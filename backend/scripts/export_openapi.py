@@ -59,7 +59,9 @@ def main(argv: list[str]) -> int:
         if not TARGET.is_file():
             print(f"[FAIL] 契约文件不存在: {TARGET}", file=sys.stderr)
             return 1
-        current = TARGET.read_text(encoding="utf-8")
+        # 先归一化 CRLF：Git 在 Windows 上可能把工作区文件转成 CRLF
+        # （即使 .gitattributes 失效或 core.autocrlf=true），此处保证不误报。
+        current = TARGET.read_bytes().replace(b"\r\n", b"\n").decode("utf-8")
         if current != rendered:
             print(
                 f"[FAIL] {TARGET} 与后端模型不一致，请重新执行 "
