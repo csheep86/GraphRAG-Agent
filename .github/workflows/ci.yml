@@ -1,0 +1,252 @@
+# CI 流水线（Sprint 1 / 阶段 3.3）
+#
+# 四个 job，任一失败即整条流水线红：
+#   1. backend  : Ruff 静态检查 + 格式检查 + Pytest（行为与契约测试）
+#   2. frontend : ESLint + `npm run gen:api` 可执行性冒烟
+#   3. contract : 契约漂移门禁（关键）
+#                 a. 后端侧 `export_openapi.py --check` 校验 contracts/openapi.yaml
+#                 b. 前端侧 `gen:api` 后 `git diff --exit-code` 校验 src/types/api.d.ts
+#   4. ci-summary: 汇总各 job 结果到 Step Summary，失败时输出失败摘要并非零退出
+#
+# 换行符策略：仓库统一以 LF 存储（根 .gitattributes: `* text=auto eol=lf`）。
+# Ubuntu runner 天然 LF；`export_openapi.py --check` 另做 CRLF 归一化兜底，
+# 因此 Windows 本地与 CI 的校验结论一致，不会出现「本地绿、CI 红」的换行符假阳性。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 最小权限：只读仓库内容
+permissions:
+  contents: read
+
+# 同一分支的新推送取消旧的未完成运行，避免排队浪费
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 与 backend/.python-version 保持一致，避免 CI 与本地解释器版本漂移
+  PYTHON_VERSION: "3.11"
+  # next@16.3.5 的 engines 为 node>=20.9.0，本地实测跑通版本为 v24.21.0
+  NODE_VERSION: "24"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. 后端：静态检查 + 测试
+  # ---------------------------------------------------------------------------
+  backend:
+    name: 后端（ruff + pytest）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        # 工作目录固定为 backend/，使裸 `ruff check .` 等价于根目录的
+        # `ruff check backend/`（uv 需要以项目根为工作目录才能读到 pyproject.toml）
+        working-directory: backend
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: 安装 Python ${{ env.PYTHON_VERSION }}
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: 同步依赖（严格使用 uv.lock）
+        run: uv sync --all-groups --frozen
+
+      - name: Ruff 静态检查
+        run: uv run ruff check .
+
+      - name: Ruff 格式检查
+        run: uv run ruff format --check .
+
+      - name: Pytest
+        run: uv run pytest -q
+
+      - name: 失败摘要
+        if: failure()
+        run: |
+          {
+            echo "## 后端 Job 失败"
+            echo ""
+            echo "- 提交: \`${{ github.sha }}\`"
+            echo "- 触发: \`${{ github.event_name }}\` @ \`${{ github.ref_name }}\`"
+            echo "- 复现命令（backend/ 目录下）:"
+            echo "  - \`uv sync --all-groups\`"
+            echo "  - \`uv run ruff check . && uv run ruff format --check .\`"
+            echo "  - \`uv run pytest -q\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # 2. 前端：lint + 类型生成可执行性
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: 前端（lint + gen:api）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖（严格使用 package-lock.json）
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: 生成 API 类型（可执行性冒烟）
+        run: npm run gen:api
+
+      - name: 失败摘要
+        if: failure()
+        run: |
+          {
+            echo "## 前端 Job 失败"
+            echo ""
+            echo "- 提交: \`${{ github.sha }}\`"
+            echo "- 触发: \`${{ github.event_name }}\` @ \`${{ github.ref_name }}\`"
+            echo "- 复现命令（frontend/ 目录下）:"
+            echo "  - \`npm ci\`"
+            echo "  - \`npm run lint\`"
+            echo "  - \`npm run gen:api\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # 3. 契约校验（关键）：前后端生成物都不得偏离 contracts/openapi.yaml
+  # ---------------------------------------------------------------------------
+  contract:
+    name: 契约校验（前后端漂移门禁）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # --- 3a. 后端侧：契约文件 vs Pydantic 模型 ---
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: 安装 Python ${{ env.PYTHON_VERSION }}
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: 同步后端依赖（严格使用 uv.lock）
+        working-directory: backend
+        run: uv sync --all-groups --frozen
+
+      - name: 后端契约校验（export_openapi.py --check）
+        working-directory: backend
+        run: uv run python scripts/export_openapi.py --check
+
+      # --- 3b. 前端侧：TS 类型 vs contracts/openapi.yaml ---
+      - name: 安装 Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装前端依赖（严格使用 package-lock.json）
+        working-directory: frontend
+        run: npm ci
+
+      - name: 重新生成前端类型
+        working-directory: frontend
+        run: npm run gen:api
+
+      - name: 前端类型漂移校验（git diff --exit-code）
+        run: |
+          if ! git diff --exit-code -- frontend/src/types/api.d.ts; then
+            echo "::error file=frontend/src/types/api.d.ts::生成的类型与 contracts/openapi.yaml 不一致，请在 frontend/ 执行 npm run gen:api 并提交生成物"
+            echo ""
+            echo "---------- 漂移详情 ----------"
+            git --no-pager diff -- frontend/src/types/api.d.ts
+            exit 1
+          fi
+          echo "契约校验通过：contracts/openapi.yaml 与前后端生成物一致"
+
+      - name: 失败摘要
+        if: failure()
+        run: |
+          {
+            echo "## 契约校验 Job 失败"
+            echo ""
+            echo "- 提交: \`${{ github.sha }}\`"
+            echo "- 触发: \`${{ github.event_name }}\` @ \`${{ github.ref_name }}\`"
+            echo "- 失败原因通常是契约漂移，修复路径（严格遵守契约同步铁律）:"
+            echo "  1. 若改了请求/响应字段：先改 \`backend/app/schemas/\` 的 Pydantic 模型"
+            echo "  2. \`cd backend && uv run python scripts/export_openapi.py\` 重新导出契约"
+            echo "  3. \`cd frontend && npm run gen:api\` 重新生成 TS 类型"
+            echo "  4. 把 \`contracts/openapi.yaml\` 与 \`frontend/src/types/api.d.ts\` 一并提交"
+            echo "- 禁止手工编辑上述两个生成物。"
+            echo "- 当前工作区差异:"
+            echo '  ```'
+            git status --short | sed 's/^/  /'
+            echo '  ```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # 4. 汇总：无论成功失败都写出一份结果摘要；失败时非零退出
+  # ---------------------------------------------------------------------------
+  ci-summary:
+    name: 流水线汇总
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, contract]
+    if: always()
+    steps:
+      - name: 输出各 Job 结果
+        run: |
+          {
+            echo "## CI 结果汇总"
+            echo ""
+            echo "- 提交: \`${{ github.sha }}\`"
+            echo "- 触发: \`${{ github.event_name }}\` @ \`${{ github.ref_name }}\`"
+            echo ""
+            echo "| Job | 结果 |"
+            echo "| --- | --- |"
+            echo "| backend | ${{ needs.backend.result }} |"
+            echo "| frontend | ${{ needs.frontend.result }} |"
+            echo "| contract | ${{ needs.contract.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 失败摘要
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          {
+            echo ""
+            echo "### 失败摘要"
+            echo ""
+            echo "存在未通过的 Job，流水线判定为失败。请查看上方表格中结果非 \`success\` 的 Job 日志，"
+            echo "并参考该 Job 的失败摘要定位复现命令。"
+            echo ""
+            echo "常见原因对照："
+            echo ""
+            echo "| 失败 Job | 常见原因 |"
+            echo "| --- | --- |"
+            echo "| backend | 静态检查告警、代码未格式化、测试失败 |"
+            echo "| frontend | ESLint 报错、openapi-typescript 执行失败 |"
+            echo "| contract | 改了后端模型但未重新导出契约，或未运行 \`npm run gen:api\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::CI 未通过，详见 Step Summary"
+          exit 1
