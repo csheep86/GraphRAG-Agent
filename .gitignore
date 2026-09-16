@@ -33,3 +33,7 @@ Thumbs.db
 
 # CodeBuddy 临时计划文件
 .codebuddy/plans/
+
+# 本地开发数据库（Sprint 1 SQLite 兜底，绝不入库）
+*.db
+*.db-journal

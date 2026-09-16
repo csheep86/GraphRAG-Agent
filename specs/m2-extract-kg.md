@@ -144,9 +144,14 @@
 |---|---|---|---|
 | `POST` | `/internal/extract` | `{doc_id, storage_key, mime_type}` | 202 接受 / 401 / 500 |
 | `GET` | `/internal/kg/{doc_id}/versions` | - | 200 `{versions: [...]}` |
-| `GET` | `/internal/kg/active` | - | 200 `{version, status: "active", created_at, scope}`；**仅返回 `status = 'active'` 的最新版本**（**ADR-0002**）；无 `active` 版本时返回 404 `KG_VERSION_NOT_ACTIVE` |
+| `GET` | `/internal/kg/active` | - | 200 `{version, status: "active", created_at, scope}`；**仅返回 `status = 'active'` 的最新版本**（**ADR-0002**）；无 `active` 版本时返回 **409** `KG_VERSION_NOT_ACTIVE` |
+| `GET` | `/api/v1/documents/{id}/graph` | - | 200 `{doc_id, kg_version, version_status: "active", nodes[], edges[], node_count, relation_count, truncated, trace_id}`；该文档无 `active` 版本时 **409** `KG_VERSION_NOT_ACTIVE`（**ADR-0002**）；跨租户 **403** `FORBIDDEN`（**ADR-0003**） |
 
-> **契约草案**，实现阶段由后端开发 B 写入 `contracts/openapi.yaml`。
+> **`KG_VERSION_NOT_ACTIVE` 的 HTTP 状态码统一为 409**（依据 **ADR-0002** §3.2 与 [`specs/m3-graphqa-citation.md`](./m3-graphqa-citation.md) §4.1）。本节原草案写作 404，**已作废**，一律以 409 为准。
+>
+> **`GET /api/v1/documents/{id}/graph`** 是本模块唯一对外暴露的只读端点，登记于此以免契约与规格脱节；返回体**刻意不含 `pii_flags`**（见 §5.3），且规模上限对齐 M3 §3 验收 1（单次节点数 ≤ 500，超限 `truncated = true`）。`/internal/*` 端点仅限服务间调用，**不进入对外契约**。
+>
+> **契约草案**，实现阶段由后端开发 B 写入 `contracts/openapi.yaml`。Sprint 1 已定稿的 5 个接口见 [`contracts/openapi.yaml`](../../contracts/openapi.yaml) 与 [`docs/multimodal_rag_backend_api_spec-v1.0.md`](../../docs/multimodal_rag_backend_api_spec-v1.0.md)；其中 `/api/v1/documents/{id}/graph` 的实现在 **Sprint 3**，当前占位返回 501 `NOT_IMPLEMENTED`。
 
 ### 5.5 数据流图（片段）
 

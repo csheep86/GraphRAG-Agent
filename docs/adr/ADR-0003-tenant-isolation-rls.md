@@ -97,6 +97,20 @@ CREATE POLICY tenant_isolation ON documents
 - `Storage.get(key)` **必须校验 key 前缀与当前 `org_id` 一致**，防止越权读取他人文件。
 - MVP 单 Org 也必须按此格式写入，**避免 P2 迁移历史文件**。
 
+### 3.6 Sprint 1 临时兜底：SQLite（**限期，必须偿还**）
+
+> **SQLite 仅作为 Sprint 1 契约验证阶段的临时兜底，不支持 RLS。Sprint 3 集成 Neo4j + PostgreSQL 时，必须切换到 PostgreSQL 并启用 RLS。**
+
+| 项 | 约定 |
+|---|---|
+| 适用范围 | `APP_ENV ∈ {development, test}`，`DATABASE_URL` 默认 `sqlite:///./dev.db` |
+| 生产禁止 | `APP_ENV=production` 且驱动为 sqlite 时**应用启动直接失败**（`backend/app/core/config.py::_guard_production_sqlite`），禁止静默降级 |
+| 隔离兜底 | RLS 缺位期间，`org_id` 过滤**只由应用层保证**（查询强制带 `org_id`，跨租户返回 `403 FORBIDDEN`） |
+| 索引 | 仍按 §3.1 **`org_id` 打头**建复合索引（如 `ix_documents_org_id_status`），避免切库时返工 |
+| 其它兜底 | `X-Org-Id` / `X-Actor-Id` 开发态请求头（`ALLOW_DEV_ORG_HEADER=true` 且非生产才生效）**同样限期移除**，见 `backend/CODEBUDDY.md` §2 |
+| 偿还动作 | Sprint 3：切 PostgreSQL → §3.1 补全各表 `org_id` → §3.2 建 `ENABLE`/`FORCE` 策略 → §3.3 事务内 `SET LOCAL app.current_org` → 删除本节全部兜底分支 |
+| 风险声明 | 本节生效期间，§3.2「DB 层兜底」**实际未生效**，越权防御强度**低于本 ADR 的目标状态**；**不得据此认为隔离已完成** |
+
 ---
 
 ## 4. 后果（Consequences）
@@ -135,7 +149,8 @@ CREATE POLICY tenant_isolation ON documents
 | 4 | `specs/m3-graphqa-citation.md` | §4.3 `qa_logs` 补 `org_id` |
 | 5 | `specs/m4-affiliation-detection.md` | §4.3 / §4.4 / §4.5 补 `org_id` |
 | 6 | `specs/m1-async-ingest.md` | §4.3 存储抽象层补 `storage_key` 前缀规则（`{org_id}/{doc_id}/{filename_hash}`） |
-| 7 | `contracts/openapi.yaml`（实现阶段） | 所有列表 / 详情端点的租户隔离与 403 语义 |
+| 7 | `contracts/openapi.yaml`（实现阶段） | 所有列表 / 详情端点的租户隔离与 403 语义（Sprint 1 已定稿 5 个核心接口） |
+| 8 | `backend/CODEBUDDY.md` §1 / §2 | SQLite 兜底与开发态请求头的**限期声明**（Sprint 1 已落地，Sprint 3 偿还） |
 
 > **注意**：本 ADR 一旦落地，**M1–M4 的全部规格表都需补 `org_id`**——这是横向基础设施的固有代价，**必须在实现前一次性对齐**。
 
