@@ -30,3 +30,6 @@ Thumbs.db
 
 # 例外：保留 MVP 输出目录的占位文件
 !**/output/.gitkeep
+
+# CodeBuddy 临时计划文件
+.codebuddy/plans/
