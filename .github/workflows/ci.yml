@@ -31,8 +31,9 @@ concurrency:
 env:
   # 与 backend/.python-version 保持一致，避免 CI 与本地解释器版本漂移
   PYTHON_VERSION: "3.11"
-  # next@16.3.5 的 engines 为 node>=20.9.0，本地实测跑通版本为 v24.21.0
-  NODE_VERSION: "24"
+  # next@16.3.5 的 engines 为 node>=20.9.0；CI 统一使用 22 LTS，与根 .nvmrc 保持一致。
+  # 本地实测跑通版本为 v24.21.0，同样满足该 engines 约束。
+  NODE_VERSION: "22"
 
 jobs:
   # ---------------------------------------------------------------------------

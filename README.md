@@ -49,7 +49,7 @@
 
 ## 开发环境
 
-- Node 18+（见 `.nvmrc`）
+- Node 22+（见 `.nvmrc`）
 - Python 3.11（见 `.python-version`，推荐 uv 管理）
 
 ```bash
