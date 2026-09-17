@@ -1,0 +1,13 @@
+[project]
+name = "langchain-mvp"
+version = "0.1.0"
+description = "LangChain ReAct Agent MVP：读取 bridge_web_demo/output.json 知识图谱，用工具回答问题"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=1.4.1",
+    "langchain-openai>=1.6.2",
+    "python-dotenv>=1.2.3",
+]
+
+[dependency-groups]
+dev = []
