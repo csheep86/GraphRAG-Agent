@@ -1,0 +1,91 @@
+import type { DocumentListItem } from "@/types/mock";
+
+/**
+ * 文档列表 Mock（p02 表格逐行还原）。
+ * 契约缺失：需后端补 `GET /api/v1/documents`（q / status / page）。
+ */
+export const MOCK_DOCUMENTS: DocumentListItem[] = [
+  {
+    id: "doc-3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+    filename: "企业知识库架构设计.pdf",
+    file_type: "PDF",
+    status: "completed",
+    entity_count: 2846,
+    uploaded_at: "2026-09-17T10:42",
+    time_label: "10:42",
+    task_id: "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+    trace_id: "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+  },
+  {
+    id: "doc-8b2d4e10-6c31-4f77-9a20-1d5e8c3b6a02",
+    filename: "Q3 产品路线图.docx",
+    file_type: "DOCX",
+    status: "processing",
+    entity_count: null,
+    uploaded_at: "2026-09-17T10:18",
+    time_label: "10:18",
+    task_id: "8b2d4e10-6c31-4f77-9a20-1d5e8c3b6a02",
+    trace_id: "1a4c9e2f-3b7d-42a1-8c6e-0f5b2d9a7e34",
+  },
+  {
+    id: "doc-6e7c1a93-2d58-4b6f-8a15-9c3e0d7b4f28",
+    filename: "客户访谈纪要-华东.pdf",
+    file_type: "PDF",
+    status: "completed",
+    entity_count: 1204,
+    uploaded_at: "2026-09-16T18:36",
+    time_label: "昨天 18:36",
+    task_id: "6e7c1a93-2d58-4b6f-8a15-9c3e0d7b4f28",
+    trace_id: "7d2b8f41-5a9c-4e30-b7f2-3c6a1d8e5b09",
+  },
+  {
+    id: "doc-2f5b8d70-9a14-4c83-b6e7-5d1a0f3c8e46",
+    filename: "安全合规手册 v2.docx",
+    file_type: "DOCX",
+    status: "failed",
+    entity_count: null,
+    uploaded_at: "2026-09-16T16:20",
+    time_label: "昨天 16:20",
+    task_id: "2f5b8d70-9a14-4c83-b6e7-5d1a0f3c8e46",
+    trace_id: "9c3e6b25-4f18-4a7d-9e02-8b5c7a1d3f60",
+  },
+  {
+    id: "doc-4d9a3c86-1e75-4b02-a8c4-7f2e5d0b9a13",
+    filename: "数据平台 API 规范.pdf",
+    file_type: "PDF",
+    status: "completed",
+    entity_count: 3982,
+    uploaded_at: "2026-09-15T14:08",
+    time_label: "09-15 14:08",
+    task_id: "4d9a3c86-1e75-4b02-a8c4-7f2e5d0b9a13",
+    trace_id: "3a7f1c58-6d92-4e14-8b30-2a5d9c6f0e71",
+  },
+  {
+    id: "doc-1c8e5b42-7a30-4d96-b1f8-6e3c9a2d7b05",
+    filename: "供应商主数据.csv",
+    file_type: "CSV",
+    status: "completed",
+    entity_count: 512,
+    uploaded_at: "2026-09-15T11:02",
+    time_label: "09-15 11:02",
+    task_id: "1c8e5b42-7a30-4d96-b1f8-6e3c9a2d7b05",
+    trace_id: "5b0d3a97-2c64-4f81-a7e5-9d1b4c8f3a26",
+  },
+  {
+    id: "doc-9a3f7d15-8b42-4c60-9e31-0d7a6f2b5c84",
+    filename: "发票明细-2026Q3.csv",
+    file_type: "CSV",
+    status: "pending",
+    entity_count: null,
+    uploaded_at: "2026-09-14T09:47",
+    time_label: "09-14 09:47",
+    task_id: "9a3f7d15-8b42-4c60-9e31-0d7a6f2b5c84",
+    trace_id: "0e6c4b83-7f25-4a19-8d63-1b9a5c7e2f40",
+  },
+];
+
+/** 知识库文档总量（设计稿固定展示 1,248） */
+export const MOCK_DOCUMENT_TOTAL = 1248;
+
+/** p01「最近文档处理」只展示前 4 条 */
+export const MOCK_RECENT_DOCUMENTS = MOCK_DOCUMENTS.slice(0, 4);

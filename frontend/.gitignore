@@ -30,8 +30,15 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
+# 仅放行「不含任何密钥」的模板文件；.env.local 及其变体必须保持忽略。
+# 注意：本文件位于 frontend/，其规则优先级高于仓库根 .gitignore，
+# 因此放行规则必须写在这里才生效。
 .env*
+!.env.example
+!.env.local.example
+!.env.development
+!.env.production
 
 # vercel
 .vercel
