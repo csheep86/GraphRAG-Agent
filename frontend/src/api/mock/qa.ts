@@ -53,15 +53,88 @@ const SESSION_1_MESSAGES: ChatMessage[] = [
     content:
       "知识库中共有 8 份文档直接涉及数据安全合规，主要集中在三类：\n1. 制度：安全合规手册、数据分级分类规范。\n2. 流程：数据访问审批、脱敏处理与审计流程。\n3. 责任人：安全委员会负责制度审批，数据平台主管负责执行。",
     created_at: "2026-09-17T14:52",
-    node_count: 8,
-    relation_count: 5,
     confidence: "high",
     refused: false,
-    graph_paths: [
-      { source: "数据安全合规", relation: "包含", target: "数据分级分类" },
-      { source: "安全委员会", relation: "审批", target: "合规制度" },
-      { source: "数据平台主管", relation: "负责执行", target: "访问审批流程" },
+    // 批次 A 契约扩展：图谱证据用 kg_nodes / kg_relations 表达
+    //（type 用受控投影枚举值 MENTIONS，真实关系名放 properties.relation_name）
+    kg_nodes: [
+      {
+        id: "e-01",
+        label: "Entity",
+        entity_type: "制度",
+        canonical_name: "数据安全合规",
+        confidence: 0.95,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-02",
+        label: "Entity",
+        entity_type: "规范",
+        canonical_name: "数据分级分类",
+        confidence: 0.93,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-03",
+        label: "Entity",
+        entity_type: "组织",
+        canonical_name: "安全委员会",
+        confidence: 0.9,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-04",
+        label: "Entity",
+        entity_type: "制度",
+        canonical_name: "合规制度",
+        confidence: 0.88,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-05",
+        label: "Entity",
+        entity_type: "人员",
+        canonical_name: "数据平台主管",
+        confidence: 0.91,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-06",
+        label: "Entity",
+        entity_type: "流程",
+        canonical_name: "访问审批流程",
+        confidence: 0.92,
+        kg_version: "20260917T0000Z-MOCK",
+      },
     ],
+    kg_relations: [
+      {
+        id: "r-01",
+        type: "MENTIONS",
+        source: "e-01",
+        target: "e-02",
+        properties: { relation_name: "包含" },
+      },
+      {
+        id: "r-02",
+        type: "MENTIONS",
+        source: "e-03",
+        target: "e-04",
+        properties: { relation_name: "审批" },
+      },
+      {
+        id: "r-03",
+        type: "MENTIONS",
+        source: "e-05",
+        target: "e-06",
+        properties: { relation_name: "负责执行" },
+      },
+    ],
+    token_usage: {
+      prompt_tokens: 2048,
+      completion_tokens: 312,
+      total_tokens: 2360,
+    },
     citations: [
       {
         doc_id: "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
@@ -101,15 +174,70 @@ const SESSION_2_MESSAGES: ChatMessage[] = [
     content:
       "Q3 路线图包含 3 个关键节点：\n1. 7 月：GraphRAG 检索链路灰度，覆盖 3 个试点部门。\n2. 8 月：实体消解与人审工作台上线。\n3. 9 月：多模态解析（PDF / DOCX / CSV）全量放开。",
     created_at: "2026-09-17T14:40",
-    node_count: 6,
-    relation_count: 5,
     confidence: "high",
     refused: false,
-    graph_paths: [
-      { source: "Q3 路线图", relation: "包含", target: "检索链路灰度" },
-      { source: "Q3 路线图", relation: "包含", target: "实体消解工作台" },
-      { source: "Q3 路线图", relation: "包含", target: "多模态解析" },
+    kg_nodes: [
+      {
+        id: "e-07",
+        label: "Entity",
+        entity_type: "规划",
+        canonical_name: "Q3 路线图",
+        confidence: 0.94,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-08",
+        label: "Entity",
+        entity_type: "里程碑",
+        canonical_name: "检索链路灰度",
+        confidence: 0.9,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-09",
+        label: "Entity",
+        entity_type: "里程碑",
+        canonical_name: "实体消解工作台",
+        confidence: 0.89,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-10",
+        label: "Entity",
+        entity_type: "里程碑",
+        canonical_name: "多模态解析",
+        confidence: 0.87,
+        kg_version: "20260917T0000Z-MOCK",
+      },
     ],
+    kg_relations: [
+      {
+        id: "r-04",
+        type: "MENTIONS",
+        source: "e-07",
+        target: "e-08",
+        properties: { relation_name: "包含" },
+      },
+      {
+        id: "r-05",
+        type: "MENTIONS",
+        source: "e-07",
+        target: "e-09",
+        properties: { relation_name: "包含" },
+      },
+      {
+        id: "r-06",
+        type: "MENTIONS",
+        source: "e-07",
+        target: "e-10",
+        properties: { relation_name: "包含" },
+      },
+    ],
+    token_usage: {
+      prompt_tokens: 1536,
+      completion_tokens: 208,
+      total_tokens: 1744,
+    },
     citations: [
       {
         doc_id: "8b2d4e10-6c31-4f77-9a20-1d5e8c3b6a02",
@@ -137,9 +265,10 @@ const FALLBACK_MESSAGES: ChatMessage[] = [
     created_at: "2026-09-17T11:20",
     refused: true,
     confidence: "low",
-    node_count: 0,
-    relation_count: 0,
-    graph_paths: [],
+    // 拒答契约语义：无支撑证据 → 空列表；未调用 LLM → token_usage 为 null
+    kg_nodes: [],
+    kg_relations: [],
+    token_usage: null,
     citations: [],
   },
 ];
@@ -159,14 +288,55 @@ export function buildMockAnswer(question: string): ChatMessage {
     role: "assistant",
     content: `已基于当前 active 图谱版本检索「${question}」。\n命中 3 个相关实体与 2 条关系路径，结论如下：\n1. 该问题可由现有图谱直接支撑，证据见下方引用来源。\n2. 引用覆盖率 100%，未做推测性补全。`,
     created_at: "2026-09-17T15:00",
-    node_count: 3,
-    relation_count: 2,
     confidence: "medium",
     refused: false,
-    graph_paths: [
-      { source: "数据安全合规", relation: "包含", target: "数据分级分类" },
-      { source: "数据平台主管", relation: "负责执行", target: "访问审批流程" },
+    kg_nodes: [
+      {
+        id: "e-11",
+        label: "Entity",
+        entity_type: "制度",
+        canonical_name: "数据安全合规",
+        confidence: 0.95,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-12",
+        label: "Entity",
+        entity_type: "规范",
+        canonical_name: "数据分级分类",
+        confidence: 0.93,
+        kg_version: "20260917T0000Z-MOCK",
+      },
+      {
+        id: "e-13",
+        label: "Entity",
+        entity_type: "人员",
+        canonical_name: "数据平台主管",
+        confidence: 0.91,
+        kg_version: "20260917T0000Z-MOCK",
+      },
     ],
+    kg_relations: [
+      {
+        id: "r-07",
+        type: "MENTIONS",
+        source: "e-11",
+        target: "e-12",
+        properties: { relation_name: "包含" },
+      },
+      {
+        id: "r-08",
+        type: "MENTIONS",
+        source: "e-13",
+        target: "e-06",
+        properties: { relation_name: "负责执行" },
+      },
+    ],
+    token_usage: {
+      prompt_tokens: 1024,
+      completion_tokens: 256,
+      total_tokens: 1280,
+    },
     citations: [
       {
         doc_id: "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",

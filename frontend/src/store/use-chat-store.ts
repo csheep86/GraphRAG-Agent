@@ -158,9 +158,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         refused: true,
         confidence: "low",
         citations: [],
-        graph_paths: [],
-        node_count: 0,
-        relation_count: 0,
+        kg_nodes: [],
+        kg_relations: [],
+        token_usage: null,
       };
 
       set((state) => ({
@@ -206,7 +206,9 @@ export function selectEvidenceMessage(state: ChatStore): ChatMessage | null {
     const message = messages[index];
     if (message.role !== "assistant") continue;
     const hasEvidence =
-      (message.graph_paths?.length ?? 0) > 0 || (message.citations?.length ?? 0) > 0;
+      (message.kg_nodes?.length ?? 0) > 0 ||
+      (message.kg_relations?.length ?? 0) > 0 ||
+      (message.citations?.length ?? 0) > 0;
     if (hasEvidence) return message;
   }
 

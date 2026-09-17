@@ -169,6 +169,10 @@ export interface components {
         /**
          * AgentQueryResponse
          * @description `POST /api/v1/agent/query` 响应（M3 §4.2）。
+         *
+         *     Sprint 4 阶段 10.0 批次 A 扩展（Sprint 3 缺口 1 偿还）：
+         *     新增 ``kg_nodes`` / ``kg_relations`` / ``token_usage`` 三字段，
+         *     供前端 p03「引用证据」面板展示图谱证据与 token 用量。
          * @example {
          *       "answer": "是。示例子公司 A 的供应商 C 同时持有 B 公司 12% 股权 [source: doc-9/page-3/chunk-12]",
          *       "citations": [
@@ -181,9 +185,35 @@ export interface components {
          *         }
          *       ],
          *       "confidence": "high",
+         *       "kg_nodes": [
+         *         {
+         *           "canonical_name": "示例科技有限公司",
+         *           "confidence": 0.93,
+         *           "entity_type": "公司",
+         *           "id": "e-001",
+         *           "kg_version": "20260320T1430Z-01H9X9ABCDEF",
+         *           "label": "Entity"
+         *         }
+         *       ],
+         *       "kg_relations": [
+         *         {
+         *           "id": "r-001",
+         *           "properties": {
+         *             "share_pct": 51
+         *           },
+         *           "source": "e-001",
+         *           "target": "e-002",
+         *           "type": "AFFILIATED_WITH"
+         *         }
+         *       ],
          *       "kg_version": "20260320T1430Z-01H9X9ABCDEF",
          *       "refused": false,
          *       "route": "m3_graphqa",
+         *       "token_usage": {
+         *         "completion_tokens": 256,
+         *         "prompt_tokens": 2048,
+         *         "total_tokens": 2304
+         *       },
          *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
          *     }
          */
@@ -205,6 +235,16 @@ export interface components {
              */
             confidence: "high" | "medium" | "low";
             /**
+             * Kg Nodes
+             * @description 支撑本次答案的图谱节点（复用 `DocumentGraphResponse.nodes` 同构模型）；拒答 / 图谱为空时为空列表
+             */
+            kg_nodes?: components["schemas"]["GraphNode"][];
+            /**
+             * Kg Relations
+             * @description 支撑本次答案的图谱关系（复用 `DocumentGraphResponse.edges` 同构模型）；拒答 / 图谱为空时为空列表
+             */
+            kg_relations?: components["schemas"]["GraphEdge"][];
+            /**
              * Kg Version
              * @description 本次检索实际使用的图谱版本（必为 active）
              */
@@ -225,6 +265,8 @@ export interface components {
              * @enum {string}
              */
             route: "m3_graphqa" | "m4_affiliation";
+            /** @description LLM token 用量；拒答分支未调用 LLM、或 LLM 未返回 usage 时为 `null` */
+            token_usage?: components["schemas"]["TokenUsage"] | null;
             /** Trace Id */
             trace_id: string;
         };
@@ -553,6 +595,33 @@ export interface components {
              * @description 契约版本，与 openapi.yaml 的 info.version 一致
              */
             version: string;
+        };
+        /**
+         * TokenUsage
+         * @description LLM token 用量（对齐 DeepSeek / OpenAI 兼容 API 的 `usage` 格式）。
+         *
+         *     按「实测结果反哺规则」：骨架链路 / LLM 未返回 usage 时，
+         *     上层字段 ``AgentQueryResponse.token_usage`` 置 ``null``，**严禁造数据**。
+         */
+        TokenUsage: {
+            /**
+             * Completion Tokens
+             * @description 输出 token 数
+             * @default 0
+             */
+            completion_tokens: number;
+            /**
+             * Prompt Tokens
+             * @description 输入 token 数
+             * @default 0
+             */
+            prompt_tokens: number;
+            /**
+             * Total Tokens
+             * @description 总 token 数
+             * @default 0
+             */
+            total_tokens: number;
         };
         /**
          * UploadResponse

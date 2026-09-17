@@ -18,6 +18,7 @@ export type DocumentStatus = components["schemas"]["DocumentStatusResponse"]["st
 export type ConfidenceLevel = components["schemas"]["AgentQueryResponse"]["confidence"];
 export type GraphNode = components["schemas"]["GraphNode"];
 export type GraphEdge = components["schemas"]["GraphEdge"];
+export type TokenUsage = components["schemas"]["TokenUsage"];
 
 /* --------------------------------------------------------------------------
  * 工作台概览（p01）—— 契约缺失，需后端补 GET /api/v1/metrics/overview
@@ -115,13 +116,6 @@ export type ChatSession = {
   doc_count: number;
 };
 
-/** 引用证据面板中的「关系路径」：源实体 → 关系 → 目标实体 */
-export type CitationPath = {
-  source: string;
-  relation: string;
-  target: string;
-};
-
 export type ChatMessage = {
   id: string;
   role: ChatRole;
@@ -129,10 +123,19 @@ export type ChatMessage = {
   created_at: string;
   /* ---- 以下仅 assistant 消息可能存在 ---- */
   citations?: Citation[];
-  graph_paths?: CitationPath[];
-  /** 引用来源概要：节点数 / 关系数 */
-  node_count?: number;
-  relation_count?: number;
+  /**
+   * 支撑本次回答的图谱节点（契约 `AgentQueryResponse.kg_nodes`）。
+   * Sprint 4 批次 A 契约扩展后由 `mapAgentQueryResponse` 直接透传，
+   * 取代原先的 `node_count` / `graph_paths` 降级占位。
+   */
+  kg_nodes?: GraphNode[];
+  /**
+   * 支撑本次回答的图谱关系（契约 `AgentQueryResponse.kg_relations`）；
+   * 真实关系名见 `properties.relation_name`（后端受控投影约定）。
+   */
+  kg_relations?: GraphEdge[];
+  /** LLM token 用量；拒答 / LLM 未返回 usage 时为 null（契约语义，非缺数） */
+  token_usage?: TokenUsage | null;
   confidence?: ConfidenceLevel;
   refused?: boolean;
   /** 流式/加载占位 */
