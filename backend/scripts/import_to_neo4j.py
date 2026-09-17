@@ -64,10 +64,10 @@ SUPPORTED_SCHEMA_VERSION = "1.0"
 # 的中文关系名映射为受控的 ASCII token，再拼接进 Cypher —— 不在白名单内的一律
 # 落到 `RELATED`，**绝不**透传原始字符串。
 #
-# ⚠️ 契约对齐提示：`contracts/openapi.yaml` 的 `GraphEdge.type` 枚举仅含
-#    HAS_CHUNK / MENTIONS / SUPPORTED_BY / AFFILIATED_WITH / SUPPLIES_TO / PARTY_TO，
-#    并未定义「实体↔实体 财务指标」这类关系。本脚本**不改契约**，在 Neo4j 侧保留
-#    原始关系名（`relation_name` 属性），由 GraphService 做受控投影。
+# ✅ 契约对齐（Sprint 4.10.0.B）：`contracts/openapi.yaml` 的 `GraphEdge.type` 枚举
+#    已扩展 HAS_FINANCIAL_INDICATOR / OPERATES_SEGMENT / RELATED（与下方白名单 token
+#    逐字一致），桥梁专有类型直通，不再由 GraphService 投影为 MENTIONS；原始关系名
+#    仍保留在 `relation_name` 属性，GraphService 仅对未知类型做兜底投影。
 # --------------------------------------------------------------------------- #
 RELATION_TOKEN_MAP: dict[str, str] = {
     "股权持有": "AFFILIATED_WITH",

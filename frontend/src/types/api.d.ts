@@ -511,9 +511,10 @@ export interface components {
             target: string;
             /**
              * Type
+             * @description 关系类型（M2 §4.2），含桥梁抽取的实体↔实体类关系
              * @enum {string}
              */
-            type: "HAS_CHUNK" | "MENTIONS" | "SUPPORTED_BY" | "AFFILIATED_WITH" | "SUPPLIES_TO" | "PARTY_TO";
+            type: "HAS_CHUNK" | "MENTIONS" | "SUPPORTED_BY" | "AFFILIATED_WITH" | "SUPPLIES_TO" | "PARTY_TO" | "HAS_FINANCIAL_INDICATOR" | "OPERATES_SEGMENT" | "RELATED";
         };
         /**
          * GraphNode

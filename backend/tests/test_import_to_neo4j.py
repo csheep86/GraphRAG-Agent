@@ -245,15 +245,21 @@ def test_relation_type_passes_through_contract_enum() -> None:
         "AFFILIATED_WITH",
         "SUPPLIES_TO",
         "PARTY_TO",
+        "HAS_FINANCIAL_INDICATOR",
+        "OPERATES_SEGMENT",
+        "RELATED",
     ):
         assert _relation_type(value) == value
 
 
-def test_relation_type_projects_bridge_types_to_contract_enum() -> None:
-    """桥梁专有类型投影为 MENTIONS；真实名由 properties['relation_name'] 承载。"""
-    assert _relation_type("HAS_FINANCIAL_INDICATOR") == "MENTIONS"
-    assert _relation_type("OPERATES_SEGMENT") == "MENTIONS"
-    assert _relation_type("RELATED") == "MENTIONS"
+def test_relation_type_passes_through_bridge_types() -> None:
+    """桥梁专有类型原样直通（Sprint 4 批次 B 契约扩展，不再投影为 MENTIONS）。
+
+    真实中文关系名仍由 ``properties['relation_name']`` 承载。
+    """
+    assert _relation_type("HAS_FINANCIAL_INDICATOR") == "HAS_FINANCIAL_INDICATOR"
+    assert _relation_type("OPERATES_SEGMENT") == "OPERATES_SEGMENT"
+    assert _relation_type("RELATED") == "RELATED"
     assert _relation_type("AFFILIATED_WITH") == "AFFILIATED_WITH"
 
 
@@ -266,6 +272,9 @@ def test_relation_type_never_returns_invalid_value() -> None:
         "AFFILIATED_WITH",
         "SUPPLIES_TO",
         "PARTY_TO",
+        "HAS_FINANCIAL_INDICATOR",
+        "OPERATES_SEGMENT",
+        "RELATED",
     }
     for raw in ("", None, "X]->() DELETE n //", "未知类型", 123):
         assert _relation_type(raw) in contract_enum

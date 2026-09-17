@@ -458,6 +458,7 @@ components:
           title: Target
           type: string
         type:
+          description: 关系类型（M2 §4.2），含桥梁抽取的实体↔实体类关系
           enum:
           - HAS_CHUNK
           - MENTIONS
@@ -465,6 +466,9 @@ components:
           - AFFILIATED_WITH
           - SUPPLIES_TO
           - PARTY_TO
+          - HAS_FINANCIAL_INDICATOR
+          - OPERATES_SEGMENT
+          - RELATED
           title: Type
           type: string
       required:

@@ -64,8 +64,8 @@
 | PostgreSQL RLS + `SET LOCAL app.current_org` | 未实现；SQLite 下由应用层 `org_id` 过滤兜底 | ADR-0003 §3.1 / §3.2 |
 | `kg_versions` 表（PG 真源） | 未建表；版本状态机暂落 Neo4j `(:KgVersion)` | ADR-0002 §2 |
 | M3 完整 Agentic-RAG | 骨架：单轮 LLM + 图谱文本注入；**无** Tool 调用循环、**无** chunk 级引用反查 | M3 §4 |
-| `AgentQueryResponse` 缺 `kg_nodes` / `kg_relations` / `token_usage` | 契约**未定义**这些字段，按「功能预留原则」不擅自补充 | 本文件 §3 |
-| `GraphEdge.type` 枚举不含「实体↔实体」关系 | 桥梁专有类型受控投影为 `MENTIONS`，真实关系名保留在 `properties.relation_name` | 本文件 §3 |
+| `AgentQueryResponse` 缺 `kg_nodes` / `kg_relations` / `token_usage` | ✅ 已偿还（Sprint 4.10.0.A）：契约已定义三字段并由 `AgentService` 填充 | 本文件 §3 |
+| `GraphEdge.type` 枚举不含「实体↔实体」关系 | ✅ 已偿还（Sprint 4.10.0.B）：枚举扩展 `HAS_FINANCIAL_INDICATOR` / `OPERATES_SEGMENT` / `RELATED`，桥梁专有类型直通；未知类型仍兜底投影 `MENTIONS` + `properties.relation_name` | 本文件 §3 |
 | 文件写入存储抽象层 | 只落 PG 元数据，`storage_key` 保持 NULL | M1 §4.3 |
 | 契约 `description` 描述漂移 | `/upload`、`/graph`、`/agent/query` 的 `description` 仍写 Sprint 1/3 措辞，与已实装行为不符；**代码侧刻意不动**以免制造契约漂移 | 本文件 §3 |
 

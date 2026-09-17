@@ -18,8 +18,9 @@
    ``writing`` / ``failed`` / ``superseded`` 版本。
 3. **MERGE 幂等**：写入路径使用 ``MERGE``，以 ``(id, kg_version)`` 为幂等键
    （ADR-0002 §3.3），支持 Saga 重放。
-4. **关系类型受控投影**：见 :func:`_relation_type` —— 契约枚举未覆盖的桥梁专有
-   关系类型投影为 ``MENTIONS``，真实关系名保留在 ``properties["relation_name"]``。
+4. **关系类型映射**：见 :func:`_relation_type` —— 命中契约枚举（含桥梁抽取的
+   实体↔实体类关系，Sprint 4.10.0.B 扩展）原样直通；**未知类型**兜底投影为
+   ``MENTIONS``，真实关系名保留在 ``properties["relation_name"]``。
 """
 
 from __future__ import annotations
@@ -414,15 +415,12 @@ def _to_node(record: Any, *, kg_version: str, label: str) -> GraphNode:
 def _relation_type(raw: Any) -> RelationType:
     """把 Cypher ``type(r)`` 的字符串映射为契约 ``RelationType`` 枚举。
 
-    **契约对齐说明（阶段九）**：``contracts/openapi.yaml`` 的 ``GraphEdge.type``
-    仅定义了 6 个枚举值（HAS_CHUNK / MENTIONS / SUPPORTED_BY / AFFILIATED_WITH /
-    SUPPLIES_TO / PARTY_TO），**没有**「实体↔实体」类关系（如
-    ``HAS_FINANCIAL_INDICATOR``）。为遵守「不修改契约」，这里做**受控投影**：
-    - 命中契约枚举 → 原样返回；
-    - 桥梁产物专有类型 → 投影为语义最接近的 ``MENTIONS``（表示「实体间存在关联」），
-      **真实关系名**保留在同级 ``properties["relation_name"]`` 中，前端可原样展示。
-
-    该缺口已登记为「接口对齐清单」项，待 Sprint 4 联调时统一刷新契约枚举。
+    **契约对齐说明（Sprint 4.10.0.B）**：``RelationType`` 已扩展
+    ``HAS_FINANCIAL_INDICATOR`` / ``OPERATES_SEGMENT`` / ``RELATED`` 三个
+    桥梁抽取的实体↔实体类关系（与 ``scripts/import_to_neo4j.py`` 的
+    ``RELATION_TOKEN_MAP`` 白名单 token 逐字一致），桥梁专有类型**原样直通**；
+    仅**未知类型**兜底投影为 ``MENTIONS``，真实关系名保留在
+    ``properties["relation_name"]``（防未来桥梁新类型再次制造契约缺口）。
     """
     contract_enum = {
         "HAS_CHUNK",
@@ -431,19 +429,16 @@ def _relation_type(raw: Any) -> RelationType:
         "AFFILIATED_WITH",
         "SUPPLIES_TO",
         "PARTY_TO",
-    }
-    # 桥梁产物（bridge_web_demo）专有类型 → 契约枚举的受控投影
-    bridge_projection = {
-        "AFFILIATED_WITH": "AFFILIATED_WITH",  # 股权持有：契约已有同名枚举，直通
-        "HAS_FINANCIAL_INDICATOR": "MENTIONS",
-        "OPERATES_SEGMENT": "MENTIONS",
-        "RELATED": "MENTIONS",
+        "HAS_FINANCIAL_INDICATOR",
+        "OPERATES_SEGMENT",
+        "RELATED",
     }
 
     raw_name = str(raw)
     if raw_name in contract_enum:
         return raw_name  # type: ignore[return-value]
-    return bridge_projection.get(raw_name, "MENTIONS")  # type: ignore[return-value]
+    # 未知类型兜底投影：真实关系名由 properties["relation_name"] 承载
+    return "MENTIONS"  # type: ignore[return-value]
 
 
 def _sanitize_properties(props: dict[str, Any]) -> dict[str, Any]:
