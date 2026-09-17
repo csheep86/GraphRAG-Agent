@@ -4,17 +4,21 @@
 - :class:`GraphService`：通过 ``GraphService.instance()`` 取单例；
 - :class:`GraphUnavailableError`：连接失败 / 查询失败时抛，路由层捕获后转
   ``501 NOT_IMPLEMENTED``（阶段九契约未实装）；
-- :func:`fetch_active_kg_version` / :func:`fetch_document_subgraph`：业务层常用
-  的两条 Cypher 入口。
+- :meth:`GraphService.fetch_active_kg_version`：取唯一 ``status='active'`` 版本；
+- :meth:`GraphService.fetch_document_subgraph`：按 PG ``document_id`` 查子图（M2 数据）；
+- :meth:`GraphService.fetch_all_subgraph`：查**全部**已导入实体图（桥梁产物，
+  不依赖 ``document_id``）。
 
 设计要点：
 1. **懒加载 driver**：模块导入时不连接 Neo4j；第一次调用 ``instance()`` 时
    才尝试建连接，避免 pytest / 启动失败被外部依赖绑架。
 2. **kg_version 强制 active**：所有 Cypher 都带 ``WHERE n.kg_version = $kg_version``
-   且 ``kg_version`` 由 :func:`fetch_active_kg_version` 给出，**严禁**调用方传入
+   且 ``kg_version`` 由 :meth:`fetch_active_kg_version` 给出，**严禁**调用方传入
    ``writing`` / ``failed`` / ``superseded`` 版本。
 3. **MERGE 幂等**：写入路径使用 ``MERGE``，以 ``(id, kg_version)`` 为幂等键
    （ADR-0002 §3.3），支持 Saga 重放。
+4. **关系类型受控投影**：见 :func:`_relation_type` —— 契约枚举未覆盖的桥梁专有
+   关系类型投影为 ``MENTIONS``，真实关系名保留在 ``properties["relation_name"]``。
 """
 from __future__ import annotations
 
@@ -44,16 +48,40 @@ class KgVersion:
     scope: str  # "doc:<uuid>" 或 "global"
 
 
-#: Cypher 查询：当前 active kg_version。
-#: 阶段九骨架：从 Neo4j 取最近一次写入的 ``kg_version``（视为 active）。
-#: Sprint 3 后段接入 ``kg_versions`` ORM 后改为 PG 真源查询，
-#: 并按 ADR-0002 §3.2 仅返回 ``status = 'active'``。
+#: Cypher 查询：当前 active kg_version（ADR-0002 §3.2 —— **仅** active 可被消费）。
+#: 阶段九由 ``scripts/import_to_neo4j.py`` 在 Neo4j 侧维护 :KgVersion 状态机；
+#: Sprint 4 接入 PG ``kg_versions`` 后，PG 为真源、此查询退化为兜底。
 _QUERY_ACTIVE_KG_VERSION = """
-OPTIONAL MATCH (n:Document)
-WHERE n.kg_version IS NOT NULL
-RETURN n.kg_version AS version
-ORDER BY n.kg_version DESC
+MATCH (v:KgVersion {status: 'active'})
+WHERE $scope IS NULL OR v.scope = $scope
+RETURN v.version AS version, v.scope AS scope
+ORDER BY v.version DESC
 LIMIT 1
+"""
+
+#: Cypher 查询：**全部**已导入实体子图（不依赖 PG ``document_id``）。
+#: 供 ``bridge_web_demo`` 阶段六产物（``:Entity`` + 实体间关系）查询使用。
+#: ``elementId`` 用于稳定去重，``id`` 属性作为对外节点标识（与边的 source/target 对齐）。
+_QUERY_ALL_ENTITY_SUBGRAPH = """
+MATCH (n:Entity {kg_version: $kg_version})
+// 用 properties(n)['org_id'] 而非 n.org_id：后者在库中尚无该属性键时
+// 会触发 ``01N52 property key does not exist`` 通知（噪声日志）。
+WITH n
+WHERE $org_id IS NULL
+   OR properties(n)['org_id'] IS NULL
+   OR properties(n)['org_id'] = $org_id
+WITH collect(n) AS all_nodes
+WITH all_nodes[0..$node_limit] AS nodes, size(all_nodes) AS total_nodes
+RETURN
+  nodes,
+  total_nodes,
+  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes | {
+    id: coalesce(r.id, elementId(r)),
+    type: type(r),
+    source: a.id,
+    target: b.id,
+    properties: properties(r)
+  }] AS edges
 """
 
 #: Cypher 查询：单个文档的子图（节点 + 关系），受 doc_id + kg_version 双重约束。
@@ -85,14 +113,14 @@ RETURN
 class GraphService:
     """Neo4j 服务封装（懒加载 + 单例）。"""
 
-    _instance: "GraphService | None" = None
+    _instance: GraphService | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
         self._driver = None
 
     @classmethod
-    def instance(cls) -> "GraphService":
+    def instance(cls) -> GraphService:
         """取全局单例；第一次调用时尝试建立 Neo4j 连接。"""
         if cls._instance is None:
             with cls._lock:
@@ -145,6 +173,11 @@ class GraphService:
                 pass
             self._driver = None
 
+    def _session(self):  # noqa: ANN202 - 第三方类型
+        """按 ``settings.neo4j_database`` 打开会话（与导入脚本保持一致）。"""
+        driver = self._ensure_driver()
+        return driver.session(database=get_settings().neo4j_database)
+
     # ------------------------------------------------------------------ queries
 
     def health_check(self) -> bool:
@@ -155,19 +188,85 @@ class GraphService:
         except GraphUnavailableError:
             return False
 
-    def fetch_active_kg_version(self) -> KgVersion:
-        """读 Neo4j 返回**唯一** active 版本（骨架实现）。"""
-        self._ensure_driver()
+    def fetch_active_kg_version(self, *, scope: str | None = None) -> KgVersion:
+        """读 Neo4j ``:KgVersion`` 返回**唯一** active 版本（ADR-0002 §3.2）。
+
+        ``writing`` / ``failed`` 版本一律**不**返回，从源头杜绝脏读。
+        """
         try:
-            with self._driver.session() as session:  # type: ignore[union-attr]
-                result = session.run(_QUERY_ACTIVE_KG_VERSION).single()
+            with self._session() as session:
+                result = session.run(_QUERY_ACTIVE_KG_VERSION, scope=scope).single()
+        except GraphUnavailableError:
+            raise
         except Exception as exc:  # noqa: BLE001 - 统一包装
             raise GraphUnavailableError(f"读取 active kg_version 失败: {exc}") from exc
 
         version = result["version"] if result else None
         if not version:
-            raise GraphUnavailableError("Neo4j 中尚无任何 kg_version（未写入数据）")
-        return KgVersion(version=version, scope="global")
+            raise GraphUnavailableError(
+                "Neo4j 中尚无 status='active' 的 KgVersion"
+                "（请先执行 scripts/import_to_neo4j.py）"
+            )
+        return KgVersion(version=version, scope=result["scope"] or "global")
+
+    def fetch_all_subgraph(
+        self,
+        *,
+        kg_version: str | None = None,
+        org_id: UUID | None = None,
+        node_limit: int = 500,
+    ) -> tuple[list[GraphNode], list[GraphEdge], bool]:
+        """取**全部**已导入实体子图，不依赖 PG ``document_id``。
+
+        用于 ``bridge_web_demo`` 阶段六产物（``:Entity`` 实体图）的查询与可视化。
+        若 ``kg_version`` 为 ``None``，自动取 :meth:`fetch_active_kg_version`
+        （**始终**只查 active 版本，ADR-0002 §3.2）。
+
+        :returns: ``(nodes, edges, truncated)``
+        """
+        if node_limit <= 0:
+            raise ValueError("node_limit 必须为正整数")
+
+        version = kg_version or self.fetch_active_kg_version().version
+
+        try:
+            with self._session() as session:
+                result = session.run(
+                    _QUERY_ALL_ENTITY_SUBGRAPH,
+                    kg_version=version,
+                    org_id=str(org_id) if org_id else None,
+                    node_limit=node_limit,
+                ).single()
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"查询全量实体子图失败: kg_version={version}: {exc}"
+            ) from exc
+
+        if result is None:
+            return [], [], False
+
+        total_nodes = int(result["total_nodes"] or 0)
+        truncated = total_nodes > node_limit
+
+        nodes = [
+            _to_node(record, kg_version=version, label="Entity")
+            for record in (result["nodes"] or [])[:node_limit]
+        ]
+
+        edges = [
+            GraphEdge(
+                id=str(record.get("id", "")),
+                type=_relation_type(record.get("type")),
+                source=str(record.get("source", "")),
+                target=str(record.get("target", "")),
+                properties=_sanitize_properties(record.get("properties") or {}),
+            )
+            for record in (result["edges"] or [])
+        ]
+
+        return nodes, edges, truncated
 
     def fetch_document_subgraph(
         self,
@@ -184,9 +283,8 @@ class GraphService:
         if node_limit <= 0:
             raise ValueError("node_limit 必须为正整数")
 
-        self._ensure_driver()
         try:
-            with self._driver.session() as session:  # type: ignore[union-attr]
+            with self._session() as session:
                 result = session.run(
                     _QUERY_DOCUMENT_SUBGRAPH,
                     doc_id=str(doc_id),
@@ -259,16 +357,38 @@ def _to_node(record: Any, *, kg_version: str, label: str) -> GraphNode:
 
 
 def _relation_type(raw: Any) -> RelationType:
-    """把 Cypher ``type(r)`` 的字符串映射为契约枚举，未知则降级为 ``HAS_CHUNK``。"""
-    mapping = {
-        "HAS_CHUNK": "HAS_CHUNK",
-        "MENTIONS": "MENTIONS",
-        "SUPPORTED_BY": "SUPPORTED_BY",
-        "AFFILIATED_WITH": "AFFILIATED_WITH",
-        "SUPPLIES_TO": "SUPPLIES_TO",
-        "PARTY_TO": "PARTY_TO",
+    """把 Cypher ``type(r)`` 的字符串映射为契约 ``RelationType`` 枚举。
+
+    **契约对齐说明（阶段九）**：``contracts/openapi.yaml`` 的 ``GraphEdge.type``
+    仅定义了 6 个枚举值（HAS_CHUNK / MENTIONS / SUPPORTED_BY / AFFILIATED_WITH /
+    SUPPLIES_TO / PARTY_TO），**没有**「实体↔实体」类关系（如
+    ``HAS_FINANCIAL_INDICATOR``）。为遵守「不修改契约」，这里做**受控投影**：
+    - 命中契约枚举 → 原样返回；
+    - 桥梁产物专有类型 → 投影为语义最接近的 ``MENTIONS``（表示「实体间存在关联」），
+      **真实关系名**保留在同级 ``properties["relation_name"]`` 中，前端可原样展示。
+
+    该缺口已登记为「接口对齐清单」项，待 Sprint 4 联调时统一刷新契约枚举。
+    """
+    contract_enum = {
+        "HAS_CHUNK",
+        "MENTIONS",
+        "SUPPORTED_BY",
+        "AFFILIATED_WITH",
+        "SUPPLIES_TO",
+        "PARTY_TO",
     }
-    return mapping.get(str(raw), "HAS_CHUNK")  # type: ignore[return-value]
+    # 桥梁产物（bridge_web_demo）专有类型 → 契约枚举的受控投影
+    bridge_projection = {
+        "AFFILIATED_WITH": "AFFILIATED_WITH",  # 股权持有：契约已有同名枚举，直通
+        "HAS_FINANCIAL_INDICATOR": "MENTIONS",
+        "OPERATES_SEGMENT": "MENTIONS",
+        "RELATED": "MENTIONS",
+    }
+
+    raw_name = str(raw)
+    if raw_name in contract_enum:
+        return raw_name  # type: ignore[return-value]
+    return bridge_projection.get(raw_name, "MENTIONS")  # type: ignore[return-value]
 
 
 def _sanitize_properties(props: dict[str, Any]) -> dict[str, Any]:
