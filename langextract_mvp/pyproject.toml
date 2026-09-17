@@ -1,0 +1,9 @@
+[project]
+name = "langextract-mvp"
+version = "0.1.0"
+description = "LangExtract + DeepSeek(OpenAI 兼容) 最小抽取 MVP：文本 -> 实体/关系 -> JSONL"
+requires-python = ">=3.11"
+dependencies = [
+    "langextract[openai]>=1.0",
+    "python-dotenv>=1.0",
+]
