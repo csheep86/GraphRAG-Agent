@@ -33,7 +33,6 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from tenacity import (
     AsyncRetrying,
-    RetryError,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
@@ -46,7 +45,6 @@ from app.schemas.agent import (
     AgentQueryResponse,
     Citation,
     QueryConfidence,
-    QueryRoute,
     RefusalReason,
 )
 from app.schemas.document import GraphEdge, GraphNode
@@ -170,6 +168,8 @@ class AgentService:
         :class:`AgentUnavailableError`（路由层转 501）；
         只有「图谱可查但证据不足」才返回 ``refused=true``（200）。
         """
+        settings = get_settings()
+
         # 1) active kg_version
         try:
             kg_version = GraphService.instance().fetch_active_kg_version()
@@ -222,20 +222,21 @@ class AgentService:
                 question=request.question,
                 trace_id=trace_id,
             )
-        except RetryError as exc:
-            last = exc.last_attempt.exception() if exc.last_attempt else exc
-            logger.bind(trace_id=trace_id, exc=str(last)).error(
-                "agent_query_llm_exhausted"
-            )
-            return self._refuse(
-                trace_id=trace_id,
-                kg_version=version,
-                reason=RefusalReason.NO_GROUNDED_EVIDENCE,
-                note="LLM unavailable",
-            )
         except AgentUnavailableError:
             # LLM 装配失败（未配置 API_KEY 等）→ 路由层转 501
             raise
+        except Exception as exc:
+            # 重试用尽后的兜底。**必须兜 Exception 而非 RetryError**：
+            # tenacity 9.1.4（tenacity/__init__.py:403-417）在 ``reraise=True`` 时走
+            # ``raise retry_exc.reraise()``，重抛的是**最后一个原始异常**，
+            # ``RetryError`` 永远不会到达调用方。若只捕 ``RetryError``，
+            # DeepSeek 的网络 / 鉴权 / 限流故障会穿透成 500 INTERNAL_ERROR。
+            logger.bind(trace_id=trace_id, exc=str(exc)).error(
+                "agent_query_llm_exhausted"
+            )
+            raise AgentUnavailableError(
+                f"LLM 调用失败（重试 {settings.task_retry_max_attempts} 次仍失败）: {exc}"
+            ) from exc
 
         # 5) 解析输出
         parsed = _parse_llm_answer(answer)
@@ -244,14 +245,19 @@ class AgentService:
         citations = [
             _to_citation(item) for item in parsed.evidence if _looks_like_citation(item)
         ]
+        # 注意：`QueryRoute` / `QueryConfidence` / `RefusalReason` 是 `Literal` **类型别名**
+        # 而非 Enum，**禁止**属性访问——`QueryRoute.M3_GRAPHQA` 会经
+        # `typing._BaseGenericAlias.__getattr__` 转发到 `typing.Literal` 而抛
+        # `AttributeError`（ruff / pytest 都测不到，只在真实调用时 500）。
+        # 只能写字符串字面量，取值必须与 `contracts/openapi.yaml` 的 `enum` 一致。
         if not citations:
             return AgentQueryResponse(
                 answer="无法回答",
                 citations=[],
-                route=QueryRoute.M3_GRAPHQA,
-                confidence=QueryConfidence.LOW,
+                route="m3_graphqa",
+                confidence="low",
                 refused=True,
-                refusal_reason=RefusalReason.NO_GROUNDED_EVIDENCE,
+                refusal_reason="no_grounded_evidence",
                 kg_version=version,
                 trace_id=trace_id,
             )
@@ -259,7 +265,7 @@ class AgentService:
         return AgentQueryResponse(
             answer=parsed.answer,
             citations=citations,
-            route=QueryRoute.M3_GRAPHQA,
+            route="m3_graphqa",
             confidence=parsed.confidence,
             refused=False,
             kg_version=version,
@@ -355,8 +361,8 @@ class AgentService:
         return AgentQueryResponse(
             answer="无法回答",
             citations=[],
-            route=QueryRoute.M3_GRAPHQA,
-            confidence=QueryConfidence.LOW,
+            route="m3_graphqa",
+            confidence="low",
             refused=True,
             refusal_reason=reason,
             kg_version=kg_version,
