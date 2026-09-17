@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -46,6 +47,7 @@ from app.schemas.agent import (
     Citation,
     QueryConfidence,
     RefusalReason,
+    TokenUsage,
 )
 from app.schemas.document import GraphEdge, GraphNode
 from app.services.graphs import (
@@ -68,6 +70,22 @@ except Exception as exc:  # noqa: BLE001 - 兼容失败时优雅降级
 
 #: 单次送入 Prompt 的图谱节点上限（与契约 `DocumentGraphResponse` 的 500 对齐）
 _GRAPH_NODE_LIMIT = 500
+
+
+@dataclass(frozen=True, slots=True)
+class _SubgraphResult:
+    """图谱检索结果（批次 A 第二步）。
+
+    一次检索同时产出两份数据：
+    - ``serialized``：XML-like 文本，喂给 ``kg_qa`` Prompt；
+    - ``nodes`` / ``edges`` / ``truncated``：结构化图谱数据，
+      直接填充契约字段 ``AgentQueryResponse.kg_nodes`` / ``kg_relations``。
+    """
+
+    serialized: str
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    truncated: bool
 
 
 class AgentUnavailableError(Exception):
@@ -183,9 +201,10 @@ class AgentService:
 
         version = kg_version.version
 
-        # 2) 拉取子图
+        # 2) 拉取子图：一次拿到 Prompt 文本 + 结构化节点 / 关系
+        #    （批次 A：nodes / edges 用于填充契约 kg_nodes / kg_relations）
         try:
-            graph_subgraph = self._fetch_subgraph_for_question(
+            subgraph = self._fetch_subgraph_for_question(
                 kg_version=version,
                 doc_id=request.doc_id,
                 org_id=org_id,
@@ -201,7 +220,7 @@ class AgentService:
         template = load_prompt("kg_qa")
         try:
             system_prompt = template.render(
-                graph_subgraph=graph_subgraph,
+                graph_subgraph=subgraph.serialized,
                 text_chunks="<chunks not provided in Sprint 3 phase 9 skeleton>",
                 chat_history="",
                 question=request.question,
@@ -213,11 +232,11 @@ class AgentService:
             )
             raise AgentUnavailableError(f"Prompt 渲染失败: {exc}") from exc
 
-        # 4) 调用 LLM（tenacity 重试）
+        # 4) 调用 LLM（tenacity 重试），同时提取真实 token 用量
         # 仅为触发前置检查（未配置 KEY / LangChain 缺失时抛 AgentUnavailableError）
         self._ensure_chat()
         try:
-            answer = await self._invoke_chat_with_retry(
+            answer, token_usage = await self._invoke_chat_with_retry(
                 system_prompt=system_prompt,
                 question=request.question,
                 trace_id=trace_id,
@@ -251,6 +270,8 @@ class AgentService:
         # `AttributeError`（ruff / pytest 都测不到，只在真实调用时 500）。
         # 只能写字符串字面量，取值必须与 `contracts/openapi.yaml` 的 `enum` 一致。
         if not citations:
+            # 拒答分支（批次 A 决策）：无支撑证据 → kg_nodes / kg_relations 为空列表；
+            # token_usage 置 None（拒答语义下不携带用量，严禁拼凑数据）
             return AgentQueryResponse(
                 answer="无法回答",
                 citations=[],
@@ -260,8 +281,13 @@ class AgentService:
                 refusal_reason="no_grounded_evidence",
                 kg_version=version,
                 trace_id=trace_id,
+                kg_nodes=[],
+                kg_relations=[],
+                token_usage=None,
             )
 
+        # 正常回答：kg_nodes / kg_relations 来自第 2 步的结构化检索结果，
+        # token_usage 来自 LLM 响应的真实提取（拿不到则为 None）
         return AgentQueryResponse(
             answer=parsed.answer,
             citations=citations,
@@ -270,6 +296,9 @@ class AgentService:
             refused=False,
             kg_version=version,
             trace_id=trace_id,
+            kg_nodes=subgraph.nodes,
+            kg_relations=subgraph.edges,
+            token_usage=token_usage,
         )
 
     # ------------------------------------------------------------------ helpers
@@ -280,8 +309,12 @@ class AgentService:
         system_prompt: str,
         question: str,
         trace_id: str,
-    ) -> str:
-        """带 tenacity 重试的 ChatModel 调用。"""
+    ) -> tuple[str, TokenUsage | None]:
+        """带 tenacity 重试的 ChatModel 调用。
+
+        :returns: ``(answer_text, token_usage)``；LLM 响应中提取不到
+            token 用量时 ``token_usage = None``（严禁造数据）。
+        """
         if SystemMessage is None or HumanMessage is None:
             raise AgentUnavailableError("LangChain messages 不可用")
 
@@ -308,7 +341,8 @@ class AgentService:
                         HumanMessage(content=question),
                     ]
                 )
-                return _extract_text(response)
+                # 文本与 token 用量从同一个 response 中提取，避免二次调用
+                return _extract_text(response), _extract_token_usage(response)
 
         raise AgentUnavailableError("LLM 调用未返回结果")
 
@@ -319,15 +353,18 @@ class AgentService:
         doc_id: UUID | None,
         org_id: UUID,
         scope: str,
-    ) -> str:
-        """拉取与问题相关的子图，序列化为 XML-like 文本供 Prompt 使用。
+    ) -> _SubgraphResult:
+        """拉取与问题相关的子图：Prompt 文本 + 结构化节点 / 关系。
 
         - ``scope = single_doc``（Pydantic 已保证 ``doc_id`` 非空）→ 文档子图；
         - ``scope = cross_doc``（``doc_id`` 为空）→ **全部**已导入实体图，
           对应 :meth:`GraphService.fetch_all_subgraph`（不依赖 PG ``document_id``）。
 
-        图谱为空时返回 ``<graph: empty>``，让 Prompt 明确「无证据」而非留白，
-        避免 LLM 用自身记忆补全。Sprint 4 替换为 LangChain Agent 的 Tool 调用循环。
+        图谱为空时 ``serialized`` 为 ``<graph: empty>``，让 Prompt 明确
+        「无证据」而非留白，避免 LLM 用自身记忆补全。
+        ``nodes`` / ``edges`` 原样透传给 ``query()`` 填充契约字段
+        （批次 A：``kg_nodes`` / ``kg_relations``）。
+        Sprint 4 后续替换为 LangChain Agent 的 Tool 调用循环。
         """
         graph = GraphService.instance()
 
@@ -347,8 +384,14 @@ class AgentService:
             )
 
         if not nodes:
-            return f"<graph: empty scope={scope} kg_version={kg_version}>"
-        return _serialize_subgraph(nodes=nodes, edges=edges, truncated=truncated)
+            serialized = f"<graph: empty scope={scope} kg_version={kg_version}>"
+        else:
+            serialized = _serialize_subgraph(
+                nodes=nodes, edges=edges, truncated=truncated
+            )
+        return _SubgraphResult(
+            serialized=serialized, nodes=nodes, edges=edges, truncated=truncated
+        )
 
     def _refuse(
         self,
@@ -401,6 +444,60 @@ def _extract_text(response: Any) -> str:
     if isinstance(response, dict):
         return str(response.get("content", ""))
     return str(content)
+
+
+def _is_nonneg_int(value: Any) -> bool:
+    """严格判定非负 int。
+
+    必须显式排除 ``bool``——它是 ``int`` 的子类，``True`` 会被 ``isinstance``
+    误判为合法的 ``1``，导致 token 计数被悄悄污染。
+    """
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _extract_token_usage(response: Any) -> TokenUsage | None:
+    """从 LangChain 响应中提取 token 用量；拿不到返回 ``None``（严禁造数据）。
+
+    按「实测结果反哺规则」，同时探测两种结构（哪个先命中用哪个）：
+
+    1. LangChain 标准化 ``usage_metadata``（``langchain_core`` ≥ 0.2 起
+       ``AIMessage.usage_metadata`` 统一为
+       ``input_tokens / output_tokens / total_tokens``）；
+    2. OpenAI 兼容 ``response_metadata["token_usage"]``
+       （DeepSeek 等 OpenAI 兼容厂商的原始 usage 透传，
+       字段为 ``prompt_tokens / completion_tokens / total_tokens``）。
+
+    任一字段缺失 / 非非负 int（如 ``None`` / 字符串 / 布尔）即视为
+    提取失败 → 返回 ``None``，由上层以 ``token_usage = None`` 落契约。
+    """
+    # 路径 1：LangChain 标准化 usage_metadata
+    usage = getattr(response, "usage_metadata", None)
+    if isinstance(usage, dict):
+        prompt = usage.get("input_tokens")
+        completion = usage.get("output_tokens")
+        total = usage.get("total_tokens")
+        if all(_is_nonneg_int(v) for v in (prompt, completion, total)):
+            return TokenUsage(
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                total_tokens=total,
+            )
+
+    # 路径 2：OpenAI 兼容 response_metadata["token_usage"]
+    metadata = getattr(response, "response_metadata", None)
+    token_usage = metadata.get("token_usage") if isinstance(metadata, dict) else None
+    if isinstance(token_usage, dict):
+        prompt = token_usage.get("prompt_tokens")
+        completion = token_usage.get("completion_tokens")
+        total = token_usage.get("total_tokens")
+        if all(_is_nonneg_int(v) for v in (prompt, completion, total)):
+            return TokenUsage(
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                total_tokens=total,
+            )
+
+    return None
 
 
 def _parse_llm_answer(raw: str) -> _LlmAnswerSchema:
