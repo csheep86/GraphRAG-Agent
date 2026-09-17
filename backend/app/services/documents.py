@@ -1,11 +1,13 @@
-"""M1 文档上传与状态查询（Sprint 1 真实实现）。
+"""M1 文档接入（阶段九：上传 + 异步任务注册）。
 
-实现边界（见 `backend/CODEBUDDY.md` §4）：
+实现边界：
 - ✅ 上传：MIME 白名单校验（415）→ 大小上限校验（413）→ 落 `documents` 记录（`pending`）；
+- ✅ 异步任务：通过 :class:`app.tasks.TaskManager` 注册 ``document.parse`` 执行体；
 - ✅ 状态：读 PostgreSQL / SQLite 返回，跨租户 403、不存在 404；
-- ⛔ 不注册异步执行体：`TaskManager` 与启动回收留 Sprint 3（ADR-0001），
-  因此本轮上传的文档 `status` 会停留在 `pending`。
 - ⛔ 不写文件到存储抽象层：`storage_key` 保持 NULL（M1 §4.3 规定 `completed` 后填写）。
+
+异步任务回收（``pending / processing → failed (TASK_INTERRUPTED)``）由
+:func:`app.tasks.recover_orphan_tasks` 在 lifespan startup 触发（ADR-0001 §3.2）。
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from app.schemas.document import (
     DocumentStatusResponse,
     UploadResponse,
 )
+from app.tasks.manager import TaskManager, TaskSpec
 
 _UPLOAD_READ_CHUNK = 1024 * 1024
 
@@ -49,8 +52,14 @@ async def create_document_upload(
     upload: UploadFile,
     identity: Identity,
     trace_id: str,
+    task_manager: TaskManager | None = None,
 ) -> UploadResponse:
-    """受理上传，返回 `task_id`（= `documents.id`）。"""
+    """受理上传，返回 `task_id`（= `documents.id`）。
+
+    当 ``task_manager`` 不为 ``None`` 时，注册 ``document.parse`` 异步执行体
+    （ADR-0001 §3.1）。pytest 不传 ``task_manager``，跳过异步任务注册，
+    维持 ``status = pending``，与原 Sprint 1 行为一致。
+    """
     settings = get_settings()
 
     mime_type = (upload.content_type or "").split(";")[0].strip().lower()
@@ -80,6 +89,16 @@ async def create_document_upload(
     session.add(document)
     session.commit()
     session.refresh(document)
+
+    # 注册异步任务（ADR-0001 §3.1）
+    if task_manager is not None:
+        task_manager.submit(
+            TaskSpec(
+                task_type="document.parse",
+                payload={"document_id": str(document.id), "mime_type": mime_type},
+                trace_id=trace_id,
+            )
+        )
 
     return UploadResponse(task_id=document.id, status="pending", trace_id=trace_id)
 

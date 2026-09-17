@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, UploadFile
 
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
@@ -23,6 +23,7 @@ from app.schemas.document import (
     UploadResponse,
 )
 from app.services.documents import create_document_upload, get_document_status
+from app.tasks.manager import TaskManager
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -48,12 +49,17 @@ async def upload_document(
         UploadFile,
         File(description="待解析文件。白名单：PDF / DOCX / CSV；单文件 ≤ 100MB"),
     ],
+    background_tasks: BackgroundTasks,
     identity: CurrentIdentity,
     session: DbSession,
     trace_id: TraceId,
 ) -> UploadResponse:
     return await create_document_upload(
-        session=session, upload=file, identity=identity, trace_id=trace_id
+        session=session,
+        upload=file,
+        identity=identity,
+        trace_id=trace_id,
+        task_manager=TaskManager(background_tasks),
     )
 
 

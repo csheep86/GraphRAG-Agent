@@ -4,18 +4,22 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# 环境变量文件：默认全部忽略
 .env
 .env.*
 !.env.example
-# 仅放行「不含任何密钥」的环境模板；其余 .env.* 一律忽略
-!**/.env.development
-!**/.env.production
-!**/.env.local.example
+
+# 仅放行 frontend 目录下的「不含密钥」的环境模板
+# 注意：backend/.env.* 一律保持忽略（含 DeepSeek API Key）
+!frontend/.env.development
+!frontend/.env.production
+!frontend/.env.local.example
 
 # 本地覆盖文件必须忽略（含 .env.local / .env.local.* 变体）
 **/.env.local
 **/.env.local.*
-!**/.env.local.example
+!frontend/.env.local.example
 
 # Node / Next.js
 node_modules/

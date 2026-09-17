@@ -38,9 +38,28 @@ def test_status_reflects_persisted_record(
     assert response.status_code == 200
     body = response.json()
     assert body["task_id"] == task_id
-    assert body["status"] == "pending"
-    assert body["progress"] == 0.0
+    # BackgroundTasks 在 TestClient.post 返回前已执行（骨架版 no-op），
+    # status 可能推进到 completed / processing / 仍为 pending；
+    # 测试只关心字段被持久化为合法枚举值。
+    assert body["status"] in {"pending", "processing", "completed"}
+    assert 0.0 <= body["progress"] <= 1.0
     assert body["error"] is None
+
+
+def test_background_task_drives_status_to_completed(
+    client: TestClient, dev_headers: dict[str, str]
+) -> None:
+    """阶段九验收：上传 → BackgroundTasks 在请求内执行 → status=completed。
+
+    骨架版执行体内部无 IO，因此从 pending 一路推进到 completed。
+    Sprint 3 后段替换为 MinerU + LangExtract 后，本测试需放宽为
+    ``status in {'processing', 'completed'}``。
+    """
+    task_id = _upload(client, dev_headers)["task_id"]
+
+    response = client.get(f"/api/v1/documents/{task_id}/status", headers=dev_headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
 
 
 def test_unknown_document_returns_404(

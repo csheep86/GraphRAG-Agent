@@ -1,0 +1,442 @@
+"""图谱问答服务（Agentic-RAG）：LangChain Agent + DeepSeek + Neo4j 图谱检索。
+
+公开面：
+- :class:`AgentService`：通过 ``AgentService.instance()`` 取单例；
+- :class:`AgentUnavailableError`：LLM 未配置 / LangChain 装配失败 / 图谱不可用时抛，
+  路由层捕获后转 ``501 NOT_IMPLEMENTED``（阶段九骨架）；
+- :func:`AgentService.query`：执行一次问答，返回契约层 :class:`AgentQueryResponse`。
+
+设计要点：
+1. **Prompt 严格经** :mod:`app.prompts.prompt_loader` **加载**——禁止硬编码
+   （CODEBUDDY.md「Prompt 版本管理规范」）。
+2. **LLM 失败 tenacity 重试**：阶段九骨架版采用 ``langchain_openai.ChatOpenAI``
+   指向 DeepSeek（OpenAI 兼容 base_url），其内部 httpx 客户端已支持重试；
+   本服务在外层再包一层 tenacity，**不**暴露给调用方。
+3. **图谱检索工具**：通过 :mod:`app.services.graphs` 提供的
+   :func:`fetch_active_kg_version` 与 Cypher 子图查询，把图谱数据喂给 Prompt。
+4. **优雅降级**：
+   - 未配置 ``DEEPSEEK_API_KEY`` → :class:`AgentUnavailableError`
+   - LangChain Agent 装配失败 → 同上
+   - Neo4j 不可用 → 同上
+   路由层捕获后统一转 ``501 NOT_IMPLEMENTED``，不污染测试用例。
+5. **不持有状态**：状态以数据库 / 文件系统为准（与 ADR-0001 一致）。
+"""
+from __future__ import annotations
+
+import json
+import threading
+from dataclasses import dataclass
+from typing import Any
+from uuid import UUID
+
+from loguru import logger
+from pydantic import BaseModel, Field
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from app.core.config import get_settings
+from app.prompts.prompt_loader import PromptRenderError, load_prompt
+from app.schemas.agent import (
+    AgentQueryRequest,
+    AgentQueryResponse,
+    Citation,
+    QueryConfidence,
+    QueryRoute,
+    RefusalReason,
+)
+from app.schemas.document import GraphEdge, GraphNode
+from app.services.graphs import (
+    GraphService,
+    GraphUnavailableError,
+)
+
+# DeepSeek 是 OpenAI 兼容 API，故使用 langchain_openai.ChatOpenAI 而非 ChatDeepSeek，
+# 这样切换到其它 OpenAI 兼容厂商零代码改动。
+_LLM_LANGCHAIN_IMPORT_ERROR: Exception | None = None
+try:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_openai import ChatOpenAI  # type: ignore[import-not-found]
+except Exception as exc:  # noqa: BLE001 - 兼容失败时优雅降级
+    _LLM_LANGCHAIN_IMPORT_ERROR = exc
+    ChatOpenAI = None  # type: ignore[assignment]
+    HumanMessage = None  # type: ignore[assignment]
+    SystemMessage = None  # type: ignore[assignment]
+
+
+class AgentUnavailableError(Exception):
+    """Agent 装配或调用前置条件缺失（未配置 API_KEY / Neo4j 不可用等）。"""
+
+
+class _LlmAnswerSchema(BaseModel):
+    """LLM 输出 JSON 的内层 schema（Pydantic 校验 + 显式字段语义）。"""
+
+    answer: str
+    evidence: list[str] = Field(default_factory=list)
+    confidence: QueryConfidence = "low"
+    missing_context: list[str] = Field(default_factory=list)
+
+
+class AgentService:
+    """图谱问答服务（懒加载 + 单例）。"""
+
+    _instance: "AgentService | None" = None
+    _lock = threading.Lock()
+
+    def __init__(self) -> None:
+        self._chat: Any = None
+        self._failure_reason: str | None = None
+
+    @classmethod
+    def instance(cls) -> "AgentService":
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    @classmethod
+    def reset(cls) -> None:
+        """重置单例（仅供测试）。"""
+        with cls._lock:
+            cls._instance = None
+
+    # ------------------------------------------------------------------ LLM
+
+    def _ensure_chat(self) -> Any:
+        """懒加载 ChatOpenAI；未配置 / LangChain 缺失抛 :class:`AgentUnavailableError`。"""
+        if self._chat is not None:
+            return self._chat
+
+        if _LLM_LANGCHAIN_IMPORT_ERROR is not None or ChatOpenAI is None:
+            self._failure_reason = (
+                f"LangChain 装配失败: {_LLM_LANGCHAIN_IMPORT_ERROR!r}"
+            )
+            raise AgentUnavailableError(self._failure_reason)
+
+        settings = get_settings()
+        if not settings.deepseek_api_key:
+            self._failure_reason = "DEEPSEEK_API_KEY 未配置"
+            raise AgentUnavailableError(self._failure_reason)
+
+        try:
+            self._chat = ChatOpenAI(
+                model=settings.deepseek_model,
+                api_key=settings.deepseek_api_key,
+                base_url=settings.deepseek_base_url,
+                timeout=settings.deepseek_request_timeout_seconds,
+                max_retries=0,  # 重试由外层 tenacity 统一管控
+            )
+        except Exception as exc:  # noqa: BLE001 - 装配失败包装
+            self._failure_reason = f"ChatOpenAI 装配失败: {exc!r}"
+            raise AgentUnavailableError(self._failure_reason) from exc
+
+        logger.bind(model=settings.deepseek_model).info("agent_llm_ready")
+        return self._chat
+
+    # ------------------------------------------------------------------ query
+
+    async def query(
+        self,
+        *,
+        request: AgentQueryRequest,
+        org_id: UUID,
+        trace_id: str,
+    ) -> AgentQueryResponse:
+        """执行一次图谱问答。
+
+        实现策略（阶段九骨架）：
+        1. 取 ``active kg_version``（强一致过滤，ADR-0002 §3.2）；
+        2. 从 Neo4j 拉取与问题相关的子图（兜底：图谱不可用时返回拒答）；
+        3. 经 :mod:`app.prompts.prompt_loader` 加载 ``kg_qa`` Prompt；
+        4. tenacity 重试调用 LLM；
+        5. 解析 LLM 输出 → 映射为契约 :class:`AgentQueryResponse`。
+        """
+        # 1) active kg_version
+        try:
+            kg_version = GraphService.instance().fetch_active_kg_version()
+        except GraphUnavailableError as exc:
+            logger.bind(trace_id=trace_id, reason=str(exc)).warning(
+                "agent_query_no_active_kg_version"
+            )
+            return self._refuse(
+                trace_id=trace_id,
+                kg_version="",
+                reason=RefusalReason.NO_GROUNDED_EVIDENCE,
+                note="Graph unavailable",
+            )
+
+        version = kg_version.version
+
+        # 2) 拉取子图（兜底为空）
+        try:
+            graph_subgraph = self._fetch_subgraph_for_question(
+                kg_version=version,
+                doc_id=request.doc_id,
+                org_id=org_id,
+                scope=request.scope,
+            )
+        except GraphUnavailableError as exc:
+            logger.bind(trace_id=trace_id, reason=str(exc)).warning(
+                "agent_query_subgraph_unavailable"
+            )
+            graph_subgraph = "<graph unavailable>"
+
+        # 3) 加载 Prompt（任何占位符错误都立即暴露，禁止硬编码）
+        template = load_prompt("kg_qa")
+        try:
+            system_prompt = template.render(
+                graph_subgraph=graph_subgraph,
+                text_chunks="<chunks not provided in Sprint 3 phase 9 skeleton>",
+                chat_history="",
+                question=request.question,
+            )
+        except PromptRenderError as exc:
+            # Prompt 渲染失败属于实现错误，不可降级为拒答
+            logger.bind(trace_id=trace_id, error=str(exc)).error(
+                "agent_query_prompt_render_failed"
+            )
+            raise AgentUnavailableError(f"Prompt 渲染失败: {exc}") from exc
+
+        # 4) 调用 LLM（tenacity 重试）
+        chat = self._ensure_chat()
+        try:
+            answer = await self._invoke_chat_with_retry(
+                system_prompt=system_prompt,
+                question=request.question,
+                trace_id=trace_id,
+            )
+        except RetryError as exc:
+            last = exc.last_attempt.exception() if exc.last_attempt else exc
+            logger.bind(trace_id=trace_id, exc=str(last)).error(
+                "agent_query_llm_exhausted"
+            )
+            return self._refuse(
+                trace_id=trace_id,
+                kg_version=version,
+                reason=RefusalReason.NO_GROUNDED_EVIDENCE,
+                note="LLM unavailable",
+            )
+        except AgentUnavailableError:
+            # LLM 装配失败（未配置 API_KEY 等）→ 路由层转 501
+            raise
+
+        # 5) 解析输出
+        parsed = _parse_llm_answer(answer)
+
+        # 6) 引用覆盖率为 0 → 拒答（F3：引用覆盖率 < 100% 直接 NO-GO）
+        citations = [
+            _to_citation(item)
+            for item in parsed.evidence
+            if _looks_like_citation(item)
+        ]
+        if not citations:
+            return AgentQueryResponse(
+                answer="无法回答",
+                citations=[],
+                route=QueryRoute.M3_GRAPHQA,
+                confidence=QueryConfidence.LOW,
+                refused=True,
+                refusal_reason=RefusalReason.NO_GROUNDED_EVIDENCE,
+                kg_version=version,
+                trace_id=trace_id,
+            )
+
+        return AgentQueryResponse(
+            answer=parsed.answer,
+            citations=citations,
+            route=QueryRoute.M3_GRAPHQA,
+            confidence=parsed.confidence,
+            refused=False,
+            kg_version=version,
+            trace_id=trace_id,
+        )
+
+    # ------------------------------------------------------------------ helpers
+
+    async def _invoke_chat_with_retry(
+        self,
+        *,
+        system_prompt: str,
+        question: str,
+        trace_id: str,
+    ) -> str:
+        """带 tenacity 重试的 ChatModel 调用。"""
+        if SystemMessage is None or HumanMessage is None:
+            raise AgentUnavailableError("LangChain messages 不可用")
+
+        settings = get_settings()
+
+        def _on_retry(retry_state) -> None:  # noqa: ANN001
+            logger.bind(
+                trace_id=trace_id,
+                attempt=retry_state.attempt_number,
+                next_wait=getattr(retry_state.next_action, "sleep", None),
+            ).warning("agent_llm_retry")
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(settings.task_retry_max_attempts),
+            wait=wait_exponential(
+                multiplier=settings.task_retry_initial_seconds,
+                multiplier_getter=lambda: settings.task_retry_multiplier,
+            ),
+            retry=retry_if_exception_type(Exception),
+            reraise=True,
+        ):
+            with attempt:
+                _on_retry(attempt.retry_state) if attempt.retry_state else None
+                response = await self._chat.ainvoke(
+                    [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=question),
+                    ]
+                )
+                return _extract_text(response)
+
+        raise AgentUnavailableError("LLM 调用未返回结果")
+
+    def _fetch_subgraph_for_question(
+        self,
+        *,
+        kg_version: str,
+        doc_id: UUID | None,
+        org_id: UUID,
+        scope: str,
+    ) -> str:
+        """拉取与问题相关的子图，序列化为 XML-like 文本供 Prompt 使用。
+
+        阶段九骨架：图谱为空时返回空文本，避免 LLM 编造。
+        Sprint 3 后段替换为 LangChain Agent 的 Tool 调用循环。
+        """
+        if doc_id is None and scope == "cross_doc":
+            # 跨文档模式：暂不展开 Cypher（避免 LLM 拿到过多噪声）
+            return f"<graph: cross_doc mode, kg_version={kg_version}>"
+
+        if doc_id is None:
+            return "<graph: no doc_id>"
+
+        nodes, edges, truncated = GraphService.instance().fetch_document_subgraph(
+            doc_id=doc_id,
+            kg_version=kg_version,
+            org_id=org_id,
+            node_limit=500,
+        )
+        if not nodes:
+            return "<graph: empty>"
+        return _serialize_subgraph(nodes=nodes, edges=edges, truncated=truncated)
+
+    def _refuse(
+        self,
+        *,
+        trace_id: str,
+        kg_version: str,
+        reason: RefusalReason,
+        note: str,
+    ) -> AgentQueryResponse:
+        return AgentQueryResponse(
+            answer="无法回答",
+            citations=[],
+            route=QueryRoute.M3_GRAPHQA,
+            confidence=QueryConfidence.LOW,
+            refused=True,
+            refusal_reason=reason,
+            kg_version=kg_version,
+            trace_id=trace_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 辅助函数
+# ---------------------------------------------------------------------------
+
+
+def _extract_text(response: Any) -> str:
+    """从 LangChain AIMessage / str / dict 中提取文本。"""
+    content = getattr(response, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        return str(response.get("content", ""))
+    return str(content)
+
+
+def _parse_llm_answer(raw: str) -> _LlmAnswerSchema:
+    """解析 LLM 输出（容忍 JSON 出现在 ```json 块里）。"""
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        # 去掉首尾 ```json ... ```
+        first_newline = cleaned.find("\n")
+        if first_newline != -1:
+            cleaned = cleaned[first_newline + 1 :]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # 输出不可解析：视为拒答（F3 防御）
+        return _LlmAnswerSchema(
+            answer="无法回答",
+            confidence="low",
+            missing_context=["LLM 输出非合法 JSON"],
+        )
+
+    try:
+        return _LlmAnswerSchema.model_validate(data)
+    except Exception:  # noqa: BLE001 - 字段缺失时容错
+        return _LlmAnswerSchema(
+            answer=str(data.get("answer", "无法回答")),
+            confidence="low",
+        )
+
+
+def _looks_like_citation(item: str) -> bool:
+    """证据条目是否形似 ``chunk-<id>`` 或 ``doc-<id>``。"""
+    return isinstance(item, str) and (
+        item.startswith("chunk-") or item.startswith("doc-") or "chunk" in item
+    )
+
+
+def _to_citation(item: str) -> Citation:
+    """把 LLM 证据条目映射为契约 :class:`Citation`（骨架版：缺字段填默认值）。
+
+    Sprint 3 后段替换为 Cypher 反查以拿到真实 ``doc_id`` / ``page`` / ``snippet``。
+    """
+    return Citation(
+        doc_id=UUID(int=0),  # 骨架版不解析真实 UUID
+        page=1,
+        chunk_id=item,
+        char_offset=0,
+        snippet="",
+    )
+
+
+def _serialize_subgraph(
+    *,
+    nodes: list[GraphNode],
+    edges: list[GraphEdge],
+    truncated: bool,
+) -> str:
+    """把子图序列化为 LLM 友好的文本。骨架版仅输出节点 label + id + 类型。"""
+    lines = [f"<graph truncated={truncated}>"]
+    for node in nodes:
+        label = node.label
+        canonical = node.canonical_name or node.id
+        lines.append(f"  node {label} id={node.id} name={canonical}")
+    for edge in edges:
+        lines.append(f"  edge {edge.type} {edge.source} -> {edge.target}")
+    lines.append("</graph>")
+    return "\n".join(lines)
+
+
+__all__ = [
+    "AgentService",
+    "AgentUnavailableError",
+]

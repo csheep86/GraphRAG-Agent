@@ -1,13 +1,40 @@
-"""异步任务层（Sprint 1 为空实现）。
+"""异步任务层（ADR-0001 §3）。
 
-**Sprint 3 待补（ADR-0001 §3.2）**：
-1. `TaskManager.submit()`：上传受理后把解析任务投递到 `asyncio.Queue` 并由 worker 消费；
-2. `TaskManager.recover()`：**应用启动时**扫描 `documents.status IN ('pending','processing')`
-   的孤儿记录，置 `failed` + `error_code = TASK_INTERRUPTED`（M5 §3 验收 4 要求该码呈现）；
-3. 重试策略：`tenacity` 指数退避，上限 3 次（`documents.retry_count`）。
+公开面：
+- :class:`~app.tasks.manager.TaskManager`：请求内可用的任务管理器；
+- :func:`~app.tasks.manager.recover_orphan_tasks`：lifespan startup 调用，回收孤儿任务；
+- :class:`~app.tasks.types.TaskSpec` / :class:`~app.tasks.types.TaskStatus`
+  / :class:`~app.tasks.types.RecoveryReport`：调用方与被调用方的数据契约；
+- :data:`~app.tasks.registry.EXECUTOR_REGISTRY`：任务类型 → 执行体的注册表。
 
-当前选择「不注册执行体」的后果已登记在 `backend/CODEBUDDY.md` §4 缺口表：
-上传后的文档会停留在 `pending`，`TASK_INTERRUPTED` 因此暂时不会被真实产生。
+执行体内部以 tenacity 指数退避重试（初始 1s、倍数 2、上限 3 次，H8）；
+进程重启后由 ``recover_orphan_tasks`` 扫描 ``documents.status IN ('pending','processing')``
+并批量置 ``failed`` + ``error_code = TASK_INTERRUPTED``（M1 §3 验收 8 / ADR-0001 §3.2）。
 """
 
-__all__: list[str] = []
+from app.tasks.manager import (
+    TaskManager,
+    list_in_flight_task_ids,
+    recover_orphan_tasks,
+)
+from app.tasks.registry import EXECUTOR_REGISTRY, resolve_executor
+from app.tasks.types import (
+    RecoveryReport,
+    TaskExecutorFn,
+    TaskSpec,
+    TaskStatus,
+    TaskType,
+)
+
+__all__ = [
+    "EXECUTOR_REGISTRY",
+    "RecoveryReport",
+    "TaskExecutorFn",
+    "TaskManager",
+    "TaskSpec",
+    "TaskStatus",
+    "TaskType",
+    "list_in_flight_task_ids",
+    "recover_orphan_tasks",
+    "resolve_executor",
+]
