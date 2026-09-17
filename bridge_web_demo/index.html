@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bridge Pipeline · MinerU → LangExtract 可视化</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2c; --panel-2:#1d2637; --line:#2a3548;
+    --text:#e6ecf5; --muted:#8ea0bb; --accent:#4f7cff; --ok:#2ecc71;
+    --warn:#f2c94c; --err:#eb5757; --run:#56ccf2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;font-size:14px}
+  header{padding:18px 24px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header .sub{color:var(--muted);font-size:12px}
+  .badge{font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--line);color:var(--muted)}
+  main{display:grid;grid-template-columns:360px 1fr;gap:16px;padding:16px;align-items:start}
+  @media(max-width:1080px){main{grid-template-columns:1fr}}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  h2{font-size:14px;margin:0 0 12px;font-weight:600;color:var(--text)}
+  h3{font-size:12px;margin:16px 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+  #drop{border:1.5px dashed var(--line);border-radius:10px;padding:24px 12px;text-align:center;
+    color:var(--muted);cursor:pointer;transition:.15s}
+  #drop:hover,#drop.hot{border-color:var(--accent);color:var(--text);background:var(--panel-2)}
+  #drop strong{display:block;color:var(--text);margin-bottom:4px}
+  input[type=file]{display:none}
+  .row{display:flex;align-items:center;gap:8px;margin-top:12px;color:var(--muted);font-size:12px}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 14px;
+    font-size:13px;cursor:pointer;font-weight:600}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--muted);font-weight:500}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .steps{list-style:none;margin:0;padding:0}
+  .steps li{display:flex;gap:10px;padding:8px 0;border-bottom:1px dashed rgba(255,255,255,.05)}
+  .steps li:last-child{border-bottom:0}
+  .dot{width:10px;height:10px;border-radius:50%;margin-top:5px;flex:0 0 10px;background:#3b475e}
+  .dot.processing{background:var(--run);box-shadow:0 0 0 4px rgba(86,204,242,.18);animation:pulse 1s infinite}
+  .dot.completed{background:var(--ok)} .dot.failed{background:var(--err)}
+  @keyframes pulse{50%{opacity:.45}}
+  .step-name{font-size:13px}
+  .step-detail{font-size:11px;color:var(--muted);word-break:break-all;margin-top:2px}
+  .step-ms{font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+  .stat{background:var(--panel-2);border-radius:8px;padding:10px}
+  .stat b{display:block;font-size:19px}
+  .stat span{font-size:11px;color:var(--muted)}
+  .tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+  .tabs button{background:var(--panel-2);color:var(--muted);font-weight:500;padding:6px 12px}
+  .tabs button.active{background:var(--accent);color:#fff}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+  .table-wrap{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;
+    background:rgba(79,124,255,.16);color:#a8c0ff;margin:1px 4px 1px 0}
+  .tag.ok{background:rgba(46,204,113,.16);color:#7ee2a8}
+  .tag.bad{background:rgba(235,85,85,.16);color:#ff9d9d}
+  .tag.derived{background:rgba(242,201,76,.16);color:#ffdf8a}
+  #graph-wrap{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0b101a}
+  #graph{display:block;width:100%;height:520px;cursor:grab}
+  #legend{position:absolute;right:10px;top:10px;background:rgba(15,20,32,.85);
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.7}
+  #legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+  #tip{position:absolute;pointer-events:none;display:none;background:#0b101a;border:1px solid var(--line);
+    border-radius:8px;padding:8px 10px;font-size:12px;max-width:280px;z-index:5}
+  .meta{font-size:12px;color:var(--muted);line-height:1.9;word-break:break-all}
+  .meta code{color:#a8c0ff}
+  .empty{color:var(--muted);font-size:12.5px;padding:16px;text-align:center}
+  #error{display:none;margin-top:12px;background:rgba(235,85,85,.12);border:1px solid rgba(235,85,85,.4);
+    color:#ffb4b4;border-radius:8px;padding:10px;font-size:12px;word-break:break-all}
+</style>
+</head>
+<body>
+<header>
+  <h1>Bridge Pipeline</h1>
+  <span class="sub">MinerU 解析 → 文本清洗 → LangExtract(DeepSeek) → 实体关系 JSON</span>
+  <span class="badge" id="health">检查环境…</span>
+</header>
+
+<main>
+  <!-- 左栏：上传 + 流程状态 -->
+  <div>
+    <section>
+      <h2>1 · 输入</h2>
+      <div id="drop">
+        <strong>点击或拖拽 PDF 到此处</strong>
+        <span id="drop-hint">支持 .pdf，≤ 100MB</span>
+      </div>
+      <input type="file" id="file" accept="application/pdf" />
+      <div class="row">
+        <input type="checkbox" id="skip" />
+        <label for="skip">跳过 MinerU，直接使用已有 output 输出</label>
+      </div>
+      <div class="row" style="gap:10px">
+        <button id="run">开始解析</button>
+        <button class="ghost" id="load-latest">读取最近结果</button>
+      </div>
+      <div id="error"></div>
+    </section>
+
+    <section style="margin-top:16px">
+      <h2>2 · 流程状态</h2>
+      <ul class="steps" id="steps"><li class="empty">尚未开始</li></ul>
+    </section>
+
+    <section style="margin-top:16px">
+      <h2>3 · 本次元信息</h2>
+      <div class="meta" id="meta">—</div>
+    </section>
+  </div>
+
+  <!-- 右栏：结果 + 图谱 -->
+  <div>
+    <section>
+      <h2>4 · 抽取结果</h2>
+      <div class="stats">
+        <div class="stat"><b id="s-ent">0</b><span>实体</span></div>
+        <div class="stat"><b id="s-rel">0</b><span>关系</span></div>
+        <div class="stat"><b id="s-derived">0</b><span>派生关系</span></div>
+        <div class="stat"><b id="s-ungrounded">0</b><span>未定位实体</span></div>
+      </div>
+      <div class="tabs">
+        <button id="tab-ent" class="active">实体列表</button>
+        <button id="tab-rel">关系列表</button>
+      </div>
+      <div class="table-wrap" id="panel"></div>
+    </section>
+
+    <section style="margin-top:16px">
+      <h2>5 · 知识图谱</h2>
+      <div id="graph-wrap">
+        <canvas id="graph"></canvas>
+        <div id="legend"></div>
+        <div id="tip"></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+const TYPE_COLORS = {
+  "公司":"#4f7cff","人物":"#f2994a","业务板块":"#27ae60","财务指标":"#9b51e0","OTHER":"#7f8c8d"
+};
+const colorOf = t => TYPE_COLORS[t] || "#7f8c8d";
+const $ = id => document.getElementById(id);
+
+let lastResult = null;
+let pollTimer = null;
+let currentTab = "ent";
+
+/* ---------------- 环境检查 ---------------- */
+fetch("/api/health").then(r=>r.json()).then(d=>{
+  $("health").textContent = (d.has_api_key ? "API Key 已配置" : "缺少 DEEPSEEK_API_KEY") +
+    " · " + d.mineru_output_dir;
+}).catch(()=>{ $("health").textContent = "后端未就绪"; });
+
+/* ---------------- 上传交互 ---------------- */
+const drop = $("drop"), fileInput = $("file");
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("hot"); };
+drop.ondragleave = () => drop.classList.remove("hot");
+drop.ondrop = e => {
+  e.preventDefault(); drop.classList.remove("hot");
+  if (e.dataTransfer.files[0]) { fileInput.files = e.dataTransfer.files; showFileName(); }
+};
+fileInput.onchange = showFileName;
+function showFileName(){
+  const f = fileInput.files[0];
+  if (f) $("drop-hint").textContent = f.name + "（" + (f.size/1024/1024).toFixed(2) + " MB）";
+}
+
+/* ---------------- 发起任务 ---------------- */
+$("run").onclick = async () => {
+  const fd = new FormData();
+  if (fileInput.files[0]) fd.append("file", fileInput.files[0]);
+  fd.append("skip_mineru", $("skip").checked ? "true" : "false");
+  if (!fileInput.files[0] && !$("skip").checked) {
+    // 无文件时只能走离线模式
+    fd.set("skip_mineru", "true");
+  }
+  setError("");
+  $("run").disabled = true;
+  try {
+    const resp = await fetch("/api/jobs", { method:"POST", body:fd });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || data.detail || "任务创建失败");
+    poll(data.job_id);
+  } catch (e) { setError(e.message); $("run").disabled = false; }
+};
+
+$("load-latest").onclick = async () => {
+  setError("");
+  try {
+    const resp = await fetch("/api/result/latest");
+    if (!resp.ok) throw new Error("尚无 output.json，请先运行 Pipeline");
+    const data = await resp.json();
+    $("steps").innerHTML = '<li class="empty">已直接加载最近一次 output.json</li>';
+    renderResult(data);
+  } catch (e) { setError(e.message); }
+};
+
+/* ---------------- 状态轮询 ---------------- */
+function poll(jobId){
+  if (pollTimer) clearInterval(pollTimer);
+  const tick = async () => {
+    try {
+      const resp = await fetch("/api/jobs/" + jobId);
+      const job = await resp.json();
+      if (!resp.ok) throw new Error(job.detail || "任务查询失败");
+      renderSteps(job);
+      if (job.status === "completed") {
+        clearInterval(pollTimer); pollTimer = null; $("run").disabled = false;
+        const r = await fetch("/api/jobs/" + jobId + "/result");
+        if (r.ok) renderResult(await r.json());
+      } else if (job.status === "failed") {
+        clearInterval(pollTimer); pollTimer = null; $("run").disabled = false;
+        setError((job.error && job.error.message) || "任务失败");
+      }
+    } catch (e) { clearInterval(pollTimer); pollTimer = null; $("run").disabled = false; setError(e.message); }
+  };
+  tick();
+  pollTimer = setInterval(tick, 1000);
+}
+
+function renderSteps(job){
+  $("steps").innerHTML = job.steps.map(s=>{
+    const ms = s.duration_ms != null ? `<span class="step-ms">${s.duration_ms} ms</span>` : "";
+    const detail = s.detail ? `<div class="step-detail">${escapeHtml(s.detail)}</div>` : "";
+    return `<li><span class="dot ${s.status}"></span><div style="flex:1">
+      <div class="step-name">${escapeHtml(s.label)}</div>${detail}</div>${ms}</li>`;
+  }).join("");
+}
+
+/* ---------------- 结果渲染 ---------------- */
+function renderResult(data){
+  lastResult = data;
+  const st = data.stats || {};
+  $("s-ent").textContent = st.entity_count ?? 0;
+  $("s-rel").textContent = st.relation_count ?? 0;
+  $("s-derived").textContent = st.derived_relation_count ?? 0;
+  $("s-ungrounded").textContent = st.ungrounded_count ?? 0;
+  const src = data.source || {}, model = data.model || {};
+  $("meta").innerHTML = [
+    `读取源文件：<code>${escapeHtml(src.source_path||"-")}</code>`,
+    `输入模式：<code>${escapeHtml(src.input_mode||"-")}</code> · 清洗后 ${src.text_chars||0} 字符`,
+    `trace_id：<code>${escapeHtml(data.trace_id||"-")}</code>`,
+    `模型：<code>${escapeHtml(model.model_id||"-")}</code> · tokenizer <code>${escapeHtml(model.tokenizer||"-")}</code>`,
+    `生成时间：${escapeHtml(data.generated_at||"-")}`
+  ].join("<br/>");
+  renderTable();
+  renderGraph(data);
+}
+
+function renderTable(){
+  if (!lastResult) return;
+  if (currentTab === "ent") {
+    const rows = (lastResult.entities||[]).map(e=>`<tr>
+      <td><span class="tag">${escapeHtml(e.type)}</span></td>
+      <td>${escapeHtml(e.name)}</td>
+      <td>${e.grounded?'<span class="tag ok">已定位</span>':'<span class="tag bad">未定位</span>'}</td>
+      <td>${fmtAttrs(e.attributes)}</td></tr>`).join("");
+    $("panel").innerHTML = `<table><thead><tr><th>类型</th><th>名称</th><th>溯源</th><th>属性</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="4" class="empty">无实体</td></tr>'}</tbody></table>`;
+  } else {
+    const rows = (lastResult.relations||[]).map(r=>`<tr>
+      <td>${escapeHtml(r.head)}</td>
+      <td><span class="tag">${escapeHtml(r.relation)}</span>${r.derived?'<span class="tag derived">派生</span>':''}</td>
+      <td>${escapeHtml(r.tail)}</td>
+      <td>${fmtAttrs(r.attributes)}</td></tr>`).join("");
+    $("panel").innerHTML = `<table><thead><tr><th>主体</th><th>关系</th><th>标的</th><th>属性</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="4" class="empty">无关系</td></tr>'}</tbody></table>`;
+  }
+}
+
+$("tab-ent").onclick = ()=>{ currentTab="ent"; $("tab-ent").classList.add("active"); $("tab-rel").classList.remove("active"); renderTable(); };
+$("tab-rel").onclick = ()=>{ currentTab="rel"; $("tab-rel").classList.add("active"); $("tab-ent").classList.remove("active"); renderTable(); };
+
+function fmtAttrs(attrs){
+  if (!attrs) return "—";
+  const keys = Object.keys(attrs);
+  if (!keys.length) return "—";
+  return keys.map(k=>`<span class="tag">${escapeHtml(k)}=${escapeHtml(String(attrs[k]))}</span>`).join("");
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function setError(msg){ const el=$("error"); el.style.display = msg?"block":"none"; el.textContent = msg||""; }
+
+/* ---------------- 知识图谱（Canvas 力导向，零依赖） ---------------- */
+const canvas = $("graph"), ctx = canvas.getContext("2d"), tip = $("tip");
+let sim = null;
+
+function renderGraph(data){
+  const ent = data.entities || [], rel = data.relations || [];
+  const idx = new Map();
+  const nodes = ent.map((e,i)=>{ idx.set(e.name, i); return {
+    i, name:e.name, type:e.type, attrs:e.attributes||{}, grounded:e.grounded,
+    x: 0, y: 0, vx: 0, vy: 0
+  };});
+  const links = [];
+  rel.forEach(r=>{
+    if (idx.has(r.head) && idx.has(r.tail)) links.push({ s: idx.get(r.head), t: idx.get(r.tail), label: r.relation });
+  });
+  renderLegend([...new Set(nodes.map(n=>n.type))]);
+  sim = { nodes, links, alpha: 1, scale: 1, ox: 0, oy: 0, drag: null, hover: null };
+
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = W * devicePixelRatio; canvas.height = H * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  sim.W = W; sim.H = H;
+  // 初始环形布局，避免重叠
+  nodes.forEach((n,i)=>{ const a = i/nodes.length*Math.PI*2;
+    n.x = W/2 + Math.cos(a)*Math.min(W,H)*0.32; n.y = H/2 + Math.sin(a)*Math.min(W,H)*0.32; });
+  if (!sim._loop) { sim._loop = true; requestAnimationFrame(loop); }
+}
+
+function renderLegend(types){
+  $("legend").innerHTML = types.map(t=>`<div><i style="background:${colorOf(t)}"></i>${escapeHtml(t)}</div>`).join("")
+    || '<div style="color:var(--muted)">无数据</div>';
+  $("legend").innerHTML += '<div style="margin-top:6px;color:var(--muted)">滚轮缩放 · 拖拽节点</div>';
+}
+
+function loop(){
+  if (!sim) return;
+  step();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function step(){
+  const { nodes, links } = sim;
+  const k = 140, L = 160;
+  // 斥力
+  for (let i=0;i<nodes.length;i++) for (let j=i+1;j<nodes.length;j++){
+    const a=nodes[i], b=nodes[j];
+    let dx=b.x-a.x, dy=b.y-a.y, d2=dx*dx+dy*dy || 1, d=Math.sqrt(d2);
+    const f = k*k/d2;
+    const fx=dx/d*f, fy=dy/d*f;
+    a.vx-=fx; a.vy-=fy; b.vx+=fx; b.vy+=fy;
+  }
+  // 弹簧
+  links.forEach(l=>{
+    const a=nodes[l.s], b=nodes[l.t];
+    const dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy)||1;
+    const f=(d-L)*0.02;
+    const fx=dx/d*f, fy=dy/d*f;
+    a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
+  });
+  // 向心力
+  nodes.forEach(n=>{
+    n.vx += (sim.W/2 - n.x)*0.002;
+    n.vy += (sim.H/2 - n.y)*0.002;
+  });
+  // 积分
+  const damp = sim.drag ? 0.6 : 0.86;
+  nodes.forEach(n=>{
+    if (sim.drag === n) { n.vx=n.vy=0; return; }
+    n.vx*=damp; n.vy*=damp;
+    n.x += n.vx * sim.alpha; n.y += n.vy * sim.alpha;
+    n.x = Math.max(20, Math.min(sim.W-20, n.x));
+    n.y = Math.max(20, Math.min(sim.H-20, n.y));
+  });
+  sim.alpha = Math.max(0.15, sim.alpha*0.995);
+}
+
+function draw(){
+  const { nodes, links } = sim;
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  ctx.clearRect(0,0,sim.W,sim.H);
+  ctx.translate(sim.ox, sim.oy); ctx.scale(sim.scale, sim.scale);
+
+  // 边
+  links.forEach(l=>{
+    const a=nodes[l.s], b=nodes[l.t];
+    ctx.strokeStyle="rgba(140,165,205,.45)"; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+    ctx.fillStyle="rgba(200,215,240,.85)"; ctx.font="11px sans-serif";
+    ctx.textAlign="center"; ctx.fillText(l.label, mx, my-3);
+  });
+  // 节点
+  nodes.forEach(n=>{
+    const r = sim.hover===n ? 11 : 8;
+    ctx.beginPath(); ctx.arc(n.x,n.y,r,0,Math.PI*2);
+    ctx.fillStyle = colorOf(n.type); ctx.fill();
+    if (!n.grounded){ ctx.setLineDash([2,2]); ctx.strokeStyle="#ff9d9d"; ctx.lineWidth=1.5; ctx.stroke(); ctx.setLineDash([]); }
+    ctx.fillStyle="#dbe5f5"; ctx.font="11px sans-serif"; ctx.textAlign="center";
+    ctx.fillText(n.name.length>14 ? n.name.slice(0,14)+"…" : n.name, n.x, n.y - r - 4);
+  });
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); // 复位
+}
+
+/* 交互：拖拽 / 缩放 / 悬停 */
+function toWorld(e){
+  const r = canvas.getBoundingClientRect();
+  return { x:(e.clientX-r.left-sim.ox)/sim.scale, y:(e.clientY-r.top-sim.oy)/sim.scale };
+}
+function pick(p){
+  let best=null, bd=14*14;
+  sim.nodes.forEach(n=>{ const d=(n.x-p.x)**2+(n.y-p.y)**2; if (d<bd){bd=d;best=n;} });
+  return best;
+}
+canvas.onmousedown = e=>{ const n=pick(toWorld(e)); if(n) sim.drag=n; };
+canvas.onmousemove = e=>{
+  const p=toWorld(e), n=pick(p);
+  sim.hover=n; canvas.style.cursor = n ? "pointer" : "grab";
+  if (sim.drag){ sim.drag.x=p.x; sim.drag.y=p.y; }
+  if (n){
+    tip.style.display="block";
+    tip.style.left=(e.clientX-canvas.getBoundingClientRect().left+12)+"px";
+    tip.style.top=(e.clientY-canvas.getBoundingClientRect().top+12)+"px";
+    const attrs=Object.entries(n.attrs||{}).map(([k,v])=>`${k}=${v}`).join("；") || "—";
+    tip.innerHTML=`<b>${escapeHtml(n.name)}</b><br/><span class="tag">${escapeHtml(n.type)}</span>
+      <span class="tag ${n.grounded?'ok':'bad'}">${n.grounded?'已定位':'未定位'}</span><br/>${escapeHtml(attrs)}`;
+  } else tip.style.display="none";
+};
+window.onmouseup = ()=>{ if(sim) sim.drag=null; };
+canvas.onwheel = e=>{
+  e.preventDefault();
+  const r=canvas.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const f = e.deltaY<0 ? 1.1 : 0.9;
+  sim.ox = mx - (mx - sim.ox)*f;
+  sim.oy = my - (my - sim.oy)*f;
+  sim.scale *= f;
+  if (sim.scale<0.3) sim.scale=0.3; if (sim.scale>3) sim.scale=3;
+};
+</script>
+</body>
+</html>

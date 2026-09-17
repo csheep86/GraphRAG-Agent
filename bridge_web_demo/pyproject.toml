@@ -1,0 +1,15 @@
+[project]
+name = "bridge-web-demo"
+version = "0.1.0"
+description = "Bridge Pipeline MVP：MinerU 输出 -> LangExtract 实体关系抽取 -> output.json + 单页可视化"
+requires-python = ">=3.11"
+dependencies = [
+    "langextract[openai]==1.7.0",
+    "python-dotenv>=1.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+    "tenacity>=8.2",
+    "pydantic>=2.7",
+]

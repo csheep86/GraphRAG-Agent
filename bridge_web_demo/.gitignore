@@ -1,0 +1,16 @@
+# 局部忽略规则（与仓库根 .gitignore 叠加）
+.venv/
+__pycache__/
+*.pyc
+
+# 密钥：仅提交模板
+.env
+.env.*
+!.env.example
+
+# 上传的 PDF 不入库
+uploads/
+
+# 运行产物不入库，但保留目录占位文件（强制入库）
+output/*
+!output/.gitkeep

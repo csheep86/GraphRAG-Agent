@@ -1,0 +1,2 @@
+# 该目录用于落盘 Bridge Pipeline 结果（output.json）。
+# 目录内容已被根 .gitignore 忽略（**/output/*），本占位文件强制加入版本库。
