@@ -7,6 +7,15 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# 仅放行「不含任何密钥」的环境模板；其余 .env.* 一律忽略
+!**/.env.development
+!**/.env.production
+!**/.env.local.example
+
+# 本地覆盖文件必须忽略（含 .env.local / .env.local.* 变体）
+**/.env.local
+**/.env.local.*
+!**/.env.local.example
 
 # Node / Next.js
 node_modules/
