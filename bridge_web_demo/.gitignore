@@ -14,3 +14,6 @@ uploads/
 # 运行产物不入库，但保留目录占位文件（强制入库）
 output/*
 !output/.gitkeep
+
+# 运行产物 JSON（根目录同级文件，非 output/ 目录内）
+output.json
