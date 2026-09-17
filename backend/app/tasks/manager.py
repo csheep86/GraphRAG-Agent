@@ -17,6 +17,7 @@
 数据类型（``TaskSpec`` / ``TaskStatus`` / ``RecoveryReport`` / ``TaskExecutorFn``）位于
 :mod:`app.tasks.types`，避免与 :mod:`app.tasks.registry` 形成循环导入。
 """
+
 from __future__ import annotations
 
 import asyncio

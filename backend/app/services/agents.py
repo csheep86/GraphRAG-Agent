@@ -21,11 +21,11 @@
    路由层捕获后统一转 ``501 NOT_IMPLEMENTED``，不污染测试用例。
 5. **不持有状态**：状态以数据库 / 文件系统为准（与 ADR-0001 一致）。
 """
+
 from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -68,8 +68,18 @@ except Exception as exc:  # noqa: BLE001 - 兼容失败时优雅降级
     SystemMessage = None  # type: ignore[assignment]
 
 
+#: 单次送入 Prompt 的图谱节点上限（与契约 `DocumentGraphResponse` 的 500 对齐）
+_GRAPH_NODE_LIMIT = 500
+
+
 class AgentUnavailableError(Exception):
-    """Agent 装配或调用前置条件缺失（未配置 API_KEY / Neo4j 不可用等）。"""
+    """Agent 装配或调用前置条件缺失（未配置 API_KEY / Neo4j 不可用等）。
+
+    路由层捕获后转 ``501``——**不**等同 ``refused=true``：
+
+    - ``AgentUnavailableError`` → 基础设施 / 配置故障（501）；
+    - ``refused=true`` → 图谱证据不足，属**正常业务判定**（200）。
+    """
 
 
 class _LlmAnswerSchema(BaseModel):
@@ -84,7 +94,7 @@ class _LlmAnswerSchema(BaseModel):
 class AgentService:
     """图谱问答服务（懒加载 + 单例）。"""
 
-    _instance: "AgentService | None" = None
+    _instance: AgentService | None = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -92,7 +102,7 @@ class AgentService:
         self._failure_reason: str | None = None
 
     @classmethod
-    def instance(cls) -> "AgentService":
+    def instance(cls) -> AgentService:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -149,30 +159,31 @@ class AgentService:
     ) -> AgentQueryResponse:
         """执行一次图谱问答。
 
-        实现策略（阶段九骨架）：
+        实现策略（阶段九 9.3）：
         1. 取 ``active kg_version``（强一致过滤，ADR-0002 §3.2）；
-        2. 从 Neo4j 拉取与问题相关的子图（兜底：图谱不可用时返回拒答）；
+        2. 从 Neo4j 拉取与问题相关的子图；
         3. 经 :mod:`app.prompts.prompt_loader` 加载 ``kg_qa`` Prompt；
         4. tenacity 重试调用 LLM；
         5. 解析 LLM 输出 → 映射为契约 :class:`AgentQueryResponse`。
+
+        **故障语义边界**：Neo4j / LLM 等基础设施不可用时抛
+        :class:`AgentUnavailableError`（路由层转 501）；
+        只有「图谱可查但证据不足」才返回 ``refused=true``（200）。
         """
         # 1) active kg_version
         try:
             kg_version = GraphService.instance().fetch_active_kg_version()
         except GraphUnavailableError as exc:
-            logger.bind(trace_id=trace_id, reason=str(exc)).warning(
-                "agent_query_no_active_kg_version"
+            # 基础设施故障（Neo4j 不可用 / 无 active 版本）**不**等同于「检索不到证据」：
+            # 后者才是 refused=true，前者必须上抛为 501，否则会把故障伪装成正常拒答。
+            logger.bind(trace_id=trace_id, reason=str(exc)).error(
+                "agent_query_graph_unavailable"
             )
-            return self._refuse(
-                trace_id=trace_id,
-                kg_version="",
-                reason=RefusalReason.NO_GROUNDED_EVIDENCE,
-                note="Graph unavailable",
-            )
+            raise AgentUnavailableError(f"Neo4j 不可用: {exc}") from exc
 
         version = kg_version.version
 
-        # 2) 拉取子图（兜底为空）
+        # 2) 拉取子图
         try:
             graph_subgraph = self._fetch_subgraph_for_question(
                 kg_version=version,
@@ -181,10 +192,10 @@ class AgentService:
                 scope=request.scope,
             )
         except GraphUnavailableError as exc:
-            logger.bind(trace_id=trace_id, reason=str(exc)).warning(
+            logger.bind(trace_id=trace_id, reason=str(exc)).error(
                 "agent_query_subgraph_unavailable"
             )
-            graph_subgraph = "<graph unavailable>"
+            raise AgentUnavailableError(f"Neo4j 子图查询失败: {exc}") from exc
 
         # 3) 加载 Prompt（任何占位符错误都立即暴露，禁止硬编码）
         template = load_prompt("kg_qa")
@@ -203,7 +214,8 @@ class AgentService:
             raise AgentUnavailableError(f"Prompt 渲染失败: {exc}") from exc
 
         # 4) 调用 LLM（tenacity 重试）
-        chat = self._ensure_chat()
+        # 仅为触发前置检查（未配置 KEY / LangChain 缺失时抛 AgentUnavailableError）
+        self._ensure_chat()
         try:
             answer = await self._invoke_chat_with_retry(
                 system_prompt=system_prompt,
@@ -230,9 +242,7 @@ class AgentService:
 
         # 6) 引用覆盖率为 0 → 拒答（F3：引用覆盖率 < 100% 直接 NO-GO）
         citations = [
-            _to_citation(item)
-            for item in parsed.evidence
-            if _looks_like_citation(item)
+            _to_citation(item) for item in parsed.evidence if _looks_like_citation(item)
         ]
         if not citations:
             return AgentQueryResponse(
@@ -280,10 +290,7 @@ class AgentService:
 
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(settings.task_retry_max_attempts),
-            wait=wait_exponential(
-                multiplier=settings.task_retry_initial_seconds,
-                multiplier_getter=lambda: settings.task_retry_multiplier,
-            ),
+            wait=_build_llm_wait_policy(),
             retry=retry_if_exception_type(Exception),
             reraise=True,
         ):
@@ -309,24 +316,32 @@ class AgentService:
     ) -> str:
         """拉取与问题相关的子图，序列化为 XML-like 文本供 Prompt 使用。
 
-        阶段九骨架：图谱为空时返回空文本，避免 LLM 编造。
-        Sprint 3 后段替换为 LangChain Agent 的 Tool 调用循环。
+        - ``scope = single_doc``（Pydantic 已保证 ``doc_id`` 非空）→ 文档子图；
+        - ``scope = cross_doc``（``doc_id`` 为空）→ **全部**已导入实体图，
+          对应 :meth:`GraphService.fetch_all_subgraph`（不依赖 PG ``document_id``）。
+
+        图谱为空时返回 ``<graph: empty>``，让 Prompt 明确「无证据」而非留白，
+        避免 LLM 用自身记忆补全。Sprint 4 替换为 LangChain Agent 的 Tool 调用循环。
         """
-        if doc_id is None and scope == "cross_doc":
-            # 跨文档模式：暂不展开 Cypher（避免 LLM 拿到过多噪声）
-            return f"<graph: cross_doc mode, kg_version={kg_version}>"
+        graph = GraphService.instance()
 
         if doc_id is None:
-            return "<graph: no doc_id>"
+            # 跨文档模式：全量实体图（阶段六 bridge 产物）
+            nodes, edges, truncated = graph.fetch_all_subgraph(
+                kg_version=kg_version,
+                org_id=org_id,
+                node_limit=_GRAPH_NODE_LIMIT,
+            )
+        else:
+            nodes, edges, truncated = graph.fetch_document_subgraph(
+                doc_id=doc_id,
+                kg_version=kg_version,
+                org_id=org_id,
+                node_limit=_GRAPH_NODE_LIMIT,
+            )
 
-        nodes, edges, truncated = GraphService.instance().fetch_document_subgraph(
-            doc_id=doc_id,
-            kg_version=kg_version,
-            org_id=org_id,
-            node_limit=500,
-        )
         if not nodes:
-            return "<graph: empty>"
+            return f"<graph: empty scope={scope} kg_version={kg_version}>"
         return _serialize_subgraph(nodes=nodes, edges=edges, truncated=truncated)
 
     def _refuse(
@@ -352,6 +367,22 @@ class AgentService:
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
+
+
+def _build_llm_wait_policy() -> Any:
+    """构造 LLM 重试的指数退避策略。
+
+    **必须独立成函数以便单测覆盖**：tenacity 9.x 的 ``wait_exponential``
+    **不接受** ``multiplier_getter``（9.1.4 签名只有
+    ``multiplier / max / exp_base / min``）。旧写法把它内联在协程里，
+    只有真正调 LLM 时才抛 ``TypeError``——测试永远碰不到。
+    语义映射：``multiplier`` = 首次等待秒数，``exp_base`` = 每轮增长倍数。
+    """
+    settings = get_settings()
+    return wait_exponential(
+        multiplier=settings.task_retry_initial_seconds,
+        exp_base=settings.task_retry_multiplier,
+    )
 
 
 def _extract_text(response: Any) -> str:

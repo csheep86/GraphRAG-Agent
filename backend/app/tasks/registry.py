@@ -8,11 +8,13 @@
 - ``document.parse``：PDF / DOCX / CSV → chunks → Neo4j（M1 → M2 衔接）；
   当前为骨架版，仅完成 `pending → processing → completed` 推进 + 错误落库。
 """
+
 from __future__ import annotations
 
 import asyncio
 import traceback
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 from uuid import UUID
 
 from loguru import logger
@@ -63,9 +65,9 @@ async def document_parse_executor(spec: TaskSpec) -> None:
             return
 
         if document.status == "completed":
-            logger.bind(
-                trace_id=spec.trace_id, document_id=str(document_id)
-            ).info("document_parse_skipped_already_completed")
+            logger.bind(trace_id=spec.trace_id, document_id=str(document_id)).info(
+                "document_parse_skipped_already_completed"
+            )
             return
 
         document.status = "processing"
@@ -100,7 +102,10 @@ async def document_parse_executor(spec: TaskSpec) -> None:
                     await _do_parse(document_id=document_id, payload=spec.payload)
         except RetryError as exc:
             # 重试用尽：把最后一个底层异常抛出，由外层 except 落库
-            if exc.last_attempt is not None and exc.last_attempt.exception() is not None:
+            if (
+                exc.last_attempt is not None
+                and exc.last_attempt.exception() is not None
+            ):
                 raise exc.last_attempt.exception() from exc  # type: ignore[misc]
             raise
 

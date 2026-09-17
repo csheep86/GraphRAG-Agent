@@ -6,6 +6,7 @@
 - :class:`RecoveryReport`：回收结果；
 - :class:`TaskExecutorFn`：执行体的协议签名。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -5,6 +5,7 @@
 - :class:`GraphUnavailableError`：连接失败 / 查询失败时抛，路由层捕获后转
   ``501 NOT_IMPLEMENTED``（阶段九契约未实装）；
 - :meth:`GraphService.fetch_active_kg_version`：取唯一 ``status='active'`` 版本；
+- :meth:`GraphService.fetch_kg_version_status`：取指定版本的 ``status``（409 判定依据）；
 - :meth:`GraphService.fetch_document_subgraph`：按 PG ``document_id`` 查子图（M2 数据）；
 - :meth:`GraphService.fetch_all_subgraph`：查**全部**已导入实体图（桥梁产物，
   不依赖 ``document_id``）。
@@ -20,6 +21,7 @@
 4. **关系类型受控投影**：见 :func:`_relation_type` —— 契约枚举未覆盖的桥梁专有
    关系类型投影为 ``MENTIONS``，真实关系名保留在 ``properties["relation_name"]``。
 """
+
 from __future__ import annotations
 
 import threading
@@ -40,6 +42,21 @@ class GraphUnavailableError(Exception):
     """
 
 
+class NoActiveKgVersionError(GraphUnavailableError):
+    """Neo4j **可达**，但不存在 ``status = 'active'`` 的 ``:KgVersion``。
+
+    刻意继承 :class:`GraphUnavailableError`，既有的 ``except GraphUnavailableError``
+    仍能兜住它；同时让业务层能**区分**两种截然不同的故障：
+
+    - :class:`NoActiveKgVersionError` → **版本状态问题** → ``409 KG_VERSION_NOT_ACTIVE``
+      （契约对 ``GET /documents/{id}/graph`` 的明文要求：「该文档不存在 active 版本时返回 409」）；
+    - 其它 :class:`GraphUnavailableError` → **基础设施故障** → ``501``。
+
+    两者若混为一谈，前端就无法区分「数据没准备好」与「后端挂了」——
+    前者应提示等待 / 引导导入，后者应触发告警与重试。
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class KgVersion:
     """当前 active ``kg_version`` 投影。"""
@@ -56,6 +73,14 @@ MATCH (v:KgVersion {status: 'active'})
 WHERE $scope IS NULL OR v.scope = $scope
 RETURN v.version AS version, v.scope AS scope
 ORDER BY v.version DESC
+LIMIT 1
+"""
+
+#: Cypher 查询：指定 ``kg_version`` 的 status（ADR-0002 §3.2 的 409 判定依据）。
+#: 节点不存在时返回空结果集（而非报错），由 Python 侧映射为 ``None``。
+_QUERY_KG_VERSION_STATUS = """
+MATCH (v:KgVersion {version: $version})
+RETURN v.status AS status
 LIMIT 1
 """
 
@@ -203,11 +228,39 @@ class GraphService:
 
         version = result["version"] if result else None
         if not version:
-            raise GraphUnavailableError(
+            # 连接是通的，只是没有 active 版本 → 版本状态问题（路由层转 409），
+            # **不是**基础设施故障（501）。见 NoActiveKgVersionError 文档。
+            raise NoActiveKgVersionError(
                 "Neo4j 中尚无 status='active' 的 KgVersion"
-                "（请先执行 scripts/import_to_neo4j.py）"
+                f"（scope={scope!r}；请先执行 scripts/import_to_neo4j.py）"
             )
         return KgVersion(version=version, scope=result["scope"] or "global")
+
+    def fetch_kg_version_status(self, version: str) -> str | None:
+        """返回指定 ``kg_version`` 的 ``status``；节点不存在返回 ``None``。
+
+        供路由层做 **409 ``KG_VERSION_NOT_ACTIVE``** 判定（ADR-0002 §3.2）：
+        只要不是 ``active``（``writing`` / ``failed`` / ``superseded`` / 不存在）
+        一律拒绝，**严禁静默降级**到最新 active 版本。
+
+        ``Neo4j`` 不可用时抛 :class:`GraphUnavailableError`——这是**基础设施**
+        故障而非「版本不合法」，调用方必须区分处理（转 501，**不可**转 409）。
+        """
+        if not version:
+            return None
+
+        try:
+            with self._session() as session:
+                result = session.run(_QUERY_KG_VERSION_STATUS, version=version).single()
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"读取 kg_version 状态失败: version={version}: {exc}"
+            ) from exc
+
+        status = result["status"] if result else None
+        return str(status) if status else None
 
     def fetch_all_subgraph(
         self,
@@ -306,7 +359,9 @@ class GraphService:
         # Document 节点
         document_record = result.get("d")
         if document_record is not None:
-            nodes.append(_to_node(document_record, kg_version=kg_version, label="Document"))
+            nodes.append(
+                _to_node(document_record, kg_version=kg_version, label="Document")
+            )
 
         for record in result.get("chunks") or []:
             nodes.append(_to_node(record, kg_version=kg_version, label="Chunk"))
@@ -410,4 +465,5 @@ __all__ = [
     "GraphService",
     "GraphUnavailableError",
     "KgVersion",
+    "NoActiveKgVersionError",
 ]

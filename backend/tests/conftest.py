@@ -16,6 +16,14 @@ os.environ["APP_ENV"] = "test"
 os.environ["ALLOW_DEV_ORG_HEADER"] = "true"
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP_DIR / 'test.db').as_posix()}"
 
+# 图谱相关端点（/graph、/agent/query）在测试中必须**确定性**降级：
+# 指向本机不可达端口，保证 GraphService 一定抛 GraphUnavailableError。
+# 环境变量优先级高于 `.env`，因此能稳定覆盖开发者本地 .env 里的真实 Neo4j 配置——
+# 否则一旦本机 Neo4j 在跑，测试结果就会随外部依赖漂移（CI 上必挂）。
+# 需要「图谱可用」的用例请用 monkeypatch 显式打桩，不要依赖真实 Neo4j。
+os.environ["NEO4J_URI"] = "bolt://127.0.0.1:1"
+os.environ["NEO4J_PASSWORD"] = ""
+
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 

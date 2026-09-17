@@ -150,7 +150,9 @@ def _char_positions(char_interval: Any) -> tuple[int | None, int | None]:
     )
 
 
-def build_entity_rows(data: dict[str, Any], *, org_id: str | None) -> list[dict[str, Any]]:
+def build_entity_rows(
+    data: dict[str, Any], *, org_id: str | None
+) -> list[dict[str, Any]]:
     """把 `entities[]` 规范化为 MERGE 参数行。"""
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -361,7 +363,9 @@ def _is_transient(exc: BaseException) -> bool:
     )
 
 
-def _run_with_retry(session: Any, cypher: str, params: dict[str, Any], *, what: str) -> Any:
+def _run_with_retry(
+    session: Any, cypher: str, params: dict[str, Any], *, what: str
+) -> Any:
     """执行单条 Cypher，失败时 tenacity 指数退避重试（≤ 3 次，初始 1s、倍数 2）。
 
     :returns: Neo4j ``ResultSummary``（可用 ``.counters`` 读取真实写入计数）。
@@ -501,12 +505,8 @@ def import_graph(
                 created = rel_summary.counters.relationships_created
                 merged_relations += len(rows)
                 stats.relation_types[token] = len(rows)
-                print(
-                    f"  [2/3]   关系 {token}: 期望 {len(rows)} / 新建 {created}"
-                )
-            print(
-                f"  [2/3] MERGE 关系 {merged_relations} 条（{len(grouped)} 种类型）"
-            )
+                print(f"  [2/3]   关系 {token}: 期望 {len(rows)} / 新建 {created}")
+            print(f"  [2/3] MERGE 关系 {merged_relations} 条（{len(grouped)} 种类型）")
 
             # ---- 写入自检：读回真实计数，防止「静默丢失」（例如端点解析错位）----
             actual = _verify_version_graph(
@@ -539,7 +539,10 @@ def import_graph(
 
         except Exception as exc:  # noqa: BLE001 - 三段式 3b：失败补偿
             error_detail = f"{type(exc).__name__}: {exc}"[:500]
-            print(f"  [3b] 写入失败，回滚为 failed 并清理: {error_detail}", file=sys.stderr)
+            print(
+                f"  [3b] 写入失败，回滚为 failed 并清理: {error_detail}",
+                file=sys.stderr,
+            )
             try:
                 _run_with_retry(
                     session,
@@ -589,14 +592,20 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--input", default=str(DEFAULT_INPUT), help="输入 JSON 路径")
-    parser.add_argument("--neo4j-uri", default=settings.neo4j_uri, help="Neo4j bolt URI")
-    parser.add_argument("--neo4j-user", default=settings.neo4j_user, help="Neo4j 用户名")
+    parser.add_argument(
+        "--neo4j-uri", default=settings.neo4j_uri, help="Neo4j bolt URI"
+    )
+    parser.add_argument(
+        "--neo4j-user", default=settings.neo4j_user, help="Neo4j 用户名"
+    )
     parser.add_argument(
         "--neo4j-password",
         default=settings.neo4j_password,
         help="Neo4j 密码（缺省取 NEO4J_PASSWORD 环境变量）",
     )
-    parser.add_argument("--neo4j-database", default=settings.neo4j_database, help="数据库名")
+    parser.add_argument(
+        "--neo4j-database", default=settings.neo4j_database, help="数据库名"
+    )
     parser.add_argument(
         "--kg-version",
         default=None,
@@ -627,14 +636,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     # Windows 控制台默认 GBK，中文统计输出需要显式切 UTF-8
-    if sys.stdout and sys.stdout.encoding and sys.stdout.encoding.lower() not in (
-        "utf-8",
-        "utf8",
+    if (
+        sys.stdout
+        and sys.stdout.encoding
+        and sys.stdout.encoding.lower()
+        not in (
+            "utf-8",
+            "utf8",
+        )
     ):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    if sys.stderr and sys.stderr.encoding and sys.stderr.encoding.lower() not in (
-        "utf-8",
-        "utf8",
+    if (
+        sys.stderr
+        and sys.stderr.encoding
+        and sys.stderr.encoding.lower()
+        not in (
+            "utf-8",
+            "utf8",
+        )
     ):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 

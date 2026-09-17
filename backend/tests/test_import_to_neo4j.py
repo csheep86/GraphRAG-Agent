@@ -7,6 +7,7 @@
 回归重点：`relations[].head / tail` 是**实体名**而非 `entities[].id`，
 若按 id 匹配会让所有关系**静默丢失**（曾真实发生，`count(r)` 为 0）。
 """
+
 from __future__ import annotations
 
 import json
@@ -173,7 +174,9 @@ def test_build_relation_rows_unknown_relation_falls_back_to_related() -> None:
             }
         ],
     }
-    name_to_id = {row["name"]: row["id"] for row in build_entity_rows(source, org_id=None)}
+    name_to_id = {
+        row["name"]: row["id"] for row in build_entity_rows(source, org_id=None)
+    }
     rows, unresolved = build_relation_rows(source, name_to_id)
 
     assert unresolved == []
@@ -194,7 +197,9 @@ def test_whitelist_blocks_cypher_injection_attempt() -> None:
             }
         ],
     }
-    name_to_id = {row["name"]: row["id"] for row in build_entity_rows(source, org_id=None)}
+    name_to_id = {
+        row["name"]: row["id"] for row in build_entity_rows(source, org_id=None)
+    }
     rows, _ = build_relation_rows(source, name_to_id)
 
     assert rows[0]["token"] == "RELATED"
@@ -206,7 +211,9 @@ def test_whitelist_blocks_cypher_injection_attempt() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.skipif(not DEFAULT_INPUT.is_file(), reason="bridge_web_demo/output.json 不存在")
+@pytest.mark.skipif(
+    not DEFAULT_INPUT.is_file(), reason="bridge_web_demo/output.json 不存在"
+)
 def test_real_bridge_output_is_fully_resolvable() -> None:
     """真实产物：23 实体 / 12 关系，且关系端点**全部**可解析（回归静默丢失 bug）。"""
     data = load_source(DEFAULT_INPUT)
@@ -231,7 +238,14 @@ def test_real_bridge_output_is_fully_resolvable() -> None:
 
 
 def test_relation_type_passes_through_contract_enum() -> None:
-    for value in ("HAS_CHUNK", "MENTIONS", "SUPPORTED_BY", "AFFILIATED_WITH", "SUPPLIES_TO", "PARTY_TO"):
+    for value in (
+        "HAS_CHUNK",
+        "MENTIONS",
+        "SUPPORTED_BY",
+        "AFFILIATED_WITH",
+        "SUPPLIES_TO",
+        "PARTY_TO",
+    ):
         assert _relation_type(value) == value
 
 
