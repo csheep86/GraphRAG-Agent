@@ -18,6 +18,7 @@ from app.core.logging import logger, setup_logging
 from app.core.middleware import TRACE_ID_HEADER, TraceIdMiddleware
 from app.core.openapi import build_openapi
 from app.db.session import dispose_engine, init_db
+from app.tasks import recover_orphan_tasks
 
 
 def create_app() -> FastAPI:
@@ -28,12 +29,15 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Sprint 1 直接建表；Sprint 3 接入 Alembic 迁移后移除（见 db/session.py）
         init_db()
+        # ADR-0001 §3.2 / M1 §3 验收 8：进程启动回收遗留 pending / processing 任务
+        recovery = recover_orphan_tasks()
         logger.bind(
             app_env=settings.app_env,
             app_version=settings.app_version,
             # 只记录驱动名，避免把数据库口令写进日志（CODEBUDDY.md 安全底线）
             db_driver=settings.database_url.split(":", 1)[0],
             dev_org_header_enabled=settings.dev_org_header_enabled,
+            task_recover_reclaimed=recovery.reclaimed,
         ).info("application_startup")
         try:
             yield

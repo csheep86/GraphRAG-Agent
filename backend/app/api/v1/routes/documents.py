@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, UploadFile
 
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
@@ -22,9 +22,22 @@ from app.schemas.document import (
     DocumentStatusResponse,
     UploadResponse,
 )
-from app.services.documents import create_document_upload, get_document_status
+from app.services.documents import (
+    create_document_upload,
+    get_document_status,
+    get_scoped_document,
+)
+from app.services.graphs import (
+    GraphService,
+    GraphUnavailableError,
+    NoActiveKgVersionError,
+)
+from app.tasks.manager import TaskManager
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+#: 单次返回节点上限（契约 `DocumentGraphResponse`：≤ 500，超限 `truncated = true`）
+_GRAPH_NODE_LIMIT = 500
 
 
 @router.post(
@@ -48,12 +61,17 @@ async def upload_document(
         UploadFile,
         File(description="待解析文件。白名单：PDF / DOCX / CSV；单文件 ≤ 100MB"),
     ],
+    background_tasks: BackgroundTasks,
     identity: CurrentIdentity,
     session: DbSession,
     trace_id: TraceId,
 ) -> UploadResponse:
     return await create_document_upload(
-        session=session, upload=file, identity=identity, trace_id=trace_id
+        session=session,
+        upload=file,
+        identity=identity,
+        trace_id=trace_id,
+        task_manager=TaskManager(background_tasks),
     )
 
 
@@ -106,14 +124,63 @@ async def read_document_status(
 async def read_document_graph(
     document_id: UUID,
     identity: CurrentIdentity,
+    session: DbSession,
     trace_id: TraceId,
 ) -> DocumentGraphResponse:
-    raise AppError(
+    # 1) 文档可见性（纯 PG，先于任何外部依赖）：不存在 → 404，跨租户 → 403
+    get_scoped_document(session=session, document_id=document_id, identity=identity)
+
+    graph = GraphService.instance()
+
+    # 2) active kg_version（ADR-0002 §3.2：只消费 active）
+    #    注意区分两种故障——「无 active 版本」是版本状态问题（409），
+    #    「连不上 Neo4j」是基础设施故障（501）。契约 §/documents/{id}/graph 明文要求 409。
+    try:
+        kg_version = graph.fetch_active_kg_version()
+    except NoActiveKgVersionError as exc:
+        raise AppError(
+            ErrorCode.KG_VERSION_NOT_ACTIVE,
+            detail={
+                "document_id": str(document_id),
+                "status": "none",
+                "hint": "该文档不存在 active 版本，拒绝静默降级",
+            },
+        ) from exc
+    except GraphUnavailableError as exc:
+        raise _graph_not_available(document_id=document_id, exc=exc) from exc
+
+    # 3) 拉取该文档在 active 版本下的子图
+    try:
+        nodes, edges, truncated = graph.fetch_document_subgraph(
+            doc_id=document_id,
+            kg_version=kg_version.version,
+            org_id=identity.org_id,
+            node_limit=_GRAPH_NODE_LIMIT,
+        )
+    except GraphUnavailableError as exc:
+        raise _graph_not_available(document_id=document_id, exc=exc) from exc
+
+    return DocumentGraphResponse(
+        doc_id=document_id,
+        kg_version=kg_version.version,
+        version_status="active",
+        nodes=nodes,
+        edges=edges,
+        node_count=len(nodes),
+        relation_count=len(edges),
+        truncated=truncated,
+        trace_id=trace_id,
+    )
+
+
+def _graph_not_available(*, document_id: UUID, exc: Exception) -> AppError:
+    """把 Neo4j 不可用映射为 501（契约已声明该分支；基础设施故障非数据问题）。"""
+    return AppError(
         ErrorCode.NOT_IMPLEMENTED,
-        "Document graph query is not implemented in Sprint 1",
+        "Graph store is unavailable",
         detail={
             "document_id": str(document_id),
-            "planned_sprint": "3",
-            "blocked_by": "Neo4j 集成与 active kg_version 一致性查询（ADR-0002）",
+            "blocked_by": "Neo4j 不可用或尚无 active kg_version（ADR-0002 §3.2）",
+            "reason": str(exc),
         },
     )

@@ -1,26 +1,165 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================================
+ * GraphRAG Studio · 暗色科技风 Design Tokens
+ * 真源：frontend/design_p01.png ~ design_p04.png
+ * 说明：界面为暗色单主题，<html class="dark"> 常驻开启。
+ * ========================================================================== */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --radius: 0.75rem;
+
+  /* 布局尺寸（对齐设计稿：顶部栏 60px / 侧栏 200px） */
+  --topbar-height: 60px;
+  --sidebar-width: 200px;
+
+  /* 页面与表面 */
+  --background: #0b0b0f;
+  --foreground: #f4f4f6;
+
+  --card: #14141a;
+  --card-foreground: #f4f4f6;
+
+  --popover: #16161d;
+  --popover-foreground: #f4f4f6;
+
+  /* 主色：蓝 */
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+
+  --secondary: #1c1c24;
+  --secondary-foreground: #e8e8ee;
+
+  --muted: #1a1a22;
+  --muted-foreground: #8b8b98;
+
+  --accent: #1f2030;
+  --accent-foreground: #f4f4f6;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --border: #22222b;
+  --input: #2a2a35;
+  --ring: #3b82f6;
+
+  /* 文档状态标签（p01 / p02：已完成=紫 · 处理中=蓝 · 失败=红 · 待处理=灰） */
+  --status-pending: #6b7280;
+  --status-processing: #3b82f6;
+  --status-completed: #7c3aed;
+  --status-failed: #ef4444;
+
+  /* 图谱节点分类色（p04 图例：主题 / 规范·数据 / 组织·人员 / 制度） */
+  --node-topic: #3b82f6;
+  --node-norm: #22d3ee;
+  --node-org: #f59e0b;
+  --node-system: #7c3aed;
+
+  /* 会话气泡 */
+  --bubble-user: #1b2436;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-status-pending: var(--status-pending);
+  --color-status-processing: var(--status-processing);
+  --color-status-completed: var(--status-completed);
+  --color-status-failed: var(--status-failed);
+
+  --color-node-topic: var(--node-topic);
+  --color-node-norm: var(--node-norm);
+  --color-node-org: var(--node-org);
+  --color-node-system: var(--node-system);
+
+  --color-bubble-user: var(--bubble-user);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, "PingFang SC",
+    "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo,
+    monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--primary) 40%, transparent);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* 暗色滚动条（设计稿中列表区域无显式滚动条，做弱化处理） */
+@layer utilities {
+  .scrollbar-subtle {
+    scrollbar-width: thin;
+    scrollbar-color: #2c2c38 transparent;
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-thumb {
+    background-color: #2c2c38;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  .scrollbar-subtle::-webkit-scrollbar-thumb:hover {
+    background-color: #3a3a48;
+  }
 }

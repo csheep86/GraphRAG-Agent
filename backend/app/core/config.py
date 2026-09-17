@@ -37,6 +37,25 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # -- Neo4j（阶段九：ADR-0002 主写入 / 查询目标）--
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
+    neo4j_database: str = "neo4j"
+    neo4j_connection_timeout_seconds: float = Field(default=5.0, gt=0)
+
+    # -- DeepSeek（阶段九：M3 Agentic-RAG LLM 推理）--
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_request_timeout_seconds: float = Field(default=60.0, gt=0)
+
+    # -- 异步任务并发（ADR-0001 §3.3）--
+    task_parse_concurrency: int = Field(default=2, ge=1)
+    task_retry_initial_seconds: float = Field(default=1.0, gt=0)
+    task_retry_max_attempts: int = Field(default=3, ge=1)
+    task_retry_multiplier: float = Field(default=2.0, gt=1)
+
     # -- 基础 --
     app_env: Literal["development", "test", "production"] = "development"
     app_name: str = "GraphRAG-Agent Backend API"

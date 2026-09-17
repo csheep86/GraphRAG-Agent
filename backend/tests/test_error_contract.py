@@ -63,19 +63,44 @@ def test_validation_error_is_400_not_422(
     assert isinstance(body["detail"]["errors"], list)
 
 
-def test_graph_endpoint_contract_only(
+def test_graph_endpoint_document_not_found(
     client: TestClient, dev_headers: dict[str, str]
 ) -> None:
-    """`/graph` 契约已定稿但实现留待 Sprint 3 → 501。"""
+    """`/graph` 已实装：文档不存在时 404（先查 PG，不依赖 Neo4j）。"""
     response = client.get(f"/api/v1/documents/{uuid4()}/graph", headers=dev_headers)
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "DOCUMENT_NOT_FOUND"
+    assert set(response.json()) == ERROR_BODY_KEYS
+
+
+def test_graph_endpoint_returns_501_when_graph_store_unavailable(
+    client: TestClient, dev_headers: dict[str, str]
+) -> None:
+    """`/graph` 已实装，但 Neo4j 不可用时 → 501（契约声明的 `NOT_IMPLEMENTED` 分支）。
+
+    测试环境由 `conftest.py` 把 `NEO4J_URI` 指向不可达端口，保证确定性。
+    注意：该用例先由 PG 文档可见性检查放行，故需上传一份真实文档。
+    """
+    upload = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("graph-probe.pdf", b"%PDF-1.4", "application/pdf")},
+        headers=dev_headers,
+    )
+    assert upload.status_code == 200
+    document_id = upload.json()["task_id"]
+
+    response = client.get(f"/api/v1/documents/{document_id}/graph", headers=dev_headers)
 
     assert response.status_code == 501
     assert response.json()["code"] == "NOT_IMPLEMENTED"
+    assert set(response.json()) == ERROR_BODY_KEYS
 
 
 def test_agent_query_endpoint_contract_only(
     client: TestClient, dev_headers: dict[str, str]
 ) -> None:
+    """`/agent/query` 已实装，但图谱 / LLM 未就绪时仍返回 501（非 `refused=true`）。"""
     response = client.post(
         "/api/v1/agent/query",
         json={"question": "A 与 B 是什么关系？"},
@@ -84,3 +109,4 @@ def test_agent_query_endpoint_contract_only(
 
     assert response.status_code == 501
     assert response.json()["code"] == "NOT_IMPLEMENTED"
+    assert set(response.json()) == ERROR_BODY_KEYS

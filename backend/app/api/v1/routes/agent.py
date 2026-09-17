@@ -1,4 +1,4 @@
-"""M3 图谱问答路由（契约已定稿，实现留待 Sprint 3）。"""
+"""M3 图谱问答路由（阶段九 9.3：由 501 占位替换为真实调用链路）。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from app.api.v1.responses import (
 )
 from app.core.errors import AppError, ErrorCode
 from app.schemas.agent import AgentQueryRequest, AgentQueryResponse
+from app.services.agents import AgentService, AgentUnavailableError
+from app.services.graphs import GraphService, GraphUnavailableError
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -42,12 +44,55 @@ async def query_agent(
     identity: CurrentIdentity,
     trace_id: TraceId,
 ) -> AgentQueryResponse:
-    raise AppError(
-        ErrorCode.NOT_IMPLEMENTED,
-        "Agent query is not implemented in Sprint 1",
-        detail={
-            "scope": payload.scope,
-            "planned_sprint": "3",
-            "blocked_by": "M3 意图路由 + 引用生成链路",
-        },
-    )
+    # 1) 显式指定 kg_version 时校验 active（ADR-0002 §3.2，严禁静默降级）
+    if payload.kg_version is not None:
+        await _assert_active_kg_version(requested=payload.kg_version, trace_id=trace_id)
+
+    # 2) 执行问答（org_id 只来自认证态，严禁取自 body / query —— ADR-0003 §3.3）
+    try:
+        return await AgentService.instance().query(
+            request=payload,
+            org_id=identity.org_id,
+            trace_id=trace_id,
+        )
+    except AgentUnavailableError as exc:
+        raise AppError(
+            ErrorCode.NOT_IMPLEMENTED,
+            "Agent pipeline is unavailable",
+            detail={
+                "scope": payload.scope,
+                "blocked_by": "LLM（DeepSeek）或 Neo4j 未就绪",
+                "reason": str(exc),
+            },
+        ) from exc
+
+
+async def _assert_active_kg_version(*, requested: str, trace_id: str) -> None:
+    """请求显式指定版本时，非 ``active`` 一律 409；Neo4j 不可用则 501。
+
+    **必须区分**「版本不合法（409）」与「图谱不可用（501）」——
+    前者是调用方的错，后者是本服务的基础设施故障，不可混为一谈。
+    """
+    try:
+        status = GraphService.instance().fetch_kg_version_status(requested)
+    except GraphUnavailableError as exc:
+        raise AppError(
+            ErrorCode.NOT_IMPLEMENTED,
+            "Graph store is unavailable",
+            detail={
+                "kg_version": requested,
+                "blocked_by": "Neo4j 不可用，无法校验 kg_version 状态",
+                "reason": str(exc),
+            },
+        ) from exc
+
+    if status != "active":
+        raise AppError(
+            ErrorCode.KG_VERSION_NOT_ACTIVE,
+            detail={
+                "kg_version": requested,
+                "status": status or "unknown",
+                "hint": "仅 status='active' 的版本可被检索，严禁静默降级",
+                "trace_id": trace_id,
+            },
+        )
