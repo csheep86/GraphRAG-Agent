@@ -24,6 +24,28 @@ const DEV_DEFAULT_ORG_ID =
  */
 export const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
 
+/**
+ * 契约内端点路径模式（Sprint 4.10.1.6 起唯一真源）。
+ * 路径参数（如 {document_id}）用 [^/]+ 占位；精确锚定 ^$ 避免误匹配。
+ * 契约新增端点时必须同步这里；漏更新会让新端点走 mock 而非真实接口。
+ */
+const CONTRACT_COVERED_PATTERNS: RegExp[] = [
+  /^\/api\/v1\/agent\/query$/,
+  /^\/api\/v1\/documents\/upload$/,
+  /^\/api\/v1\/documents\/[^/]+\/graph$/,
+  /^\/api\/v1\/documents\/[^/]+\/status$/,
+];
+
+/**
+ * 接口级 mock 判定：
+ *  - USE_MOCK=true → 全 Mock（开发态零依赖）
+ *  - USE_MOCK=false → 仅契约内端点走真实；契约外端点仍走 Mock（避免 UI 全红）
+ */
+export function shouldMock(path: string): boolean {
+  if (USE_MOCK) return true;
+  return !CONTRACT_COVERED_PATTERNS.some((re) => re.test(path));
+}
+
 export type ErrorResponse = components["schemas"]["ErrorResponse"];
 export type ErrorCode = components["schemas"]["ErrorCode"];
 

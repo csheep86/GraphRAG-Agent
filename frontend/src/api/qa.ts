@@ -5,12 +5,12 @@ import type {
   SendQuestionPayload,
 } from "@/types/mock";
 
-import { USE_MOCK, delay, request } from "./client";
+import { delay, request, shouldMock } from "./client";
 import { MOCK_MESSAGES, MOCK_SESSIONS, buildMockAnswer } from "./mock/qa";
 
 /** 会话列表。契约缺失：需后端补 `GET /api/v1/qa/sessions` */
 export async function listSessions(): Promise<ChatSession[]> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/qa/sessions")) {
     await delay(200);
     return MOCK_SESSIONS;
   }
@@ -22,7 +22,7 @@ export async function listSessions(): Promise<ChatSession[]> {
 export async function listMessages(
   sessionId: string,
 ): Promise<ChatMessage[]> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/qa/sessions/{id}")) {
     await delay(260);
     return MOCK_MESSAGES[sessionId] ?? [];
   }
@@ -64,7 +64,7 @@ export function mapAgentQueryResponse(
 export async function sendQuestion(
   payload: SendQuestionPayload,
 ): Promise<ChatMessage> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/agent/query")) {
     await delay(900);
     return buildMockAnswer(payload.question);
   }

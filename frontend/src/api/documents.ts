@@ -6,9 +6,10 @@ import type {
   ReprocessResponse,
 } from "@/types/mock";
 
-import { USE_MOCK, delay, mockId, request } from "./client";
+import { delay, mockId, request, shouldMock } from "./client";
 import {
   MOCK_DOCUMENTS,
+  MOCK_DOCUMENT_STATUS,
   MOCK_DOCUMENT_TOTAL,
   MOCK_RECENT_DOCUMENTS,
 } from "./mock/documents";
@@ -17,7 +18,7 @@ import {
 export async function listDocuments(
   query: DocumentListQuery = {},
 ): Promise<DocumentListResponse> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/documents")) {
     await delay(260);
 
     const keyword = query.keyword?.trim().toLowerCase() ?? "";
@@ -51,7 +52,7 @@ export async function listDocuments(
 export async function listRecentDocuments(
   limit = 4,
 ): Promise<DocumentListItem[]> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/documents")) {
     await delay(200);
     return MOCK_RECENT_DOCUMENTS.slice(0, limit);
   }
@@ -67,7 +68,7 @@ export async function listRecentDocuments(
 export async function uploadDocument(
   file: File,
 ): Promise<components["schemas"]["UploadResponse"]> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/documents/upload")) {
     await delay(720);
     return {
       status: "pending",
@@ -93,6 +94,11 @@ export async function uploadDocument(
 export async function getDocumentStatus(
   documentId: string,
 ): Promise<components["schemas"]["DocumentStatusResponse"]> {
+  if (shouldMock("/api/v1/documents/{id}/status")) {
+    await delay(180);
+    return MOCK_DOCUMENT_STATUS;
+  }
+
   return request<components["schemas"]["DocumentStatusResponse"]>(
     `/api/v1/documents/${documentId}/status`,
   );
@@ -102,7 +108,7 @@ export async function getDocumentStatus(
 export async function reprocessDocument(
   documentId: string,
 ): Promise<ReprocessResponse> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/documents/{id}/reprocess")) {
     await delay(420);
     return {
       task_id: mockId("task"),
