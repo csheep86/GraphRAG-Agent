@@ -21,6 +21,12 @@
 4. **关系类型映射**：见 :func:`_relation_type` —— 命中契约枚举（含桥梁抽取的
    实体↔实体类关系，Sprint 4.10.0.B 扩展）原样直通；**未知类型**兜底投影为
    ``MENTIONS``，真实关系名保留在 ``properties["relation_name"]``。
+5. **投影失败显式化**（Sprint 4.10.0.D1 缺口 5）：Neo4j 返回的原始数据与契约
+   不符（字段缺失 / 类型非法）时，把 Pydantic 构造异常**包装**为
+   :class:`GraphUnavailableError`（路由层转 ``501``），消息中带上
+   「上下文 + 第几条 + 字段级明细」；**不**跳过坏记录、**更不**静默返回空图——
+   空图会被上层误判为「图谱里没有证据」而返回 ``refused = true``（200），
+   把数据质量故障伪装成正常业务结论。
 """
 
 from __future__ import annotations
@@ -304,21 +310,18 @@ class GraphService:
         total_nodes = int(result["total_nodes"] or 0)
         truncated = total_nodes > node_limit
 
-        nodes = [
-            _to_node(record, kg_version=version, label="Entity")
-            for record in (result["nodes"] or [])[:node_limit]
-        ]
-
-        edges = [
-            GraphEdge(
-                id=str(record.get("id", "")),
-                type=_relation_type(record.get("type")),
-                source=str(record.get("source", "")),
-                target=str(record.get("target", "")),
-                properties=_sanitize_properties(record.get("properties") or {}),
-            )
-            for record in (result["edges"] or [])
-        ]
+        # 投影段（批次 D1 缺口 5）：Neo4j 原始数据可能与契约不符
+        # （如 ``canonical_name`` 是对象、``confidence`` 越界、``properties`` 非 dict）。
+        # 任何一条构造失败都抛 GraphUnavailableError（路由层 501），
+        # **不可**静默跳过坏记录或返回空图——见模块 docstring 设计要点 5。
+        projection_context = f"fetch_all_subgraph kg_version={version}"
+        nodes = _project_nodes(
+            (result["nodes"] or [])[:node_limit],
+            kg_version=version,
+            label="Entity",
+            context=projection_context,
+        )
+        edges = _project_edges(result["edges"] or [], context=projection_context)
 
         return nodes, edges, truncated
 
@@ -354,36 +357,39 @@ class GraphService:
         if result is None:
             return [], [], False
 
-        nodes: list[GraphNode] = []
+        # 投影段（批次 D1 缺口 5）：与 fetch_all_subgraph 同族问题——
+        # 构造失败必须显式抛 GraphUnavailableError（501），不得静默降级为空结果。
+        projection_context = (
+            f"fetch_document_subgraph doc_id={doc_id}, kg_version={kg_version}"
+        )
         truncated = False
 
-        # Document 节点
+        # Document 节点：Cypher 用 OPTIONAL MATCH，故文档节点可能缺失（None）
         document_record = result.get("d")
-        if document_record is not None:
-            nodes.append(
-                _to_node(document_record, kg_version=kg_version, label="Document")
-            )
-
-        for record in result.get("chunks") or []:
-            nodes.append(_to_node(record, kg_version=kg_version, label="Chunk"))
-        for record in result.get("entities") or []:
-            nodes.append(_to_node(record, kg_version=kg_version, label="Entity"))
+        nodes = _project_nodes(
+            [document_record] if document_record is not None else [],
+            kg_version=kg_version,
+            label="Document",
+            context=projection_context,
+        )
+        nodes += _project_nodes(
+            result.get("chunks") or [],
+            kg_version=kg_version,
+            label="Chunk",
+            context=projection_context,
+        )
+        nodes += _project_nodes(
+            result.get("entities") or [],
+            kg_version=kg_version,
+            label="Entity",
+            context=projection_context,
+        )
 
         if len(nodes) > node_limit:
             nodes = nodes[:node_limit]
             truncated = True
 
-        edges: list[GraphEdge] = []
-        for record in result.get("mentions") or []:
-            edges.append(
-                GraphEdge(
-                    id=str(record.get("id", "")),
-                    type=_relation_type(record.get("type")),
-                    source=str(record.get("source", "")),
-                    target=str(record.get("target", "")),
-                    properties=_sanitize_properties(record.get("properties") or {}),
-                )
-            )
+        edges = _project_edges(result.get("mentions") or [], context=projection_context)
 
         return nodes, edges, truncated
 
@@ -410,6 +416,112 @@ def _to_node(record: Any, *, kg_version: str, label: str) -> GraphNode:
         confidence=_safe_float(record.get("confidence")),
         kg_version=kg_version,
     )
+
+
+def _project_nodes(
+    records: Any,
+    *,
+    kg_version: str,
+    label: str,
+    context: str,
+) -> list[GraphNode]:
+    """逐条把 Neo4j record 投影为 :class:`GraphNode`（批次 D1 缺口 5 兜底）。
+
+    任一条构造失败（Pydantic ``ValidationError`` / 属性缺失 ``AttributeError`` 等）
+    都**立即**包装为 :class:`GraphUnavailableError`，消息里带上
+    「查询上下文 + 第几条 + 具体字段」，便于定位是哪条脏数据。
+    刻意**不**跳过坏记录：图谱问答里「少一条数据」上层完全无法感知，
+    只会得到一个看似正常的结论。
+    """
+    nodes: list[GraphNode] = []
+    for index, record in enumerate(records):
+        try:
+            nodes.append(_to_node(record, kg_version=kg_version, label=label))
+        except Exception as exc:  # noqa: BLE001 - 投影失败必须显式暴露，不可静默
+            logger.bind(
+                context=context, kind="node", label=label, record_index=index
+            ).warning("graph_projection_failed")
+            raise GraphUnavailableError(
+                _projection_failure_message(
+                    context=context, kind="node", label=label, index=index, exc=exc
+                )
+            ) from exc
+    return nodes
+
+
+def _project_edges(records: Any, *, context: str) -> list[GraphEdge]:
+    """逐条把 Cypher 关系投影为 :class:`GraphEdge`（与 :func:`_project_nodes` 同策略）。"""
+    edges: list[GraphEdge] = []
+    for index, record in enumerate(records):
+        try:
+            edges.append(_edge_from_record(record))
+        except Exception as exc:  # noqa: BLE001 - 同上：失败即 501，不静默丢弃
+            logger.bind(context=context, kind="edge", record_index=index).warning(
+                "graph_projection_failed"
+            )
+            raise GraphUnavailableError(
+                _projection_failure_message(
+                    context=context, kind="edge", label=None, index=index, exc=exc
+                )
+            ) from exc
+    return edges
+
+
+def _edge_from_record(record: Any) -> GraphEdge:
+    """把 Cypher ``type(r)`` / 关系属性投影为契约层 :class:`GraphEdge`。
+
+    ``type`` 经 :func:`_relation_type` 做契约投影；``properties`` **必须**是
+    dict（Cypher 的 ``properties(r)`` 恒为 map），否则显式报错并指名 ``properties``
+    字段，避免 ``AttributeError: 'list' object has no attribute 'items'`` 这类
+    无法定位字段的报错。
+    """
+    raw_properties = record.get("properties") or {}
+    if not isinstance(raw_properties, dict):
+        raise TypeError(
+            f"properties 字段应为 dict，实际为 {type(raw_properties).__name__}"
+        )
+    return GraphEdge(
+        id=str(record.get("id", "")),
+        type=_relation_type(record.get("type")),
+        source=str(record.get("source", "")),
+        target=str(record.get("target", "")),
+        properties=_sanitize_properties(raw_properties),
+    )
+
+
+def _projection_failure_message(
+    *,
+    context: str,
+    kind: str,
+    label: str | None,
+    index: int,
+    exc: Exception,
+) -> str:
+    """拼装「图谱数据与契约不符」的异常消息（含字段级明细，便于排查脏数据）。"""
+    where = f"{context}, {kind}[{index}]"
+    if label:
+        where += f" label={label}"
+    return f"图谱数据与契约不符（{where}）: {_describe_projection_error(exc)}"
+
+
+def _describe_projection_error(exc: Exception) -> str:
+    """把 Pydantic ``ValidationError`` 压成「字段: 原因」串；其它异常退化为「类型: 文本」。
+
+    只取前 3 条错误，避免一条脏记录带出一大段消息把日志冲爆。
+    """
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            items = errors()
+        except Exception:  # noqa: BLE001 - 描述失败不影响上抛语义
+            items = None
+        if items:
+            details = []
+            for item in items[:3]:
+                location = ".".join(str(part) for part in item.get("loc") or ())
+                details.append(f"{location or '<root>'}: {item.get('msg')}")
+            return "; ".join(details)
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _relation_type(raw: Any) -> RelationType:

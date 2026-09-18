@@ -68,6 +68,10 @@
 | `GraphEdge.type` 枚举不含「实体↔实体」关系 | ✅ 已偿还（Sprint 4.10.0.B）：枚举扩展 `HAS_FINANCIAL_INDICATOR` / `OPERATES_SEGMENT` / `RELATED`，桥梁专有类型直通；未知类型仍兜底投影 `MENTIONS` + `properties.relation_name` | 本文件 §3 |
 | 文件写入存储抽象层 | 只落 PG 元数据，`storage_key` 保持 NULL | M1 §4.3 |
 | 契约 `description` 描述漂移 | `/upload`、`/graph`、`/agent/query` 的 `description` 仍写 Sprint 1/3 措辞，与已实装行为不符；**代码侧刻意不动**以免制造契约漂移 | 本文件 §3 |
+| C2：`/upload` 的 `description` 过期 | `routes/documents.py` L53-54 仍写「Sprint 1 边界：不注册异步执行体，`status` 停留在 `pending`；`TaskManager` 与启动回收在 Sprint 3 补齐」，而 `TaskManager.recover_orphan_tasks` 已实装；改动会连带重导出 `contracts/openapi.yaml` + `frontend/src/types/api.d.ts` | 本文件 §3（另开批次 C2） |
+| S4-1：`docs/multimodal_rag_backend_api_spec-v1.0.md` L137 | `NOT_IMPLEMENTED` 行仍写「契约已定稿、实现留待 Sprint 3 / 来源：Sprint 1 边界」，与已实装的 5 个接口不符 | Sprint 4 待办 |
+| S4-2：`specs/m2-extract-kg.md` L157 | `/graph` 仍写「实现在 Sprint 3，当前占位返回 501」 | Sprint 4 待办（spec 改动属架构师角色，须人工确认，ADR-0002 §6） |
+| S4-3：`frontend/` 注释过期 | `api/client.ts` L15-16、`api/graph.ts` L41、`api/qa.ts` L61、`.env.development` L9-10 仍表述「大部分端点当前实现状态为 501 NOT_IMPLEMENTED」 | Sprint 4 收尾统一评估 |
 
 ### 4.1 阶段九已偿还的缺口
 

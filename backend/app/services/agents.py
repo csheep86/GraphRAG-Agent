@@ -270,20 +270,18 @@ class AgentService:
         # `AttributeError`（ruff / pytest 都测不到，只在真实调用时 500）。
         # 只能写字符串字面量，取值必须与 `contracts/openapi.yaml` 的 `enum` 一致。
         if not citations:
-            # 拒答分支（批次 A 决策）：无支撑证据 → kg_nodes / kg_relations 为空列表；
-            # token_usage 置 None（拒答语义下不携带用量，严禁拼凑数据）
-            return AgentQueryResponse(
-                answer="无法回答",
-                citations=[],
-                route="m3_graphqa",
-                confidence="low",
-                refused=True,
-                refusal_reason="no_grounded_evidence",
-                kg_version=version,
+            # 拒答分支（批次 A 决策 + D1 缺口 6）：无支撑证据 → 统一走 `_refuse()`。
+            # 原先此处 inline 构造，与 `_refuse()` 逻辑重复（DRY）；
+            # Sprint 4 接入 Agent Tool 调用循环后，工具循环里的拒答可复用同一出口。
+            # 语义**不变**：kg_nodes / kg_relations 为空列表，token_usage 为 None。
+            return self._refuse(
                 trace_id=trace_id,
-                kg_nodes=[],
-                kg_relations=[],
-                token_usage=None,
+                kg_version=version,
+                reason="no_grounded_evidence",
+                note=(
+                    "图谱可查但 LLM 未给出可溯源证据"
+                    "（evidence 中无 chunk-/doc- 前缀条目），按 M3 验收 3 拒答"
+                ),
             )
 
         # 正常回答：kg_nodes / kg_relations 来自第 2 步的结构化检索结果，
@@ -401,6 +399,21 @@ class AgentService:
         reason: RefusalReason,
         note: str,
     ) -> AgentQueryResponse:
+        """拒答的**唯一出口**（Sprint 4.10.0.D1 缺口 6：原为无调用方的死代码）。
+
+        拒答是**正常业务判定**（HTTP ``200`` + ``refused = true``），
+        **不是**基础设施故障——后者必须抛 :class:`AgentUnavailableError`（501）。
+
+        三个图谱 / 用量字段在此**显式置空**，理由如下（严禁拼凑数据）：
+        - ``kg_nodes`` / ``kg_relations``：拒答意味着**没有**任何支撑答案的证据，
+          若把检索到的子图一并返回，前端会误以为答案有据可依；
+        - ``token_usage``：拒答语义下不承担用量统计，即使 LLM 曾被调用过也不回填。
+
+        :param note: 人类可读的拒答缘由，**仅**进日志便于检索（不入契约）。
+        """
+        logger.bind(trace_id=trace_id, reason=reason, note=note).info(
+            "agent_query_refused"
+        )
         return AgentQueryResponse(
             answer="无法回答",
             citations=[],
@@ -410,6 +423,9 @@ class AgentService:
             refusal_reason=reason,
             kg_version=kg_version,
             trace_id=trace_id,
+            kg_nodes=[],
+            kg_relations=[],
+            token_usage=None,
         )
 
 
