@@ -46,9 +46,13 @@ export interface paths {
          * @description **同步校验 + 立即返回**，不在请求内做任何解析：
          *     1. MIME 白名单校验 → 失败 415；
          *     2. 大小上限校验（默认 100MB）→ 失败 413；
-         *     3. 落 `documents` 记录（`status = pending`）并返回 `task_id`。
+         *     3. 落 `documents` 记录（`status = pending`），注册 `document.parse` 异步执行体，并返回 `task_id`。
          *
-         *     Sprint 1 边界：**不注册异步执行体**，因此 `status` 会停留在 `pending`；`TaskManager` 与启动回收在 Sprint 3 补齐（ADR-0001 §3.2）。
+         *     **解析链路**：执行体真实推进 `pending → processing → completed / failed`（M1 硬约束 H1），第三方 IO 异常按 H8 指数退避重试（≤ 3 次）；进程重启时由启动回收把在途任务置 `failed` + `error_code = TASK_INTERRUPTED`（ADR-0001 §3.2）。
+         *
+         *     上传响应的 `status` 恒为 `pending`，后续进度请轮询 `GET /documents/{id}/status`。
+         *
+         *     **当前局限**：状态机与错误落库为真实链路；MinerU 结构化解析与 LangExtract 实体关系抽取尚未接入，执行体当前返回空结果（后续版本补齐，见 v1.1.0 待办）。
          *
          *     文件名以 SHA-256 落库（`filename_hash`），日志与响应均不含原文。
          */
