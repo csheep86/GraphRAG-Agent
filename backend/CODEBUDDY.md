@@ -73,6 +73,8 @@
 | S4-2：`specs/m2-extract-kg.md` L157 | `/graph` 仍写「实现在 Sprint 3，当前占位返回 501」 | Sprint 4 待办（spec 改动属架构师角色，须人工确认，ADR-0002 §6） |
 | S4-3：`frontend/` 注释过期 | `api/client.ts` L15-16、`api/graph.ts` L41、`api/qa.ts` L61、`.env.development` L9-10 仍表述「大部分端点当前实现状态为 501 NOT_IMPLEMENTED」 | Sprint 4 收尾统一评估 |
 | S4-4：`tasks/registry.py` L135-138 docstring 过期 | 仍写「Sprint 3 后段将替换为…ADR-0002 三段式写入」，而该段实现已随 D2（PG `kg_versions` 真源）移出 Sprint 4 | v1.1.0 待办（与 D2 同期处理） |
+| E1：财务指标孤立节点 | output.json 12/16 财务指标实体无任何边，图谱连通性差 | v1.1.0 数据质量专项 |
+| E2：实体命名可疑 | 「智能制造与数字服务」「集团」等实体命名不符预期，需 Prompt 抽取规范重设计 | v1.1.0 数据质量专项（与 E1 同期，Prompt 改动需版本化） |
 
 ### 4.1 阶段九已偿还的缺口
 
