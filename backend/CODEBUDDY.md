@@ -75,6 +75,7 @@
 | S4-4：`tasks/registry.py` L135-138 docstring 过期 | 仍写「Sprint 3 后段将替换为…ADR-0002 三段式写入」，而该段实现已随 D2（PG `kg_versions` 真源）移出 Sprint 4 | v1.1.0 待办（与 D2 同期处理） |
 | E1：财务指标孤立节点 | output.json 12/16 财务指标实体无任何边，图谱连通性差 | v1.1.0 数据质量专项 |
 | E2：实体命名可疑 | 「智能制造与数字服务」「集团」等实体命名不符预期，需 Prompt 抽取规范重设计 | v1.1.0 数据质量专项（与 E1 同期，Prompt 改动需版本化） |
+| `/agent/query` 缺 PG 前置租户隔离 | Cypher `_QUERY_ALL_ENTITY_SUBGRAPH` fail-open（`Entity.org_id` 属性键不存在时 `OR properties(n)['org_id'] IS NULL` 命中放行）；route 无 PG `documents` 表前置租户校验 | v1.1.0（接入 MinerU + LangExtract 时同步改 fail-closed） |
 
 ### 4.1 阶段九已偿还的缺口
 
