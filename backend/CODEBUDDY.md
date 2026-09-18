@@ -76,6 +76,8 @@
 | E1：财务指标孤立节点 | output.json 12/16 财务指标实体无任何边，图谱连通性差 | v1.1.0 数据质量专项 |
 | E2：实体命名可疑 | 「智能制造与数字服务」「集团」等实体命名不符预期，需 Prompt 抽取规范重设计 | v1.1.0 数据质量专项（与 E1 同期，Prompt 改动需版本化） |
 | `/agent/query` 缺 PG 前置租户隔离 | Cypher `_QUERY_ALL_ENTITY_SUBGRAPH` fail-open（`Entity.org_id` 属性键不存在时 `OR properties(n)['org_id'] IS NULL` 命中放行）；route 无 PG `documents` 表前置租户校验 | v1.1.0（接入 MinerU + LangExtract 时同步改 fail-closed） |
+| B1：Document.retry_count 列存在但 executor 从不更新 | 列已声明（Schema 有），executor 从不写；要么漏写、要么该删列。11.2 第二批测试不锁定该值 | v1.1.0 疑似缺陷 |
+| B4：Settings.task_retry_multiplier 已声明但从未被消费 | 字段定义 default=2.0, gt=1，但 executor 只用 task_retry_initial_seconds 作 multiplier；改该配置无任何效果 | v1.1.0 疑似缺陷（配置项与代码脱节） |
 
 ### 4.1 阶段九已偿还的缺口
 
