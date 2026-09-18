@@ -23,14 +23,19 @@ router = APIRouter(prefix="/agent", tags=["agent"])
     "/query",
     response_model=AgentQueryResponse,
     operation_id="queryAgent",
-    summary="图谱问答（契约已定稿，Sprint 3 实现）",
+    summary="图谱问答",
     description=(
         "单轮问答 + 可溯源引用。每个事实句必须能回溯到 `citations[]`，"
         "引用覆盖率不足时**必须拒答**（`refused = true`），严禁编造引用（M3 验收 3）。\n\n"
         "`refused = true` 时 `answer` 恒为 `无法回答`。\n\n"
         "**版本一致性（ADR-0002 §3.2）**：显式传入非 active 的 `kg_version` 时一律返回 "
         "**409** `KG_VERSION_NOT_ACTIVE`，**严禁静默降级**。\n\n"
-        "**当前实现状态**：返回 **501** `NOT_IMPLEMENTED`（M3 检索链路为 Sprint 3 范围）。"
+        "**实现状态**：已实装——由 `AgentService.query`（`app/services/agents.py`）执行"
+        "「取 active 版本 → 拉取相关子图 → 加载 `kg_qa` Prompt → LLM 调用与解析」单轮链路，"
+        "返回 `AgentQueryResponse`。\n\n"
+        "**501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`DEEPSEEK_API_KEY` 缺失）/ "
+        "LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，"
+        "**不**表示「接口未实现」。"
     ),
     responses={
         **TENANT_ERROR_RESPONSES,

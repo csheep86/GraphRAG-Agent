@@ -105,14 +105,18 @@ async def read_document_status(
     "/{document_id}/graph",
     response_model=DocumentGraphResponse,
     operation_id="getDocumentGraph",
-    summary="获取文档图谱子图（契约已定稿，Sprint 3 实现）",
+    summary="获取文档图谱子图",
     description=(
         "返回该文档在 Neo4j 中的子图（`nodes` + `edges`），供前端力导向图渲染。\n\n"
         "**一致性（ADR-0002 §3.2）**：只返回 `status = active` 的 `kg_version`；"
         "该文档不存在 active 版本时返回 **409** `KG_VERSION_NOT_ACTIVE`，"
         "**绝不静默降级**到其他版本；响应中的 `version_status` 恒为 `active`。\n\n"
         "规模上限对齐 M3 §3 验收 1：单次节点数 ≤ 500，超限 `truncated = true`。\n\n"
-        "**当前实现状态**：返回 **501** `NOT_IMPLEMENTED`（Neo4j 查询为 Sprint 3 范围）。"
+        "**实现状态**：已实装——由 `GraphService.fetch_document_subgraph`"
+        "（`app/services/graphs.py`）按 `kg_version` 查询 Neo4j 子图，"
+        "并映射为 `DocumentGraphResponse`（`nodes` / `edges` / `truncated` / `version_status`）。\n\n"
+        "**501 `NOT_IMPLEMENTED` 的真实语义**：Neo4j 不可用（连接失败 / 查询超时 / 凭据错误）"
+        "属**基础设施故障**，此时返回 501——**不**表示「接口未实现」。"
     ),
     responses={
         **TENANT_ERROR_RESPONSES,

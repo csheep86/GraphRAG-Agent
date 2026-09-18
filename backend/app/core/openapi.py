@@ -41,8 +41,9 @@ GraphRAG-Agent 后端 API（契约 v1.0，Sprint 1）。
 查询层只认 `kg_version.status = active`。请求显式指定非 active 版本时，
 一律返回 `409 KG_VERSION_NOT_ACTIVE`，**严禁静默降级**到最新版本。
 
-## 实现状态（Sprint 1 边界）
-`/documents/{id}/graph` 与 `/agent/query` 契约已定稿，实现返回 `501 NOT_IMPLEMENTED`。
+## 实现状态（Sprint 4）
+五个接口均已实装真实链路；`501 NOT_IMPLEMENTED` 不再表示「接口未实现」，而是
+**基础设施故障**（Neo4j 不可用 / LLM 未配置或装配失败）的统一出口。
 """.strip()
 
 OPENAPI_TAGS: list[dict[str, str]] = [
