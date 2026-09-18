@@ -11,6 +11,13 @@ export const API_BASE_URL =
 
 export const APP_ENV = process.env.NEXT_PUBLIC_APP_ENV || "development";
 
+// dev-only 默认 org_id：与 backend/.env.development DEFAULT_ORG_ID 同步。
+// 仅当 NEXT_PUBLIC_APP_ENV 显式 === "development" 时注入 X-Org-Id；
+// 读 raw env 而非 APP_ENV 常量，避免 prod build 忘设 env 时被 fallback 误注入。
+const DEV_DEFAULT_ORG_ID =
+  process.env.NEXT_PUBLIC_DEV_DEFAULT_ORG_ID ||
+  "00000000-0000-4000-8000-000000000001";
+
 /**
  * 默认走 Mock：contracts/openapi.yaml 中除 health / upload / status 外，
  * 其余端点当前实现状态为 501 NOT_IMPLEMENTED（Sprint 3 范围）。
@@ -49,6 +56,9 @@ export async function request<T>(
     ...init,
     headers: {
       Accept: "application/json",
+      ...(process.env.NEXT_PUBLIC_APP_ENV === "development"
+        ? { "X-Org-Id": DEV_DEFAULT_ORG_ID }
+        : {}),
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...init.headers,
     },
