@@ -76,6 +76,9 @@
 | `:AFFILIATED_WITH` | `type, share_pct, since` | `:Entity` → `:Entity` | 关联（股权 / 任职 / 地址 / 法人） |
 | `:SUPPLIES_TO` | `contract_id, amount` | `:Entity` → `:Entity` | 供应关系 |
 | `:PARTY_TO` | `role` | `:Entity` → `:Document` | 合同当事人 |
+| `:HAS_FINANCIAL_INDICATOR` | `relation_name, derived` | `:Entity` → `:Entity` | 实体↔财务指标（桥梁抽取） |
+| `:OPERATES_SEGMENT` | `relation_name, derived` | `:Entity` → `:Entity` | 实体经营业务板块（桥梁抽取） |
+| `:RELATED` | `relation_name, derived` | `:Entity` → `:Entity` | 通用实体关联兜底（桥梁抽取） |
 
 ### 4.3 关键属性约束
 

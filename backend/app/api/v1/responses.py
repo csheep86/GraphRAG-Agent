@@ -67,6 +67,9 @@ VALIDATION_ERROR: dict[int, dict[str, Any]] = {
 NOT_IMPLEMENTED: dict[int, dict[str, Any]] = {
     501: {
         "model": ErrorResponse,
-        "description": "契约已定稿但实现留待 Sprint 3（`NOT_IMPLEMENTED`）",
+        "description": (
+            "基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501"
+            "（`NOT_IMPLEMENTED`）"
+        ),
     }
 }

@@ -2,7 +2,7 @@
 #
 # 四个 job，任一失败即整条流水线红：
 #   1. backend  : Ruff 静态检查 + 格式检查 + Pytest（行为与契约测试）
-#   2. frontend : ESLint + `npm run gen:api` 可执行性冒烟
+#   2. frontend : ESLint + TypeScript 类型检查 + `npm run gen:api` 可执行性冒烟
 #   3. contract : 契约漂移门禁（关键）
 #                 a. 后端侧 `export_openapi.py --check` 校验 contracts/openapi.yaml
 #                 b. 前端侧 `gen:api` 后 `git diff --exit-code` 校验 src/types/api.d.ts
@@ -114,6 +114,12 @@ jobs:
       - name: ESLint
         run: npm run lint
 
+      - name: 生成 Next 类型声明（next-env.d.ts 被 gitignore，CI 检出后需先生成）
+        run: npm exec next typegen
+
+      - name: TypeScript 类型检查
+        run: npm run typecheck
+
       - name: 生成 API 类型（可执行性冒烟）
         run: npm run gen:api
 
@@ -128,6 +134,7 @@ jobs:
             echo "- 复现命令（frontend/ 目录下）:"
             echo "  - \`npm ci\`"
             echo "  - \`npm run lint\`"
+            echo "  - \`npm exec next typegen && npm run typecheck\`"
             echo "  - \`npm run gen:api\`"
           } >> "$GITHUB_STEP_SUMMARY"
 

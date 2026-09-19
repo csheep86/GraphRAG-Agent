@@ -28,8 +28,13 @@ RelationType = Literal[
     "AFFILIATED_WITH",
     "SUPPLIES_TO",
     "PARTY_TO",
+    "HAS_FINANCIAL_INDICATOR",
+    "OPERATES_SEGMENT",
+    "RELATED",
 ]
-"""对齐 Neo4j 关系类型（M2 §4.2）。"""
+"""对齐 Neo4j 关系类型（M2 §4.2）；后三者为桥梁抽取的实体↔实体类关系
+（Sprint 4.10.0.B 扩展），与 ``scripts/import_to_neo4j.py::RELATION_TOKEN_MAP``
+白名单 token 逐字一致。"""
 
 
 class UploadResponse(BaseModel):
@@ -128,7 +133,9 @@ class GraphNode(BaseModel):
 
 class GraphEdge(BaseModel):
     id: str
-    type: RelationType
+    type: RelationType = Field(
+        description="关系类型（M2 §4.2），含桥梁抽取的实体↔实体类关系"
+    )
     source: str = Field(description="起点节点 id")
     target: str = Field(description="终点节点 id")
     properties: dict[str, Any] = Field(

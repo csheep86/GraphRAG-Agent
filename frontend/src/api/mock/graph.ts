@@ -1,7 +1,10 @@
+import type { components } from "@/types/api";
 import type {
   EntityDetail,
   GraphOverviewResponse,
 } from "@/types/mock";
+
+type DocumentGraphResponse = components["schemas"]["DocumentGraphResponse"];
 
 /**
  * 全局知识图谱 Mock（p04）。
@@ -305,6 +308,47 @@ const ENTITY_DETAILS: Record<string, EntityDetail> = {
 
 /** 默认选中的实体（对齐 p04 首屏「数据安全合规」） */
 export const MOCK_DEFAULT_ENTITY_ID = "e-topic-compliance";
+
+/**
+ * USE_MOCK=true 时 `getDocumentGraph` 直接返回最小图谱（Sprint 4.10.1.6）：
+ * 2 节点 + 1 边，让 p04 文档级力导向图可渲染。
+ * 节点 / 边 / kg_version / trace_id 全部 mock；触发真实接口时由后端覆盖。
+ */
+export const MOCK_DOCUMENT_GRAPH: DocumentGraphResponse = {
+  doc_id: "00000000-0000-4000-8000-000000000001",
+  kg_version: "00000000-0000-4000-8000-0000000000aa",
+  node_count: 2,
+  relation_count: 1,
+  truncated: false,
+  version_status: "active",
+  trace_id: "00000000-0000-4000-8000-0000000000bb",
+  nodes: [
+    {
+      id: "e-mock-001",
+      kg_version: "00000000-0000-4000-8000-0000000000aa",
+      label: "Entity",
+      canonical_name: "数据安全合规",
+      entity_type: "主题",
+      confidence: 0.95,
+    },
+    {
+      id: "e-mock-002",
+      kg_version: "00000000-0000-4000-8000-0000000000aa",
+      label: "Entity",
+      canonical_name: "数据分级分类",
+      entity_type: "规范",
+      confidence: 0.92,
+    },
+  ],
+  edges: [
+    {
+      id: "r-mock-001",
+      source: "e-mock-001",
+      target: "e-mock-002",
+      type: "RELATED",
+    },
+  ],
+};
 
 export function getMockEntityDetail(id: string): EntityDetail | null {
   return ENTITY_DETAILS[id] ?? null;

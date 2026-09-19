@@ -5,12 +5,12 @@ import type {
   SendQuestionPayload,
 } from "@/types/mock";
 
-import { USE_MOCK, delay, request } from "./client";
+import { delay, request, shouldMock } from "./client";
 import { MOCK_MESSAGES, MOCK_SESSIONS, buildMockAnswer } from "./mock/qa";
 
 /** 会话列表。契约缺失：需后端补 `GET /api/v1/qa/sessions` */
 export async function listSessions(): Promise<ChatSession[]> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/qa/sessions")) {
     await delay(200);
     return MOCK_SESSIONS;
   }
@@ -22,7 +22,7 @@ export async function listSessions(): Promise<ChatSession[]> {
 export async function listMessages(
   sessionId: string,
 ): Promise<ChatMessage[]> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/qa/sessions/{id}")) {
     await delay(260);
     return MOCK_MESSAGES[sessionId] ?? [];
   }
@@ -33,10 +33,10 @@ export async function listMessages(
 /**
  * 契约响应 → 前端会话消息的适配器。
  *
- * ⚠️ 已知字段缺口（需在「接口对齐清单」中收敛）：
- * `AgentQueryResponse` 不含图谱「关系路径」与节点/关系计数，
- * 而 p03 右侧「引用证据」面板需要它们。此处降级为 `undefined`，
- * 面板将只展示 `citations` 原文证据。
+ * Sprint 4 批次 A 契约扩展（Sprint 3 缺口 1 偿还）：
+ * `AgentQueryResponse` 已含 `kg_nodes` / `kg_relations` / `token_usage`，
+ * 原先对 `node_count` / `relation_count` / `graph_paths` 的降级处理已移除，
+ * 三字段直接透传给 p03「引用证据」面板。
  */
 export function mapAgentQueryResponse(
   response: components["schemas"]["AgentQueryResponse"],
@@ -49,9 +49,9 @@ export function mapAgentQueryResponse(
     citations: response.citations,
     confidence: response.confidence,
     refused: response.refused,
-    node_count: undefined,
-    relation_count: undefined,
-    graph_paths: undefined,
+    kg_nodes: response.kg_nodes ?? [],
+    kg_relations: response.kg_relations ?? [],
+    token_usage: response.token_usage ?? null,
   };
 }
 
@@ -64,7 +64,7 @@ export function mapAgentQueryResponse(
 export async function sendQuestion(
   payload: SendQuestionPayload,
 ): Promise<ChatMessage> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/agent/query")) {
     await delay(900);
     return buildMockAnswer(payload.question);
   }

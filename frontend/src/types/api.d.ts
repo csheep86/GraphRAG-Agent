@@ -14,14 +14,16 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 图谱问答（契约已定稿，Sprint 3 实现）
+         * 图谱问答
          * @description 单轮问答 + 可溯源引用。每个事实句必须能回溯到 `citations[]`，引用覆盖率不足时**必须拒答**（`refused = true`），严禁编造引用（M3 验收 3）。
          *
          *     `refused = true` 时 `answer` 恒为 `无法回答`。
          *
          *     **版本一致性（ADR-0002 §3.2）**：显式传入非 active 的 `kg_version` 时一律返回 **409** `KG_VERSION_NOT_ACTIVE`，**严禁静默降级**。
          *
-         *     **当前实现状态**：返回 **501** `NOT_IMPLEMENTED`（M3 检索链路为 Sprint 3 范围）。
+         *     **实现状态**：已实装——由 `AgentService.query`（`app/services/agents.py`）执行「取 active 版本 → 拉取相关子图 → 加载 `kg_qa` Prompt → LLM 调用与解析」单轮链路，返回 `AgentQueryResponse`。
+         *
+         *     **501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`DEEPSEEK_API_KEY` 缺失）/ LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，**不**表示「接口未实现」。
          */
         post: operations["queryAgent"];
         delete?: never;
@@ -44,9 +46,13 @@ export interface paths {
          * @description **同步校验 + 立即返回**，不在请求内做任何解析：
          *     1. MIME 白名单校验 → 失败 415；
          *     2. 大小上限校验（默认 100MB）→ 失败 413；
-         *     3. 落 `documents` 记录（`status = pending`）并返回 `task_id`。
+         *     3. 落 `documents` 记录（`status = pending`），注册 `document.parse` 异步执行体，并返回 `task_id`。
          *
-         *     Sprint 1 边界：**不注册异步执行体**，因此 `status` 会停留在 `pending`；`TaskManager` 与启动回收在 Sprint 3 补齐（ADR-0001 §3.2）。
+         *     **解析链路**：执行体真实推进 `pending → processing → completed / failed`（M1 硬约束 H1），第三方 IO 异常按 H8 指数退避重试（≤ 3 次）；进程重启时由启动回收把在途任务置 `failed` + `error_code = TASK_INTERRUPTED`（ADR-0001 §3.2）。
+         *
+         *     上传响应的 `status` 恒为 `pending`，后续进度请轮询 `GET /documents/{id}/status`。
+         *
+         *     **当前局限**：状态机与错误落库为真实链路；MinerU 结构化解析与 LangExtract 实体关系抽取尚未接入，执行体当前返回空结果（后续版本补齐，见 v1.1.0 待办）。
          *
          *     文件名以 SHA-256 落库（`filename_hash`），日志与响应均不含原文。
          */
@@ -65,14 +71,16 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 获取文档图谱子图（契约已定稿，Sprint 3 实现）
+         * 获取文档图谱子图
          * @description 返回该文档在 Neo4j 中的子图（`nodes` + `edges`），供前端力导向图渲染。
          *
          *     **一致性（ADR-0002 §3.2）**：只返回 `status = active` 的 `kg_version`；该文档不存在 active 版本时返回 **409** `KG_VERSION_NOT_ACTIVE`，**绝不静默降级**到其他版本；响应中的 `version_status` 恒为 `active`。
          *
          *     规模上限对齐 M3 §3 验收 1：单次节点数 ≤ 500，超限 `truncated = true`。
          *
-         *     **当前实现状态**：返回 **501** `NOT_IMPLEMENTED`（Neo4j 查询为 Sprint 3 范围）。
+         *     **实现状态**：已实装——由 `GraphService.fetch_document_subgraph`（`app/services/graphs.py`）按 `kg_version` 查询 Neo4j 子图，并映射为 `DocumentGraphResponse`（`nodes` / `edges` / `truncated` / `version_status`）。
+         *
+         *     **501 `NOT_IMPLEMENTED` 的真实语义**：Neo4j 不可用（连接失败 / 查询超时 / 凭据错误）属**基础设施故障**，此时返回 501——**不**表示「接口未实现」。
          */
         get: operations["getDocumentGraph"];
         put?: never;
@@ -169,6 +177,10 @@ export interface components {
         /**
          * AgentQueryResponse
          * @description `POST /api/v1/agent/query` 响应（M3 §4.2）。
+         *
+         *     Sprint 4 阶段 10.0 批次 A 扩展（Sprint 3 缺口 1 偿还）：
+         *     新增 ``kg_nodes`` / ``kg_relations`` / ``token_usage`` 三字段，
+         *     供前端 p03「引用证据」面板展示图谱证据与 token 用量。
          * @example {
          *       "answer": "是。示例子公司 A 的供应商 C 同时持有 B 公司 12% 股权 [source: doc-9/page-3/chunk-12]",
          *       "citations": [
@@ -181,9 +193,35 @@ export interface components {
          *         }
          *       ],
          *       "confidence": "high",
+         *       "kg_nodes": [
+         *         {
+         *           "canonical_name": "示例科技有限公司",
+         *           "confidence": 0.93,
+         *           "entity_type": "公司",
+         *           "id": "e-001",
+         *           "kg_version": "20260320T1430Z-01H9X9ABCDEF",
+         *           "label": "Entity"
+         *         }
+         *       ],
+         *       "kg_relations": [
+         *         {
+         *           "id": "r-001",
+         *           "properties": {
+         *             "share_pct": 51
+         *           },
+         *           "source": "e-001",
+         *           "target": "e-002",
+         *           "type": "AFFILIATED_WITH"
+         *         }
+         *       ],
          *       "kg_version": "20260320T1430Z-01H9X9ABCDEF",
          *       "refused": false,
          *       "route": "m3_graphqa",
+         *       "token_usage": {
+         *         "completion_tokens": 256,
+         *         "prompt_tokens": 2048,
+         *         "total_tokens": 2304
+         *       },
          *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
          *     }
          */
@@ -205,6 +243,16 @@ export interface components {
              */
             confidence: "high" | "medium" | "low";
             /**
+             * Kg Nodes
+             * @description 支撑本次答案的图谱节点（复用 `DocumentGraphResponse.nodes` 同构模型）；拒答 / 图谱为空时为空列表
+             */
+            kg_nodes?: components["schemas"]["GraphNode"][];
+            /**
+             * Kg Relations
+             * @description 支撑本次答案的图谱关系（复用 `DocumentGraphResponse.edges` 同构模型）；拒答 / 图谱为空时为空列表
+             */
+            kg_relations?: components["schemas"]["GraphEdge"][];
+            /**
              * Kg Version
              * @description 本次检索实际使用的图谱版本（必为 active）
              */
@@ -225,6 +273,8 @@ export interface components {
              * @enum {string}
              */
             route: "m3_graphqa" | "m4_affiliation";
+            /** @description LLM token 用量；拒答分支未调用 LLM、或 LLM 未返回 usage 时为 `null` */
+            token_usage?: components["schemas"]["TokenUsage"] | null;
             /** Trace Id */
             trace_id: string;
         };
@@ -469,9 +519,10 @@ export interface components {
             target: string;
             /**
              * Type
+             * @description 关系类型（M2 §4.2），含桥梁抽取的实体↔实体类关系
              * @enum {string}
              */
-            type: "HAS_CHUNK" | "MENTIONS" | "SUPPORTED_BY" | "AFFILIATED_WITH" | "SUPPLIES_TO" | "PARTY_TO";
+            type: "HAS_CHUNK" | "MENTIONS" | "SUPPORTED_BY" | "AFFILIATED_WITH" | "SUPPLIES_TO" | "PARTY_TO" | "HAS_FINANCIAL_INDICATOR" | "OPERATES_SEGMENT" | "RELATED";
         };
         /**
          * GraphNode
@@ -553,6 +604,33 @@ export interface components {
              * @description 契约版本，与 openapi.yaml 的 info.version 一致
              */
             version: string;
+        };
+        /**
+         * TokenUsage
+         * @description LLM token 用量（对齐 DeepSeek / OpenAI 兼容 API 的 `usage` 格式）。
+         *
+         *     按「实测结果反哺规则」：骨架链路 / LLM 未返回 usage 时，
+         *     上层字段 ``AgentQueryResponse.token_usage`` 置 ``null``，**严禁造数据**。
+         */
+        TokenUsage: {
+            /**
+             * Completion Tokens
+             * @description 输出 token 数
+             * @default 0
+             */
+            completion_tokens: number;
+            /**
+             * Prompt Tokens
+             * @description 输入 token 数
+             * @default 0
+             */
+            prompt_tokens: number;
+            /**
+             * Total Tokens
+             * @description 总 token 数
+             * @default 0
+             */
+            total_tokens: number;
         };
         /**
          * UploadResponse
@@ -651,7 +729,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description 契约已定稿但实现留待 Sprint 3（`NOT_IMPLEMENTED`） */
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -788,7 +866,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description 契约已定稿但实现留待 Sprint 3（`NOT_IMPLEMENTED`） */
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
             501: {
                 headers: {
                     [name: string]: unknown;

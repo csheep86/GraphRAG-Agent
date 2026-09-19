@@ -41,7 +41,14 @@ components:
       title: AgentQueryRequest
       type: object
     AgentQueryResponse:
-      description: '`POST /api/v1/agent/query` 响应（M3 §4.2）。'
+      description: '`POST /api/v1/agent/query` 响应（M3 §4.2）。
+
+
+        Sprint 4 阶段 10.0 批次 A 扩展（Sprint 3 缺口 1 偿还）：
+
+        新增 ``kg_nodes`` / ``kg_relations`` / ``token_usage`` 三字段，
+
+        供前端 p03「引用证据」面板展示图谱证据与 token 用量。'
       example:
         answer: '是。示例子公司 A 的供应商 C 同时持有 B 公司 12% 股权 [source: doc-9/page-3/chunk-12]'
         citations:
@@ -51,9 +58,27 @@ components:
           page: 3
           snippet: ……供应商 C 持有本公司 12% 股权……
         confidence: high
+        kg_nodes:
+        - canonical_name: 示例科技有限公司
+          confidence: 0.93
+          entity_type: 公司
+          id: e-001
+          kg_version: 20260320T1430Z-01H9X9ABCDEF
+          label: Entity
+        kg_relations:
+        - id: r-001
+          properties:
+            share_pct: 51.0
+          source: e-001
+          target: e-002
+          type: AFFILIATED_WITH
         kg_version: 20260320T1430Z-01H9X9ABCDEF
         refused: false
         route: m3_graphqa
+        token_usage:
+          completion_tokens: 256
+          prompt_tokens: 2048
+          total_tokens: 2304
         trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
       properties:
         answer:
@@ -74,6 +99,18 @@ components:
           - low
           title: Confidence
           type: string
+        kg_nodes:
+          description: 支撑本次答案的图谱节点（复用 `DocumentGraphResponse.nodes` 同构模型）；拒答 / 图谱为空时为空列表
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          title: Kg Nodes
+          type: array
+        kg_relations:
+          description: 支撑本次答案的图谱关系（复用 `DocumentGraphResponse.edges` 同构模型）；拒答 / 图谱为空时为空列表
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+          title: Kg Relations
+          type: array
         kg_version:
           description: 本次检索实际使用的图谱版本（必为 active）
           title: Kg Version
@@ -99,6 +136,11 @@ components:
           - m4_affiliation
           title: Route
           type: string
+        token_usage:
+          anyOf:
+          - $ref: '#/components/schemas/TokenUsage'
+          - type: 'null'
+          description: LLM token 用量；拒答分支未调用 LLM、或 LLM 未返回 usage 时为 `null`
         trace_id:
           title: Trace Id
           type: string
@@ -338,7 +380,7 @@ components:
         INTERNAL_ERROR: 未预期的服务端异常，已记录日志（含 trace_id）。
         KG_VERSION_NOT_ACTIVE: 请求显式指定了非 active 的 kg_version（writing / failed / superseded），按 ADR-0002 §3.2 一律拒绝，严禁静默降级到最新版。
         NOT_FOUND: 通用资源不存在（含未注册路由）。
-        NOT_IMPLEMENTED: 该端点契约已定义，但实现留待 Sprint 3（占位返回 501）。
+        NOT_IMPLEMENTED: 基础设施不可用（Neo4j 图谱存储不可用（连不上 / 查询失败）/ LLM 未配置或装配失败）时返回 501，**不**表示「接口未实现」。
         TASK_INTERRUPTED: 进程重启导致在途任务被 TaskManager.recover() 回收置 failed（ADR-0001 §3.2）。
         UNAUTHORIZED: 缺少或无法解析认证态（Bearertoken / 开发态请求头）。
         UNSUPPORTED_MEDIA_TYPE: 上传文件 MIME 不在白名单（M1 验收 3）。
@@ -351,7 +393,7 @@ components:
         INTERNAL_ERROR: CODEBUDDY.md 错误响应规范
         KG_VERSION_NOT_ACTIVE: ADR-0002 §3.2 / M3 §4.1
         NOT_FOUND: CODEBUDDY.md 错误响应规范
-        NOT_IMPLEMENTED: Sprint 1 实现边界
+        NOT_IMPLEMENTED: backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2
         TASK_INTERRUPTED: ADR-0001 §3.2
         UNAUTHORIZED: M5 §3 验收 1
         UNSUPPORTED_MEDIA_TYPE: M1 §3 验收 3
@@ -416,6 +458,7 @@ components:
           title: Target
           type: string
         type:
+          description: 关系类型（M2 §4.2），含桥梁抽取的实体↔实体类关系
           enum:
           - HAS_CHUNK
           - MENTIONS
@@ -423,6 +466,9 @@ components:
           - AFFILIATED_WITH
           - SUPPLIES_TO
           - PARTY_TO
+          - HAS_FINANCIAL_INDICATOR
+          - OPERATES_SEGMENT
+          - RELATED
           title: Type
           type: string
       required:
@@ -534,6 +580,34 @@ components:
       - trace_id
       title: HealthResponse
       type: object
+    TokenUsage:
+      description: 'LLM token 用量（对齐 DeepSeek / OpenAI 兼容 API 的 `usage` 格式）。
+
+
+        按「实测结果反哺规则」：骨架链路 / LLM 未返回 usage 时，
+
+        上层字段 ``AgentQueryResponse.token_usage`` 置 ``null``，**严禁造数据**。'
+      properties:
+        completion_tokens:
+          default: 0
+          description: 输出 token 数
+          minimum: 0.0
+          title: Completion Tokens
+          type: integer
+        prompt_tokens:
+          default: 0
+          description: 输入 token 数
+          minimum: 0.0
+          title: Prompt Tokens
+          type: integer
+        total_tokens:
+          default: 0
+          description: 总 token 数
+          minimum: 0.0
+          title: Total Tokens
+          type: integer
+      title: TokenUsage
+      type: object
     UploadResponse:
       description: '`POST /api/v1/documents/upload` 响应（M1 验收 1）。'
       example:
@@ -567,7 +641,7 @@ components:
       scheme: bearer
       type: http
 info:
-  description: "GraphRAG-Agent 后端 API（契约 v1.0，Sprint 1）。\n\n## 租户隔离（ADR-0003，**所有接口强制**）\n- `org_id` **只能**来自认证态：`Authorization: Bearer <token>` 解析结果；\n  **严禁**从请求 body / query 读取。\n- 开发态兜底（`ALLOW_DEV_ORG_HEADER=true` 且非生产）可用 `X-Org-Id` / `X-Actor-Id` 请求头，\n  该兜底 **Sprint 3 必须移除**。\n- 跨租户访问一律 `403 FORBIDDEN`；`org_id` 过滤**必须**经 ORM / 统一注入，禁止裸写 SQL。\n- **例外**：`GET /api/v1/health` 不要求认证、不返回任何业务数据。\n\n## trace_id（M1 验收 7 / M5 §5.3）\n- 请求头 `X-Trace-Id` 可选透传（必须是合法 UUID），缺失则服务端生成 UUIDv4；\n- 响应头 `X-Trace-Id` 恒回显；错误体 `trace_id` 与之一致。\n\n## 统一错误响应\n所有 4xx / 5xx 均为 `{code, message, detail, trace_id}`，`code` 取自 `ErrorCode` 枚举。\n\n## 图谱版本一致性（ADR-0002）\n查询层只认 `kg_version.status = active`。请求显式指定非 active 版本时，\n一律返回 `409 KG_VERSION_NOT_ACTIVE`，**严禁静默降级**到最新版本。\n\n## 实现状态（Sprint 1 边界）\n`/documents/{id}/graph` 与 `/agent/query` 契约已定稿，实现返回 `501 NOT_IMPLEMENTED`。"
+  description: "GraphRAG-Agent 后端 API（契约 v1.0，Sprint 1）。\n\n## 租户隔离（ADR-0003，**所有接口强制**）\n- `org_id` **只能**来自认证态：`Authorization: Bearer <token>` 解析结果；\n  **严禁**从请求 body / query 读取。\n- 开发态兜底（`ALLOW_DEV_ORG_HEADER=true` 且非生产）可用 `X-Org-Id` / `X-Actor-Id` 请求头，\n  该兜底 **Sprint 3 必须移除**。\n- 跨租户访问一律 `403 FORBIDDEN`；`org_id` 过滤**必须**经 ORM / 统一注入，禁止裸写 SQL。\n- **例外**：`GET /api/v1/health` 不要求认证、不返回任何业务数据。\n\n## trace_id（M1 验收 7 / M5 §5.3）\n- 请求头 `X-Trace-Id` 可选透传（必须是合法 UUID），缺失则服务端生成 UUIDv4；\n- 响应头 `X-Trace-Id` 恒回显；错误体 `trace_id` 与之一致。\n\n## 统一错误响应\n所有 4xx / 5xx 均为 `{code, message, detail, trace_id}`，`code` 取自 `ErrorCode` 枚举。\n\n## 图谱版本一致性（ADR-0002）\n查询层只认 `kg_version.status = active`。请求显式指定非 active 版本时，\n一律返回 `409 KG_VERSION_NOT_ACTIVE`，**严禁静默降级**到最新版本。\n\n## 实现状态（Sprint 4）\n五个接口均已实装真实链路；`501 NOT_IMPLEMENTED` 不再表示「接口未实现」，而是\n**基础设施故障**（Neo4j 不可用 / LLM 未配置或装配失败）的统一出口。"
   title: GraphRAG-Agent Backend API
   version: 1.0.0
 openapi: 3.1.0
@@ -583,7 +657,10 @@ paths:
         **版本一致性（ADR-0002 §3.2）**：显式传入非 active 的 `kg_version` 时一律返回 **409** `KG_VERSION_NOT_ACTIVE`，**严禁静默降级**。
 
 
-        **当前实现状态**：返回 **501** `NOT_IMPLEMENTED`（M3 检索链路为 Sprint 3 范围）。'
+        **实现状态**：已实装——由 `AgentService.query`（`app/services/agents.py`）执行「取 active 版本 → 拉取相关子图 → 加载 `kg_qa` Prompt → LLM 调用与解析」单轮链路，返回 `AgentQueryResponse`。
+
+
+        **501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`DEEPSEEK_API_KEY` 缺失）/ LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，**不**表示「接口未实现」。'
       operationId: queryAgent
       parameters:
       - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
@@ -648,10 +725,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: 契约已定稿但实现留待 Sprint 3（`NOT_IMPLEMENTED`）
+          description: 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`）
       security:
       - bearerAuth: []
-      summary: 图谱问答（契约已定稿，Sprint 3 实现）
+      summary: 图谱问答
       tags:
       - agent
   /api/v1/documents/upload:
@@ -662,10 +739,16 @@ paths:
 
         2. 大小上限校验（默认 100MB）→ 失败 413；
 
-        3. 落 `documents` 记录（`status = pending`）并返回 `task_id`。
+        3. 落 `documents` 记录（`status = pending`），注册 `document.parse` 异步执行体，并返回 `task_id`。
 
 
-        Sprint 1 边界：**不注册异步执行体**，因此 `status` 会停留在 `pending`；`TaskManager` 与启动回收在 Sprint 3 补齐（ADR-0001 §3.2）。
+        **解析链路**：执行体真实推进 `pending → processing → completed / failed`（M1 硬约束 H1），第三方 IO 异常按 H8 指数退避重试（≤ 3 次）；进程重启时由启动回收把在途任务置 `failed` + `error_code = TASK_INTERRUPTED`（ADR-0001 §3.2）。
+
+
+        上传响应的 `status` 恒为 `pending`，后续进度请轮询 `GET /documents/{id}/status`。
+
+
+        **当前局限**：状态机与错误落库为真实链路；MinerU 结构化解析与 LangExtract 实体关系抽取尚未接入，执行体当前返回空结果（后续版本补齐，见 v1.1.0 待办）。
 
 
         文件名以 SHA-256 落库（`filename_hash`），日志与响应均不含原文。'
@@ -744,7 +827,10 @@ paths:
         规模上限对齐 M3 §3 验收 1：单次节点数 ≤ 500，超限 `truncated = true`。
 
 
-        **当前实现状态**：返回 **501** `NOT_IMPLEMENTED`（Neo4j 查询为 Sprint 3 范围）。'
+        **实现状态**：已实装——由 `GraphService.fetch_document_subgraph`（`app/services/graphs.py`）按 `kg_version` 查询 Neo4j 子图，并映射为 `DocumentGraphResponse`（`nodes` / `edges` / `truncated` / `version_status`）。
+
+
+        **501 `NOT_IMPLEMENTED` 的真实语义**：Neo4j 不可用（连接失败 / 查询超时 / 凭据错误）属**基础设施故障**，此时返回 501——**不**表示「接口未实现」。'
       operationId: getDocumentGraph
       parameters:
       - in: path
@@ -810,10 +896,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: 契约已定稿但实现留待 Sprint 3（`NOT_IMPLEMENTED`）
+          description: 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`）
       security:
       - bearerAuth: []
-      summary: 获取文档图谱子图（契约已定稿，Sprint 3 实现）
+      summary: 获取文档图谱子图
       tags:
       - documents
   /api/v1/documents/{document_id}/status:
