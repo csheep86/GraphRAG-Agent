@@ -47,7 +47,6 @@ from app.core.auth import Identity, identity_from_dev_headers, parse_bearer_toke
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 
-
 # --------------------------------------------------------------------------- #
 # 夹具
 # --------------------------------------------------------------------------- #
