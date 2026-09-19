@@ -63,7 +63,7 @@
 
 ## 代码质量规范
 1. 后端使用 Black + Ruff 格式化，前端使用 Prettier + ESLint。
-2. 提交前必须通过 pre-commit hook。
+2. 提交前必须通过本地检查（后端 ruff check/format、前端 eslint/typecheck）；推送后以 CI 全量门禁（ruff/pytest/eslint/tsc/契约零漂移）为最终裁决。pre-commit hook 暂未启用，规划于 v1.1.0。
 
 ## Git 提交规范
 使用 Conventional Commits：feat / fix / docs / chore / refactor / test

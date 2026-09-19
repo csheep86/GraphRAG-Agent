@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "gen:api": "openapi-typescript ../contracts/openapi.yaml -o src/types/api.d.ts"
   },
   "dependencies": {
