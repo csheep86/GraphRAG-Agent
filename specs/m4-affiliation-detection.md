@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m4
 > **版本**：v1.0
-> **状态**：MVP 规格（实现前）
+> **状态**：MVP 规格（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M4
 > **关联 Prompts**：`prompts/entity_relation_extract_v1.md`（场景适配模式）、`prompts/kg_qa_v1.md`
 > **关联研究结论**：`01-research.md` §1.4 P3 详解、§1.5 图谱化必要性、§3.3 C1–C2

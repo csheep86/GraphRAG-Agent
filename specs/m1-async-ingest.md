@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m1
 > **版本**：v1.0
-> **状态**：MVP 规格（实现前）
+> **状态**：MVP 规格（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M1
 > **关联 Prompts**：`prompts/document_parse_v1.md`
 > **关联研究结论**：`01-research.md` §3.4 验证里程碑 M0–M1；假设 A3（解析质量实测）
