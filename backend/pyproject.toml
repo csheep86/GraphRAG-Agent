@@ -1,6 +1,6 @@
 [project]
 name = "backend"
-version = "0.1.0"
+version = "1.0.0"
 description = "GraphRAG-Agent 后端服务（Sprint 1：契约骨架 + 可运行）"
 readme = "README.md"
 authors = [
