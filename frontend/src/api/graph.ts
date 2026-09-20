@@ -40,7 +40,7 @@ export async function getDefaultEntityId(): Promise<string | null> {
 
 /**
  * 文档级子图。
- * ✅ 契约已存在：`GET /api/v1/documents/{id}/graph`（当前 501 NOT_IMPLEMENTED）
+ * ✅ 契约已存在且已实装（v1.0.0）：`GET /api/v1/documents/{id}/graph`
  */
 export async function getDocumentGraph(
   documentId: string,

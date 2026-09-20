@@ -134,7 +134,7 @@ Authorization: Bearer <token>
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | MIME 不在白名单 | M1 §3 验收 3 | 2 |
 | **`KG_VERSION_NOT_ACTIVE`** | **409** | 指定 `kg_version` 非 active（`writing`/`failed`/`superseded`） | **ADR-0002 §3.2** | 4、5 |
 | **`TASK_INTERRUPTED`** | **409** | 进程重启导致在途任务被回收置 `failed` | **ADR-0001 §3.2** | 3（作为 `error.code` 呈现） |
-| `NOT_IMPLEMENTED` | 501 | 契约已定稿、实现留待 Sprint 3 | Sprint 1 边界 | 4、5 |
+| `NOT_IMPLEMENTED` | 501 | 下游依赖不可用（Neo4j 连不上 / 查询失败，`GraphUnavailableError`）；**不再表示「实现留待 Sprint」** | backend/CODEBUDDY.md §1.1（v1.0.0 重定义） | 4、5 |
 | `INTERNAL_ERROR` | 500 | 未预期的服务端异常（已记日志，含 `trace_id`） | CODEBUDDY.md | 任意 |
 | `HTTP_ERROR` | 原样 | 未登记 HTTP 状态的兜底，保留原始状态码语义 | CODEBUDDY.md | 任意 |
 

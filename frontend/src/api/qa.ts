@@ -57,9 +57,8 @@ export function mapAgentQueryResponse(
 
 /**
  * 图谱问答。
- * ✅ 契约已存在：`POST /api/v1/agent/query`
- * 注意：当前后端实现状态为 501 NOT_IMPLEMENTED（Sprint 3 范围），
- * 因此默认走 Mock。
+ * ✅ 契约已存在且已实装（v1.0.0）：`POST /api/v1/agent/query`
+ * 注意：`USE_MOCK=true` 时走 Mock；置 false 后该端点走真实后端。
  */
 export async function sendQuestion(
   payload: SendQuestionPayload,

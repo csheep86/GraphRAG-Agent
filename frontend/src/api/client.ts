@@ -19,8 +19,8 @@ const DEV_DEFAULT_ORG_ID =
   "00000000-0000-4000-8000-000000000001";
 
 /**
- * 默认走 Mock：contracts/openapi.yaml 中除 health / upload / status 外，
- * 其余端点当前实现状态为 501 NOT_IMPLEMENTED（Sprint 3 范围）。
+ * 默认走 Mock：契约内端点（见 CONTRACT_COVERED_PATTERNS）已随 v1.0.0 实装，
+ * 契约外端点属已知缺口（后端未定义），仍走 Mock。
  */
 export const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
 
