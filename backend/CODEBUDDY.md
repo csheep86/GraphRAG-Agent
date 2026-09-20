@@ -69,15 +69,17 @@
 | 文件写入存储抽象层 | 只落 PG 元数据，`storage_key` 保持 NULL | M1 §4.3 |
 | 契约 `description` 描述漂移 | ✅ 已偿还（Sprint 4.10.0.C + C2）——C 批：`/graph`、`/agent/query`；C2 批：`/upload` | 本文件 §3 |
 | C2：`/upload` 的 `description` 过期 | ✅ 已偿还（Sprint 4.10.0.C2）：`routes/documents.py` 原「不注册异步执行体 / `status` 停留在 `pending` / Sprint 3 补齐」已改为真实链路措辞（含 H1 状态机、H8 重试、启动回收、骨架版局限），并同批重导出 `contracts/openapi.yaml` + `frontend/src/types/api.d.ts` | 本文件 §3 |
-| S4-1：`docs/multimodal_rag_backend_api_spec-v1.0.md` L137 | `NOT_IMPLEMENTED` 行仍写「契约已定稿、实现留待 Sprint 3 / 来源：Sprint 1 边界」，与已实装的 5 个接口不符 | Sprint 4 待办 |
-| S4-2：`specs/m2-extract-kg.md` L157 | `/graph` 仍写「实现在 Sprint 3，当前占位返回 501」 | Sprint 4 待办（spec 改动属架构师角色，须人工确认，ADR-0002 §6） |
-| S4-3：`frontend/` 注释过期 | `api/client.ts` L15-16、`api/graph.ts` L41、`api/qa.ts` L61、`.env.development` L9-10 仍表述「大部分端点当前实现状态为 501 NOT_IMPLEMENTED」 | Sprint 4 收尾统一评估 |
-| S4-4：`tasks/registry.py` L135-138 docstring 过期 | 仍写「Sprint 3 后段将替换为…ADR-0002 三段式写入」，而该段实现已随 D2（PG `kg_versions` 真源）移出 Sprint 4 | v1.1.0 待办（与 D2 同期处理） |
+| S4-1：`docs/multimodal_rag_backend_api_spec-v1.0.md` L137 | `NOT_IMPLEMENTED` 行仍写「契约已定稿、实现留待 Sprint 3 / 来源：Sprint 1 边界」，与已实装的 5 个接口不符 | ✅ 已偿还（Sprint 4.13） |
+| S4-2：`specs/m2-extract-kg.md` L157 | `/graph` 仍写「实现在 Sprint 3，当前占位返回 501」 | ✅ 已偿还（Sprint 4.13） |
+| S4-3：`frontend/` 注释过期 | `api/client.ts` L15-16、`api/graph.ts` L41、`api/qa.ts` L61、`.env.development` L9-10 仍表述「大部分端点当前实现状态为 501 NOT_IMPLEMENTED」 | ✅ 已偿还（Sprint 4.13） |
+| S4-4：`tasks/registry.py` L135-138 docstring 过期 | 仍写「Sprint 3 后段将替换为…ADR-0002 三段式写入」，而该段实现已随 D2（PG `kg_versions` 真源）移出 Sprint 4 | ✅ 已偿还（Sprint 4.13） |
 | E1：财务指标孤立节点 | output.json 12/16 财务指标实体无任何边，图谱连通性差 | v1.1.0 数据质量专项 |
 | E2：实体命名可疑 | 「智能制造与数字服务」「集团」等实体命名不符预期，需 Prompt 抽取规范重设计 | v1.1.0 数据质量专项（与 E1 同期，Prompt 改动需版本化） |
 | `/agent/query` 缺 PG 前置租户隔离 | Cypher `_QUERY_ALL_ENTITY_SUBGRAPH` fail-open（`Entity.org_id` 属性键不存在时 `OR properties(n)['org_id'] IS NULL` 命中放行）；route 无 PG `documents` 表前置租户校验 | v1.1.0（接入 MinerU + LangExtract 时同步改 fail-closed） |
 | B1：Document.retry_count 列存在但 executor 从不更新 | 列已声明（Schema 有），executor 从不写；要么漏写、要么该删列。11.2 第二批测试不锁定该值 | v1.1.0 疑似缺陷 |
 | B4：Settings.task_retry_multiplier 已声明但从未被消费 | 字段定义 default=2.0, gt=1，但 executor 只用 task_retry_initial_seconds 作 multiplier；改该配置无任何效果 | v1.1.0 疑似缺陷（配置项与代码脱节） |
+| `_refuse()` 构造响应体未注入 trace_id | 10.4 联调发现：响应头 X-Trace-Id 正确，但 body.trace_id 在拒答分支为 None（其他场景正常） | v1.1.0（与 AgentService 其他响应构造统一处理） |
+| S4-1 遗留：api-spec 同文件还有 6 处同类过期描述 | L31-32 / L191 / L273 / L334 / L343 / §7 整节（含「TaskManager.recover() 未实现」，实际已实现） | v1.1.0 文档刷新专项 |
 
 ### 4.1 阶段九已偿还的缺口
 
