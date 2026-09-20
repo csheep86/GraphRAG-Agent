@@ -49,9 +49,16 @@ _GRAPH_NODE_LIMIT = 500
         "**同步校验 + 立即返回**，不在请求内做任何解析：\n"
         "1. MIME 白名单校验 → 失败 415；\n"
         "2. 大小上限校验（默认 100MB）→ 失败 413；\n"
-        "3. 落 `documents` 记录（`status = pending`）并返回 `task_id`。\n\n"
-        "Sprint 1 边界：**不注册异步执行体**，因此 `status` 会停留在 `pending`；"
-        "`TaskManager` 与启动回收在 Sprint 3 补齐（ADR-0001 §3.2）。\n\n"
+        "3. 落 `documents` 记录（`status = pending`），注册 `document.parse` 异步执行体，"
+        "并返回 `task_id`。\n\n"
+        "**解析链路**：执行体真实推进 `pending → processing → completed / failed`"
+        "（M1 硬约束 H1），第三方 IO 异常按 H8 指数退避重试（≤ 3 次）；"
+        "进程重启时由启动回收把在途任务置 `failed` + `error_code = TASK_INTERRUPTED`"
+        "（ADR-0001 §3.2）。\n\n"
+        "上传响应的 `status` 恒为 `pending`，后续进度请轮询 "
+        "`GET /documents/{id}/status`。\n\n"
+        "**当前局限**：状态机与错误落库为真实链路；MinerU 结构化解析与 LangExtract "
+        "实体关系抽取尚未接入，执行体当前返回空结果（后续版本补齐，见 v1.1.0 待办）。\n\n"
         "文件名以 SHA-256 落库（`filename_hash`），日志与响应均不含原文。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **FILE_TOO_LARGE, **UNSUPPORTED_MEDIA_TYPE},
@@ -105,14 +112,18 @@ async def read_document_status(
     "/{document_id}/graph",
     response_model=DocumentGraphResponse,
     operation_id="getDocumentGraph",
-    summary="获取文档图谱子图（契约已定稿，Sprint 3 实现）",
+    summary="获取文档图谱子图",
     description=(
         "返回该文档在 Neo4j 中的子图（`nodes` + `edges`），供前端力导向图渲染。\n\n"
         "**一致性（ADR-0002 §3.2）**：只返回 `status = active` 的 `kg_version`；"
         "该文档不存在 active 版本时返回 **409** `KG_VERSION_NOT_ACTIVE`，"
         "**绝不静默降级**到其他版本；响应中的 `version_status` 恒为 `active`。\n\n"
         "规模上限对齐 M3 §3 验收 1：单次节点数 ≤ 500，超限 `truncated = true`。\n\n"
-        "**当前实现状态**：返回 **501** `NOT_IMPLEMENTED`（Neo4j 查询为 Sprint 3 范围）。"
+        "**实现状态**：已实装——由 `GraphService.fetch_document_subgraph`"
+        "（`app/services/graphs.py`）按 `kg_version` 查询 Neo4j 子图，"
+        "并映射为 `DocumentGraphResponse`（`nodes` / `edges` / `truncated` / `version_status`）。\n\n"
+        "**501 `NOT_IMPLEMENTED` 的真实语义**：Neo4j 不可用（连接失败 / 查询超时 / 凭据错误）"
+        "属**基础设施故障**，此时返回 501——**不**表示「接口未实现」。"
     ),
     responses={
         **TENANT_ERROR_RESPONSES,

@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.document import GraphEdge, GraphNode
+
 QueryScope = Literal["single_doc", "cross_doc"]
 QueryRoute = Literal["m3_graphqa", "m4_affiliation"]
 QueryConfidence = Literal["high", "medium", "low"]
@@ -62,8 +64,25 @@ class Citation(BaseModel):
     snippet: str = Field(description="用于 UI 高亮的原文片段")
 
 
+class TokenUsage(BaseModel):
+    """LLM token 用量（对齐 DeepSeek / OpenAI 兼容 API 的 `usage` 格式）。
+
+    按「实测结果反哺规则」：骨架链路 / LLM 未返回 usage 时，
+    上层字段 ``AgentQueryResponse.token_usage`` 置 ``null``，**严禁造数据**。
+    """
+
+    prompt_tokens: int = Field(default=0, ge=0, description="输入 token 数")
+    completion_tokens: int = Field(default=0, ge=0, description="输出 token 数")
+    total_tokens: int = Field(default=0, ge=0, description="总 token 数")
+
+
 class AgentQueryResponse(BaseModel):
-    """`POST /api/v1/agent/query` 响应（M3 §4.2）。"""
+    """`POST /api/v1/agent/query` 响应（M3 §4.2）。
+
+    Sprint 4 阶段 10.0 批次 A 扩展（Sprint 3 缺口 1 偿还）：
+    新增 ``kg_nodes`` / ``kg_relations`` / ``token_usage`` 三字段，
+    供前端 p03「引用证据」面板展示图谱证据与 token 用量。
+    """
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -84,6 +103,30 @@ class AgentQueryResponse(BaseModel):
                 "refusal_reason": None,
                 "kg_version": "20260320T1430Z-01H9X9ABCDEF",
                 "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+                "kg_nodes": [
+                    {
+                        "id": "e-001",
+                        "label": "Entity",
+                        "entity_type": "公司",
+                        "canonical_name": "示例科技有限公司",
+                        "confidence": 0.93,
+                        "kg_version": "20260320T1430Z-01H9X9ABCDEF",
+                    }
+                ],
+                "kg_relations": [
+                    {
+                        "id": "r-001",
+                        "type": "AFFILIATED_WITH",
+                        "source": "e-001",
+                        "target": "e-002",
+                        "properties": {"share_pct": 51.0},
+                    }
+                ],
+                "token_usage": {
+                    "prompt_tokens": 2048,
+                    "completion_tokens": 256,
+                    "total_tokens": 2304,
+                },
             }
         }
     )
@@ -106,3 +149,23 @@ class AgentQueryResponse(BaseModel):
     )
     kg_version: str = Field(description="本次检索实际使用的图谱版本（必为 active）")
     trace_id: str
+    kg_nodes: list[GraphNode] = Field(
+        default_factory=list,
+        description=(
+            "支撑本次答案的图谱节点（复用 `DocumentGraphResponse.nodes` 同构模型）；"
+            "拒答 / 图谱为空时为空列表"
+        ),
+    )
+    kg_relations: list[GraphEdge] = Field(
+        default_factory=list,
+        description=(
+            "支撑本次答案的图谱关系（复用 `DocumentGraphResponse.edges` 同构模型）；"
+            "拒答 / 图谱为空时为空列表"
+        ),
+    )
+    token_usage: TokenUsage | None = Field(
+        default=None,
+        description=(
+            "LLM token 用量；拒答分支未调用 LLM、或 LLM 未返回 usage 时为 `null`"
+        ),
+    )

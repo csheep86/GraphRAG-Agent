@@ -59,7 +59,7 @@ DEFAULT_MESSAGES: Mapping[ErrorCode, str] = {
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "Unsupported media type",
     ErrorCode.KG_VERSION_NOT_ACTIVE: "Requested kg_version is not active",
     ErrorCode.TASK_INTERRUPTED: "Task interrupted by process restart",
-    ErrorCode.NOT_IMPLEMENTED: "Endpoint is not implemented in this sprint",
+    ErrorCode.NOT_IMPLEMENTED: "Infrastructure unavailable",
     ErrorCode.INTERNAL_ERROR: "Internal server error",
     ErrorCode.HTTP_ERROR: "Unmapped HTTP error",
 }
@@ -80,7 +80,10 @@ ERROR_CODE_DESCRIPTIONS: Mapping[ErrorCode, str] = {
     ErrorCode.TASK_INTERRUPTED: (
         "进程重启导致在途任务被 TaskManager.recover() 回收置 failed（ADR-0001 §3.2）。"
     ),
-    ErrorCode.NOT_IMPLEMENTED: "该端点契约已定义，但实现留待 Sprint 3（占位返回 501）。",
+    ErrorCode.NOT_IMPLEMENTED: (
+        "基础设施不可用（Neo4j 图谱存储不可用（连不上 / 查询失败）"
+        "/ LLM 未配置或装配失败）时返回 501，**不**表示「接口未实现」。"
+    ),
     ErrorCode.INTERNAL_ERROR: "未预期的服务端异常，已记录日志（含 trace_id）。",
     ErrorCode.HTTP_ERROR: "未在错误码表中登记的 HTTP 状态兜底，保留原始 HTTP 状态语义。",
 }
@@ -96,7 +99,7 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "M1 §3 验收 3",
     ErrorCode.KG_VERSION_NOT_ACTIVE: "ADR-0002 §3.2 / M3 §4.1",
     ErrorCode.TASK_INTERRUPTED: "ADR-0001 §3.2",
-    ErrorCode.NOT_IMPLEMENTED: "Sprint 1 实现边界",
+    ErrorCode.NOT_IMPLEMENTED: "backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2",
     ErrorCode.INTERNAL_ERROR: "CODEBUDDY.md 错误响应规范",
     ErrorCode.HTTP_ERROR: "CODEBUDDY.md 错误响应规范",
 }

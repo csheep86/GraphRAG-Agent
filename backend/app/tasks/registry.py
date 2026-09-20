@@ -130,12 +130,13 @@ async def document_parse_executor(spec: TaskSpec) -> None:
 
 
 async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None:
-    """真正的解析逻辑（MinerU + LangExtract）。阶段九骨架：占位，让状态机推进到 completed。
+    """真正的解析逻辑（MinerU + LangExtract）。v1.0.0 仍为骨架：占位返回，让状态机推进到 completed。
 
-    Sprint 3 后段将替换为：
+    v1.1.0 待办（原「Sprint 3 后段」计划已顺延）：
     1. ``document_parse_v1`` 提示词驱动的结构化解析；
     2. ``entity_relation_extract_v1`` 提示词驱动的实体抽取；
-    3. ADR-0002 三段式写入：PG `writing` → Neo4j `MERGE` → PG `active / failed`。
+    3. ADR-0002 三段式写入（PG ``kg_versions`` 真源 → Neo4j ``MERGE`` → PG ``active / failed``）；
+       其中 PG 真源建表随 D2 移出 Sprint 4，与本节第 3 项同期处理。
     """
     _ = document_id, payload
     return None

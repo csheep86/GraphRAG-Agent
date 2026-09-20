@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m2
 > **版本**：v1.0
-> **状态**：MVP 规格（实现前）
+> **状态**：MVP 规格（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M2
 > **关联 Prompts**：`prompts/chunk_summary_v1.md`、`prompts/entity_relation_extract_v1.md`
 > **关联研究结论**：`01-research.md` §1.4 P3（应用能力）、§3.1.2 能力 2–3；假设 A3 / A4
@@ -76,6 +76,9 @@
 | `:AFFILIATED_WITH` | `type, share_pct, since` | `:Entity` → `:Entity` | 关联（股权 / 任职 / 地址 / 法人） |
 | `:SUPPLIES_TO` | `contract_id, amount` | `:Entity` → `:Entity` | 供应关系 |
 | `:PARTY_TO` | `role` | `:Entity` → `:Document` | 合同当事人 |
+| `:HAS_FINANCIAL_INDICATOR` | `relation_name, derived` | `:Entity` → `:Entity` | 实体↔财务指标（桥梁抽取） |
+| `:OPERATES_SEGMENT` | `relation_name, derived` | `:Entity` → `:Entity` | 实体经营业务板块（桥梁抽取） |
+| `:RELATED` | `relation_name, derived` | `:Entity` → `:Entity` | 通用实体关联兜底（桥梁抽取） |
 
 ### 4.3 关键属性约束
 
@@ -151,7 +154,7 @@
 >
 > **`GET /api/v1/documents/{id}/graph`** 是本模块唯一对外暴露的只读端点，登记于此以免契约与规格脱节；返回体**刻意不含 `pii_flags`**（见 §5.3），且规模上限对齐 M3 §3 验收 1（单次节点数 ≤ 500，超限 `truncated = true`）。`/internal/*` 端点仅限服务间调用，**不进入对外契约**。
 >
-> **契约草案**，实现阶段由后端开发 B 写入 `contracts/openapi.yaml`。Sprint 1 已定稿的 5 个接口见 [`contracts/openapi.yaml`](../../contracts/openapi.yaml) 与 [`docs/multimodal_rag_backend_api_spec-v1.0.md`](../../docs/multimodal_rag_backend_api_spec-v1.0.md)；其中 `/api/v1/documents/{id}/graph` 的实现在 **Sprint 3**，当前占位返回 501 `NOT_IMPLEMENTED`。
+> **契约已定稿并落库于 `contracts/openapi.yaml`**。Sprint 1 已定稿的 5 个接口见 [`contracts/openapi.yaml`](../../contracts/openapi.yaml) 与 [`docs/multimodal_rag_backend_api_spec-v1.0.md`](../../docs/multimodal_rag_backend_api_spec-v1.0.md)；其中 `/api/v1/documents/{id}/graph` 已随 **v1.0.0（Sprint 4）** 实装（读 Neo4j 子图，仅消费 `status = active` 的版本），实现态与残留缺口见 `backend/CODEBUDDY.md` §1.1 / §4。
 
 ### 5.5 数据流图（片段）
 

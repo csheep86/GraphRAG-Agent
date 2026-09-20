@@ -2,7 +2,7 @@
 
 > **文档编号**：03-prd
 > **版本**：v1.0
-> **状态**：MVP 汇总 PRD（实现前）
+> **状态**：MVP 汇总 PRD（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
 > **上游依据**：`docs/01-research.md`（v1.0）、`docs/02-product-outline.md`（v1.0）
 > **关联规格**：[specs/m1-async-ingest.md](../specs/m1-async-ingest.md)、[m2-extract-kg.md](../specs/m2-extract-kg.md)、[m3-graphqa-citation.md](../specs/m3-graphqa-citation.md)、[m4-affiliation-detection.md](../specs/m4-affiliation-detection.md)、[m5-permission-audit.md](../specs/m5-permission-audit.md)
 > **关联 ADR**：[ADR-0001 异步任务后端选型](./adr/ADR-0001-async-task-backend.md)、[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](./adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](./adr/ADR-0003-tenant-isolation-rls.md)

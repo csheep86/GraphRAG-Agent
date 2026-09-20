@@ -11,11 +11,40 @@ export const API_BASE_URL =
 
 export const APP_ENV = process.env.NEXT_PUBLIC_APP_ENV || "development";
 
+// dev-only 默认 org_id：与 backend/.env.development DEFAULT_ORG_ID 同步。
+// 仅当 NEXT_PUBLIC_APP_ENV 显式 === "development" 时注入 X-Org-Id；
+// 读 raw env 而非 APP_ENV 常量，避免 prod build 忘设 env 时被 fallback 误注入。
+const DEV_DEFAULT_ORG_ID =
+  process.env.NEXT_PUBLIC_DEV_DEFAULT_ORG_ID ||
+  "00000000-0000-4000-8000-000000000001";
+
 /**
- * 默认走 Mock：contracts/openapi.yaml 中除 health / upload / status 外，
- * 其余端点当前实现状态为 501 NOT_IMPLEMENTED（Sprint 3 范围）。
+ * 默认走 Mock：契约内端点（见 CONTRACT_COVERED_PATTERNS）已随 v1.0.0 实装，
+ * 契约外端点属已知缺口（后端未定义），仍走 Mock。
  */
 export const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
+
+/**
+ * 契约内端点路径模式（Sprint 4.10.1.6 起唯一真源）。
+ * 路径参数（如 {document_id}）用 [^/]+ 占位；精确锚定 ^$ 避免误匹配。
+ * 契约新增端点时必须同步这里；漏更新会让新端点走 mock 而非真实接口。
+ */
+const CONTRACT_COVERED_PATTERNS: RegExp[] = [
+  /^\/api\/v1\/agent\/query$/,
+  /^\/api\/v1\/documents\/upload$/,
+  /^\/api\/v1\/documents\/[^/]+\/graph$/,
+  /^\/api\/v1\/documents\/[^/]+\/status$/,
+];
+
+/**
+ * 接口级 mock 判定：
+ *  - USE_MOCK=true → 全 Mock（开发态零依赖）
+ *  - USE_MOCK=false → 仅契约内端点走真实；契约外端点仍走 Mock（避免 UI 全红）
+ */
+export function shouldMock(path: string): boolean {
+  if (USE_MOCK) return true;
+  return !CONTRACT_COVERED_PATTERNS.some((re) => re.test(path));
+}
 
 export type ErrorResponse = components["schemas"]["ErrorResponse"];
 export type ErrorCode = components["schemas"]["ErrorCode"];
@@ -49,6 +78,9 @@ export async function request<T>(
     ...init,
     headers: {
       Accept: "application/json",
+      ...(process.env.NEXT_PUBLIC_APP_ENV === "development"
+        ? { "X-Org-Id": DEV_DEFAULT_ORG_ID }
+        : {}),
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...init.headers,
     },

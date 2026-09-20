@@ -30,8 +30,9 @@ export function ChatMessageItem({
   }
 
   const citations = message.citations ?? [];
-  const nodeCount = message.node_count ?? 0;
-  const relationCount = message.relation_count ?? 0;
+  // 计数由契约字段 kg_nodes / kg_relations 派生（批次 A：原 node_count 占位退役）
+  const nodeCount = message.kg_nodes?.length ?? 0;
+  const relationCount = message.kg_relations?.length ?? 0;
   const hasEvidence = citations.length > 0 || nodeCount > 0;
 
   return (
@@ -106,6 +107,15 @@ export function ChatMessageItem({
             </div>
           ) : null}
         </div>
+      ) : null}
+
+      {/* LLM token 用量（契约 token_usage；拒答 / 未返回时为 null 不展示） */}
+      {message.token_usage ? (
+        <p className="mt-2 font-mono text-[10px] text-muted-foreground/70">
+          Token：输入 {message.token_usage.prompt_tokens} · 输出{" "}
+          {message.token_usage.completion_tokens} · 共{" "}
+          {message.token_usage.total_tokens}
+        </p>
       ) : null}
     </div>
   );

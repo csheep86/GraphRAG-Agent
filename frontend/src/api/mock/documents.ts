@@ -1,4 +1,7 @@
+import type { components } from "@/types/api";
 import type { DocumentListItem } from "@/types/mock";
+
+type DocumentStatusResponse = components["schemas"]["DocumentStatusResponse"];
 
 /**
  * 文档列表 Mock（p02 表格逐行还原）。
@@ -89,3 +92,15 @@ export const MOCK_DOCUMENT_TOTAL = 1248;
 
 /** p01「最近文档处理」只展示前 4 条 */
 export const MOCK_RECENT_DOCUMENTS = MOCK_DOCUMENTS.slice(0, 4);
+
+/**
+ * USE_MOCK=true 时 `getDocumentStatus` 直接返回完成态（Sprint 4.10.1.6）：
+ * 让 p02 上传后状态轮询立刻进完成态，无需真实后端。
+ * progress=1 表示完成（schema 限定 0–1，不是 0–100）。
+ */
+export const MOCK_DOCUMENT_STATUS: DocumentStatusResponse = {
+  status: "completed",
+  progress: 1,
+  task_id: "00000000-0000-4000-8000-000000000001",
+  trace_id: "00000000-0000-4000-8000-0000000000aa",
+};

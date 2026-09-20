@@ -1,6 +1,6 @@
 import type { MetricOverview, QaHistoryItem } from "@/types/mock";
 
-import { USE_MOCK, delay, request } from "./client";
+import { delay, request, shouldMock } from "./client";
 import {
   MOCK_METRIC_OVERVIEW,
   MOCK_RECENT_QA_HISTORY,
@@ -8,7 +8,7 @@ import {
 
 /** 工作台指标卡。契约缺失：需后端补 `GET /api/v1/metrics/overview` */
 export async function getMetricOverview(): Promise<MetricOverview> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/metrics/overview")) {
     await delay(240);
     return MOCK_METRIC_OVERVIEW;
   }
@@ -20,7 +20,7 @@ export async function getMetricOverview(): Promise<MetricOverview> {
 export async function getRecentQaHistory(
   limit = 3,
 ): Promise<QaHistoryItem[]> {
-  if (USE_MOCK) {
+  if (shouldMock("/api/v1/qa/history")) {
     await delay(200);
     return MOCK_RECENT_QA_HISTORY.slice(0, limit);
   }

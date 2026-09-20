@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m3
 > **版本**：v1.0
-> **状态**：MVP 规格（实现前）
+> **状态**：MVP 规格（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M3
 > **关联 Prompts**：`prompts/intent_router_v1.md`、`prompts/kg_qa_v1.md`
 > **关联研究结论**：`01-research.md` §3.1.2 能力 1–2；§3.3 C2（引用覆盖率 = 100%）；§3.3 F3（直接 NO-GO 条件）
