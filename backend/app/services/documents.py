@@ -1,10 +1,13 @@
-"""M1 文档接入（阶段九：上传 + 异步任务注册）。
+"""M1 文档接入（阶段九：上传 + 异步任务注册；Sprint 5 批次 A：真实落盘）。
 
 实现边界：
-- ✅ 上传：MIME 白名单校验（415）→ 大小上限校验（413）→ 落 `documents` 记录（`pending`）；
+- ✅ 上传：MIME 白名单校验（415）→ 大小上限校验（413）→ **文件写入存储抽象层**
+  （Sprint 5 批次 A，`app.storage`）→ 落 `documents` 记录（`pending`）；
 - ✅ 异步任务：通过 :class:`app.tasks.TaskManager` 注册 ``document.parse`` 执行体；
 - ✅ 状态：读 PostgreSQL / SQLite 返回，跨租户 403、不存在 404；
-- ⛔ 不写文件到存储抽象层：`storage_key` 保持 NULL（M1 §4.3 规定 `completed` 后填写）。
+- ✅ `storage_key` 在解析 `completed` 时回填（M1 §4.1；executor 职责）。
+  文件本体在上传时即落盘（Starlette 临时文件随请求销毁，异步任务须能从
+  存储层取回原始字节）。
 
 异步任务回收（``pending / processing → failed (TASK_INTERRUPTED)``）由
 :func:`app.tasks.recover_orphan_tasks` 在 lifespan startup 触发（ADR-0001 §3.2）。
@@ -16,6 +19,7 @@ import hashlib
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,6 +32,7 @@ from app.schemas.document import (
     DocumentStatusResponse,
     UploadResponse,
 )
+from app.storage import build_storage_key, get_storage
 from app.tasks.manager import TaskManager, TaskSpec
 
 _UPLOAD_READ_CHUNK = 1024 * 1024
@@ -74,9 +79,20 @@ async def create_document_upload(
 
     size_bytes = await _measure_size(upload, max_bytes=settings.max_upload_size_bytes)
 
+    document_id = uuid4()
+    filename_hash = hash_filename(upload.filename or "")
+    storage_key = build_storage_key(
+        org_id=identity.org_id, doc_id=document_id, filename_hash=filename_hash
+    )
+
+    # 文件落盘先于 DB 写入：put 失败 → 4xx/5xx 且无 DB 行（无幽灵记录）；
+    # DB 失败 → 至多留一个孤儿文件（可被运维清理，优于「行存在但无文件」）。
+    content = await upload.read()
+    get_storage().put(storage_key, content)
+
     document = Document(
-        id=uuid4(),
-        filename_hash=hash_filename(upload.filename or ""),
+        id=document_id,
+        filename_hash=filename_hash,
         mime_type=mime_type,
         size_bytes=size_bytes,
         status="pending",
@@ -89,6 +105,13 @@ async def create_document_upload(
     session.add(document)
     session.commit()
     session.refresh(document)
+
+    logger.bind(
+        trace_id=trace_id,
+        document_id=str(document_id),
+        size_bytes=size_bytes,
+        mime_type=mime_type,
+    ).info("document_file_stored")
 
     # 注册异步任务（ADR-0001 §3.1）
     if task_manager is not None:

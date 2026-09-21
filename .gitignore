@@ -37,6 +37,9 @@ uploads/
 **/output/*
 *.log
 
+# 存储抽象层根目录（开发环境本地 FS 落盘内容，绝不入库）
+backend/storage/
+
 # 系统文件
 .DS_Store
 Thumbs.db

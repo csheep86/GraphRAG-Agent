@@ -4,9 +4,10 @@
 具体业务逻辑；新增一种任务类型只需在本注册表中登记一项，TaskManager
 代码无需改动。
 
-阶段九已登记：
-- ``document.parse``：PDF / DOCX / CSV → chunks → Neo4j（M1 → M2 衔接）；
-  当前为骨架版，仅完成 `pending → processing → completed` 推进 + 错误落库。
+已登记（v1.1.0 批次 A 起）：
+- ``document.parse``：PDF 经 MinerU 云解析 → 产物落存储层（M1 → M2 衔接）；
+  docx / csv 的结构化解析分别由 Sprint 10 / Sprint 9 承接（plan §15.3），
+  本阶段跳过解析但照常推进状态机。
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
+import httpx
 from loguru import logger
 from sqlalchemy.orm import Session
 from tenacity import (
@@ -31,24 +33,30 @@ from app.core.config import get_settings
 from app.core.errors import ErrorCode
 from app.db.models import Document
 from app.db.session import SessionLocal
+from app.services.parsing import MineruApiError, MineruClient
+from app.storage import build_parse_artifact_key, build_storage_key, get_storage
 from app.tasks.types import TaskExecutorFn, TaskSpec
 
-#: 可重试的异常类型：第三方 IO 错误（Neo4j / HTTP / 文件解析等）。
+#: 可重试的异常类型：第三方 IO 错误（HTTP / MinerU 业务失败 / 网络与文件系统）。
 #: 业务校验失败（ValueError 等）**不**重试。
 _RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     asyncio.TimeoutError,
     ConnectionError,
     OSError,
+    httpx.HTTPError,
+    MineruApiError,
 )
 
 
 async def document_parse_executor(spec: TaskSpec) -> None:
-    """``document.parse`` 执行体骨架。
+    """``document.parse`` 执行体。
 
-    真实 MinerU + LangExtract 链路属 Sprint 3 后段；本阶段只保证：
     1. 状态机 `pending → processing → completed` 真实推进；
-    2. 第三方 IO 异常走 tenacity 重试（≤ 3 次，初始 1s、倍数 2）；
-    3. 最终失败时落 `error_code` + `error_detail`，**绝不静默吞错**。
+    2. 第三方 IO 异常走 tenacity 重试（≤ 3 次，初始 1s、倍数读
+       ``task_retry_multiplier``——B4 修复：退避参数与配置真实挂钩）；
+    3. 重试计数回写 ``documents.retry_count``（B1 修复）；
+    4. 成功时回填 ``storage_key``（M1 §4.1：completed 后填写）；
+    5. 最终失败时落 `error_code` + `error_detail`，**绝不静默吞错**。
     """
     settings = get_settings()
     document_id = UUID(spec.payload["document_id"])
@@ -79,6 +87,9 @@ async def document_parse_executor(spec: TaskSpec) -> None:
         def _on_retry(retry_state: Any) -> None:  # noqa: ANN401
             nonlocal attempt_count
             attempt_count = retry_state.attempt_number
+            # B1 修复：重试计数回写 DB（attempt 1 = 首次尝试，重试从 2 起）
+            document.retry_count = max(attempt_count - 1, 0)
+            db.commit()
             next_action = getattr(retry_state, "next_action", None)
             next_sleep = getattr(next_action, "sleep", None) if next_action else None
             logger.bind(
@@ -93,6 +104,8 @@ async def document_parse_executor(spec: TaskSpec) -> None:
                 stop=stop_after_attempt(settings.task_retry_max_attempts),
                 wait=wait_exponential(
                     multiplier=settings.task_retry_initial_seconds,
+                    # B4 修复：倍数真实读取 task_retry_multiplier（原硬编码等价于恒 2）
+                    exp_base=settings.task_retry_multiplier,
                 ),
                 retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
                 reraise=True,
@@ -109,18 +122,25 @@ async def document_parse_executor(spec: TaskSpec) -> None:
                 raise exc.last_attempt.exception() from exc  # type: ignore[misc]
             raise
 
-        # 3. 推进到 completed
+        # 3. 推进到 completed + 回填 storage_key（M1 §4.1）
         document = db.get(Document, document_id)
         assert document is not None  # 同 session 内不可能消失
         document.status = "completed"
         document.error_code = None
         document.error_detail = None
+        document.retry_count = max(attempt_count - 1, 0)
+        document.storage_key = build_storage_key(
+            org_id=document.org_id,
+            doc_id=document_id,
+            filename_hash=document.filename_hash,
+        )
         db.commit()
 
         logger.bind(
             trace_id=spec.trace_id,
             document_id=str(document_id),
-            retry_count=attempt_count,
+            retry_count=document.retry_count,
+            storage_key_present=True,
         ).info("document_parse_completed")
     except Exception as exc:  # noqa: BLE001 - 框架层吞错并落库
         db.rollback()
@@ -130,16 +150,74 @@ async def document_parse_executor(spec: TaskSpec) -> None:
 
 
 async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None:
-    """真正的解析逻辑（MinerU + LangExtract）。v1.0.0 仍为骨架：占位返回，让状态机推进到 completed。
+    """真实解析：PDF → MinerU 云 API → 产物落存储层。
 
-    v1.1.0 待办（原「Sprint 3 后段」计划已顺延）：
-    1. ``document_parse_v1`` 提示词驱动的结构化解析；
-    2. ``entity_relation_extract_v1`` 提示词驱动的实体抽取；
-    3. ADR-0002 三段式写入（PG ``kg_versions`` 真源 → Neo4j ``MERGE`` → PG ``active / failed``）；
-       其中 PG 真源建表随 D2 移出 Sprint 4，与本节第 3 项同期处理。
+    - 产物键：``{org_id}/{doc_id}/parse/{full.md, content_list.json}``
+      （与原文件同前缀族，继承 ADR-0003 租户隔离；Sprint 6 批次 B 的
+      Chunk 证据节点与批次 B 的 LangExtract 以此为输入）；
+    - docx / csv：**跳过结构化解析**（S10 / S9 承接，plan §15.3），
+      照常推进 completed——与 v1.0.0 行为一致，仅由日志显式登记。
+
+    v1.1.0 后续批次（原「Sprint 3 后段」计划顺延）：
+    1. ``entity_relation_extract_v1`` 提示词驱动的实体抽取（批次 B）；
+    2. ADR-0002 三段式写入（PG ``kg_versions`` 真源 → Neo4j ``MERGE``）。
     """
-    _ = document_id, payload
-    return None
+    settings = get_settings()
+    db: Session = SessionLocal()
+    try:
+        document = db.get(Document, document_id)
+        if document is None:
+            return
+
+        if document.mime_type != "application/pdf":
+            logger.bind(
+                trace_id=str(payload.get("trace_id", "")),
+                document_id=str(document_id),
+                mime_type=document.mime_type,
+            ).info("document_parse_skipped_unsupported_parser")
+            return
+
+        storage = get_storage()
+        source_key = build_storage_key(
+            org_id=document.org_id,
+            doc_id=document_id,
+            filename_hash=document.filename_hash,
+        )
+        content = storage.get(source_key, org_id=document.org_id)
+
+        # 文件名不使用原始上传名（M5 §4.5：文件名不得明文外发）
+        client = MineruClient(
+            base_url=settings.mineru_api_base,
+            token=settings.mineru_token,
+            model_version=settings.mineru_model_version,
+            language=settings.mineru_language,
+            request_timeout_seconds=settings.mineru_request_timeout_seconds,
+            poll_interval_seconds=settings.mineru_poll_interval_seconds,
+            poll_timeout_seconds=settings.mineru_poll_timeout_seconds,
+        )
+        result = await client.parse_pdf(
+            content=content, display_name=f"{document_id}.pdf"
+        )
+
+        storage.put(
+            build_parse_artifact_key(
+                org_id=document.org_id, doc_id=document_id, filename="full.md"
+            ),
+            result.markdown.encode("utf-8"),
+        )
+        storage.put(
+            build_parse_artifact_key(
+                org_id=document.org_id, doc_id=document_id, filename="content_list.json"
+            ),
+            result.content_list_json.encode("utf-8"),
+        )
+        logger.bind(
+            trace_id=str(payload.get("trace_id", "")),
+            document_id=str(document_id),
+            markdown_bytes=len(result.markdown.encode("utf-8")),
+        ).info("document_parse_artifacts_stored")
+    finally:
+        db.close()
 
 
 def _mark_failed(db: Session, document_id: UUID, exc: Exception, trace_id: str) -> None:

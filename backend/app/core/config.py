@@ -56,6 +56,18 @@ class Settings(BaseSettings):
     task_retry_max_attempts: int = Field(default=3, ge=1)
     task_retry_multiplier: float = Field(default=2.0, gt=1)
 
+    # -- 存储（M1 §4.3：开发本地 FS；生产 S3 由抽象层切换，不加无消费者的开关）--
+    storage_root: Path = BACKEND_DIR / "storage"
+
+    # -- MinerU 云解析（Sprint 5 批次 A 接入主链路；批次 A2 将收口为 parser_provider）--
+    mineru_api_base: str = "https://mineru.net"
+    mineru_token: str = ""
+    mineru_model_version: str = "vlm"
+    mineru_language: str = "ch"
+    mineru_request_timeout_seconds: float = Field(default=120.0, gt=0)
+    mineru_poll_interval_seconds: float = Field(default=5.0, gt=0)
+    mineru_poll_timeout_seconds: float = Field(default=600.0, gt=0)
+
     # -- 基础 --
     app_env: Literal["development", "test", "production"] = "development"
     app_name: str = "GraphRAG-Agent Backend API"

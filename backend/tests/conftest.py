@@ -16,6 +16,13 @@ os.environ["APP_ENV"] = "test"
 os.environ["ALLOW_DEV_ORG_HEADER"] = "true"
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP_DIR / 'test.db').as_posix()}"
 
+# 存储抽象层隔离：测试统一写入临时目录，不污染 backend/storage/
+os.environ["STORAGE_ROOT"] = str(_TMP_DIR / "storage")
+
+# 无 MINERU_TOKEN 时 PDF 解析任务会以 MineruApiError 重试 3 次；
+# 等待降至最小值（字段校验 gt=0）避免用例真实 sleep 1s + 2s。
+os.environ["TASK_RETRY_INITIAL_SECONDS"] = "0.001"
+
 # 图谱相关端点（/graph、/agent/query）在测试中必须**确定性**降级：
 # 指向本机不可达端口，保证 GraphService 一定抛 GraphUnavailableError。
 # 环境变量优先级高于 `.env`，因此能稳定覆盖开发者本地 .env 里的真实 Neo4j 配置——
