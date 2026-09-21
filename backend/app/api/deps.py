@@ -8,11 +8,12 @@ from fastapi import Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.core.auth import Identity, identity_from_dev_headers, parse_bearer_token
+from app.core.auth import Identity
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.middleware import get_trace_id_value, new_trace_id
 from app.db.session import get_session
+from app.services.auth import get_auth_provider
 
 #: 契约中登记的认证方案名，前端代码生成后即为 `bearerAuth`
 bearer_scheme = HTTPBearer(
@@ -52,22 +53,23 @@ async def get_current_identity(
         str | None, Header(alias="X-Actor-Id", description=DEV_ACTOR_HEADER_DESCRIPTION)
     ] = None,
 ) -> Identity:
-    """解析当前租户上下文。
+    """解析当前租户上下文（经接缝 1 ``AuthProvider`` 分发）。
 
     优先级：`Authorization: Bearer <token>` > 开发态请求头 > 401。
     两者都不可用时返回 401 `UNAUTHORIZED`，**不提供任何匿名路径**
     （`/api/v1/health` 不使用本依赖，因此天然豁免）。
+    当前唯一实现 ``LocalAuthProvider``；企业身份源接入时扩展工厂。
     """
     settings = get_settings()
 
-    if credentials is not None and credentials.credentials:
-        return parse_bearer_token(credentials.credentials, settings)
-
-    fallback = identity_from_dev_headers(
-        settings=settings, org_id_header=x_org_id, actor_id_header=x_actor_id
+    identity = get_auth_provider().authenticate(
+        settings=settings,
+        bearer_token=(credentials.credentials if credentials is not None else None),
+        org_id_header=x_org_id,
+        actor_id_header=x_actor_id,
     )
-    if fallback is not None:
-        return fallback
+    if identity is not None:
+        return identity
 
     raise AppError(
         ErrorCode.UNAUTHORIZED,

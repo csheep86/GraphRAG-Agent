@@ -68,4 +68,32 @@ class Document(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
+
+    # -- 企业集成预留字段（ADR-0004 接缝 2 / plan §8.2；Sprint 5 批次 A2）--
+    # 一律 nullable、只落库、**不进 contracts/openapi.yaml**（预留纪律：
+    # export_openapi.py --check 无 diff）。只在对应集成真正启用时才提升到契约。
+    source_type: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # upload/api/connector
+    source_ref: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # 外部系统引用
+    document_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # 业务侧主键
+    content_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )  # 幂等去重
+    source_version: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )  # 外部版本
+    acl_scope: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )  # 未来 ACL 边界
+    acl_owner_ref: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # 未来属主
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )  # 软删
     trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)

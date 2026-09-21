@@ -185,6 +185,15 @@ async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None
         )
         content = storage.get(source_key, org_id=document.org_id)
 
+        # parser_provider（接缝 3）：当前唯一档位 mineru_cloud；
+        # 未知档位显式报错，不静默回退（错误分类由 MineruApiError 承载，
+        # 属可重试集合——配置错误会在重试用尽后 failed 并落 error_detail）。
+        if settings.parser_provider != "mineru_cloud":
+            raise MineruApiError(
+                f"未知 parser_provider={settings.parser_provider!r}"
+                "（当前仅支持 'mineru_cloud'）"
+            )
+
         # 文件名不使用原始上传名（M5 §4.5：文件名不得明文外发）
         client = MineruClient(
             base_url=settings.mineru_api_base,

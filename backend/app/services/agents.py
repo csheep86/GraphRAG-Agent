@@ -15,7 +15,7 @@
 3. **图谱检索工具**：通过 :mod:`app.services.graphs` 提供的
    :func:`fetch_active_kg_version` 与 Cypher 子图查询，把图谱数据喂给 Prompt。
 4. **优雅降级**：
-   - 未配置 ``DEEPSEEK_API_KEY`` → :class:`AgentUnavailableError`
+   - 未配置 ``LLM_API_KEY`` → :class:`AgentUnavailableError`
    - LangChain Agent 装配失败 → 同上
    - Neo4j 不可用 → 同上
    路由层捕获后统一转 ``501 NOT_IMPLEMENTED``，不污染测试用例。
@@ -54,13 +54,14 @@ from app.services.graphs import (
     GraphService,
     GraphUnavailableError,
 )
+from app.services.providers import build_chat_model
 
 # DeepSeek 是 OpenAI 兼容 API，故使用 langchain_openai.ChatOpenAI 而非 ChatDeepSeek，
 # 这样切换到其它 OpenAI 兼容厂商零代码改动。
 _LLM_LANGCHAIN_IMPORT_ERROR: Exception | None = None
 try:
+    import langchain_openai  # noqa: F401 - 可用性探测；构造经 providers.build_chat_model
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI  # type: ignore[import-not-found]
 except Exception as exc:  # noqa: BLE001 - 兼容失败时优雅降级
     _LLM_LANGCHAIN_IMPORT_ERROR = exc
     ChatOpenAI = None  # type: ignore[assignment]
@@ -145,23 +146,19 @@ class AgentService:
             raise AgentUnavailableError(self._failure_reason)
 
         settings = get_settings()
-        if not settings.deepseek_api_key:
-            self._failure_reason = "DEEPSEEK_API_KEY 未配置"
+        if not settings.llm_api_key:
+            self._failure_reason = "LLM_API_KEY 未配置"
             raise AgentUnavailableError(self._failure_reason)
 
         try:
-            self._chat = ChatOpenAI(
-                model=settings.deepseek_model,
-                api_key=settings.deepseek_api_key,
-                base_url=settings.deepseek_base_url,
-                timeout=settings.deepseek_request_timeout_seconds,
-                max_retries=0,  # 重试由外层 tenacity 统一管控
-            )
+            self._chat = build_chat_model()
+        except AgentUnavailableError:
+            raise
         except Exception as exc:  # noqa: BLE001 - 装配失败包装
-            self._failure_reason = f"ChatOpenAI 装配失败: {exc!r}"
+            self._failure_reason = f"LLM 装配失败: {exc!r}"
             raise AgentUnavailableError(self._failure_reason) from exc
 
-        logger.bind(model=settings.deepseek_model).info("agent_llm_ready")
+        logger.bind(model=settings.llm_model).info("agent_llm_ready")
         return self._chat
 
     # ------------------------------------------------------------------ query

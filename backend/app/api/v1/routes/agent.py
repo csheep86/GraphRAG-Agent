@@ -33,7 +33,7 @@ router = APIRouter(prefix="/agent", tags=["agent"])
         "**实现状态**：已实装——由 `AgentService.query`（`app/services/agents.py`）执行"
         "「取 active 版本 → 拉取相关子图 → 加载 `kg_qa` Prompt → LLM 调用与解析」单轮链路，"
         "返回 `AgentQueryResponse`。\n\n"
-        "**501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`DEEPSEEK_API_KEY` 缺失）/ "
+        "**501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`LLM_API_KEY` 缺失）/ "
         "LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，"
         "**不**表示「接口未实现」。"
     ),

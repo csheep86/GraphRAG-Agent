@@ -34,6 +34,7 @@ from app.schemas.document import (
 )
 from app.storage import build_storage_key, get_storage
 from app.tasks.manager import TaskManager, TaskSpec
+from app.tasks.pipeline import first_pipeline_stage
 
 _UPLOAD_READ_CHUNK = 1024 * 1024
 
@@ -113,15 +114,22 @@ async def create_document_upload(
         mime_type=mime_type,
     ).info("document_file_stored")
 
-    # 注册异步任务（ADR-0001 §3.1）
+    # 注册异步任务（ADR-0001 §3.1；阶段经接缝 4 pipeline_stages 解析，
+    # 当前登记的执行体仅 document.parse——后续阶段登记后自动进入管线）
     if task_manager is not None:
-        task_manager.submit(
-            TaskSpec(
-                task_type="document.parse",
-                payload={"document_id": str(document.id), "mime_type": mime_type},
-                trace_id=trace_id,
+        stage = first_pipeline_stage()
+        if stage is not None:
+            task_manager.submit(
+                TaskSpec(
+                    task_type=stage,
+                    payload={"document_id": str(document.id), "mime_type": mime_type},
+                    trace_id=trace_id,
+                )
             )
-        )
+        else:
+            logger.bind(trace_id=trace_id, document_id=str(document_id)).warning(
+                "document_pipeline_all_stages_disabled"
+            )
 
     return UploadResponse(task_id=document.id, status="pending", trace_id=trace_id)
 

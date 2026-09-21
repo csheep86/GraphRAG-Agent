@@ -44,17 +44,35 @@ class Settings(BaseSettings):
     neo4j_database: str = "neo4j"
     neo4j_connection_timeout_seconds: float = Field(default=5.0, gt=0)
 
-    # -- DeepSeek（阶段九：M3 Agentic-RAG LLM 推理）--
-    deepseek_api_key: str = ""
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
-    deepseek_request_timeout_seconds: float = Field(default=60.0, gt=0)
+    # -- LLM 推理（接缝 3：OpenAI 兼容 Provider，Sprint 5 批次 A2 去厂商硬编码）--
+    # 原 deepseek_* 字段改名为中性 llm_*（.env 需同步改名，见 changes/Sprint5.2）；
+    # llm_provider 是接缝 3 的切换开关（内网双轨时指向本地 vLLM/Ollama 端点，
+    # 见 plan §3.4-5 / §18.4）。
+    llm_provider: str = "openai_compatible"
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-chat"
+    llm_request_timeout_seconds: float = Field(default=60.0, gt=0)
+
+    # -- 解析 Provider（接缝 3：parser 侧切换开关，Sprint 5 批次 A2）--
+    # 当前唯一实现 mineru_cloud；内网本地解析通路（plan §18.4）落地时在此切换。
+    parser_provider: str = "mineru_cloud"
 
     # -- 异步任务并发（ADR-0001 §3.3）--
     task_parse_concurrency: int = Field(default=2, ge=1)
     task_retry_initial_seconds: float = Field(default=1.0, gt=0)
     task_retry_max_attempts: int = Field(default=3, ge=1)
     task_retry_multiplier: float = Field(default=2.0, gt=1)
+
+    # -- 处理管线阶段（接缝 4：启停与顺序，Sprint 5 批次 A2）--
+    # 顺序即执行顺序；删除某项 = 停用该阶段。未登记执行体的阶段自动跳过
+    # （document.extract / kg.build 随批次 B、risk.detect 随 Sprint 7 登记）。
+    pipeline_stages: list[str] = [
+        "document.parse",
+        "document.extract",
+        "kg.build",
+        "risk.detect",
+    ]
 
     # -- 存储（M1 §4.3：开发本地 FS；生产 S3 由抽象层切换，不加无消费者的开关）--
     storage_root: Path = BACKEND_DIR / "storage"

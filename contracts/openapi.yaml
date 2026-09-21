@@ -660,7 +660,7 @@ paths:
         **实现状态**：已实装——由 `AgentService.query`（`app/services/agents.py`）执行「取 active 版本 → 拉取相关子图 → 加载 `kg_qa` Prompt → LLM 调用与解析」单轮链路，返回 `AgentQueryResponse`。
 
 
-        **501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`DEEPSEEK_API_KEY` 缺失）/ LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，**不**表示「接口未实现」。'
+        **501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`LLM_API_KEY` 缺失）/ LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，**不**表示「接口未实现」。'
       operationId: queryAgent
       parameters:
       - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
