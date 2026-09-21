@@ -1,0 +1,2 @@
+{"id": "e1-001", "text": "甲方：北京青云科技有限公司（统一社会信用代码 91110108MA0001ABC）。乙方：上海临港智能装备有限公司。", "expected_entities": [{"canonical_name": "北京青云科技有限公司", "entity_type": "ORG"}, {"canonical_name": "上海临港智能装备有限公司", "entity_type": "ORG"}]}
+{"id": "e1-002", "text": "2024 年度公司营业收入为人民币 12.34 亿元，较上年同期增长 15.6%。", "expected_entities": [{"canonical_name": "2024 年", "entity_type": "DATE"}, {"canonical_name": "12.34 亿元", "entity_type": "MONEY"}]}

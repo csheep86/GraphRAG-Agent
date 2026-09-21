@@ -99,6 +99,14 @@ class AgentUnavailableError(Exception):
     """
 
 
+class AgentTenantLeakError(AgentUnavailableError):
+    """跨租户子图泄漏检测（ADR-0003 §4，Sprint 5 批次 B fail-closed 强化）。
+
+    路由层捕获后转 ``403`` + ``KG_TENANT_LEAK``——与 ``AgentUnavailableError``（501）
+    严格区分：前者是数据质量事故（数据已写出，须禁止消费），后者是基础设施不可用。
+    """
+
+
 class _LlmAnswerSchema(BaseModel):
     """LLM 输出 JSON 的内层 schema（Pydantic 校验 + 显式字段语义）。"""
 
@@ -212,6 +220,36 @@ class AgentService:
                 "agent_query_subgraph_unavailable"
             )
             raise AgentUnavailableError(f"Neo4j 子图查询失败: {exc}") from exc
+
+        # 2.5) fail-closed 校验（ADR-0003 §4 强化，Sprint 5 批次 B）
+        # 即使 Cypher 已带 ``WHERE e.org_id = $org_id`` 过滤，**仍**做一次独立的
+        # 全库校验：防漏改（恶意 / 越权 build 把跨租户节点写入同一 kg_version）
+        # 被 fail-open Cypher 过滤掩盖——属数据质量事故伪装为正常结论。
+        try:
+            tenant_clean = GraphService.instance().validate_kg_version_tenant_boundary(
+                kg_version=version, current_org_id=org_id
+            )
+        except GraphUnavailableError as exc:
+            logger.bind(trace_id=trace_id, reason=str(exc)).error(
+                "agent_query_tenant_boundary_check_failed"
+            )
+            raise AgentUnavailableError(f"fail-closed 校验失败: {exc}") from exc
+
+        if not tenant_clean:
+            if settings.agent_fail_closed:
+                logger.bind(
+                    trace_id=trace_id,
+                    org_id=str(org_id),
+                    kg_version=version,
+                ).error("agent_query_tenant_leak_blocked")
+                raise AgentTenantLeakError(
+                    f"跨租户子图泄漏检测到（kg_version={version}，org_id={org_id}）"
+                )
+            logger.bind(
+                trace_id=trace_id,
+                org_id=str(org_id),
+                kg_version=version,
+            ).warning("agent_query_tenant_leak_warn_only")
 
         # 3) 加载 Prompt（任何占位符错误都立即暴露，禁止硬编码）
         template = load_prompt("kg_qa")

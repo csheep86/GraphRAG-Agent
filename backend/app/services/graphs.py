@@ -91,6 +91,19 @@ RETURN v.status AS status
 LIMIT 1
 """
 
+
+#: fail-closed 接缝 Cypher（Sprint 5 批次 B）：校验 active kg_version 内
+#: **任何** Entity 节点的 ``org_id`` 都属于 ``current_org_id``。
+#: 返回 ``leaked`` 计数：> 0 即视为跨租户子图泄漏（ADR-0003 §4）。
+#: 设计：使用 ``properties(n)['org_id']`` 而非 ``n.org_id``，避免属性键不存在时
+#: 触发 ``01N52 property key does not exist`` 通知。
+_QUERY_TENANT_BOUNDARY_LEAK = """
+MATCH (n:Entity {kg_version: $kg_version})
+WHERE properties(n)['org_id'] IS NOT NULL
+  AND properties(n)['org_id'] <> $current_org_id
+RETURN count(n) AS leaked
+"""
+
 #: Cypher 查询：**全部**已导入实体子图（不依赖 PG ``document_id``）。
 #: 供 ``bridge_web_demo`` 阶段六产物（``:Entity`` + 实体间关系）查询使用。
 #: ``elementId`` 用于稳定去重，``id`` 属性作为对外节点标识（与边的 source/target 对齐）。
@@ -268,6 +281,38 @@ class GraphService:
 
         status = result["status"] if result else None
         return str(status) if status else None
+
+    def validate_kg_version_tenant_boundary(
+        self, *, kg_version: str, current_org_id: UUID
+    ) -> bool:
+        """fail-closed 校验：active kg_version 内**任何** Entity 节点都属于 ``current_org_id``。
+
+        ADR-0003 §4（Sprint 5 批次 B 强化）：跨租户子图必须由 ``/agent/query`` 在 LLM
+        调用前**显式拒绝**（路由层转 ``403``）。**禁止**静默吞错或仅日志告警——计划 §4.4
+        纪律「数据质量故障伪装成正常业务结论」属最高优先级事故。
+
+        设计选择：返回 ``bool`` 而非抛异常——把"是否泄漏"的事实交由调用方决定行为
+        （路由层转 403 vs 强隔离 vs 业务开关）。Agent 服务默认 fail-closed
+        （``settings.agent_fail_closed = True``），即泄漏即拒答。
+
+        :returns: ``True`` 表示无泄漏（可继续）；``False`` 表示存在跨租户节点。
+        """
+        try:
+            with self._session() as session:
+                result = session.run(
+                    _QUERY_TENANT_BOUNDARY_LEAK,
+                    kg_version=kg_version,
+                    current_org_id=str(current_org_id),
+                ).single()
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"fail-closed 校验失败: kg_version={kg_version}: {exc}"
+            ) from exc
+
+        leaked = int((result or {}).get("leaked") or 0)
+        return leaked == 0
 
     def fetch_all_subgraph(
         self,

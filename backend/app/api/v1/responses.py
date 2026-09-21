@@ -57,6 +57,18 @@ KG_VERSION_NOT_ACTIVE: dict[int, dict[str, Any]] = {
     }
 }
 
+KG_TENANT_LEAK: dict[int, dict[str, Any]] = {
+    403: {
+        "model": ErrorResponse,
+        "description": (
+            "403 跨租户拒绝，两种成因：① `FORBIDDEN`（ADR-0003 §3.3）——"
+            "请求资源 org_id 不符；② `KG_TENANT_LEAK`（ADR-0003 §4，Sprint 5 批次 B）——"
+            "fail-closed 校验发现 active kg_version 内存在不属于当前 org 的节点，"
+            "属数据质量事故伪装为正常结论，**不**降级为拒答（200）"
+        ),
+    }
+}
+
 VALIDATION_ERROR: dict[int, dict[str, Any]] = {
     400: {
         "model": ErrorResponse,

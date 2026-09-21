@@ -13,8 +13,13 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
-TaskType = Literal["document.parse"]
-"""当前已登记的任务类型。新增类型须同步 :mod:`app.tasks.registry`。"""
+TaskType = Literal["document.parse", "document.extract", "kg.build"]
+"""当前已登记的任务类型。新增类型须同步 :mod:`app.tasks.registry`。
+
+Sprint 5 批次 B 扩展：从单段 ``document.parse`` 扩为串行三段——
+``document.parse`` → ``document.extract`` → ``kg.build``，每段独立 task_type
+与独立执行体（ADR-0004 §2.1 接缝 4）。
+"""
 
 
 @dataclass(frozen=True, slots=True)

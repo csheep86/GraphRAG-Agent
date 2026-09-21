@@ -58,12 +58,20 @@ class TaskManager:
         self._background_tasks = background_tasks
 
     def submit(self, spec: TaskSpec) -> str:
-        """落 ``pending`` + 注册执行体，返回 task_id（与 ``documents.id`` 一致）。"""
-        if spec.task_type != "document.parse":
+        """落 ``pending`` + 注册执行体，返回 task_id（与 ``documents.id`` 一致）。
+
+        支持 ``document.parse`` / ``document.extract`` / ``kg.build`` 三种 task_type
+        （Sprint 5 批次 B 扩展；批次 B 起每个 task_type 对应一个执行体段）。
+        """
+        # 用「执行体是否登记」代替硬编码白名单——新增阶段后只改 registry 即可
+        try:
+            resolve_executor(spec.task_type)
+        except KeyError as exc:
             raise ValueError(
                 f"未实现的 task_type={spec.task_type!r}；新增任务类型须先登记到 "
                 f"app.tasks.registry.EXECUTOR_REGISTRY"
-            )
+            ) from exc
+
         document_id_raw = spec.payload.get("document_id")
         if not isinstance(document_id_raw, str) or not document_id_raw:
             raise ValueError("TaskSpec.payload.document_id 必填且须为字符串 UUID")
@@ -75,7 +83,7 @@ class TaskManager:
             document = session.get(Document, document_id)
             if document is None:
                 raise LookupError(f"documents 不存在: id={document_id}")
-            if document.status != "pending":
+            if document.status not in {"pending", "processing"}:
                 # 允许幂等：completed / failed 不再重投
                 logger.bind(
                     trace_id=spec.trace_id,

@@ -109,6 +109,29 @@ class Settings(BaseSettings):
     # -- Prompt 目录（CODEBUDDY.md「Prompt 版本管理规范」）--
     prompts_dir: Path = REPO_ROOT / "prompts"
 
+    # -- 实体 / 关系抽取（Sprint 5 批次 B：LangExtract 接入；接缝 3 内部档位）--
+    # 与 MineruClient 同模式：单实现 + 切换键，不抽接口；
+    # `extraction_provider` 默认 'langextract'，未实现别档显式报错（与 llm_provider 同策略）。
+    extraction_provider: str = "langextract"
+    #: 单次送入 LLM 的最大字符数；超长在客户端内切分
+    extraction_max_chars_per_chunk: int = Field(default=4000, gt=0)
+    #: 单文档实体上限（防 LLM 失控批量生成）
+    extraction_max_entities_per_doc: int = Field(default=500, gt=0)
+    #: 单文档关系上限
+    extraction_max_relations_per_doc: int = Field(default=1000, gt=0)
+    #: Prompt 版本（CODEBUDDY.md 版本管理规范）；prompt_loader 必须有对应版本文件
+    extraction_prompt_version: str = "kg_extraction_v1"
+
+    # -- KG 构建（Sprint 5 批次 B：ADR-0002 三段式写入 Neo4j）--
+    #: stage-2 / stage-3 batch LOAD 的批大小（防内存峰值）
+    kg_build_batch_size: int = Field(default=500, gt=0)
+    #: 唯一档位 'per_org'（全局版本留 Pro / Enterprise，ADR-0004 §3 第 2 条）
+    kg_version_strategy: str = "per_org"
+
+    # -- Agent fail-closed（ADR-0003 强化：跨租户子图必须由 PG documents 兜底校验）--
+    #: True = 跨 org_id 即抛 KG_TENANT_LEAK（路由层转 403）；False 仅日志告警
+    agent_fail_closed: bool = True
+
     # -- CORS（阶段 3.2 前端联调）--
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000"]

@@ -28,6 +28,19 @@ def build_parse_artifact_key(*, org_id: UUID, doc_id: UUID, filename: str) -> st
     return f"{org_id}/{doc_id}/parse/{filename}"
 
 
+def build_extract_artifact_key(*, org_id: UUID, doc_id: UUID, filename: str) -> str:
+    """抽取产物键：`{org_id}/{doc_id}/extract/{filename}`（与 parse 同族，券商隔离段前缀）。"""
+    return f"{org_id}/{doc_id}/extract/{filename}"
+
+
+def build_kg_artifact_key(*, org_id: UUID, doc_id: UUID, filename: str) -> str:
+    """KG 中间产物键：`{org_id}/{doc_id}/kg/{filename}`（stage-1/2/3 三段输入暂存）。
+
+    **不进契约**——仅 ``kg.build`` 执行体内部存读，不暴露给前端。
+    """
+    return f"{org_id}/{doc_id}/kg/{filename}"
+
+
 def get_storage() -> StorageBackend:
     """按配置返回存储后端（v1.1.0 仅本地 FS；生产实现随部署阶段接入）。
 
@@ -44,5 +57,7 @@ __all__ = [
     "LocalFSStorage",
     "build_storage_key",
     "build_parse_artifact_key",
+    "build_extract_artifact_key",
+    "build_kg_artifact_key",
     "get_storage",
 ]

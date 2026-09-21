@@ -366,6 +366,7 @@ components:
       - FILE_TOO_LARGE
       - UNSUPPORTED_MEDIA_TYPE
       - KG_VERSION_NOT_ACTIVE
+      - KG_TENANT_LEAK
       - TASK_INTERRUPTED
       - NOT_IMPLEMENTED
       - INTERNAL_ERROR
@@ -378,6 +379,7 @@ components:
         FORBIDDEN: 跨租户访问被拒（ADR-0003：org_id 不符），非本租户资源一律拒绝。
         HTTP_ERROR: 未在错误码表中登记的 HTTP 状态兜底，保留原始 HTTP 状态语义。
         INTERNAL_ERROR: 未预期的服务端异常，已记录日志（含 trace_id）。
+        KG_TENANT_LEAK: 跨租户子图泄漏检测到（ADR-0003 §4，Sprint 5 批次 B）。active kg_version 内任一 Entity 节点 org_id 与当前 org_id 不一致——属数据质量事故伪装为正常结论，由 /agent/query 路由层转 403。
         KG_VERSION_NOT_ACTIVE: 请求显式指定了非 active 的 kg_version（writing / failed / superseded），按 ADR-0002 §3.2 一律拒绝，严禁静默降级到最新版。
         NOT_FOUND: 通用资源不存在（含未注册路由）。
         NOT_IMPLEMENTED: 基础设施不可用（Neo4j 图谱存储不可用（连不上 / 查询失败）/ LLM 未配置或装配失败）时返回 501，**不**表示「接口未实现」。
@@ -391,6 +393,7 @@ components:
         FORBIDDEN: ADR-0003 §3.3 / M5 §3 验收 1
         HTTP_ERROR: CODEBUDDY.md 错误响应规范
         INTERNAL_ERROR: CODEBUDDY.md 错误响应规范
+        KG_TENANT_LEAK: ADR-0003 §4 / Sprint 5 批次 B
         KG_VERSION_NOT_ACTIVE: ADR-0002 §3.2 / M3 §4.1
         NOT_FOUND: CODEBUDDY.md 错误响应规范
         NOT_IMPLEMENTED: backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2
@@ -713,7 +716,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+          description: 403 跨租户拒绝，两种成因：① `FORBIDDEN`（ADR-0003 §3.3）——请求资源 org_id 不符；② `KG_TENANT_LEAK`（ADR-0003 §4，Sprint 5 批次 B）——fail-closed 校验发现 active kg_version 内存在不属于当前 org 的节点，属数据质量事故伪装为正常结论，**不**降级为拒答（200）
         '409':
           content:
             application/json:
