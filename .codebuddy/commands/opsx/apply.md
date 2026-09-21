@@ -1,8 +1,13 @@
 ---
 name: "OPSX: Apply"
-description: "Implement tasks from an OpenSpec change (Experimental)"
+description: "【本仓库已停用，禁止执行】OpenSpec CLI 未启用（决议 O-1）；实现任务请直接按 changes/Sprint<N>.<M>/tasks.md 推进。DO NOT RUN in this repository."
 argument-hint: "[command arguments]"
 ---
+
+> ⛔ **本命令在本仓库已停用，禁止执行。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 需要的动作改用：读 `changes/Sprint<N>.<M>/tasks.md` 逐条执行，证据链写 `integration-log.md`。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Implement tasks from an OpenSpec change.
 

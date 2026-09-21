@@ -1,8 +1,13 @@
 ---
 name: "OPSX: Archive"
-description: "Archive a completed change in the experimental workflow"
+description: "【本仓库已停用，禁止执行】OpenSpec CLI 未启用（决议 O-1）；归档请用 git mv 到 changes/archive/<日期>-Sprint<N>.<M>/。DO NOT RUN in this repository."
 argument-hint: "[command arguments]"
 ---
+
+> ⛔ **本命令在本仓库已停用，禁止执行。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 需要的动作改用：`git mv changes/Sprint<N>.<M>/ changes/archive/<日期>-Sprint<N>.<M>/`（只归档 `.md` / `.py`）。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Archive a completed change in the experimental workflow.
 

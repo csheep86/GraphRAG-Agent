@@ -1,14 +1,19 @@
 ---
 name: openspec-explore
-description: Enter explore mode - a thinking partner for exploring ideas, investigating problems, and clarifying requirements. Use when the user wants to think through something before or during a change.
+description: "【本仓库已停用，禁止调用】DO NOT USE in this repository. OpenSpec CLI 未启用（决议 O-1）；探索/澄清需求请用 brainstorming 技能。Original: Enter explore mode - a thinking partner for exploring ideas, investigating problems, and clarifying requirements."
 allowed-tools: Bash(openspec:*)
 license: MIT
-compatibility: Requires openspec CLI.
+compatibility: "本仓库未启用：openspec CLI 未安装、也不需要安装。"
 metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.13.0"
 ---
+
+> ⛔ **本技能在本仓库已停用，禁止调用。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 若要"探索想法 / 澄清需求"，改用本仓库的 `brainstorming` 技能（已启用）。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Enter explore mode. Think deeply. Visualize freely. Follow the conversation wherever it goes.
 

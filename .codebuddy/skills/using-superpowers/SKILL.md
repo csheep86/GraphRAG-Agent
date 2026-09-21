@@ -20,6 +20,7 @@ description: 技能体系总入口：说明本项目 13 个 Superpowers 技能�
 | 想清楚 | brainstorming | 需求澄清与方案探索 |
 | 定计划 | writing-plans | 产出可执行 checklist |
 | 干起来 | executing-plans | 逐项执行计划 |
+| 无人值守干 | unattended-sprint-execution | 预授权按计划连续执行（默认采纳建议项，仅 4 类升级） |
 | 写代码 | test-driven-development | 红-绿-重构循环 |
 | 排问题 | systematic-debugging | 证据链定位根因 |
 | 保质量 | verification-before-completion | 完成前强制验证 |

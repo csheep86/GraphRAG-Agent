@@ -1,8 +1,13 @@
 ---
 name: "OPSX: Sync"
-description: "Sync delta specs from a change to main specs"
+description: "【本仓库已停用，禁止执行】OpenSpec CLI 未启用（决议 O-1）；规格同步请直接改 specs/*.md。DO NOT RUN in this repository."
 argument-hint: "[command arguments]"
 ---
+
+> ⛔ **本命令在本仓库已停用，禁止执行。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 需要的动作改用：直接编辑 `specs/*.md`，并按"PRD §4 → spec §3 → 验收矩阵 §4"**三处同步**（纪律见 `docs/acceptance-traceability-matrix.md` §7）。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Sync delta specs from a change to main specs.
 

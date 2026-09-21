@@ -1,14 +1,19 @@
 ---
 name: openspec-archive-change
-description: Archive a completed change in the experimental workflow. Use when the user wants to finalize and archive a change after implementation is complete.
+description: "【本仓库已停用，禁止调用】DO NOT USE in this repository. OpenSpec CLI 未启用（决议 O-1）；归档请用 git mv 到 changes/archive/<日期>-Sprint<N>.<M>/。Original: Archive a completed change in the experimental workflow."
 allowed-tools: Bash(openspec:*)
 license: MIT
-compatibility: Requires openspec CLI.
+compatibility: "本仓库未启用：openspec CLI 未安装、也不需要安装。"
 metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.13.0"
 ---
+
+> ⛔ **本技能在本仓库已停用，禁止调用。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 若要"归档变更"，改用：`git mv changes/Sprint<N>.<M>/ changes/archive/<日期>-Sprint<N>.<M>/`（只归档 `.md` / `.py`），清单见 `docs/dev-doc-status.md` §9.2。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Archive a completed change in the experimental workflow.
 

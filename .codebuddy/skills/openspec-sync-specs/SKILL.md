@@ -1,14 +1,19 @@
 ---
 name: openspec-sync-specs
-description: Sync delta specs from a change to main specs. Use when the user wants to update main specs with changes from a delta spec, without archiving the change.
+description: "【本仓库已停用，禁止调用】DO NOT USE in this repository. OpenSpec CLI 未启用（决议 O-1）；规格同步请直接改 specs/*.md 并按 PRD→spec→矩阵 三处同步。Original: Sync delta specs from a change to main specs."
 allowed-tools: Bash(openspec:*)
 license: MIT
-compatibility: Requires openspec CLI.
+compatibility: "本仓库未启用：openspec CLI 未安装、也不需要安装。"
 metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.13.0"
 ---
+
+> ⛔ **本技能在本仓库已停用，禁止调用。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 若要"同步规格"，直接编辑 `specs/*.md`；**改动需按"PRD §4 → spec §3 → 验收矩阵 §4"三处同步**（纪律见 `docs/acceptance-traceability-matrix.md` §7）。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Sync delta specs from a change to main specs.
 

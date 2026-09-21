@@ -1,6 +1,6 @@
 # Design: <变更名称>
 
-> 使用说明：复制本模板到 `changes/<change-id>/design.md`。仅在变更涉及架构决策、跨模块影响或多种可行方案时编写；简单变更可省略本文件。
+> 使用说明：复制本模板到 `changes/Sprint<N>.<M>/design.md`。仅在批次涉及架构决策、跨模块影响或多种可行方案时编写；**简单批次可省略本文件**（`proposal.md` + `tasks.md` 必填，`integration-log.md` 必填）。落点决议见 `docs/v2.0.0-ship-backward-plan.md` §6。
 
 ## Context
 

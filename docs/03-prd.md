@@ -1,20 +1,22 @@
 # GraphRAG-Agent 多模态企业知识库平台 · 汇总 PRD（MVP 1.0）
 
 > **文档编号**：03-prd
-> **版本**：v1.0
-> **状态**：MVP 汇总 PRD（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
+> **版本**：v1.0（**2026-09-21 口径修订**：§2 M6 归属 / §7 Prompt 清单 / §8 TBD 窗口 / 附录 C 落清单）
+> **状态**：MVP 汇总 PRD（**v1.0.0 仅交付工程外壳，MVP 1.0 未完成**——承接 Sprint 与交付口径见 `docs/v1.1.0-demo-mvp-plan.md` §3.2 B / §15；实现态见 `backend/CODEBUDDY.md` §4；**逐条验收对账见 [`acceptance-traceability-matrix.md`](./acceptance-traceability-matrix.md)**）
 > **上游依据**：`docs/01-research.md`（v1.0）、`docs/02-product-outline.md`（v1.0）
-> **关联规格**：[specs/m1-async-ingest.md](../specs/m1-async-ingest.md)、[m2-extract-kg.md](../specs/m2-extract-kg.md)、[m3-graphqa-citation.md](../specs/m3-graphqa-citation.md)、[m4-affiliation-detection.md](../specs/m4-affiliation-detection.md)、[m5-permission-audit.md](../specs/m5-permission-audit.md)
-> **关联 ADR**：[ADR-0001 异步任务后端选型](./adr/ADR-0001-async-task-backend.md)、[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](./adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](./adr/ADR-0003-tenant-isolation-rls.md)
-> **技术栈**：React（Next.js 15 + TS + Tailwind）+ Python 3.11 + FastAPI + Pydantic + loguru + slowapi + tenacity + MinerU + LangExtract + LangChain + Neo4j + PostgreSQL
+> **关联规格**：[specs/m1-async-ingest.md](../specs/m1-async-ingest.md)、[m2-extract-kg.md](../specs/m2-extract-kg.md)、[m3-graphqa-citation.md](../specs/m3-graphqa-citation.md)、[m4-affiliation-detection.md](../specs/m4-affiliation-detection.md)、[m5-permission-audit.md](../specs/m5-permission-audit.md)、[**m6-ontology-incremental.md**](../specs/m6-ontology-incremental.md)（v0.1 草案 → v1.0 定稿闸门见倒推文档 §7.1）、[specs/_template/](../specs/_template/)
+> **关联 ADR**：[ADR-0001 异步任务后端选型](./adr/ADR-0001-async-task-backend.md)、[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](./adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](./adr/ADR-0003-tenant-isolation-rls.md)、[ADR-0004 企业集成接缝](./adr/0004-integration-seams.md)
+> **关联计划**：`docs/v1.1.0-demo-mvp-plan.md`（交付计划 v3.0）、`docs/v2.0.0-ship-backward-plan.md`（倒推计划）、`docs/dev-doc-status.md`（文档状态跟踪）
+> **技术栈**：React（**Next.js 16.3.5 + React 19 + TS + Tailwind**）+ Python 3.11 + FastAPI + Pydantic + loguru + slowapi + tenacity + MinerU + LangExtract + LangChain + Neo4j + PostgreSQL
 
 ---
 
 ## 0. 文档目的与读者
 
-- **目的**：汇总 MVP 1.0 的 5 个 P0 模块规格，提供跨模块依赖图、跨模块硬约束、端到端验收、数据架构总览与风险表，**作为实现阶段（后端开发 B / 前端 FE）的统一对齐基线**。
+- **目的**：汇总 MVP 1.0 的 **6 个 P0 模块**规格，提供跨模块依赖图、跨模块硬约束、端到端验收、数据架构总览与风险表，**作为实现阶段（后端开发 B / 前端 FE）的统一对齐基线**。
 - **读者**：项目发起人、技术决策者、后端开发 B、前端 FE、QA / 测试。
-- **不重复** 5 份规格中的细节；**以引用形式**指向具体规格文件 + 章节。
+- **不重复** 6 份规格中的细节；**以引用形式**指向具体规格文件 + 章节。
+- **配套文档（验收侧）**：本 PRD 的 H1–H12 / C1–C3 / F1–F5 **逐条对账见 [`acceptance-traceability-matrix.md`](./acceptance-traceability-matrix.md)**——该文件是"是否达成"的唯一判定入口；本 PRD 只定义要求，不定义判据。
 
 ---
 
@@ -52,9 +54,15 @@
 | **M3** | 图谱问答与可溯源引用 | **P0** | [specs/m3-graphqa-citation.md](../specs/m3-graphqa-citation.md) | 多跳查询 + 100% 引用回溯 + 拒答兜底 |
 | **M4** | 财务关联交易识别（首靶） | **P0** | [specs/m4-affiliation-detection.md](../specs/m4-affiliation-detection.md) | 四源对齐 + 三类算法 + 疑点清单 |
 | **M5** | 权限隔离与审计留痕 | **P0** | [specs/m5-permission-audit.md](../specs/m5-permission-audit.md) | 三粒度权限 + trace_id + 敏感字段过滤 |
-| M6 | 本体管理与增量更新 | **P1（不在本期 MVP）** | — | P2 进入前必须完成（详 `02-product-outline.md` §3.2 M6） |
+| **M6** | 本体管理与增量更新 | **P0（口径修订）** | [specs/m6-ontology-incremental.md](../specs/m6-ontology-incremental.md) | 本体可校正 + 增量重算 + 成本仪表盘（C3 的验证载体） |
 
-> **关键结论**：**P0 = 5 个模块**，**P1 = 1 个（M6）**，**M6 不在 MVP 1.0 范围**。本期交付物仅含 M1–M5。
+> **关键结论**：**P0 = 6 个模块**（M1–M6），本期交付物含 **M1–M6**。
+>
+> **⚠️ v3.0 口径修订（2026-09-21）**：本表 M6 行原为「**P1（不在本期 MVP）**」，与 `docs/v1.1.0-demo-mvp-plan.md` §15.1 第 5 行（v3.0 变更）冲突——该处已裁决「**完整 M6 进入 MVP**（C3 的验证载体）」，由 **Sprint 12** 承接。**以 v3.0 裁决为准**，本表已同步。判定依据：
+> 1. C3 准入线（单位成本 / 增量全量成本比）**没有 M6 就没有验证载体**（`02-product-outline.md` §3.2 M6）；
+> 2. 本体不可校正 = 抽取错误无法收敛 = 一次性玩具（GAP-F2 的付费前提）。
+>
+> 规格就绪状态：`specs/m6-ontology-incremental.md` 当前为 **v0.1 草案**，**v1.0 定稿是 S12 的开工闸门**（检查点机制见 `docs/v2.0.0-ship-backward-plan.md` §7.1）。
 
 ---
 
@@ -72,18 +80,25 @@ flowchart TD
     M2 -.审计写入.-> M5
     M3 -.审计写入.-> M5
     M4 -.审计写入.-> M5
+    U -->|本体校正动作| M6
+    M6 -->|entity_types / relation_types 参数| M2
+    M6 -->|增量 kg_version| M3
+    M6 -->|增量 kg_version| M4
+    M6 -.审计写入.-> M5
     M5 -.权限校验 + trace_id 注入.-> M1
     M5 -.权限校验.-> M2
     M5 -.权限校验.-> M3
     M5 -.权限校验.-> M4
+    M5 -.权限校验.-> M6
 ```
 
 **依赖关系关键结论**：
 
 1. **M1 是链路起点**，**无上游依赖**。
-2. **M2 是图谱层唯一写入入口**，**M3 / M4 仅消费**（**任何绕过 M2 直接写 Neo4j 的代码路径都应被 lint 规则拦截**，详 M2 §5.5）。
-3. **M5 是横向基础设施**，**被 M1–M4 调用**，**不调用任何业务模块**。
+2. **M2 是图谱层唯一写入入口**，**M3 / M4 仅消费**（**任何绕过 M2 直接写 Neo4j 的代码路径都应被 lint 规则拦截**，详 M2 §5.5）。**M6 的校正动作同样不直接写 Neo4j 业务节点**，而是经"参数注入 M2 抽取"与"增量重算事件"两条通道（M6 §3 验收 2 / 6）。
+3. **M5 是横向基础设施**，**被 M1–M4 / M6 调用**，**不调用任何业务模块**。
 4. **M3 调用 M4**（通过意图路由），**M4 不调用 M3**。
+5. **M6 是"元层"模块**：它不产生业务实体，只**约束 M2 的抽取参数**并**触发 M3 / M4 所消费的 `kg_version` 增量**——因此 **M6 的校正动作失败不得污染已 `active` 的 `kg_version`**（沿用 ADR-0002 三段式，M6 §3 验收 6 / 7）。
 
 ---
 
@@ -107,6 +122,8 @@ flowchart TD
 | **H12** | 反证条件 F3（引用覆盖率 < 100% → 直接 NO-GO） | 01-research §3.3 | M3 / M4 | M3 §3 验收 2 / M4 §3 验收 4 |
 
 > **关键结论**：**H1–H10 来自项目规则**（`CODEBUDDY.md`），**H11–H12 来自产品准入线**（`01-research.md` / `02-product-outline.md`）。**任一约束被绕过都应被代码评审驳回**。
+>
+> **⚠️ 本表只有"要求"，没有"判据"**——**每条 H 的验收锚点、判据类型、可复现命令与签字人见 [`acceptance-traceability-matrix.md`](./acceptance-traceability-matrix.md) §4**。修改本表必须同步改该矩阵（三处同步纪律见矩阵 §7）。
 
 ---
 
@@ -178,7 +195,7 @@ flowchart TD
 | M2 | `prompts/entity_relation_extract_v1.md` | 实体 / 关系 / 证据抽取（核心） |
 | M3 | `prompts/intent_router_v1.md` | 意图路由（问答 / 场景识别） |
 | M3 / M4 | `prompts/kg_qa_v1.md` | GraphRAG 答案生成 |
-| M6（**本期不含**） | `prompts/entity_relation_extract_v1.md` | 本体冷启动建议（参数区分） |
+| M6（**本期含，Sprint 12 承接**） | `prompts/entity_relation_extract_v1.md` + `prompts/kg_qa_v1.md` | 本体冷启动建议（参数区分）+ 增量重算（**复用 v1，不新增版本**，plan §19.1 A） |
 
 > **关键约束**（来自 `CODEBUDDY.md`）：**P2 场景扩展时新增版本号**（如 `kg_qa_v2.md`），**禁止原地覆盖历史版本**。
 
@@ -190,29 +207,33 @@ flowchart TD
 |---|---|---|---|---|---|---|---|
 | **TBD-1** | 异步任务后端选型 | M1 吞吐与重试语义 | 设计阶段 | ✅ **已决定** | **FastAPI `BackgroundTasks` + `TaskManager` 抽象层**：零新增依赖（不引入 Redis / Celery）；启动扫描 PostgreSQL 将遗留 `pending` / `processing` 置 `failed`（`TASK_INTERRUPTED`）；状态持久化于 DB，**禁止只存进程内存**；接口预留，可无缝替换 Arq / Celery | M1 / M4 | [ADR-0001](./adr/ADR-0001-async-task-backend.md) |
 | **TBD-2** | Neo4j ↔ PostgreSQL 一致性边界 | M2 写入失败回滚语义 | 设计阶段 | ✅ **已决定** | **PostgreSQL 为 Source of Truth，先 PG 后 Neo4j + Saga 补偿**：`kg_versions` 先落 `writing` → 写 Neo4j → 置 `active`；Neo4j 失败则置 `failed` 且**不对外提供**；**查询层只认 `active`**，**绝不允许幽灵版本** | M2 / M3 / M4 | [ADR-0002](./adr/ADR-0002-neo4j-postgres-consistency.md) |
-| **TBD-3** | `kg_version` 的回滚 API 设计（规格未列） | 影响审计可追溯性 | M1.0 末期 | ⏳ 待定 | — | M2 / M3 / M4 | — |
-| **TBD-4** | 意图路由模型训练数据（`intent_router_v1.md` 的覆盖范围） | 影响 M3 → M4 的路由准确率 | M1.0 验证期 | ⏳ 待定 | — | M3 | — |
+| **TBD-3** | `kg_version` 的回滚 API 设计（规格未列） | 影响审计可追溯性 | **Sprint 13（批次 D）** | ⏳ 待定 | 收敛时点已定：`v1.1.0-demo-mvp-plan.md` §20.1 批次 D | M2 / M3 / M4 | — |
+| **TBD-4** | 意图路由模型训练数据（`intent_router_v1.md` 的覆盖范围） | 影响 M3 → M4 的路由准确率 | **Sprint 13（批次 D）** | ⏳ 待定 | 收敛时点已定：同上 | M3 | — |
 | **TBD-5** | 跨租户资源隔离粒度 | 私域部署安全 | **设计阶段（由"部署阶段"提前）** | ✅ **已决定** | **API 层强制注入 `org_id` + DB 层 RLS**：核心表全部含 `org_id`；启用 **`FORCE ROW LEVEL SECURITY`** + 受限 DB 角色；`storage_key` 以 `org_id` 为前缀；查询经 ORM / 中间件注入过滤，**严禁裸写 SQL** | M5（+ M1–M4 全量） | [ADR-0003](./adr/ADR-0003-tenant-isolation-rls.md) |
-| **TBD-6** | M5 慢查询 / 大查询的 trace 采样策略 | 影响可观测性成本 | 实现期确定 | ⏳ 待定 | — | M5 | — |
-| **TBD-7** | 反证条件 F4（单位成本）的具体阈值 | 影响 MVP 准入线 C3 | M1.0 验证期 | ⏳ 待定 | — | M2 / M4 | — |
+| **TBD-6** | M5 慢查询 / 大查询的 trace 采样策略 | 影响可观测性成本 | **Sprint 13（批次 D）** | ⏳ 待定 | 收敛时点已定：同上 | M5 | — |
+| **TBD-7** | 反证条件 F4（单位成本）的具体阈值 | 影响 MVP 准入线 C3 | **Sprint 13（批次 D）** | ⏳ 待定 | 收敛时点已定：同上；**阈值落 `backend/app/core/config.py`，可经 `.env` 覆盖**（M6 §3 验收 9） | M2 / M4 / **M6** | — |
 
-> **关键结论**：**3 个设计阶段架构决策已收敛**（TBD-1 / TBD-2 / TBD-5 → **ADR-0001 / ADR-0002 / ADR-0003，状态均为 Accepted**），详见 [`docs/adr/`](./adr/)。其中 **TBD-5 的决策窗口由"部署阶段"提前至"设计阶段"**——隔离粒度是数据模型的**根属性**，一旦实现便散落于全部查询，无法在部署阶段追加。**TBD-3 / 4 / 6 / 7 仍按原窗口收敛**，**任一 TBD 不可拖延至实现完成之后**——届时架构已固化，调整成本会指数级上升。
+> **关键结论**：**3 个设计阶段架构决策已收敛**（TBD-1 / TBD-2 / TBD-5 → **ADR-0001 / ADR-0002 / ADR-0003，状态均为 Accepted**），详见 [`docs/adr/`](./adr/)。其中 **TBD-5 的决策窗口由"部署阶段"提前至"设计阶段"**——隔离粒度是数据模型的**根属性**，一旦实现便散落于全部查询，无法在部署阶段追加。
+>
+> **TBD-3 / 4 / 6 / 7 的收敛窗口已由"模糊的 M1.0 末期 / 验证期 / 实现期"收敛为可执行的 `Sprint 13 §20.1 批次 D`**（决议 **O-4**，见 `docs/v2.0.0-ship-backward-plan.md` §7）。**理由**：原窗口无锚点、无法在倒推计划里设闸门；批次 D 本身就要做准入线判定（C3 依赖 TBD-7 阈值），**同批次收敛可避免"判定时才发现阈值没定"**。**任一 TBD 不可拖延至实现完成之后**——届时架构已固化，调整成本指数级上升。
 
-> **落地前置条件**：**5 份规格已完成与 3 份 ADR 的同步**（规格同步记录见附录 C.1，`org_id` 覆盖度校验见附录 C.2）；**`contracts/openapi.yaml` 尚未生成**，须于**阶段三**统一补齐 `TASK_INTERRUPTED` / `KG_VERSION_NOT_ACTIVE` 错误码与租户隔离 403 语义。
+> **落地前置条件**：**5 份规格已完成与 3 份 ADR 的同步**（规格同步记录见附录 C.1，`org_id` 覆盖度校验见附录 C.2）；**`contracts/openapi.yaml` 已生成并纳入 CI 零漂移门禁**（`contract` job：`export_openapi.py --check` + `gen:api` 后 `git diff --exit-code`），`TASK_INTERRUPTED` / `KG_VERSION_NOT_ACTIVE` / 租户隔离 403 语义已随契约落定；**第 6 份规格 `specs/m6-ontology-incremental.md` 为 v0.1 草案**，其 **v1.0 定稿 = Sprint 12 开工闸门**（倒推文档 §7.1 CP-3）。
 
 ---
 
 ## 9. 角色隔离与文档所有权（来自 `CODEBUDDY.md`）
 
-| 角色 | 本期产出 | 后续产出 |
+| 角色 | 已产出 / 本期产出 | 后续产出 |
 |---|---|---|
-| **架构师**（本次） | `specs/m1..m5-*.md` + `docs/03-prd.md` + `docs/adr/ADR-0001..0003.md` | 设计文档（后续补充） |
-| **后端开发 B** | — | `contracts/openapi.yaml` + `backend/app/` |
-| **前端 FE** | — | `frontend/src/` |
-| **测试 QA** | — | `tests/unit|integration|e2e/` |
-| **部署 DevOps** | — | `docker-compose.yml` / `deploy/` |
+| **架构师** | `specs/m1..m6-*.md` + `specs/_template/` + `docs/03-prd.md` + `docs/adr/ADR-0001..0003` + `docs/adr/0004-integration-seams.md` + `docs/v1.1.0-demo-mvp-plan.md` + `docs/v2.0.0-ship-backward-plan.md` + `docs/acceptance-traceability-matrix.md` + `docs/dev-doc-status.md` | D-1（m6 spec v1.0 定稿，S11 收尾前）、D-4（开发指南阶段十八～二十二）、上线 gate 的准入线裁决 |
+| **后端开发 B** | `backend/app/`（v1.0.0 工程外壳） | `contracts/openapi.yaml` 增量 + `backend/app/`；**契约同步 5 步**（见 `backend/CODEBUDDY.md` §3）由后端 B 执行 |
+| **前端 FE** | `frontend/src/`（v1.0.0 工程外壳） | `npm run gen:api` 后的类型与页面 |
+| **测试 QA** | `backend/tests/`（含 `test_check_seams.py`） | `tests/unit` / `tests/integration` / `tests/e2e`；**按 [`acceptance-traceability-matrix.md`](./acceptance-traceability-matrix.md) 逐行取证** |
+| **部署 DevOps** | CI（`.github/workflows/ci.yml` 四 job 门禁） | `docker-compose.yml` / `deploy/` |
 
-> **本次 PRD 由架构师角色产出**，**仅动 `specs/` 与 `docs/`**。**未触碰** `frontend/`、`backend/`、`contracts/`、`prompts/`、`openspec/`、`specs/_template/`。
+> **PRD 由架构师角色产出**，**只动 `specs/` 与 `docs/`**。**未触碰** `frontend/`、`backend/`、`contracts/`、`prompts/`。
+>
+> **验收职责口径**：`acceptance-traceability-matrix.md` §4 的"验收人"列是唯一签字依据；**人工判据必须有具名验收人**，不得以"团队确认"代替。
 
 ---
 
@@ -255,6 +276,35 @@ flowchart TD
 
 ## 附录 C. 文件落清单
 
+### C.0 当前文档基线（2026-09-21，**唯一权威**）
+
+> 下表是**当前实际存在**的文档基线。**新增文档必须在此登记**，否则视为"无登记文档"（与 ADR-0004"预留必须有登记"同源纪律）。C.1 是 v1.0 首轮产出快照，仅作历史留痕。
+
+| # | 路径 | 角色 | 性质 |
+|---|---|---|---|
+| 1 | `docs/01-research.md` | 架构师 | 上游依据（v1.0，含 §3.3 C1–C3 / F1–F5） |
+| 2 | `docs/02-product-outline.md` | 架构师 | 上游依据（v1.0，含附录 C 指标定义） |
+| 3 | `docs/03-prd.md` | 架构师 | **本文件**（汇总 PRD v1.0 + 2026-09-21 口径修订） |
+| 4 | `specs/m1-async-ingest.md` ～ `specs/m5-permission-audit.md` | 架构师 | 5 份 P0 规格（验收 8/7/7/7/8 条） |
+| 5 | `specs/m6-ontology-incremental.md` | 架构师 | **第 6 份 P0 规格**（v0.1 草案，验收 11 条） |
+| 6 | `specs/_template/{proposal,tasks,design}.md` | 架构师 | SDD 三件套模板 |
+| 7 | `docs/adr/ADR-0001-async-task-backend.md` | 架构师 | 设计阶段 ADR（Accepted） |
+| 8 | `docs/adr/ADR-0002-neo4j-postgres-consistency.md` | 架构师 | 设计阶段 ADR（Accepted） |
+| 9 | `docs/adr/ADR-0003-tenant-isolation-rls.md` | 架构师 | 设计阶段 ADR（Accepted） |
+| 10 | `docs/adr/0004-integration-seams.md` | 架构师 | 集成接缝清单（**门禁 `check_seams.py` 的数据源**） |
+| 11 | `docs/v1.1.0-demo-mvp-plan.md` | 架构师 | 交付计划 **v3.0** |
+| 12 | `docs/v2.0.0-ship-backward-plan.md` | 架构师 | 倒推计划（闸门 + **§7 决策记录**） |
+| 13 | **`docs/acceptance-traceability-matrix.md`** | 架构师 | **验收可追溯矩阵**（H1–H12 / C1–C3 / F1–F5 → 判据 → 验收人） |
+| 14 | `docs/dev-doc-status.md` | 架构师 | 文档状态跟踪（**唯一活表**） |
+| 14a | **`docs/sprint-calendar.md`** | 架构师 | **Sprint 日历**（S5~S13 日历化排期，交付日 2027-02-12；范围真源仍是 plan v3.0） |
+| 15 | `docs/release-notes/v1.0.0.md` | 架构师 | 版本说明 |
+| 16 | `docs/GraphRAG-Agent + Harness + SDD 多模态知识库全栈开发指南.md` | 架构师 | 全栈 / Harness / SDD 指南（**头部已标注：Sprint 9–13 尚未覆盖**） |
+| 17 | `docs/multimodal_rag_backend_api_spec-v1.0.md`、`docs/bridge-pipeline-specification-v1.0.md`、`docs/langextract_spec.md`、`docs/mineru_cloud_api_spec.md` | 架构师 | 技术选型实测规格（**第三方对接以实测为准**，见 `CODEBUDDY.md` 实测反哺规则） |
+
+> **非文档产物**（不在本表但同等权威）：`contracts/openapi.yaml`（契约真源，禁止手改）、`prompts/`（5 个 v1）、`changes/Sprint<N>.<M>/`（SDD 三件套 + `integration-log.md`）、`changes/archive/`（归档）。
+
+### C.1 v1.0 首轮产出快照（历史留痕，2026-09）
+
 | # | 路径 | 角色 | 大致行数 |
 |---|---|---|---|
 | 1 | `specs/m1-async-ingest.md` | 架构师 | ~120 |
@@ -267,7 +317,7 @@ flowchart TD
 | 8 | `docs/adr/ADR-0002-neo4j-postgres-consistency.md` | 架构师 | ~110 |
 | 9 | `docs/adr/ADR-0003-tenant-isolation-rls.md` | 架构师 | ~120 |
 
-> **关键结论**：**9 个文件**（6 份规格 / PRD + 3 份 ADR）**均为新建**；其中 `docs/03-prd.md`（本文）在写入 TBD 决策后**被修改**（§8 TBD 表 + 文档头 + §9 + 附录 C）。**未触碰** `frontend/`、`backend/`、`contracts/`、`prompts/`、`openspec/`、`specs/_template/`、`.env*`。
+> **首轮关键结论**：**9 个文件**（6 份规格 / PRD + 3 份 ADR）**均为新建**；其中 `docs/03-prd.md`（本文）在写入 TBD 决策后**被修改**（§8 TBD 表 + 文档头 + §9 + 附录 C）。**未触碰** `frontend/`、`backend/`、`contracts/`、`prompts/`、`openspec/`、`specs/_template/`、`.env*`。
 
 ### C.1 规格同步记录（对齐 ADR-0001 / ADR-0002 / ADR-0003）
 

@@ -45,7 +45,7 @@
 
 1. **WHEN** M1 完成文档解析并投递 M2 任务，**THEN** M2 调用 MinerU 完成结构化解析并落中间表示（chunk 列表 + 版面坐标），**AND** 平均解析时延 P95 ≤ 30s / 100 页（中文表格型 PDF），**AND** 表格字段还原准确率 ≥ 0.85（基于 50 份样本实测）。
 2. **WHEN** LangExtract 执行抽取，**THEN** 每个三元组输出 `{entity, relation, evidence_span, confidence}`，**AND** `confidence` 字段落 Neo4j 节点 / 关系属性（用于 M3 过滤），**AND** `evidence_span` 必须含 `doc_id + chunk_id + char_offset + text`。
-3. **WHEN** 抽取结果包含 2 个以上名称相似但不同的实体（如"ABC 公司"与"ABC股份有限公司"），**THEN** 实体消解器返回合并候选（含相似度评分），**AND** 评分 ≥ 0.90 的候选**自动合并**（写 Neo4j + 落 `entity_merge_candidates.status=auto_merged`），**AND** 0.70–0.90 的候选**进入人工校正队列**（`status=human_review`，由 M6 处理），**AND** < 0.70 的候选**保持独立**。
+3. **WHEN** 抽取结果包含 2 个以上名称相似但不同的实体（如"ABC 公司"与"ABC股份有限公司"），**THEN** 实体消解器返回合并候选（含相似度评分），**AND** 评分 ≥ 0.90 的候选**自动合并**（写 Neo4j + 落 `entity_merge_candidates.status=auto_merged`），**AND** 0.70–0.90 的候选**进入人工校正队列**（`status=human_review`，由 M6 处理），**AND** < 0.70 的候选**保持独立**。（**注**：`status` 另有 M6 前向预留值 `applied`，见 §4.5 注脚——**本验收不涉及**。）
 4. **WHEN** 任一抽取结果写入 Neo4j，**THEN** 该次写入生成一个版本号 `kg_version`（ISO 时间戳 + ULID 后缀），**AND** 写入顺序**严格**为「**先 PG 后 Neo4j**」（**ADR-0002**）：① `kg_versions` **插入** `status = writing` → ② 写入 Neo4j（**必须 `MERGE`**，以 `(id, kg_version)` 为幂等键，保证重放安全）→ ③ 成功置 `active` / 失败置 `failed` 并记 `error_code` / `error_detail`，**AND** 不删除或覆盖历史版本（历史版本仅 `superseded` 标记，不删），**AND** PostgreSQL `kg_versions` 表记录 `{version, org_id, doc_id, status, error_code?, error_detail?, reconciled_at?, trace_id, created_at, updated_at}`。
 5. **WHEN** 抽取过程中 LangExtract 抛错或超时，**THEN** tenacity 指数退避重试 ≤ 3 次（初始 1s、倍数 2），**AND** 最终失败触发 M5 审计 `extract.fail` 事件，**AND** `documents.status` 置为 `failed` 且 `error_code` 落库。
 6. **WHEN** 抽取完成且 `kg_version` 落库，**THEN** M2 投递索引更新事件（`kg_version` 标识），**AND** M3 / M4 可立即消费该版本。
@@ -117,9 +117,17 @@
 | `left_entity_id` | UUID | 是 | 左实体 |
 | `right_entity_id` | UUID | 是 | 右实体 |
 | `similarity` | FLOAT | 是 | 0–1 |
-| `status` | TEXT | 是 | `pending / auto_merged / human_review / rejected` |
+| `status` | TEXT | 是 | `pending / auto_merged / human_review / rejected`（**另有 M6 前向预留值 `applied`，见本表下方注脚**） |
 | `created_at` | TIMESTAMP | 是 | - |
 | `trace_id` | UUID | 是 | - |
+
+> **注脚：`applied` = M6 前向预留值（本阶段不实现）**
+>
+> `status` 预留第 5 个值 `applied`，由 **M6 本体校正 GUI**（Sprint 12）在"合并动作被人工确认"后写入。**M2 实现阶段（含 Sprint 9）不落该值**——`similarity ∈ [0.70, 0.90]` 的候选仍**只进** `human_review`（**§3 验收 3 口径不变**）。
+>
+> M6 落地前须**先升版本表**并走**契约同步 5 步**：① Pydantic 枚举加 `applied` → ② `uv run python scripts/export_openapi.py` 重导契约 → ③ 提交生成物 → ④ `npm run gen:api` 重导前端类型 → ⑤ CI 零漂移校验。详见 `specs/m6-ontology-incremental.md` §4.4。
+>
+> **本注脚只声明预留位，不改变 M2 自身的实现范围与验收口径。**
 
 ---
 

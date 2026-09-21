@@ -1,8 +1,13 @@
 ---
 name: "OPSX: Explore"
-description: "Enter explore mode - think through ideas, investigate problems, clarify requirements"
+description: "【本仓库已停用，禁止执行】OpenSpec CLI 未启用（决议 O-1）；探索/澄清需求请用 brainstorming 技能。DO NOT RUN in this repository."
 argument-hint: "[command arguments]"
 ---
+
+> ⛔ **本命令在本仓库已停用，禁止执行。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 需要的动作改用：本仓库的 `brainstorming` 技能（已启用）。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Enter explore mode. Think deeply. Visualize freely. Follow the conversation wherever it goes.
 

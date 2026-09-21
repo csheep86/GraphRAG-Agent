@@ -1,14 +1,19 @@
 ---
 name: openspec-propose
-description: Propose a new change with all artifacts generated in one step. Use when the user wants to quickly describe what they want to build and get a complete proposal with design, specs, and tasks ready for implementation.
+description: "【本仓库已停用，禁止调用】DO NOT USE in this repository. OpenSpec CLI 未启用（决议 O-1）；SDD 变更落点为 changes/Sprint<N>.<M>/。Original: Propose a new change with all artifacts generated in one step."
 allowed-tools: Bash(openspec:*)
 license: MIT
-compatibility: Requires openspec CLI.
+compatibility: "本仓库未启用：openspec CLI 未安装、也不需要安装。"
 metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.13.0"
 ---
+
+> ⛔ **本技能在本仓库已停用，禁止调用。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**：方案 A′，落点 `changes/Sprint<N>.<M>/`，不启用 OpenSpec CLI）。
+> 若要"提一个变更"，改用：建 `changes/Sprint<N>.<M>/proposal.md` + `tasks.md`（模板 `specs/_template/`），流程见 `docs/dev-doc-status.md` §9.1。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Propose a new change - create the change and generate all artifacts in one step.
 

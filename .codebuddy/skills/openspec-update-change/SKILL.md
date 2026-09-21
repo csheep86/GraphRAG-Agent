@@ -1,14 +1,19 @@
 ---
 name: openspec-update-change
-description: Update an OpenSpec change by revising its existing planning artifacts and keeping them coherent with one another. Use when the user wants to revise a change's plan, fold new decisions into it, or reconcile its artifacts after an edit. Never edits code.
+description: "【本仓库已停用，禁止调用】DO NOT USE in this repository. OpenSpec CLI 未启用（决议 O-1）；修订计划请直接改 changes/Sprint<N>.<M>/proposal.md + tasks.md。Original: Update an OpenSpec change by revising its existing planning artifacts."
 allowed-tools: Bash(openspec:*)
 license: MIT
-compatibility: Requires openspec CLI.
+compatibility: "本仓库未启用：openspec CLI 未安装、也不需要安装。"
 metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.13.0"
 ---
+
+> ⛔ **本技能在本仓库已停用，禁止调用。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 若要"修订变更计划"，直接改 `changes/Sprint<N>.<M>/proposal.md` 与 `tasks.md` 并保持二者一致。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Revise a change's existing planning artifacts and keep them coherent. Never edit code.
 

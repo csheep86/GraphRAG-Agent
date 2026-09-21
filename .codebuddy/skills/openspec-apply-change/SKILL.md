@@ -1,14 +1,19 @@
 ---
 name: openspec-apply-change
-description: Implement tasks from an OpenSpec change. Use when the user wants to start implementing, continue implementation, or work through tasks.
+description: "【本仓库已停用，禁止调用】DO NOT USE in this repository. OpenSpec CLI 未启用（决议 O-1）；实现任务请直接按 changes/Sprint<N>.<M>/tasks.md 推进。Original: Implement tasks from an OpenSpec change."
 allowed-tools: Bash(openspec:*)
 license: MIT
-compatibility: Requires openspec CLI.
+compatibility: "本仓库未启用：openspec CLI 未安装、也不需要安装。"
 metadata:
   author: openspec
   version: "1.0"
   generatedBy: "1.13.0"
 ---
+
+> ⛔ **本技能在本仓库已停用，禁止调用。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 若要"实现任务"，直接读 `changes/Sprint<N>.<M>/tasks.md` 并逐条执行；证据链写 `integration-log.md`。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Implement tasks from an OpenSpec change.
 

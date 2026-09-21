@@ -1,6 +1,7 @@
 # Proposal: <变更名称>
 
-> 使用说明：复制本模板到 `changes/<change-id>/proposal.md`，填写后随变更一起维护；变更归档后移入 `changes/archive/`。
+> 使用说明：复制本模板到 `changes/Sprint<N>.<M>/proposal.md`（与 `design.md` / `tasks.md` / 联调证据 `integration-log.md` **同目录**）；填写后随批次一起维护；批次收尾后**整目录**移入 `changes/archive/<日期>-Sprint<N>.<M>/`。
+> **定位**：本模板产出**事前计划**；同目录的 `integration-log.md` 记录**事后实测证据**（前置核实 / 跑数 / 关键发现 / gap / 未触碰项 / 收尾确认）。两者互补，**不可互相替代**。落点决议见 `docs/v2.0.0-ship-backward-plan.md` §6。
 
 ## Why
 

@@ -56,6 +56,7 @@
 2. 执行 `uv run python scripts/export_openapi.py` 重新生成 `contracts/openapi.yaml`。
 3. 生成物**必须提交**，禁止手工编辑 `contracts/openapi.yaml`。
 4. 前端类型由阶段 3.2 的 `npm run gen:api` 生成，CI 在阶段 3.3 校验漂移。
+5. **集成接缝预留字段不进契约**：为未来企业系统集成预留的可空字段/表（`documents` 的 8 个预留字段、`external_refs`、`domain_events`）**不导出到 OpenAPI**（根 `CODEBUDDY.md` §功能预留原则 第 4 条 / ADR-0004 §3）。`export_openapi.py --check` 与 `npm run gen:api` 无 diff 即为合规证据。
 
 ## 4. 已登记的实现缺口
 
@@ -73,13 +74,14 @@
 | S4-2：`specs/m2-extract-kg.md` L157 | `/graph` 仍写「实现在 Sprint 3，当前占位返回 501」 | ✅ 已偿还（Sprint 4.13） |
 | S4-3：`frontend/` 注释过期 | `api/client.ts` L15-16、`api/graph.ts` L41、`api/qa.ts` L61、`.env.development` L9-10 仍表述「大部分端点当前实现状态为 501 NOT_IMPLEMENTED」 | ✅ 已偿还（Sprint 4.13） |
 | S4-4：`tasks/registry.py` L135-138 docstring 过期 | 仍写「Sprint 3 后段将替换为…ADR-0002 三段式写入」，而该段实现已随 D2（PG `kg_versions` 真源）移出 Sprint 4 | ✅ 已偿还（Sprint 4.13） |
-| E1：财务指标孤立节点 | output.json 12/16 财务指标实体无任何边，图谱连通性差 | v1.1.0 数据质量专项 |
-| E2：实体命名可疑 | 「智能制造与数字服务」「集团」等实体命名不符预期，需 Prompt 抽取规范重设计 | v1.1.0 数据质量专项（与 E1 同期，Prompt 改动需版本化） |
+| E1：财务指标孤立节点 | output.json 12/16 财务指标实体无任何边，图谱连通性差 | v1.1.0（Sprint 5 重接 LangExtract 后**重新评估并登记新结论**，不动 Prompt） |
+| E2：实体命名可疑 | 「智能制造与数字服务」「集团」等实体命名不符预期 | v1.1.0（同上）；**Prompt 抽取规范重设计推迟 v1.5+**（避免撑大 Sprint 5） |
 | `/agent/query` 缺 PG 前置租户隔离 | Cypher `_QUERY_ALL_ENTITY_SUBGRAPH` fail-open（`Entity.org_id` 属性键不存在时 `OR properties(n)['org_id'] IS NULL` 命中放行）；route 无 PG `documents` 表前置租户校验 | v1.1.0（接入 MinerU + LangExtract 时同步改 fail-closed） |
 | B1：Document.retry_count 列存在但 executor 从不更新 | 列已声明（Schema 有），executor 从不写；要么漏写、要么该删列。11.2 第二批测试不锁定该值 | v1.1.0 疑似缺陷 |
-| B4：Settings.task_retry_multiplier 已声明但从未被消费 | 字段定义 default=2.0, gt=1，但 executor 只用 task_retry_initial_seconds 作 multiplier；改该配置无任何效果 | v1.1.0 疑似缺陷（配置项与代码脱节） |
+| B4：Settings.task_retry_multiplier 在**任务退避路径**未被读取 | 字段定义 default=2.0, gt=1；`app/services/agents.py` 以 `exp_base` 读它（Agent 退避生效），但 `app/tasks/registry.py` / `scripts/import_to_neo4j.py` 只用 `task_retry_initial_seconds` 作 multiplier——**任务重试改该配置无效果**。措辞修正：不是"从未被消费"，而是"读它的地方不全"；因此 `check_seams.py` 的配置消费者判据**拦不到它**（它确有消费者），必须靠 S5 批次 A 的验收项落实 | v1.1.0 疑似缺陷（配置项与代码脱节） |
 | `_refuse()` 构造响应体未注入 trace_id | 10.4 联调发现：响应头 X-Trace-Id 正确，但 body.trace_id 在拒答分支为 None（其他场景正常） | v1.1.0（与 AgentService 其他响应构造统一处理） |
 | S4-1 遗留：api-spec 同文件还有 6 处同类过期描述 | L31-32 / L191 / L273 / L334 / L343 / §7 整节（含「TaskManager.recover() 未实现」，实际已实现） | v1.1.0 文档刷新专项 |
+| 集成接缝预留（`documents` 8 字段 / `AuthProvider` / provider 抽象 / `external_refs` / `domain_events` / 外部数据导入） | 未落。Sprint 5 批次 A2 落 provider 抽象 + `documents` 8 字段 + `AuthProvider` + 流水线阶段配置；Sprint 7 批次 B/D 落 `external_refs` + 外部数据导入接缝 + `domain_events`；Sprint 8 批次 E 落 `ExportSink`。**全部 nullable 且不进契约** | ADR-0004 / 本文件 §3 第 5 条 |
 
 ### 4.1 阶段九已偿还的缺口
 
@@ -101,6 +103,8 @@ uv sync                                        # 安装依赖（提交 uv.lock�
 uv run uvicorn app.main:app --reload           # 本地启动
 uv run python scripts/export_openapi.py        # 导出契约
 uv run python scripts/export_openapi.py --check # 校验契约是否漂移
+uv run python scripts/check_seams.py           # 接缝纪律门禁（实现集合 / 配置消费者 / 预留字段）
+uv run python scripts/check_seams.py --strict  # Sprint 收尾：未到期项也要求全绿
 uv run pytest                                  # 契约与行为测试
 uv run ruff check . && uv run ruff format .
 ```

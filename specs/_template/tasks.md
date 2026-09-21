@@ -1,6 +1,8 @@
 # Tasks: <变更名称>
 
-> 使用说明：复制本模板到 `changes/<change-id>/tasks.md`。按依赖顺序拆解，每项控制在可独立验证的粒度；完成后勾选。
+> 使用说明：复制本模板到 `changes/Sprint<N>.<M>/tasks.md`（**每个批次必填**，是"排计划"的直接依据）。按依赖顺序拆解，每项控制在可独立验证的粒度；完成后勾选；**收尾时须与同目录 `integration-log.md` 的实测结论对账**（勾选 ≠ 通过，须有实测证据）。落点决议见 `docs/v2.0.0-ship-backward-plan.md` §6。
+>
+> **与 plan 的分工**：`docs/v1.1.0-demo-mvp-plan.md` §16~§20 是 **Sprint 级**范围与验收清单（"这 3 周做什么"）；本文件是 **批次级**任务拆解与勾选（"今天勾哪一项"）。两者不互相复制。
 
 ## 1. 契约更新
 - [ ] 更新 `contracts/openapi.yaml`（endpoint / schema / 错误码）

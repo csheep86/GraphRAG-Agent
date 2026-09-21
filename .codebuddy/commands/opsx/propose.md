@@ -1,8 +1,13 @@
 ---
 name: "OPSX: Propose"
-description: "Propose a new change - create it and generate all artifacts in one step"
+description: "【本仓库已停用，禁止执行】OpenSpec CLI 未启用（决议 O-1）；变更落点为 changes/Sprint<N>.<M>/。DO NOT RUN in this repository."
 argument-hint: "[command arguments]"
 ---
+
+> ⛔ **本命令在本仓库已停用，禁止执行。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**：方案 A′，不启用 OpenSpec CLI）。
+> 需要的动作改用：建 `changes/Sprint<N>.<M>/proposal.md` + `tasks.md`（模板 `specs/_template/`），流程见 `docs/dev-doc-status.md` §9.1。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Propose a new change - create the change and generate all artifacts in one step.
 

@@ -1,8 +1,13 @@
 ---
 name: "OPSX: Update"
-description: "Update a change - revise existing planning artifacts and keep them coherent (Experimental)"
+description: "【本仓库已停用，禁止执行】OpenSpec CLI 未启用（决议 O-1）；修订计划请直接改 changes/Sprint<N>.<M>/proposal.md + tasks.md。DO NOT RUN in this repository."
 argument-hint: "[command arguments]"
 ---
+
+> ⛔ **本命令在本仓库已停用，禁止执行。**
+> 依据：`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**O-1**）。
+> 需要的动作改用：直接改 `changes/Sprint<N>.<M>/proposal.md` 与 `tasks.md`，并保持二者一致。
+> 本文件仅作历史留痕，**不要执行其中任何 `openspec` 命令**。
 
 Revise a change's existing planning artifacts and keep them coherent. Never edit code.
 
