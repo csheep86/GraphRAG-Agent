@@ -1,7 +1,7 @@
 # CI 流水线（Sprint 1 / 阶段 3.3）
 #
 # 四个 job，任一失败即整条流水线红：
-#   1. backend  : Ruff 静态检查 + 格式检查 + Pytest（行为与契约测试）
+#   1. backend  : Ruff 静态检查 + 格式检查 + 接缝纪律门禁（check_seams.py）+ Pytest（行为与契约测试）
 #   2. frontend : ESLint + TypeScript 类型检查 + `npm run gen:api` 可执行性冒烟
 #   3. contract : 契约漂移门禁（关键）
 #                 a. 后端侧 `export_openapi.py --check` 校验 contracts/openapi.yaml
@@ -70,6 +70,11 @@ jobs:
       - name: Ruff 格式检查
         run: uv run ruff format --check .
 
+      # 版本闸门：未到期项只记 WARN，不阻塞开发；越界（登记外实现）与预留字段泄进契约
+      # 始终判 ERROR。Sprint 收尾验收请手工执行 `--strict`（计划文档 §4.3 / §7.2）。
+      - name: 接缝纪律门禁（check_seams.py）
+        run: uv run python scripts/check_seams.py
+
       - name: Pytest
         run: uv run pytest -q
 
@@ -84,6 +89,7 @@ jobs:
             echo "- 复现命令（backend/ 目录下）:"
             echo "  - \`uv sync --all-groups\`"
             echo "  - \`uv run ruff check . && uv run ruff format --check .\`"
+            echo "  - \`uv run python scripts/check_seams.py\`（接缝纪律门禁；收尾验收用 \`--strict\`）"
             echo "  - \`uv run pytest -q\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -252,7 +258,7 @@ jobs:
             echo ""
             echo "| 失败 Job | 常见原因 |"
             echo "| --- | --- |"
-            echo "| backend | 静态检查告警、代码未格式化、测试失败 |"
+            echo "| backend | 静态检查告警、代码未格式化、接缝门禁报错（登记外实现 / 预留字段泄进契约）、测试失败 |"
             echo "| frontend | ESLint 报错、openapi-typescript 执行失败 |"
             echo "| contract | 改了后端模型但未重新导出契约，或未运行 \`npm run gen:api\` |"
           } >> "$GITHUB_STEP_SUMMARY"
