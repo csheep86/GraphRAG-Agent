@@ -74,12 +74,12 @@
 | S4-2：`specs/m2-extract-kg.md` L157 | `/graph` 仍写「实现在 Sprint 3，当前占位返回 501」 | ✅ 已偿还（Sprint 4.13） |
 | S4-3：`frontend/` 注释过期 | `api/client.ts` L15-16、`api/graph.ts` L41、`api/qa.ts` L61、`.env.development` L9-10 仍表述「大部分端点当前实现状态为 501 NOT_IMPLEMENTED」 | ✅ 已偿还（Sprint 4.13） |
 | S4-4：`tasks/registry.py` L135-138 docstring 过期 | 仍写「Sprint 3 后段将替换为…ADR-0002 三段式写入」，而该段实现已随 D2（PG `kg_versions` 真源）移出 Sprint 4 | ✅ 已偿还（Sprint 4.13） |
-| E1：财务指标孤立节点 | output.json 12/16 财务指标实体无任何边，图谱连通性差 | v1.1.0（Sprint 5 重接 LangExtract 后**重新评估并登记新结论**，不动 Prompt） |
-| E2：实体命名可疑 | 「智能制造与数字服务」「集团」等实体命名不符预期 | v1.1.0（同上）；**Prompt 抽取规范重设计推迟 v1.5+**（避免撑大 Sprint 5） |
-| `/agent/query` 缺 PG 前置租户隔离 | Cypher `_QUERY_ALL_ENTITY_SUBGRAPH` fail-open（`Entity.org_id` 属性键不存在时 `OR properties(n)['org_id'] IS NULL` 命中放行）；route 无 PG `documents` 表前置租户校验 | v1.1.0（接入 MinerU + LangExtract 时同步改 fail-closed） |
-| B1：Document.retry_count 列存在但 executor 从不更新 | 列已声明（Schema 有），executor 从不写；要么漏写、要么该删列。11.2 第二批测试不锁定该值 | v1.1.0 疑似缺陷 |
-| B4：Settings.task_retry_multiplier 在**任务退避路径**未被读取 | 字段定义 default=2.0, gt=1；`app/services/agents.py` 以 `exp_base` 读它（Agent 退避生效），但 `app/tasks/registry.py` / `scripts/import_to_neo4j.py` 只用 `task_retry_initial_seconds` 作 multiplier——**任务重试改该配置无效果**。措辞修正：不是"从未被消费"，而是"读它的地方不全"；因此 `check_seams.py` 的配置消费者判据**拦不到它**（它确有消费者），必须靠 S5 批次 A 的验收项落实 | v1.1.0 疑似缺陷（配置项与代码脱节） |
-| `_refuse()` 构造响应体未注入 trace_id | 10.4 联调发现：响应头 X-Trace-Id 正确，但 body.trace_id 在拒答分支为 None（其他场景正常） | v1.1.0（与 AgentService 其他响应构造统一处理） |
+| E1：财务指标孤立节点 | output.json 12/16 财务指标实体无任何边，图谱连通性差 | ⏳ **`unresolved`（Sprint 5 按 §4.4 第 3 条收口）**——见 §4.1 |
+| E2：实体命名可疑 | 「智能制造与数字服务」「集团」等实体命名不符预期 | ⏳ **`unresolved`（同上）**；Prompt 抽取规范重设计归属 Sprint 13（条件吸收，见计划 §10） |
+| `/agent/query` 缺 PG 前置租户隔离 | Cypher `_QUERY_ALL_ENTITY_SUBGRAPH` fail-open；route 无 PG `documents` 表前置租户校验 | ✅ **已偿还（Sprint 5 批次 B）**：`AgentService.query` 经 `GraphService.validate_kg_version_tenant_boundary` 校验 → `AgentTenantLeakError` → 路由层 **403 `KG_TENANT_LEAK`**；`settings.agent_fail_closed=False` 为逃生阀 |
+| B1：Document.retry_count 列存在但 executor 从不更新 | 列已声明（Schema 有），executor 从不写；要么漏写、要么该删列 | ✅ **已偿还（Sprint 5 批次 A）**：`registry.py` 在 tenacity 重试回调与 completed 分支回写 `documents.retry_count`；阶段列 `extract_retry_count` / `kg_build_retry_count` 同步回写 |
+| B4：Settings.task_retry_multiplier 在**任务退避路径**未被读取 | 字段定义 default=2.0, gt=1；`app/tasks/registry.py` 只用 `task_retry_initial_seconds` 作 multiplier——**任务重试改该配置无效果** | ✅ **已偿还（Sprint 5 批次 A）**：三个执行体（parse / extract / kg.build）的 `wait_exponential` 均改为 `exp_base=settings.task_retry_multiplier`；`test_graph_and_agent_routes.py` 断言退避随次数增长 |
+| `_refuse()` 构造响应体未注入 trace_id | 10.4 联调发现：响应头 X-Trace-Id 正确，但 body.trace_id 在拒答分支为 None | ✅ **已偿还（Sprint 5 批次 A）**：`agents.py::_refuse()` 构造 `AgentQueryResponse` 时注入 `trace_id=trace_id` |
 | S4-1 遗留：api-spec 同文件还有 6 处同类过期描述 | L31-32 / L191 / L273 / L334 / L343 / §7 整节（含「TaskManager.recover() 未实现」，实际已实现） | v1.1.0 文档刷新专项 |
 | 集成接缝预留（`documents` 8 字段 / `AuthProvider` / provider 抽象 / `external_refs` / `domain_events` / 外部数据导入） | 未落。Sprint 5 批次 A2 落 provider 抽象 + `documents` 8 字段 + `AuthProvider` + 流水线阶段配置；Sprint 7 批次 B/D 落 `external_refs` + 外部数据导入接缝 + `domain_events`；Sprint 8 批次 E 落 `ExportSink`。**全部 nullable 且不进契约** | ADR-0004 / 本文件 §3 第 5 条 |
 
@@ -91,6 +91,29 @@
 | `GET /documents/{id}/graph` 真实查询 | ✅ 调 `GraphService.fetch_document_subgraph`，输出严格遵循 `DocumentGraphResponse` |
 | `POST /agent/query` 真实问答 | ✅ 调 `AgentService.query`，含 409 版本校验 / 401 / 400 / 501 全分支 |
 | Neo4j ↔ PG Saga 写入时序 | ⚠️ 三段式已在 `scripts/import_to_neo4j.py` 落实，但状态机落 Neo4j 而非 PG（见上表） |
+
+### 4.2 E1 / E2 收口（Sprint 5 批次 B，`unresolved`）
+
+**结论：两项均登记为 `unresolved`——维持现状，不顺延到下一批次**（计划 §4.4 降级预案第 3 条）。
+
+| 项 | 要求产出的数字 | 实际 | 结论 |
+|---|---|---|---|
+| E1 孤立节点率 | 财务指标类实体中「无任何边」的占比 | **未产出** | `unresolved` |
+| E2 命名可疑率 | 实体名不符预期（如「集团」「智能制造与数字服务」）的占比 | **未产出** | `unresolved` |
+
+**为什么跑不出数字（根因，非托辞）**：
+
+1. Sprint 5 批次 B 落地的 `LangextractClient` 是**默认 mockable** 实现——`_default_extract_chunk` 为基于正则的占位抽取器（`ORG` / `DATE` / `MONEY` + `PARTY_TO` 共现），**真实 LLM 调用留 `_evaluate_client_call_llm` 占位**，受 `extraction_provider` 切换键约束（未实现别档显式报错）；
+2. 该设计的目的是保证 **CI / 单元测试零外部依赖**——但代价是抽取产物由正则产生，**不反映真实 LangExtract 的抽取质量**；
+3. 因此在其产物上统计出来的「孤立节点率 / 命名可疑率」是**正则抽取器的性质，不是 E1/E2 的性质**——拿它登记等于用假数据冒充结论，比不登记更糟。
+
+**是否达演示可接受线**：**无法判定**（判定所需数据未产出）。演示剧本第 2 步（看图）依赖真实抽取，当前在 mockable 档位下可跑通链路但**抽取质量为占位水平**。
+
+**后续归属**：E1/E2 专项按计划 §10 为**条件吸收 → Sprint 13**——若 Sprint 13 的 C2 实验结论为「召回 < 0.80」，E2 的 Prompt 抽取规范重设计升为 Sprint 13 阻塞项；否则结论后置 v2.0+。**本次只评估、不改 Prompt**（§4.2 批次 B 纪律）。
+
+> **纪律说明**：§4.2 批次 B 要求「先写模板再跑数，禁止边看边调 Prompt」。当前模板已就位（`prompts/kg_extraction_v1.md`），
+> 缺的是「真实 LLM 抽取产物」这一输入。一旦接入真实 `extraction_provider` 档位，即可用同一模板产出这两个数字，
+> **无需重新设计模板**。
 
 > **契约零漂移**：阶段九只改路由函数体，**未动** 任何 `@router.*` 装饰器
 > （`summary` / `description` / `responses` / `response_model` 全部保持原样），
