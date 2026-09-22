@@ -78,7 +78,17 @@ jobs:
         run: uv run python scripts/check_seams.py
 
       - name: Pytest
-        run: uv run pytest -q
+        run: |
+          set +e
+          uv run pytest -q > pytest.log 2>&1
+          code=$?
+          cat pytest.log
+          if [ "$code" -ne 0 ]; then
+            grep -E "^(FAILED|ERROR)|^E  |assert" pytest.log | head -25 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit $code
 
       - name: 失败摘要
         if: failure()
@@ -173,7 +183,19 @@ jobs:
 
       - name: 后端契约校验（export_openapi.py --check）
         working-directory: backend
-        run: uv run python scripts/export_openapi.py --check
+        run: |
+          set +e
+          uv run python scripts/export_openapi.py --check > openapi.log 2>&1
+          code=$?
+          cat openapi.log
+          if [ "$code" -ne 0 ]; then
+            # 重新生成并输出与仓库版本的差异，用于定位平台相关的契约漂移
+            uv run python scripts/export_openapi.py > /dev/null 2>&1
+            git -C .. --no-pager diff -- contracts/openapi.yaml | head -80 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit $code
 
       # --- 3b. 前端侧：TS 类型 vs contracts/openapi.yaml ---
       - name: 安装 Node.js ${{ env.NODE_VERSION }}
