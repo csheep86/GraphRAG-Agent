@@ -1,7 +1,7 @@
 # Sprint 日历（v1.0.0 → v2.0.0 上线倒推排期）
 
 > **文档编号**：sprint-calendar
-> **版本**：v1.0（2026-09-21 建立）
+> **版本**：v1.1（2026-09-21 建立；2026-09-22 修订：S5 收尾登记 + `--strict` 口径更正）
 > **性质**：**日历化排期登记表**——把 `docs/v1.1.0-demo-mvp-plan.md`（v3.0）§13 的 Sprint 时长映射到具体日历日期。**范围与口径的真源仍是 plan v3.0 §4~§21 与 `docs/v2.0.0-ship-backward-plan.md`**；本文只回答"什么时候做、什么时候 tag"，冲突时以 plan v3.0 为准。
 > **排期前提**：① Sprint 5 于 **2026-09-21（周一）开工**；② 执行者为 AI，**不加节假日与风险缓冲**（用户 2026-09-21 拍板："该登记该记录还是要记录好先"前一轮确认）；③ 外部依赖（MinerU / DeepSeek API）不可压缩项保留降级预案（各 Sprint §降级预案）。
 > **纪律**：提前完成 → 提前验收，**不跳验收**。每个 Sprint 收尾门禁（见 §3）全绿才可打 tag。
@@ -40,7 +40,7 @@ tag v1.0.0（现状基线，Sprint 4 已收尾，黄金路径 2/7）
 |---|---|
 | 开工首日 | 建 `changes/Sprint<N>.1/proposal.md` + `tasks.md`（模板 `specs/_template/`），分支 `feature/sprint-<N>` |
 | 批次推进 | 先改 `contracts/openapi.yaml` → 后端实现 → `npm run gen:api` → 前端；证据链写 `integration-log.md` |
-| 收尾门禁（全绿才 tag） | `uv run ruff check . && uv run ruff format --check .`；`uv run pytest -q`；`uv run python scripts/check_seams.py --strict`；`uv run python scripts/export_openapi.py --check`；`cd frontend && npm run lint && npm run typecheck && npm run gen:api`（无 diff） |
+| 收尾门禁（全绿才 tag） | `uv run ruff check . && uv run ruff format --check .`；`uv run pytest -q`；`uv run python scripts/check_seams.py`（**默认档，要求 ERROR = 0**；`--strict` 仅用于 v1.4.0 Demo-MVP 完成点，判据见脚本 docstring）；`uv run python scripts/export_openapi.py --check`；`cd frontend && npm run lint && npm run typecheck && npm run gen:api`（无 diff） |
 | 收尾动作 | **bump `settings.app_version`（与打 tag 是同一个动作）** → `git tag -a vX.Y.0` → `merge --no-ff` 回 main → release notes → `git mv` 归档 `changes/Sprint<N>.M/` 到 `changes/archive/<日期>-Sprint<N>.M>/` → **更新本表 §2 状态列 + `dev-doc-status.md` §9.2** |
 
 ## 4. 横跨全程的硬闸门（错过即倒推链断）
@@ -63,7 +63,7 @@ tag v1.0.0（现状基线，Sprint 4 已收尾，黄金路径 2/7）
 
 | Sprint | 状态 | 实际 tag 日期 | 偏差记录 |
 |---|---|---|---|
-| S5 | 🔄 进行中（2026-09-21 开工） | — | — |
+| S5 | ✅ 已收尾 | 2026-09-22 | 提前 19 天（计划 09-21→10-11，实际 09-22 tag）；批次 A / A2 / B / C 全完成，**提前完成但验收不跳过**（§1 纪律）；E1/E2 登记 unresolved |
 | S6 | ⏳ 未开始 | — | — |
 | S7 | ⏳ 未开始 | — | — |
 | S8 | ⏳ 未开始 | — | — |
@@ -78,3 +78,4 @@ tag v1.0.0（现状基线，Sprint 4 已收尾，黄金路径 2/7）
 | 日期 | 版本 | 变更 | 依据 |
 |---|---|---|---|
 | 2026-09-21 | v1.0 | 建立：日历化 plan v3.0 §13 的 9 个 Sprint（S5~S13），交付日 2027-02-12；用户拍板"AI 执行、不加缓冲" | plan §13；倒推文档 §3/§7.1；用户 2026-09-21 确认 |
+| 2026-09-22 | v1.1 | S5 收尾登记：① §3 收尾门禁的 `check_seams.py --strict` 更正为**默认档（要求 ERROR = 0）**；② §5 状态列 S5 → ✅ 已收尾（tag 2026-09-22，提前 19 天） | `check_seams.py` docstring 第 5–6 行 + `--strict` 分支报错文案（明示「只适用于 v1.4.0 Demo-MVP 完成点」）；实测 v1.1.0 跑 `--strict` 必红——WARN 6 全部为 **未到期** 接缝（5 事件出口 / 6 导出 / 7 外部映射 / 8 外部导入），按 `required_from` 属 v1.3.0~v1.4.0，非越界 |

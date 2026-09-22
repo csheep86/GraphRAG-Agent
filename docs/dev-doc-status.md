@@ -28,6 +28,8 @@
 
 **2026-09-21 追加（无人值守执行协议固化为技能）**：新增 `.codebuddy/skills/unattended-sprint-execution/SKILL.md`（用户选 A 方案授权）——`executing-plans` 的预授权变体：默认按 plan v3.0 + sprint-calendar + CODEBUDDY 逐批次推进、免请求自动提交、决策点一律采纳文档建议项，**仅 4 类情况升级用户**（CP-2 PoC 不通 / F1~F5 触发 / 文档未覆盖决策 / S13 上线 gate 终审）。已在 `using-superpowers/SKILL.md` 技能地图登记。
 
+**2026-09-22 追加（Sprint 5 收尾登记）**：S5 于 **2026-09-22** 完成（tag `v1.1.0`，较计划区间 09-21→10-11 提前 19 天，验收不跳过）。① **归档**：`changes/Sprint5.1`~`Sprint5.4` → `changes/archive/2026-09-22-Sprint5.N/`；② **矩阵对账**（`acceptance-traceability-matrix.md`）：H4（`_refuse()` 出口 `trace_id` 为空）、H8（B1 `retry_count` 回写 + B4 退避路径未读 `task_retry_multiplier`）**两项「已知缺陷」关闭**，M1 / M2 现状与黄金路径步骤 3 同步刷新；③ **口径更正（重要）**：接缝门禁的 Sprint 收尾判据由 `--strict` 更正为 **默认档 + ERROR = 0**——依据 `check_seams.py` docstring 第 5–6 行，`--strict` 仅适用 v1.4.0 Demo-MVP 完成点；实测 v1.1.0 跑 `--strict` 必红，6 条 WARN 全为**未到期**接缝（5/6/7/8，分属 v1.3.0~v1.4.0）而非越界。已同步修 `sprint-calendar.md` §3 与矩阵 §5.3（原两处均误写为 `--strict`）；④ **遗留降级**：E1 / E2 数据质量评估登记 **unresolved**（抽取器为 mockable 正则占位，统计无意义），归 S13 条件吸收，见 release notes v1.1.0 §6.1。
+
 ---
 
 ## 1. P0 — 开 Sprint 5 前必办（**已全部就绪，无文档阻塞**）
