@@ -112,11 +112,13 @@ def report_env() -> None:
     )
     print("  NEO4J_URI               =", settings.neo4j_uri)
     print(
-        "  DEEPSEEK_API_KEY        =",
-        "已配置" if settings.deepseek_api_key else "**未配置 → 只会 501，不会是 500**",
+        "  LLM_PROVIDER            =",
+        settings.llm_provider,
+        "| LLM_API_KEY =",
+        "已配置" if settings.llm_api_key else "**未配置 → 只会 501，不会是 500**",
     )
-    print("  DEEPSEEK_BASE_URL       =", settings.deepseek_base_url)
-    print("  DEEPSEEK_MODEL          =", settings.deepseek_model)
+    print("  LLM_BASE_URL            =", settings.llm_base_url)
+    print("  LLM_MODEL               =", settings.llm_model)
     print(
         "  prompts_dir             =",
         settings.prompts_dir,

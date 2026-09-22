@@ -23,9 +23,11 @@ class ErrorCode(StrEnum):
     FORBIDDEN = "FORBIDDEN"
     NOT_FOUND = "NOT_FOUND"
     DOCUMENT_NOT_FOUND = "DOCUMENT_NOT_FOUND"
+    ENTITY_NOT_FOUND = "ENTITY_NOT_FOUND"
     FILE_TOO_LARGE = "FILE_TOO_LARGE"
     UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
     KG_VERSION_NOT_ACTIVE = "KG_VERSION_NOT_ACTIVE"
+    KG_TENANT_LEAK = "KG_TENANT_LEAK"
     TASK_INTERRUPTED = "TASK_INTERRUPTED"
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -39,9 +41,11 @@ ERROR_HTTP_STATUS: Mapping[ErrorCode, int] = {
     ErrorCode.FORBIDDEN: 403,
     ErrorCode.NOT_FOUND: 404,
     ErrorCode.DOCUMENT_NOT_FOUND: 404,
+    ErrorCode.ENTITY_NOT_FOUND: 404,
     ErrorCode.FILE_TOO_LARGE: 413,
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: 415,
     ErrorCode.KG_VERSION_NOT_ACTIVE: 409,
+    ErrorCode.KG_TENANT_LEAK: 403,
     ErrorCode.TASK_INTERRUPTED: 409,
     ErrorCode.NOT_IMPLEMENTED: 501,
     ErrorCode.INTERNAL_ERROR: 500,
@@ -55,9 +59,11 @@ DEFAULT_MESSAGES: Mapping[ErrorCode, str] = {
     ErrorCode.FORBIDDEN: "Cross-tenant access denied",
     ErrorCode.NOT_FOUND: "Resource not found",
     ErrorCode.DOCUMENT_NOT_FOUND: "Document not found",
+    ErrorCode.ENTITY_NOT_FOUND: "Entity not found",
     ErrorCode.FILE_TOO_LARGE: "Uploaded file exceeds the size limit",
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "Unsupported media type",
     ErrorCode.KG_VERSION_NOT_ACTIVE: "Requested kg_version is not active",
+    ErrorCode.KG_TENANT_LEAK: "Cross-tenant subgraph detected",
     ErrorCode.TASK_INTERRUPTED: "Task interrupted by process restart",
     ErrorCode.NOT_IMPLEMENTED: "Infrastructure unavailable",
     ErrorCode.INTERNAL_ERROR: "Internal server error",
@@ -71,11 +77,17 @@ ERROR_CODE_DESCRIPTIONS: Mapping[ErrorCode, str] = {
     ErrorCode.FORBIDDEN: "跨租户访问被拒（ADR-0003：org_id 不符），非本租户资源一律拒绝。",
     ErrorCode.NOT_FOUND: "通用资源不存在（含未注册路由）。",
     ErrorCode.DOCUMENT_NOT_FOUND: "文档不存在或未在本租户可见范围内。",
+    ErrorCode.ENTITY_NOT_FOUND: "实体不存在或不属于当前 active kg_version；与跨租户 403 区分。",
     ErrorCode.FILE_TOO_LARGE: "上传文件超过 MAX_UPLOAD_SIZE_MB（默认 100MB，M1 验收 2）。",
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "上传文件 MIME 不在白名单（M1 验收 3）。",
     ErrorCode.KG_VERSION_NOT_ACTIVE: (
         "请求显式指定了非 active 的 kg_version（writing / failed / superseded），"
         "按 ADR-0002 §3.2 一律拒绝，严禁静默降级到最新版。"
+    ),
+    ErrorCode.KG_TENANT_LEAK: (
+        "跨租户子图泄漏检测到（ADR-0003 §4，Sprint 5 批次 B）。"
+        "active kg_version 内任一 Entity 节点 org_id 与当前 org_id 不一致——"
+        "属数据质量事故伪装为正常结论，由 /agent/query 路由层转 403。"
     ),
     ErrorCode.TASK_INTERRUPTED: (
         "进程重启导致在途任务被 TaskManager.recover() 回收置 failed（ADR-0001 §3.2）。"
@@ -95,9 +107,11 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.FORBIDDEN: "ADR-0003 §3.3 / M5 §3 验收 1",
     ErrorCode.NOT_FOUND: "CODEBUDDY.md 错误响应规范",
     ErrorCode.DOCUMENT_NOT_FOUND: "M1 §5.4",
+    ErrorCode.ENTITY_NOT_FOUND: "Sprint 5 批次 C / plans §4.2 批次 C",
     ErrorCode.FILE_TOO_LARGE: "M1 §3 验收 2",
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "M1 §3 验收 3",
     ErrorCode.KG_VERSION_NOT_ACTIVE: "ADR-0002 §3.2 / M3 §4.1",
+    ErrorCode.KG_TENANT_LEAK: "ADR-0003 §4 / Sprint 5 批次 B",
     ErrorCode.TASK_INTERRUPTED: "ADR-0001 §3.2",
     ErrorCode.NOT_IMPLEMENTED: "backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2",
     ErrorCode.INTERNAL_ERROR: "CODEBUDDY.md 错误响应规范",

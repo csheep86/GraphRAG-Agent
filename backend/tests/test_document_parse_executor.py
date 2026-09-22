@@ -1,4 +1,4 @@
-"""阶段十一 11.2：document.parse 执行体单元测试。
+"""阶段十一 11.2 + Sprint 5 批次 A：document.parse 执行体单元测试。
 
 覆盖 :mod:`app.tasks.registry.document_parse_executor` 的完整生命周期：
 
@@ -7,25 +7,27 @@
 3. tenacity 指数退避：第三方 IO 异常重试后成功；
 4. tenacity 用尽后置 ``failed``；
 5. 失败态 ``error_code / error_detail`` 落库结构化；
-6. 文档记录缺失时 graceful 早 return。
+6. 文档记录缺失时 graceful 早 return；
+7. （批次 A）completed 回填 ``storage_key``（M1 §4.1）；
+8. （批次 A / B1 修复）重试计数回写 ``retry_count``；
+9. （批次 A）PDF 真实路径：MinerU 客户端（mock）→ 产物落存储层；
+10. （批次 A）docx 跳过结构化解析（S10 承接）。
 
 **隔离策略**：
 
 - 直接落库造数据（``seed_document`` 夹具，DELETE 收尾），不经过 FastAPI / BackgroundTasks；
 - ``document_parse_executor`` 是 ``async``，测试通过 ``asyncio.run`` 同步直调；
-- mock ``_do_parse``（**唯一** IO 入口），不动 tenacity / 状态机；
-- tenacity ``wait_exponential(multiplier=settings.task_retry_initial_seconds)`` 在测试中临时置 0.0，
-  ``monkeypatch`` 自动恢复，不污染其它用例。
+- tenacity ``wait_exponential`` 等待参数在测试中临时置 0.0，
+  ``monkeypatch`` 自动恢复，不污染其它用例；
+- MinerU 客户端以假类整体替换（网络零依赖）。
 
 **不与** :func:`~app.tasks.manager.recover_orphan_tasks` 混用（B3 约束）：
 回收函数是全表扫描，会强制置 ``failed (TASK_INTERRUPTED)``，与 executor 测试的状态断言冲突。
 
-**已知 v1.1.0 疑似缺陷（不在本批修复，仅记录）**：
+**已修复（Sprint 5 批次 A）**：
 
-- B1：``Document.retry_count`` 列存在，但执行体从不更新它——只把 ``attempt_count`` 留作局部变量用于日志；
-- B4：``Settings.task_retry_multiplier`` 已声明（``default=2.0, gt=1``），但 ``document_parse_executor`` 未读取
-      该字段——只用了 ``task_retry_initial_seconds`` 作为 ``wait_exponential`` 的 multiplier，
-      配置项 ``task_retry_multiplier`` 改不改都没生效。
+- B1：``retry_count`` 现在在重试回调与 completed 分支回写 DB；
+- B4：``wait_exponential`` 的 ``exp_base`` 真实读取 ``task_retry_multiplier``。
 """
 
 from __future__ import annotations
@@ -70,6 +72,7 @@ def _insert_document(
     *,
     error_code: str | None = None,
     error_detail: str | None = None,
+    mime_type: str = "application/pdf",
 ) -> UUID:
     """直接落一行 ``documents``，返回主键。"""
     settings = get_settings()
@@ -79,7 +82,7 @@ def _insert_document(
             Document(
                 id=document_id,
                 filename_hash=hashlib.sha256(b"contract.pdf").hexdigest(),
-                mime_type="application/pdf",
+                mime_type=mime_type,
                 size_bytes=1024,
                 status=status,
                 uploaded_by=settings.default_actor_id,
@@ -94,7 +97,7 @@ def _insert_document(
 
 
 def _snapshot(document_id: UUID) -> dict[str, Any]:
-    """读回一行 ``documents`` 的状态三要素。"""
+    """读回一行 ``documents`` 的状态要素。"""
     with SessionLocal() as session:
         document = session.get(Document, document_id)
         assert document is not None, f"document {document_id} 未落库"
@@ -102,6 +105,8 @@ def _snapshot(document_id: UUID) -> dict[str, Any]:
             "status": document.status,
             "error_code": document.error_code,
             "error_detail": document.error_detail,
+            "retry_count": document.retry_count,
+            "storage_key": document.storage_key,
         }
 
 
@@ -149,8 +154,14 @@ def zero_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_executor_pushes_pending_to_completed(
     seed_document: Callable[..., UUID],
 ) -> None:
-    """``pending → processing → completed`` 完整推进；无异常时 ``error_*`` 清空。"""
-    document_id = seed_document("pending")
+    """``pending → processing → completed`` 完整推进；无异常时 ``error_*`` 清空。
+
+    用 docx（跳过 MinerU 的快路径）隔离状态机本身；PDF 真实路径见第 9 节。
+    """
+    document_id = seed_document(
+        "pending",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
 
     asyncio.run(document_parse_executor(_make_spec(document_id)))
 
@@ -311,3 +322,213 @@ def test_executor_handles_missing_document_gracefully(
 
     assert calls == [], "缺失 doc 不应触发 _do_parse"
     assert after == before, "缺失 doc 不应有 DB 副作用"
+
+
+# --------------------------------------------------------------------------- #
+# 7. （批次 A）completed 回填 storage_key（M1 §4.1）
+# --------------------------------------------------------------------------- #
+
+
+def test_executor_backfills_storage_key_on_completed(
+    seed_document: Callable[..., UUID],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """completed 后 storage_key 非 NULL 且格式 = {org}/{doc}/{hash}。"""
+
+    async def noop(*, document_id: UUID, payload: Any) -> None:
+        return None
+
+    monkeypatch.setattr("app.tasks.registry._do_parse", noop)
+    document_id = seed_document("pending")
+    settings = get_settings()
+
+    asyncio.run(document_parse_executor(_make_spec(document_id)))
+
+    snapshot = _snapshot(document_id)
+    assert snapshot["status"] == "completed"
+    expected_key = (
+        f"{settings.default_org_id}/{document_id}/"
+        + hashlib.sha256(b"contract.pdf").hexdigest()
+    )
+    assert snapshot["storage_key"] == expected_key
+
+
+# --------------------------------------------------------------------------- #
+# 8. （批次 A / B1）重试计数回写 retry_count
+# --------------------------------------------------------------------------- #
+
+
+def test_executor_records_retry_count(
+    seed_document: Callable[..., UUID],
+    monkeypatch: pytest.MonkeyPatch,
+    zero_retry_wait: None,
+) -> None:
+    """前 2 次失败、第 3 次成功 → retry_count = 2（重试次数，不含首次尝试）。"""
+    document_id = seed_document("pending")
+    calls: list[int] = []
+
+    async def flaky(*, document_id: UUID, payload: Any) -> None:
+        calls.append(len(calls) + 1)
+        if len(calls) < 3:
+            raise OSError("simulated io error")
+
+    monkeypatch.setattr("app.tasks.registry._do_parse", flaky)
+
+    asyncio.run(document_parse_executor(_make_spec(document_id)))
+
+    assert calls == [1, 2, 3]
+    snapshot = _snapshot(document_id)
+    assert snapshot["status"] == "completed"
+    assert snapshot["retry_count"] == 2
+
+
+def test_executor_failed_path_records_retry_count(
+    seed_document: Callable[..., UUID],
+    monkeypatch: pytest.MonkeyPatch,
+    zero_retry_wait: None,
+) -> None:
+    """重试用尽 → failed 且 retry_count = max_attempts - 1；storage_key 保持 NULL。"""
+    settings = get_settings()
+    document_id = seed_document("pending")
+
+    async def always_fail(*, document_id: UUID, payload: Any) -> None:
+        raise OSError("simulated permanent failure")
+
+    monkeypatch.setattr("app.tasks.registry._do_parse", always_fail)
+
+    asyncio.run(document_parse_executor(_make_spec(document_id)))
+
+    snapshot = _snapshot(document_id)
+    assert snapshot["status"] == "failed"
+    assert snapshot["retry_count"] == settings.task_retry_max_attempts - 1
+    assert snapshot["storage_key"] is None
+
+
+# --------------------------------------------------------------------------- #
+# 9. （批次 A）PDF 真实路径：MinerU（mock）→ 产物落存储层
+# --------------------------------------------------------------------------- #
+
+
+def test_do_parse_pdf_stores_artifacts(
+    seed_document: Callable[..., UUID],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PDF：源文件经存储层取出 → MinerU 解析 → md / content_list 落盘。"""
+    from app.services.parsing import MineruParseResult
+    from app.storage import build_parse_artifact_key, build_storage_key, get_storage
+    from app.tasks.registry import _do_parse
+
+    settings = get_settings()
+    document_id = seed_document("pending")
+    filename_hash = hashlib.sha256(b"contract.pdf").hexdigest()
+
+    # 预置源文件（模拟上传链路已落盘）
+    source_key = build_storage_key(
+        org_id=settings.default_org_id, doc_id=document_id, filename_hash=filename_hash
+    )
+    get_storage().put(source_key, b"%PDF-fake-bytes")
+
+    seen: dict[str, Any] = {}
+
+    class _FakeMineruClient:
+        def __init__(self, **kwargs: Any) -> None:
+            seen["kwargs"] = kwargs
+
+        async def parse_pdf(
+            self, *, content: bytes, display_name: str
+        ) -> MineruParseResult:
+            seen["content"] = content
+            seen["display_name"] = display_name
+            return MineruParseResult(
+                markdown="# 摘要", content_list_json='[{"type":"text"}]'
+            )
+
+    monkeypatch.setattr("app.tasks.registry.MineruClient", _FakeMineruClient)
+
+    asyncio.run(
+        _do_parse(document_id=document_id, payload={"document_id": str(document_id)})
+    )
+
+    # 源文件真实读取；对外文件名不含原始名（M5 §4.5）
+    assert seen["content"] == b"%PDF-fake-bytes"
+    assert seen["display_name"] == f"{document_id}.pdf"
+
+    storage = get_storage()
+    md_key = build_parse_artifact_key(
+        org_id=settings.default_org_id, doc_id=document_id, filename="full.md"
+    )
+    cl_key = build_parse_artifact_key(
+        org_id=settings.default_org_id, doc_id=document_id, filename="content_list.json"
+    )
+    assert storage.get(md_key, org_id=settings.default_org_id) == "# 摘要".encode()
+    assert storage.get(cl_key, org_id=settings.default_org_id) == b'[{"type":"text"}]'
+
+
+def test_executor_pdf_path_completes_with_artifacts(
+    seed_document: Callable[..., UUID],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """端到端：pending → MinerU（mock）→ completed + storage_key + 产物存在。"""
+    from app.services.parsing import MineruParseResult
+    from app.storage import build_parse_artifact_key, build_storage_key, get_storage
+
+    settings = get_settings()
+    document_id = seed_document("pending")
+    filename_hash = hashlib.sha256(b"contract.pdf").hexdigest()
+
+    source_key = build_storage_key(
+        org_id=settings.default_org_id, doc_id=document_id, filename_hash=filename_hash
+    )
+    get_storage().put(source_key, b"%PDF-fake-bytes")
+
+    class _FakeMineruClient:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def parse_pdf(
+            self, *, content: bytes, display_name: str
+        ) -> MineruParseResult:
+            return MineruParseResult(markdown="md", content_list_json="[]")
+
+    monkeypatch.setattr("app.tasks.registry.MineruClient", _FakeMineruClient)
+
+    asyncio.run(document_parse_executor(_make_spec(document_id)))
+
+    snapshot = _snapshot(document_id)
+    assert snapshot["status"] == "completed"
+    assert snapshot["storage_key"] == source_key
+    storage = get_storage()
+    assert storage.exists(
+        build_parse_artifact_key(
+            org_id=settings.default_org_id, doc_id=document_id, filename="full.md"
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 10. （批次 A）docx 跳过结构化解析（S10 承接）
+# --------------------------------------------------------------------------- #
+
+
+def test_executor_skips_non_pdf_parse(
+    seed_document: Callable[..., UUID],
+) -> None:
+    """docx：跳过 MinerU，照常 completed，不产生 parse/ 产物。"""
+    from app.storage import build_parse_artifact_key, get_storage
+
+    settings = get_settings()
+    document_id = seed_document(
+        "pending",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    asyncio.run(document_parse_executor(_make_spec(document_id)))
+
+    snapshot = _snapshot(document_id)
+    assert snapshot["status"] == "completed"
+    storage = get_storage()
+    assert not storage.exists(
+        build_parse_artifact_key(
+            org_id=settings.default_org_id, doc_id=document_id, filename="full.md"
+        )
+    )

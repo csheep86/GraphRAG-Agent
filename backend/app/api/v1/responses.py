@@ -47,12 +47,34 @@ DOCUMENT_NOT_FOUND: dict[int, dict[str, Any]] = {
     }
 }
 
+ENTITY_NOT_FOUND: dict[int, dict[str, Any]] = {
+    404: {
+        "model": ErrorResponse,
+        "description": (
+            "实体不存在（`ENTITY_NOT_FOUND`）。"
+            "**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1；Sprint 5 批次 C）"
+        ),
+    }
+}
+
 KG_VERSION_NOT_ACTIVE: dict[int, dict[str, Any]] = {
     409: {
         "model": ErrorResponse,
         "description": (
             "指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。"
             "**严禁静默降级**到最新 active 版本（ADR-0002 §3.2）"
+        ),
+    }
+}
+
+KG_TENANT_LEAK: dict[int, dict[str, Any]] = {
+    403: {
+        "model": ErrorResponse,
+        "description": (
+            "403 跨租户拒绝，两种成因：① `FORBIDDEN`（ADR-0003 §3.3）——"
+            "请求资源 org_id 不符；② `KG_TENANT_LEAK`（ADR-0003 §4，Sprint 5 批次 B）——"
+            "fail-closed 校验发现 active kg_version 内存在不属于当前 org 的节点，"
+            "属数据质量事故伪装为正常结论，**不**降级为拒答（200）"
         ),
     }
 }

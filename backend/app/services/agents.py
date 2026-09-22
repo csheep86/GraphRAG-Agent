@@ -15,7 +15,7 @@
 3. **图谱检索工具**：通过 :mod:`app.services.graphs` 提供的
    :func:`fetch_active_kg_version` 与 Cypher 子图查询，把图谱数据喂给 Prompt。
 4. **优雅降级**：
-   - 未配置 ``DEEPSEEK_API_KEY`` → :class:`AgentUnavailableError`
+   - 未配置 ``LLM_API_KEY`` → :class:`AgentUnavailableError`
    - LangChain Agent 装配失败 → 同上
    - Neo4j 不可用 → 同上
    路由层捕获后统一转 ``501 NOT_IMPLEMENTED``，不污染测试用例。
@@ -54,13 +54,14 @@ from app.services.graphs import (
     GraphService,
     GraphUnavailableError,
 )
+from app.services.providers import build_chat_model
 
 # DeepSeek 是 OpenAI 兼容 API，故使用 langchain_openai.ChatOpenAI 而非 ChatDeepSeek，
 # 这样切换到其它 OpenAI 兼容厂商零代码改动。
 _LLM_LANGCHAIN_IMPORT_ERROR: Exception | None = None
 try:
+    import langchain_openai  # noqa: F401 - 可用性探测；构造经 providers.build_chat_model
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_openai import ChatOpenAI  # type: ignore[import-not-found]
 except Exception as exc:  # noqa: BLE001 - 兼容失败时优雅降级
     _LLM_LANGCHAIN_IMPORT_ERROR = exc
     ChatOpenAI = None  # type: ignore[assignment]
@@ -95,6 +96,14 @@ class AgentUnavailableError(Exception):
 
     - ``AgentUnavailableError`` → 基础设施 / 配置故障（501）；
     - ``refused=true`` → 图谱证据不足，属**正常业务判定**（200）。
+    """
+
+
+class AgentTenantLeakError(AgentUnavailableError):
+    """跨租户子图泄漏检测（ADR-0003 §4，Sprint 5 批次 B fail-closed 强化）。
+
+    路由层捕获后转 ``403`` + ``KG_TENANT_LEAK``——与 ``AgentUnavailableError``（501）
+    严格区分：前者是数据质量事故（数据已写出，须禁止消费），后者是基础设施不可用。
     """
 
 
@@ -145,23 +154,19 @@ class AgentService:
             raise AgentUnavailableError(self._failure_reason)
 
         settings = get_settings()
-        if not settings.deepseek_api_key:
-            self._failure_reason = "DEEPSEEK_API_KEY 未配置"
+        if not settings.llm_api_key:
+            self._failure_reason = "LLM_API_KEY 未配置"
             raise AgentUnavailableError(self._failure_reason)
 
         try:
-            self._chat = ChatOpenAI(
-                model=settings.deepseek_model,
-                api_key=settings.deepseek_api_key,
-                base_url=settings.deepseek_base_url,
-                timeout=settings.deepseek_request_timeout_seconds,
-                max_retries=0,  # 重试由外层 tenacity 统一管控
-            )
+            self._chat = build_chat_model()
+        except AgentUnavailableError:
+            raise
         except Exception as exc:  # noqa: BLE001 - 装配失败包装
-            self._failure_reason = f"ChatOpenAI 装配失败: {exc!r}"
+            self._failure_reason = f"LLM 装配失败: {exc!r}"
             raise AgentUnavailableError(self._failure_reason) from exc
 
-        logger.bind(model=settings.deepseek_model).info("agent_llm_ready")
+        logger.bind(model=settings.llm_model).info("agent_llm_ready")
         return self._chat
 
     # ------------------------------------------------------------------ query
@@ -215,6 +220,36 @@ class AgentService:
                 "agent_query_subgraph_unavailable"
             )
             raise AgentUnavailableError(f"Neo4j 子图查询失败: {exc}") from exc
+
+        # 2.5) fail-closed 校验（ADR-0003 §4 强化，Sprint 5 批次 B）
+        # 即使 Cypher 已带 ``WHERE e.org_id = $org_id`` 过滤，**仍**做一次独立的
+        # 全库校验：防漏改（恶意 / 越权 build 把跨租户节点写入同一 kg_version）
+        # 被 fail-open Cypher 过滤掩盖——属数据质量事故伪装为正常结论。
+        try:
+            tenant_clean = GraphService.instance().validate_kg_version_tenant_boundary(
+                kg_version=version, current_org_id=org_id
+            )
+        except GraphUnavailableError as exc:
+            logger.bind(trace_id=trace_id, reason=str(exc)).error(
+                "agent_query_tenant_boundary_check_failed"
+            )
+            raise AgentUnavailableError(f"fail-closed 校验失败: {exc}") from exc
+
+        if not tenant_clean:
+            if settings.agent_fail_closed:
+                logger.bind(
+                    trace_id=trace_id,
+                    org_id=str(org_id),
+                    kg_version=version,
+                ).error("agent_query_tenant_leak_blocked")
+                raise AgentTenantLeakError(
+                    f"跨租户子图泄漏检测到（kg_version={version}，org_id={org_id}）"
+                )
+            logger.bind(
+                trace_id=trace_id,
+                org_id=str(org_id),
+                kg_version=version,
+            ).warning("agent_query_tenant_leak_warn_only")
 
         # 3) 加载 Prompt（任何占位符错误都立即暴露，禁止硬编码）
         template = load_prompt("kg_qa")

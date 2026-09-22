@@ -9,7 +9,9 @@ import {
   getMockEntityDetail,
 } from "./mock/graph";
 
-/** 全局图谱概览。契约缺失：需后端补 `GET /api/v1/graph/overview` */
+/**
+ * 全局图谱概览。✅ 契约已实装（`GET /api/v1/graph/overview`，Sprint 5 批次 C）。
+ */
 export async function getGraphOverview(): Promise<GraphOverviewResponse> {
   if (shouldMock("/api/v1/graph/overview")) {
     await delay(280);
@@ -19,10 +21,14 @@ export async function getGraphOverview(): Promise<GraphOverviewResponse> {
   return request<GraphOverviewResponse>("/api/v1/graph/overview");
 }
 
-/** 实体详情。契约缺失：需后端补 `GET /api/v1/entities/{id}` */
+/**
+ * 实体详情。✅ 契约已实装（`GET /api/v1/entities/{id}`，Sprint 5 批次 C）。
+ * 实体不存在返回 404 `ENTITY_NOT_FOUND`，调用方应通过 ApiError.code 区分；
+ * 跨租户访问返回 403 `FORBIDDEN`（与 404 严格区分）。
+ */
 export async function getEntityDetail(
   entityId: string,
-): Promise<EntityDetail | null> {
+): Promise<EntityDetail> {
   if (shouldMock("/api/v1/entities/{id}")) {
     await delay(180);
     return getMockEntityDetail(entityId);

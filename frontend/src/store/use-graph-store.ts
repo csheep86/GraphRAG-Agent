@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { ApiError } from "@/api/client";
 import { getDefaultEntityId, getEntityDetail, getGraphOverview } from "@/api/graph";
 import type { EntityDetail, GraphOverviewResponse } from "@/types/mock";
 
@@ -15,6 +16,8 @@ type GraphStore = {
   selectedId: string | null;
   detail: EntityDetail | null;
   detailLoading: boolean;
+  /** 实体详情加载失败原因（如 ENTITY_NOT_FOUND / FORBIDDEN / NOT_IMPLEMENTED） */
+  detailError: string | null;
 
   zoom: number;
 
@@ -35,6 +38,7 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   selectedId: null,
   detail: null,
   detailLoading: false,
+  detailError: null,
 
   zoom: 1,
 
@@ -57,15 +61,24 @@ export const useGraphStore = create<GraphStore>((set, get) => ({
   },
 
   select: (entityId) => {
-    set({ selectedId: entityId, detailLoading: true });
-    void getEntityDetail(entityId).then((detail) => {
-      // 防止竞态：仅当仍是当前选中实体时才写入
-      if (get().selectedId !== entityId) return;
-      set({ detail, detailLoading: false });
-    });
+    set({ selectedId: entityId, detailLoading: true, detailError: null });
+    void getEntityDetail(entityId).then(
+      (detail) => {
+        // 防止竞态：仅当仍是当前选中实体时才写入
+        if (get().selectedId !== entityId) return;
+        set({ detail, detailLoading: false });
+      },
+      (error: unknown) => {
+        if (get().selectedId !== entityId) return;
+        // 契约错误：ENTITY_NOT_FOUND / FORBIDDEN / NOT_IMPLEMENTED 等
+        const code = error instanceof ApiError ? error.code : "INTERNAL_ERROR";
+        set({ detail: null, detailLoading: false, detailError: code });
+      },
+    );
   },
 
-  closeDetail: () => set({ selectedId: null, detail: null }),
+  closeDetail: () =>
+    set({ selectedId: null, detail: null, detailError: null }),
 
   zoomIn: () =>
     set((state) => ({ zoom: Math.min(ZOOM_MAX, state.zoom + ZOOM_STEP) })),

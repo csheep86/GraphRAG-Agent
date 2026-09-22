@@ -1,11 +1,11 @@
-"""M1 文档接入相关路由：上传 / 状态 / 图谱子图。"""
+"""M1 文档接入相关路由：上传 / 状态 / 图谱子图；批次 C：文档列表。"""
 
 from __future__ import annotations
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Query, UploadFile
 
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
@@ -15,17 +15,23 @@ from app.api.v1.responses import (
     NOT_IMPLEMENTED,
     TENANT_ERROR_RESPONSES,
     UNSUPPORTED_MEDIA_TYPE,
+    VALIDATION_ERROR,
 )
 from app.core.errors import AppError, ErrorCode
 from app.schemas.document import (
     DocumentGraphResponse,
+    DocumentListResponse,
     DocumentStatusResponse,
     UploadResponse,
 )
 from app.services.documents import (
+    PAGE_SIZE_DEFAULT,
+    PAGE_SIZE_MAX,
+    DocumentListQuery,
     create_document_upload,
     get_document_status,
     get_scoped_document,
+    list_documents,
 )
 from app.services.graphs import (
     GraphService,
@@ -38,6 +44,83 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 #: 单次返回节点上限（契约 `DocumentGraphResponse`：≤ 500，超限 `truncated = true`）
 _GRAPH_NODE_LIMIT = 500
+
+#: `GET /documents` 合法状态过滤值（与契约 `DocumentStatus` 一致）
+_LIST_STATUS_VALUES = ("pending", "processing", "completed", "failed")
+
+
+@router.get(
+    "",
+    response_model=DocumentListResponse,
+    operation_id="listDocuments",
+    summary="列出当前租户的文档（批次 C）",
+    description=(
+        "按 `org_id` 强制过滤（ADR-0003），跨租户资源**永不**出现在结果里。\n\n"
+        "**查询参数**：\n"
+        "- `q`：按 `filename_hash`（SHA-256 hex）前缀匹配。文件名原文**不**落库，"
+        "演示场景下做「输入前缀」匹配即可。\n"
+        "- `status`：可选 `pending / processing / completed / failed`。\n"
+        "- `page`：1-based 页码，默认 1。\n"
+        "- `page_size`：默认 10，**上限 100**（演示前端表格默认 10 条 / 页）。\n\n"
+        "**返回字段**：`filename` 字段展示的是 `filename_hash`（前端表格沿用 mock"
+        "口径展示 hash，**不**伪造文件名原文，符合 M5 §4.5）；`entity_count` 仅当"
+        "文档已参与建图（`kg_version_id IS NOT NULL`）时有值，否则为 `null`。\n\n"
+        "**一致性**：列表按 `created_at DESC` 排序（最新上传在前），"
+        "PG 唯一真源；Neo4j 不可用时本接口仍可正常返回——不依赖图谱存储。"
+    ),
+    responses={**TENANT_ERROR_RESPONSES, **VALIDATION_ERROR},
+)
+async def list_documents_endpoint(
+    identity: CurrentIdentity,
+    session: DbSession,
+    trace_id: TraceId,
+    q: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=64,
+            description=(
+                "按 `filename_hash` 前缀匹配（SHA-256 hex）。"
+                "示例：`q=e3b0` 匹配 hash 以 `e3b0` 开头的所有文档"
+            ),
+        ),
+    ] = None,
+    status: Annotated[
+        str | None,
+        Query(description="按状态过滤；M1 H1 状态机取值之一"),
+    ] = None,
+    page: Annotated[int, Query(ge=1, description="1-based 页码")] = 1,
+    page_size: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=PAGE_SIZE_MAX,
+            description=f"每页条目数（默认 {PAGE_SIZE_DEFAULT}，上限 {PAGE_SIZE_MAX}）",
+        ),
+    ] = PAGE_SIZE_DEFAULT,
+) -> DocumentListResponse:
+    # `status` 显式校验：FastAPI Query 不支持 Literal 联合类型自动枚举校验，需手动断言
+    if status is not None and status not in _LIST_STATUS_VALUES:
+        raise AppError(
+            ErrorCode.VALIDATION_ERROR,
+            detail={
+                "field": "status",
+                "value": status,
+                "allowed": list(_LIST_STATUS_VALUES),
+            },
+        )
+
+    return list_documents(
+        session=session,
+        identity=identity,
+        query=DocumentListQuery(
+            q=q,
+            status=status,
+            page=page,
+            page_size=page_size,
+        ),
+        trace_id=trace_id,
+    )
 
 
 @router.post(

@@ -31,9 +31,12 @@ export const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
  */
 const CONTRACT_COVERED_PATTERNS: RegExp[] = [
   /^\/api\/v1\/agent\/query$/,
+  /^\/api\/v1\/documents$/,
   /^\/api\/v1\/documents\/upload$/,
   /^\/api\/v1\/documents\/[^/]+\/graph$/,
   /^\/api\/v1\/documents\/[^/]+\/status$/,
+  /^\/api\/v1\/graph\/overview$/,
+  /^\/api\/v1\/entities\/[^/]+$/,
 ];
 
 /**

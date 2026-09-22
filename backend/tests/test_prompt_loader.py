@@ -64,3 +64,10 @@ def test_unknown_prompt_raises() -> None:
 def test_unknown_version_raises() -> None:
     with pytest.raises(PromptNotFoundError):
         load_prompt("kg_qa", 999)
+
+
+def test_kg_extraction_v1_registered() -> None:
+    """Sprint 5 批次 B：kg_extraction_v1（E1/E2 共用模板）必须可发现。"""
+    template = load_prompt("kg_extraction")
+    assert template.version == 1
+    assert set(template.placeholders) == {"text", "language"}

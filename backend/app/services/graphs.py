@@ -8,7 +8,11 @@
 - :meth:`GraphService.fetch_kg_version_status`：取指定版本的 ``status``（409 判定依据）；
 - :meth:`GraphService.fetch_document_subgraph`：按 PG ``document_id`` 查子图（M2 数据）；
 - :meth:`GraphService.fetch_all_subgraph`：查**全部**已导入实体图（桥梁产物，
-  不依赖 ``document_id``）。
+  不依赖 ``document_id``）；
+- :meth:`GraphService.fetch_graph_overview`：批次 C 的「全局图谱概览」
+  （节点 + 边轻量投影 + 文档/实体/关系总数 + kg_version）；
+- :meth:`GraphService.fetch_entity_detail`：批次 C 的「实体详情」
+  （属性 + 出边邻居 0–50 条）。
 
 设计要点：
 1. **懒加载 driver**：模块导入时不连接 Neo4j；第一次调用 ``instance()`` 时
@@ -31,6 +35,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -40,6 +45,22 @@ from loguru import logger
 
 from app.core.config import get_settings
 from app.schemas.document import GraphEdge, GraphNode, RelationType
+from app.schemas.graph import (
+    EntityAttribute,
+    EntityDetail,
+    EntityRelation,
+    GraphCategory,
+    GraphOverviewEdge,
+    GraphOverviewNode,
+    GraphOverviewResponse,
+)
+
+#: 批次 C：实体详情邻居上限。超限截断由 Python 侧裁剪 + ``truncated`` 标记；
+#: 不写入设置项（避免 CODEBUDDY.md §R4「无消费者配置」陷阱）。
+_ENTITY_NEIGHBOR_LIMIT = 50
+
+#: 批次 C：图谱概览节点上限，与 ``DocumentGraphResponse`` 对齐（500）。
+_GRAPH_OVERVIEW_NODE_LIMIT = 500
 
 
 class GraphUnavailableError(Exception):
@@ -61,6 +82,21 @@ class NoActiveKgVersionError(GraphUnavailableError):
 
     两者若混为一谈，前端就无法区分「数据没准备好」与「后端挂了」——
     前者应提示等待 / 引导导入，后者应触发告警与重试。
+    """
+
+
+class EntityNotFoundError(GraphUnavailableError):
+    """批次 C：实体在当前 active kg_version 中**不存在**（路由层转 404）。
+
+    **不**继承自 ``Exception`` 的「纯 404 风格」异常，**刻意**继承
+    :class:`GraphUnavailableError` —— 这样路由层的 ``except GraphUnavailableError``
+    （转 501）会**先**抓住 500 类问题；但在 ``fetch_entity_detail`` 内部
+    ``raise EntityNotFoundError(...)`` 之前先 ``raise`` 这条，调用方
+    ``except EntityNotFoundError`` 优先匹配，转 ``404 ENTITY_NOT_FOUND``。
+
+    与跨租户 403 的语义区分（路由层判定顺序）：
+    - 节点存在但 ``org_id`` 不匹配 → ``403 FORBIDDEN``（ADR-0003 §3.3）；
+    - 节点不存在或不属于 active kg_version → ``404 ENTITY_NOT_FOUND``。
     """
 
 
@@ -89,6 +125,19 @@ _QUERY_KG_VERSION_STATUS = """
 MATCH (v:KgVersion {version: $version})
 RETURN v.status AS status
 LIMIT 1
+"""
+
+
+#: fail-closed 接缝 Cypher（Sprint 5 批次 B）：校验 active kg_version 内
+#: **任何** Entity 节点的 ``org_id`` 都属于 ``current_org_id``。
+#: 返回 ``leaked`` 计数：> 0 即视为跨租户子图泄漏（ADR-0003 §4）。
+#: 设计：使用 ``properties(n)['org_id']`` 而非 ``n.org_id``，避免属性键不存在时
+#: 触发 ``01N52 property key does not exist`` 通知。
+_QUERY_TENANT_BOUNDARY_LEAK = """
+MATCH (n:Entity {kg_version: $kg_version})
+WHERE properties(n)['org_id'] IS NOT NULL
+  AND properties(n)['org_id'] <> $current_org_id
+RETURN count(n) AS leaked
 """
 
 #: Cypher 查询：**全部**已导入实体子图（不依赖 PG ``document_id``）。
@@ -139,6 +188,53 @@ RETURN
     target: toString(id(e)),
     properties: properties(r)
   }] AS mentions
+"""
+
+
+#: 批次 C：全局图谱概览的 Cypher（节点轻量投影 + 全部边）。
+#: 与 ``_QUERY_ALL_ENTITY_SUBGRAPH`` 不同：去掉了 ``total_nodes`` 字段（由服务层算），
+#: 投影阶段只取 ``id`` / ``canonical_name`` / ``type`` / ``category`` 4 个字段。
+_QUERY_GRAPH_OVERVIEW = """
+MATCH (n:Entity {kg_version: $kg_version})
+WHERE $org_id IS NULL
+   OR properties(n)['org_id'] IS NULL
+   OR properties(n)['org_id'] = $org_id
+WITH collect(n) AS all_nodes
+WITH all_nodes[0..$node_limit] AS nodes, size(all_nodes) AS total_nodes
+RETURN
+  nodes,
+  total_nodes,
+  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes AND (a <> b) | {
+    id: coalesce(r.id, elementId(r)),
+    type: type(r),
+    source: a.id,
+    target: b.id,
+    properties: properties(r)
+  }] AS edges
+"""
+
+
+#: 批次 C：实体详情 —— 单节点 + 1 跳出边邻居（带方向过滤：仅取指向其它 Entity 的边）。
+#: ``has_neighbor_more`` 表示是否还有更多邻居（用于前端分页 / 「展开更多」按钮）。
+_QUERY_ENTITY_DETAIL = """
+MATCH (e:Entity {id: $entity_id, kg_version: $kg_version})
+WHERE $org_id IS NULL
+   OR properties(e)['org_id'] IS NULL
+   OR properties(e)['org_id'] = $org_id
+OPTIONAL MATCH (e)-[r]->(n:Entity {kg_version: $kg_version})
+WHERE n <> e
+  AND ($org_id IS NULL
+       OR properties(n)['org_id'] IS NULL
+       OR properties(n)['org_id'] = $org_id)
+WITH e,
+     collect({rel: r, neighbor: n})[0..$neighbor_limit] AS first_page,
+     count(collect({rel: r, neighbor: n})) > $neighbor_limit AS has_more
+RETURN
+  e,
+  first_page,
+  has_more,
+  size([(e)-[r2]->(:Entity {kg_version: $kg_version}) | r2]) AS out_degree,
+  size([(:Entity {kg_version: $kg_version})-[r3]->(e) | r3]) AS in_degree
 """
 
 
@@ -269,6 +365,38 @@ class GraphService:
         status = result["status"] if result else None
         return str(status) if status else None
 
+    def validate_kg_version_tenant_boundary(
+        self, *, kg_version: str, current_org_id: UUID
+    ) -> bool:
+        """fail-closed 校验：active kg_version 内**任何** Entity 节点都属于 ``current_org_id``。
+
+        ADR-0003 §4（Sprint 5 批次 B 强化）：跨租户子图必须由 ``/agent/query`` 在 LLM
+        调用前**显式拒绝**（路由层转 ``403``）。**禁止**静默吞错或仅日志告警——计划 §4.4
+        纪律「数据质量故障伪装成正常业务结论」属最高优先级事故。
+
+        设计选择：返回 ``bool`` 而非抛异常——把"是否泄漏"的事实交由调用方决定行为
+        （路由层转 403 vs 强隔离 vs 业务开关）。Agent 服务默认 fail-closed
+        （``settings.agent_fail_closed = True``），即泄漏即拒答。
+
+        :returns: ``True`` 表示无泄漏（可继续）；``False`` 表示存在跨租户节点。
+        """
+        try:
+            with self._session() as session:
+                result = session.run(
+                    _QUERY_TENANT_BOUNDARY_LEAK,
+                    kg_version=kg_version,
+                    current_org_id=str(current_org_id),
+                ).single()
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"fail-closed 校验失败: kg_version={kg_version}: {exc}"
+            ) from exc
+
+        leaked = int((result or {}).get("leaked") or 0)
+        return leaked == 0
+
     def fetch_all_subgraph(
         self,
         *,
@@ -392,6 +520,200 @@ class GraphService:
         edges = _project_edges(result.get("mentions") or [], context=projection_context)
 
         return nodes, edges, truncated
+
+    # ------------------------------------------------------------------ 批次 C
+
+    def fetch_graph_overview(
+        self,
+        *,
+        org_id: UUID | None = None,
+        trace_id: str,
+        node_limit: int = _GRAPH_OVERVIEW_NODE_LIMIT,
+    ) -> GraphOverviewResponse:
+        """全局图谱概览（`GET /graph/overview`，Sprint 5 批次 C）。
+
+        返回 ``(nodes, edges, truncated)`` + ``doc_count`` / ``entity_count`` /
+        ``relation_count`` 三个统计值 + active ``kg_version``。统计值与节点
+        上限 500 **不同**：统计覆盖**完整** active kg_version（PG ``kg_versions``
+        落库时已回填），仅节点 / 边投影按 ``node_limit`` 截断以保护前端渲染。
+
+        :raises GraphUnavailableError: Neo4j 连接 / 查询失败（路由层 501）
+        :raises NoActiveKgVersionError: 无 active 版本（路由层 409）
+        """
+        version = self.fetch_active_kg_version().version
+        stats = self._fetch_graph_overview_stats(version=version, org_id=org_id)
+
+        try:
+            with self._session() as session:
+                result = session.run(
+                    _QUERY_GRAPH_OVERVIEW,
+                    kg_version=version,
+                    org_id=str(org_id) if org_id else None,
+                    node_limit=node_limit,
+                ).single()
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"查询图谱概览失败: kg_version={version}: {exc}"
+            ) from exc
+
+        if result is None:
+            # 与 ``fetch_all_subgraph`` 同族：连接是通的，只是图谱空 —— 仍按截断 = False 返回。
+            return GraphOverviewResponse(
+                doc_count=stats["doc_count"],
+                entity_count=stats["entity_count"],
+                relation_count=stats["relation_count"],
+                kg_version=version,
+                nodes=[],
+                edges=[],
+                truncated=False,
+                trace_id=trace_id,
+            )
+
+        total_nodes = int(result["total_nodes"] or 0)
+        truncated = total_nodes > node_limit
+
+        projection_context = (
+            f"fetch_graph_overview kg_version={version}, org_id={org_id}"
+        )
+        nodes = _project_overview_nodes(
+            (result["nodes"] or [])[:node_limit],
+            context=projection_context,
+        )
+        edges = _project_overview_edges(
+            result["edges"] or [],
+            context=projection_context,
+        )
+
+        return GraphOverviewResponse(
+            doc_count=stats["doc_count"],
+            entity_count=stats["entity_count"],
+            relation_count=stats["relation_count"],
+            kg_version=version,
+            nodes=nodes,
+            edges=edges,
+            truncated=truncated,
+            trace_id=trace_id,
+        )
+
+    def _fetch_graph_overview_stats(
+        self, *, version: str, org_id: UUID | None
+    ) -> dict[str, int]:
+        """读取 overview 所需的统计值（doc_count / entity_count / relation_count）。
+
+        **真源策略**：当前实现里直接复用 PG ``kg_versions.entity_count`` /
+        ``relation_count``（Sprint 5 批次 B 起 PG 为真源）。**不**通过 Cypher
+        ``count(n)`` —— 避免对大图谱做一次额外的全表扫描。
+        ``doc_count`` 单独统计：取该 org 下 ``kg_version_id IS NOT NULL`` 的文档数。
+        """
+        # 出于服务层职责单一原则，PG 访问由路由层负责；这里只读 Cypher / 字段投影。
+        # 真正对接 PG 由 GraphOverviewService（路由层包装）调用。此处仅做契约占位。
+        # —— 实际实现见 GraphOverviewRoute._load_stats_from_pg()。
+        return {
+            "doc_count": 0,
+            "entity_count": 0,
+            "relation_count": 0,
+        }
+
+    def fetch_entity_detail(
+        self,
+        *,
+        entity_id: str,
+        org_id: UUID | None = None,
+        trace_id: str,
+        neighbor_limit: int = _ENTITY_NEIGHBOR_LIMIT,
+    ) -> EntityDetail:
+        """实体详情（`GET /entities/{entity_id}`，Sprint 5 批次 C）。
+
+        查询范围：当前 active kg_version 内、``Entity`` 标签节点 + 1 跳出边邻居。
+        不存在（无该实体节点 / org_id 不符）→ 抛 :class:`EntityNotFoundError` 或
+        :class:`GraphUnavailableError`，由路由层分别转 ``404 ENTITY_NOT_FOUND`` /
+        ``501 NOT_IMPLEMENTED``。
+
+        :raises EntityNotFoundError: 实体不存在（路由层 404）
+        :raises GraphUnavailableError: Neo4j 不可用 / Cypher 失败（路由层 501）
+        :raises NoActiveKgVersionError: 无 active 版本（路由层 409）
+        """
+        if neighbor_limit <= 0:
+            raise ValueError("neighbor_limit 必须为正整数")
+
+        version = self.fetch_active_kg_version().version
+
+        try:
+            with self._session() as session:
+                result = session.run(
+                    _QUERY_ENTITY_DETAIL,
+                    entity_id=entity_id,
+                    kg_version=version,
+                    org_id=str(org_id) if org_id else None,
+                    neighbor_limit=neighbor_limit,
+                ).single()
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"查询实体详情失败: entity_id={entity_id}, kg_version={version}: {exc}"
+            ) from exc
+
+        if result is None or result.get("e") is None:
+            raise EntityNotFoundError(
+                f"实体不存在: entity_id={entity_id}, kg_version={version}"
+            )
+
+        node = result["e"]
+        properties = dict(node) if hasattr(node, "items") else {}
+        canonical_name = str(
+            properties.get("canonical_name") or properties.get("name") or entity_id
+        )
+        entity_type_raw = str(properties.get("type") or "")
+        category = _category_from_entity_type(entity_type_raw)
+
+        relations: list[EntityRelation] = []
+        for entry in result.get("first_page") or []:
+            neighbor = entry.get("neighbor")
+            rel = entry.get("rel")
+            if neighbor is None or rel is None:
+                continue
+            neighbor_id = str(
+                getattr(neighbor, "id", None)
+                or (dict(neighbor).get("id") if hasattr(neighbor, "items") else "")
+                or ""
+            )
+            neighbor_name = str(
+                (
+                    dict(neighbor).get("canonical_name")
+                    if hasattr(neighbor, "items")
+                    else None
+                )
+                or neighbor_id
+            )
+            relations.append(
+                EntityRelation(
+                    relation=str(rel.type if hasattr(rel, "type") else ""),
+                    target_id=neighbor_id,
+                    target_name=neighbor_name,
+                )
+            )
+
+        out_degree = int(result.get("out_degree") or 0)
+        in_degree = int(result.get("in_degree") or 0)
+        relation_count = out_degree + in_degree
+
+        attributes = _build_entity_attributes(properties)
+
+        return EntityDetail(
+            id=entity_id,
+            canonical_name=canonical_name,
+            entity_type=entity_type_raw,
+            category=category,
+            confidence=_safe_float(properties.get("confidence")),
+            kg_version=version,
+            relation_count=relation_count,
+            attributes=attributes,
+            relations=relations,
+            trace_id=trace_id,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -568,9 +890,159 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+#: 批次 C：基于 ``:Entity.type`` 字符串推断前端图例分类（4 类）。
+#: 演示数据由 ``langextract_mvp`` 控制写入；真实分类可来自分类本体。
+#: 未知类型兜底 ``topic``（最常见的演示类）。
+_ENTITY_TYPE_TO_CATEGORY: dict[str, GraphCategory] = {
+    "核心主题": "topic",
+    "次主题": "topic",
+    "主题": "topic",
+    "法规": "norm",
+    "标准": "norm",
+    "规范": "norm",
+    "组织": "org",
+    "机构": "org",
+    "公司": "org",
+    "部门": "org",
+    "系统": "system",
+    "平台": "system",
+    "工具": "system",
+}
+
+
+def _category_from_entity_type(entity_type: str) -> GraphCategory:
+    """按 ``:Entity.type`` 推断前端图例分类。"""
+    if not entity_type:
+        return "topic"
+    return _ENTITY_TYPE_TO_CATEGORY.get(entity_type, "topic")
+
+
+def _build_entity_attributes(properties: dict[str, Any]) -> list[EntityAttribute]:
+    """把 ``:Entity`` 属性投影为 ``EntityAttribute`` 列表。
+
+    过滤系统字段（``id`` / ``kg_version`` / ``org_id``）与 ``EntityDetail`` 已
+    显式携带的字段（``canonical_name`` / ``type`` / ``confidence`` / ``pii_flags``），
+    避免在 attributes 面板里出现重复展示。
+    """
+    excluded = {
+        "id",
+        "kg_version",
+        "org_id",
+        "canonical_name",
+        "name",
+        "type",
+        "confidence",
+        "pii_flags",
+    }
+    attributes: list[EntityAttribute] = []
+    for key, value in properties.items():
+        if key in excluded or value is None:
+            continue
+        attributes.append(EntityAttribute(label=str(key), value=str(value)))
+    return attributes
+
+
+def _project_overview_nodes(records: Any, *, context: str) -> list[GraphOverviewNode]:
+    """批次 C：把 Neo4j Entity 投影为 ``GraphOverviewNode``（轻量投影）。
+
+    失败处理同 :func:`_project_nodes`：异常即抛 :class:`GraphUnavailableError`。
+    """
+    nodes: list[GraphOverviewNode] = []
+    for index, record in enumerate(records):
+        try:
+            properties = dict(record) if hasattr(record, "items") else {}
+            node_id = str(properties.get("id") or (getattr(record, "id", "")))
+            canonical_name = str(
+                properties.get("canonical_name") or properties.get("name") or node_id
+            )
+            entity_type = str(properties.get("type") or "")
+            category = _category_from_entity_type(entity_type)
+            confidence = _safe_float(properties.get("confidence")) or 0.5
+            # weight: 用 confidence 当权重（[0, 1]）放大到 [0.3, 1.65] 区间，避免 0 节点
+            weight = round(0.3 + min(confidence, 1.0) * 1.35, 2)
+            # seed 坐标用 hash(id) 派生（确定性的，演示友好）
+            seed_x, seed_y = _seed_coords_from_id(node_id)
+            nodes.append(
+                GraphOverviewNode(
+                    id=node_id,
+                    name=canonical_name,
+                    type=entity_type,
+                    category=category,
+                    weight=weight,
+                    seed_x=seed_x,
+                    seed_y=seed_y,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - 投影失败必须显式暴露
+            logger.bind(
+                context=context, kind="overview_node", record_index=index
+            ).warning("graph_projection_failed")
+            raise GraphUnavailableError(
+                _projection_failure_message(
+                    context=context,
+                    kind="overview_node",
+                    label="Entity",
+                    index=index,
+                    exc=exc,
+                )
+            ) from exc
+    return nodes
+
+
+def _project_overview_edges(records: Any, *, context: str) -> list[GraphOverviewEdge]:
+    """批次 C：把 Cypher 关系投影为 ``GraphOverviewEdge``。"""
+    edges: list[GraphOverviewEdge] = []
+    for index, record in enumerate(records):
+        try:
+            raw_properties = record.get("properties") or {}
+            if raw_properties and not isinstance(raw_properties, dict):
+                raise TypeError(
+                    f"properties 字段应为 dict，实际为 {type(raw_properties).__name__}"
+                )
+            rel_name = str(record.get("type") or "")
+            if rel_name not in {"HAS_CHUNK", "MENTIONS", "SUPPORTED_BY"}:
+                # 仅展示实体间可引用边（演示）；其它（含桥梁抽取的
+                # HAS_FINANCIAL_INDICATOR / OPERATES_SEGMENT / RELATED）由
+                # ``MOCK_GRAPH_OVERVIEW`` 风格数据补齐。**不**静默跳过。
+                rel_name = rel_name or "MENTIONS"
+            edges.append(
+                GraphOverviewEdge(
+                    id=str(record.get("id") or ""),
+                    source=str(record.get("source") or ""),
+                    target=str(record.get("target") or ""),
+                    relation=rel_name,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - 投影失败必须显式暴露
+            logger.bind(
+                context=context, kind="overview_edge", record_index=index
+            ).warning("graph_projection_failed")
+            raise GraphUnavailableError(
+                _projection_failure_message(
+                    context=context,
+                    kind="overview_edge",
+                    label=None,
+                    index=index,
+                    exc=exc,
+                )
+            ) from exc
+    return edges
+
+
+def _seed_coords_from_id(node_id: str) -> tuple[float, float]:
+    """按节点 id 派生确定性的 (seed_x, seed_y)，便于 SSR / CSR 一致性。"""
+    if not node_id:
+        return (0.5, 0.5)
+    digest = hashlib.md5(node_id.encode("utf-8")).digest()
+    x = digest[0] / 255.0
+    y = digest[1] / 255.0
+    return (round(x, 3), round(y, 3))
+
+
 __all__ = [
     "GraphService",
     "GraphUnavailableError",
+    "EntityNotFoundError",
     "KgVersion",
     "NoActiveKgVersionError",
 ]

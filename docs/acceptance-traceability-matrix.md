@@ -11,7 +11,7 @@
 > - 验收条文：`specs/m1..m6-*.md` §3
 > - 指标定义：`docs/02-product-outline.md` 附录 C；反证条件：`docs/01-research.md` §3.3
 >
-> **状态**：v1.0（2026-09-21，架构师）
+> **状态**：v1.1（2026-09-21 建立，架构师；**2026-09-22 更新**：S5 收尾对账——H4 / H8 两项「已知缺陷」关闭、M1 / M2 与黄金路径步骤 3 现状刷新、§5.3 `--strict` 口径更正为默认档）
 
 ---
 
@@ -47,8 +47,8 @@
 
 | 模块 | 规格 | 条数 | 编号 | 承接 Sprint | 现状 |
 |---|---|---|---|---|---|
-| **M1** | `specs/m1-async-ingest.md` §3 | 8 | 1–8 | S5（docx 解析 S10） | 🟡 上传 / 状态机 / 重试已真实；docx 只收不解析 |
-| **M2** | `specs/m2-extract-kg.md` §3 | 7 | 1–7 | S5（四源字段）、S9（实体消解） | 🟡 离线脚本，非服务 |
+| **M1** | `specs/m1-async-ingest.md` §3 | 8 | 1–8 | S5（docx 解析 S10） | ✅ 上传 / 状态机 / 重试**全部真实**（B1 `retry_count` 回写 + B4 退避读配置已于 S5 收口）；docx 仍只收不解析 → S10 |
+| **M2** | `specs/m2-extract-kg.md` §3 | 7 | 1–7 | S5（四源字段）、S9（实体消解） | 🟡 **S5 批次 B 转正为在线服务**（上传即建图，三段式写入，`kg_versions` 为版本真源）；仍缺 `confidence` 落库 / `char_offset` / 实体消解（S9~S10） |
 | **M3** | `specs/m3-graphqa-citation.md` §3 | 7 | 1–7 | S6（引用溯源）、S10（≥3 跳） | 🟡 链路真实，缺证据节点 |
 | **M4** | `specs/m4-affiliation-detection.md` §3 | 7 | 1–7 | S7（1 类算法）、S9（三类 + 四源） | ❌ 0% |
 | **M5** | `specs/m5-permission-audit.md` §3 | 8 | 1–8 | S8（审计页）、S11（RBAC / RLS / 双轨） | 🟡 仅 trace_id + 部分脱敏 |
@@ -61,7 +61,7 @@
 |---|---|---|---|
 | 1 | 上传合同 PDF + 3 CSV，P95 ≤ 500ms | M1 §3 验收 1 | ✅ |
 | 2 | 轮询状态 `pending → processing → completed` | M1 §3 验收 5 | ✅ |
-| 3 | Neo4j 写入 + `kg_version` 落 `kg_versions` | M2 §3 验收 4 | 🟡 S5-B |
+| 3 | Neo4j 写入 + `kg_version` 落 `kg_versions` | M2 §3 验收 4 | ✅ **S5 批次 B 达成**（`kg_versions` 为版本真源，黄金路径 3/7） |
 | 4 | M4 命中 ≥ 1 疑点且引用覆盖率 100% | M4 §3 验收 4 + 6 | ❌ S9 |
 | 5 | M3 提问 → 引用 100% 或拒答 | M3 §3 验收 2 + 3 | 🟡 S6 / S10 |
 | 6 | 审计 ≥ 7 条且共享同一 `trace_id` | M5 §3 验收 6 | ❌ S8 |
@@ -76,11 +76,11 @@
 | **H1** | 异步任务状态机 `pending → processing → completed / failed` | M1 §3 验收 1 / 5；M1 §3 验收 8（启动回收 → `TASK_INTERRUPTED`）；**M4 §3 验收 7** | 机械 | 集成测试断言 `status` 仅在四值内 + 重启回收用例；契约 `documents.status` 枚举 | CI | ✅ M1 侧；⏳ M4 侧（S9） |
 | **H2** | 上传 ≤ 100MB + MIME 白名单（pdf/docx/csv） | M1 §3 验收 2 / 3 | 机械 | 集成测试各 1 例：超限 → 413 `FILE_TOO_LARGE`；非白名单 → 415 `UNSUPPORTED_MEDIA_TYPE` 且不落存储 | CI | ✅（docx 解析 S10） |
 | **H3** | 错误响应统一 `{code, message, detail, trace_id}` | M1 §3 验收 2 / 3；M5 §3 验收 1；M3 §3 验收 3 | 机械 | 契约 `ErrorResponse` schema + 各错误分支响应体断言 | CI | 🟡 M1 侧已统一；M3 / M4 / M5 侧随模块落地 |
-| **H4** | loguru JSON 日志 + `trace_id` 全链路 | M1 §3 验收 7；**M2 §3 验收 7**；M5 §3 验收 6；**M6 §3 验收 10** | 半机械 | 断言响应头 `X-Trace-Id` 回显且与 `detail.trace_id` 一致；E2E 断言同一 `trace_id` 贯穿 M1→M5 | 后端 B | ⚠️ **已知缺陷**：`_refuse()` 出口 `body.trace_id` 为空，需在 S5 批次收口 |
+| **H4** | loguru JSON 日志 + `trace_id` 全链路 | M1 §3 验收 7；**M2 §3 验收 7**；M5 §3 验收 6；**M6 §3 验收 10** | 半机械 | 断言响应头 `X-Trace-Id` 回显且与 `detail.trace_id` 一致；E2E 断言同一 `trace_id` 贯穿 M1→M5 | 后端 B | ✅ **S5 已收口**：`_refuse()` 出口 `trace_id` 已补，原「已知缺陷」关闭；M6 侧 ⏳ S12 |
 | **H5** | 敏感字段脱敏（金额 / 发票号 / 税号 / 法人 / 银行 / 身份证 / 电话 / 文件名） | **M5 §3 验收 3 + §4.5** | 机械 | 单元测试断言日志与响应中**无原文**；`filename_hash` 替代原文 | 后端 B | 🟡 部分；完整脱敏 S11 |
 | **H6** | 私域部署禁云外发（`PRIVATE_DEPLOY_ENABLED=true`） | M5 §3 验收 4 | 机械 | 单元测试断言外发被拦截（503 `PRIVATE_DEPLOY_BLOCKED`） | 后端 B + 架构师 | ⏳ S11。**当前为占位**，例外登记见 `docs/adr/0004-integration-seams.md` §3 |
 | **H7** | slowapi 限流（默认 60 req/min/IP） | M5 §3 验收 5 | 机械 | 集成测试连打超阈值 → 429 `RATE_LIMITED` | CI | ⏳ S11（**尚未落地**） |
-| **H8** | tenacity 指数退避 ≤ 3 次（初始 1s、倍数 2） | M1 §3 验收 4；M2 §3 验收 5 | 半机械 | 注入失败后断言重试次数 = 3 且 `error_code` / `error_detail` 落库；M2 侧断言 `retry_count` 写回 | 后端 B + 架构师 | 🟡 M1 侧已真实；⚠️ **B4 缺陷**：`task_retry_multiplier` 在退避路径未被读取（plan T11 收口） |
+| **H8** | tenacity 指数退避 ≤ 3 次（初始 1s、倍数 2） | M1 §3 验收 4；M2 §3 验收 5 | 半机械 | 注入失败后断言重试次数 = 3 且 `error_code` / `error_detail` 落库；M2 侧断言 `retry_count` 写回 | 后端 B + 架构师 | ✅ **S5 批次 A 已收口**：B1（`retry_count` 回写）+ B4（退避 `exp_base` 读配置）两项缺陷均关闭，`task_retry_multiplier` 现为**有消费者的配置** |
 | **H9** | Prompt 版本管理（MVP 复用 5 个 v1，P2 才新增版本） | 各 spec §"关联 Prompts" | 机械 | `prompts/` 5 份文件名带版本号；`prompt_loader.py` 加载，**代码内无硬编码 Prompt** | 架构师 | ✅ 5 个 v1 就位（S9–S13 不新增版本，plan §19.1 A） |
 | **H10** | 契约先行 | 各 spec §"API 端点草案" + `contracts/openapi.yaml` | 机械 | `backend/`：`uv run python scripts/export_openapi.py --check`；`frontend/`：`npm run gen:api` 后 `git diff --exit-code -- frontend/src/types/api.d.ts` | CI（`contract` job） | ✅ 门禁在跑 |
 | **H11** | 准入线 C1–C3 | M4 §3 验收 6；M3 §3 验收 2 | 机械 + 人工 | 见 §5.1 | 架构师 + 用户 | ⏳ S13（评测脚本**待建**） |
@@ -125,7 +125,7 @@
 # backend/
 uv sync --all-groups --frozen
 uv run ruff check . && uv run ruff format --check .
-uv run python scripts/check_seams.py --strict   # 收尾用 --strict；CI 默认非 strict
+uv run python scripts/check_seams.py            # 收尾用【默认档】，要求 ERROR = 0
 uv run pytest -q
 uv run python scripts/export_openapi.py --check
 
@@ -136,7 +136,11 @@ npm run gen:api
 git diff --exit-code -- frontend/src/types/api.d.ts
 ```
 
-> `check_seams.py --strict` 是 Sprint 收尾口径（CI 只记 WARN，见倒推文档与 `ci.yml` 注释）；**Sprint 收尾若只跑 CI 默认口径，会漏掉"未到期项"**。
+> **口径更正（2026-09-22，以脚本实测为准，原表述作废）**：`--strict` **不是** Sprint 收尾口径。`check_seams.py` docstring 第 5–6 行与 `--strict` 分支的报错文案均明示——「`--strict` 只适用于 Demo-MVP 完成点（**v1.4.0**，接缝全部到期）；Sprint 收尾请用默认档并要求 **ERROR = 0**」。
+>
+> 实测佐证：v1.1.0 跑 `--strict` 必红（exit 1），其 6 条 WARN **全部是未到期接缝**（5 事件出口 / 6 导出 / 7 外部映射 / 8 外部导入，按 `required_from` 分属 v1.3.0~v1.4.0），属"尚未到期"而**非越界**——若据此判 Sprint 5 收尾失败，逻辑上等于要求 S5 提前交付 S7~S8 的内容。
+>
+> **默认档不会漏项**：未到期项由脚本按 `required_from` 自动上闸，一旦越过当前版本即自动升为 ERROR；`--strict` 的用途是 v1.4.0 收尾时确认"接缝全部就位"，不是常规 Sprint 的放行条件。
 
 ---
 

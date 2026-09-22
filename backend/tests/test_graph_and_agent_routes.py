@@ -555,6 +555,12 @@ def _patch_agent_pipeline_ok(
         "fetch_all_subgraph",
         lambda self, **kwargs: (nodes, edges, False),
     )
+    # 批次 B fail-closed 校验（ADR-0003 §4）：打桩放行（同租户无泄漏）
+    monkeypatch.setattr(
+        GraphService,
+        "validate_kg_version_tenant_boundary",
+        lambda self, **kwargs: True,
+    )
     # 测试环境未配置 DEEPSEEK_API_KEY，前置检查必须打桩放行
     monkeypatch.setattr(AgentService, "_ensure_chat", lambda self: None)
 

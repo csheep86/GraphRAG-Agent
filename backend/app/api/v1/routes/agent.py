@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.api.deps import CurrentIdentity, TraceId
 from app.api.v1.responses import (
+    KG_TENANT_LEAK,
     KG_VERSION_NOT_ACTIVE,
     NOT_IMPLEMENTED,
     TENANT_ERROR_RESPONSES,
@@ -13,7 +14,11 @@ from app.api.v1.responses import (
 )
 from app.core.errors import AppError, ErrorCode
 from app.schemas.agent import AgentQueryRequest, AgentQueryResponse
-from app.services.agents import AgentService, AgentUnavailableError
+from app.services.agents import (
+    AgentService,
+    AgentTenantLeakError,
+    AgentUnavailableError,
+)
 from app.services.graphs import GraphService, GraphUnavailableError
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -33,7 +38,7 @@ router = APIRouter(prefix="/agent", tags=["agent"])
         "**实现状态**：已实装——由 `AgentService.query`（`app/services/agents.py`）执行"
         "「取 active 版本 → 拉取相关子图 → 加载 `kg_qa` Prompt → LLM 调用与解析」单轮链路，"
         "返回 `AgentQueryResponse`。\n\n"
-        "**501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`DEEPSEEK_API_KEY` 缺失）/ "
+        "**501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`LLM_API_KEY` 缺失）/ "
         "LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，"
         "**不**表示「接口未实现」。"
     ),
@@ -41,6 +46,7 @@ router = APIRouter(prefix="/agent", tags=["agent"])
         **TENANT_ERROR_RESPONSES,
         **VALIDATION_ERROR,
         **KG_VERSION_NOT_ACTIVE,
+        **KG_TENANT_LEAK,
         **NOT_IMPLEMENTED,
     },
 )
@@ -60,6 +66,17 @@ async def query_agent(
             org_id=identity.org_id,
             trace_id=trace_id,
         )
+    except AgentTenantLeakError as exc:
+        # 必须先于 AgentUnavailableError（它是其子类）——数据质量事故 ≠ 基础设施故障
+        raise AppError(
+            ErrorCode.KG_TENANT_LEAK,
+            detail={
+                "org_id": str(identity.org_id),
+                "blocked_by": "fail-closed 跨租户子图校验（ADR-0003 §4）",
+                "reason": str(exc),
+                "trace_id": trace_id,
+            },
+        ) from exc
     except AgentUnavailableError as exc:
         raise AppError(
             ErrorCode.NOT_IMPLEMENTED,
