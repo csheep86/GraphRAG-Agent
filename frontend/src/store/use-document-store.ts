@@ -75,7 +75,7 @@ export const useDocumentStore = create<DocumentStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const { keyword, status } = get();
-      const response = await listDocuments({ keyword, status });
+      const response = await listDocuments({ q: keyword, status });
       set({
         items: response.items,
         total: response.total,

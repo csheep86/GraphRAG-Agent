@@ -8,13 +8,16 @@ type DocumentGraphResponse = components["schemas"]["DocumentGraphResponse"];
 
 /**
  * 全局知识图谱 Mock（p04）。
- * 契约缺失：现有 `GET /api/v1/documents/{id}/graph` 为文档级子图，
- * 设计稿需要全局图谱 + 实体详情，故此处为 UI 预留。
+ * ✅ 契约已实装（`GET /api/v1/graph/overview`，Sprint 5 批次 C）——
+ * 字段以 `components["schemas"]["GraphOverviewResponse"]` 为准，仅 USE_MOCK=true 时返回。
  */
 export const MOCK_GRAPH_OVERVIEW: GraphOverviewResponse = {
   doc_count: 1248,
   entity_count: 86492,
   relation_count: 246810,
+  kg_version: "00000000-0000-4000-8000-0000000000aa",
+  truncated: false,
+  trace_id: "00000000-0000-4000-8000-0000000000bb",
   nodes: [
     {
       id: "e-topic-compliance",
@@ -135,11 +138,13 @@ export const MOCK_GRAPH_OVERVIEW: GraphOverviewResponse = {
 const ENTITY_DETAILS: Record<string, EntityDetail> = {
   "e-topic-compliance": {
     id: "e-topic-compliance",
-    name: "数据安全合规",
-    tag: "核心主题",
+    canonical_name: "数据安全合规",
+    entity_type: "核心主题",
     category: "topic",
-    display_code: "ENTITY-008492",
+    confidence: 0.98,
+    kg_version: "00000000-0000-4000-8000-0000000000aa",
     relation_count: 18,
+    trace_id: "00000000-0000-4000-8000-0000000000bb",
     attributes: [
       { label: "首次出现", value: "企业知识库架构设计.pdf" },
       { label: "置信度", value: "0.98" },
@@ -165,11 +170,13 @@ const ENTITY_DETAILS: Record<string, EntityDetail> = {
   },
   "e-norm-classification": {
     id: "e-norm-classification",
-    name: "数据分级分类",
-    tag: "规范",
+    canonical_name: "数据分级分类",
+    entity_type: "规范",
     category: "norm",
-    display_code: "ENTITY-002317",
+    confidence: 0.94,
+    kg_version: "00000000-0000-4000-8000-0000000000aa",
     relation_count: 9,
+    trace_id: "00000000-0000-4000-8000-0000000000bb",
     attributes: [
       { label: "首次出现", value: "安全合规手册 v2.docx" },
       { label: "置信度", value: "0.94" },
@@ -190,11 +197,13 @@ const ENTITY_DETAILS: Record<string, EntityDetail> = {
   },
   "e-system-policy": {
     id: "e-system-policy",
-    name: "合规制度",
-    tag: "制度",
+    canonical_name: "合规制度",
+    entity_type: "制度",
     category: "system",
-    display_code: "ENTITY-001064",
+    confidence: 0.91,
+    kg_version: "00000000-0000-4000-8000-0000000000aa",
     relation_count: 12,
+    trace_id: "00000000-0000-4000-8000-0000000000bb",
     attributes: [
       { label: "首次出现", value: "安全合规手册 v2.docx" },
       { label: "置信度", value: "0.91" },
@@ -215,11 +224,13 @@ const ENTITY_DETAILS: Record<string, EntityDetail> = {
   },
   "e-org-committee": {
     id: "e-org-committee",
-    name: "安全委员会",
-    tag: "组织",
+    canonical_name: "安全委员会",
+    entity_type: "组织",
     category: "org",
-    display_code: "ENTITY-004871",
+    confidence: 0.96,
+    kg_version: "00000000-0000-4000-8000-0000000000aa",
     relation_count: 14,
+    trace_id: "00000000-0000-4000-8000-0000000000bb",
     attributes: [
       { label: "首次出现", value: "企业知识库架构设计.pdf" },
       { label: "置信度", value: "0.96" },
@@ -236,11 +247,13 @@ const ENTITY_DETAILS: Record<string, EntityDetail> = {
   },
   "e-norm-audit-log": {
     id: "e-norm-audit-log",
-    name: "审计日志",
-    tag: "数据",
+    canonical_name: "审计日志",
+    entity_type: "数据",
     category: "norm",
-    display_code: "ENTITY-006105",
+    confidence: 0.89,
+    kg_version: "00000000-0000-4000-8000-0000000000aa",
     relation_count: 7,
+    trace_id: "00000000-0000-4000-8000-0000000000bb",
     attributes: [
       { label: "首次出现", value: "数据平台 API 规范.pdf" },
       { label: "置信度", value: "0.89" },
@@ -261,11 +274,13 @@ const ENTITY_DETAILS: Record<string, EntityDetail> = {
   },
   "e-topic-approval": {
     id: "e-topic-approval",
-    name: "访问审批流程",
-    tag: "流程",
+    canonical_name: "访问审批流程",
+    entity_type: "流程",
     category: "topic",
-    display_code: "ENTITY-005540",
+    confidence: 0.93,
+    kg_version: "00000000-0000-4000-8000-0000000000aa",
     relation_count: 11,
+    trace_id: "00000000-0000-4000-8000-0000000000bb",
     attributes: [
       { label: "首次出现", value: "企业知识库架构设计.pdf" },
       { label: "置信度", value: "0.93" },
@@ -286,11 +301,13 @@ const ENTITY_DETAILS: Record<string, EntityDetail> = {
   },
   "e-org-data-owner": {
     id: "e-org-data-owner",
-    name: "数据平台主管",
-    tag: "人员",
+    canonical_name: "数据平台主管",
+    entity_type: "人员",
     category: "org",
-    display_code: "ENTITY-003392",
+    confidence: 0.87,
+    kg_version: "00000000-0000-4000-8000-0000000000aa",
     relation_count: 6,
+    trace_id: "00000000-0000-4000-8000-0000000000bb",
     attributes: [
       { label: "首次出现", value: "客户访谈纪要-华东.pdf" },
       { label: "置信度", value: "0.87" },
@@ -308,6 +325,20 @@ const ENTITY_DETAILS: Record<string, EntityDetail> = {
 
 /** 默认选中的实体（对齐 p04 首屏「数据安全合规」） */
 export const MOCK_DEFAULT_ENTITY_ID = "e-topic-compliance";
+
+/**
+ * Mock 模式下返回实体详情；未知 ID 抛 404 ENTITY_NOT_FOUND 语义错误，
+ * 与真实接口的契约一致（避免前端开发态走 Mock 时跳过错误分支）。
+ */
+export function getMockEntityDetail(id: string): EntityDetail {
+  const detail = ENTITY_DETAILS[id];
+  if (!detail) {
+    const error = new Error(`Entity not found: ${id}`);
+    (error as Error & { code: string }).code = "ENTITY_NOT_FOUND";
+    throw error;
+  }
+  return detail;
+}
 
 /**
  * USE_MOCK=true 时 `getDocumentGraph` 直接返回最小图谱（Sprint 4.10.1.6）：
@@ -349,7 +380,3 @@ export const MOCK_DOCUMENT_GRAPH: DocumentGraphResponse = {
     },
   ],
 };
-
-export function getMockEntityDetail(id: string): EntityDetail | null {
-  return ENTITY_DETAILS[id] ?? null;
-}

@@ -23,9 +23,39 @@ export interface paths {
          *
          *     **实现状态**：已实装——由 `AgentService.query`（`app/services/agents.py`）执行「取 active 版本 → 拉取相关子图 → 加载 `kg_qa` Prompt → LLM 调用与解析」单轮链路，返回 `AgentQueryResponse`。
          *
-         *     **501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`DEEPSEEK_API_KEY` 缺失）/ LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，**不**表示「接口未实现」。
+         *     **501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`LLM_API_KEY` 缺失）/ LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，**不**表示「接口未实现」。
          */
         post: operations["queryAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出当前租户的文档（批次 C）
+         * @description 按 `org_id` 强制过滤（ADR-0003），跨租户资源**永不**出现在结果里。
+         *
+         *     **查询参数**：
+         *     - `q`：按 `filename_hash`（SHA-256 hex）前缀匹配。文件名原文**不**落库，演示场景下做「输入前缀」匹配即可。
+         *     - `status`：可选 `pending / processing / completed / failed`。
+         *     - `page`：1-based 页码，默认 1。
+         *     - `page_size`：默认 10，**上限 100**（演示前端表格默认 10 条 / 页）。
+         *
+         *     **返回字段**：`filename` 字段展示的是 `filename_hash`（前端表格沿用 mock口径展示 hash，**不**伪造文件名原文，符合 M5 §4.5）；`entity_count` 仅当文档已参与建图（`kg_version_id IS NOT NULL`）时有值，否则为 `null`。
+         *
+         *     **一致性**：列表按 `created_at DESC` 排序（最新上传在前），PG 唯一真源；Neo4j 不可用时本接口仍可正常返回——不依赖图谱存储。
+         */
+        get: operations["listDocuments"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -107,6 +137,58 @@ export interface paths {
          *     **跨租户访问返回 403**（`FORBIDDEN`），不返回 404——按 M5 §3 验收 1 的显式要求。
          */
         get: operations["getDocumentStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/entities/{entity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 获取实体详情（批次 C）
+         * @description 返回单个实体的属性 + 出边邻居（≤ 50 条）：
+         *     - `attributes`：Neo4j 节点属性（系统字段 `id` / `kg_version` / `org_id` / `pii_flags` 等已过滤）；
+         *     - `relations`：实体的 1 跳出边（含 `target_id` / `target_name` / `relation` 三元组）。
+         *
+         *     **错误响应**：
+         *     - 实体不属于当前 active `kg_version` → **404** `ENTITY_NOT_FOUND`；
+         *     - Neo4j 不可用 / 无 active 版本 → **501** `NOT_IMPLEMENTED` 或 **409** `KG_VERSION_NOT_ACTIVE`；
+         *     - 跨租户访问 → **403** `FORBIDDEN`（**不**走 404，避免混淆资源不存在与权限不足 —— M5 §3 验收 1）。
+         */
+        get: operations["getEntityDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/graph/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 获取全局图谱概览（批次 C）
+         * @description 返回 active `kg_version` 的全局实体子图概览：
+         *     - `nodes` / `edges` 轻量投影（供前端力导向图渲染）；
+         *     - `doc_count` / `entity_count` / `relation_count` 三个统计值；
+         *     - `truncated`：超过 500 节点上限时为 `true`，**前端必须禁用「全部展开」**；
+         *
+         *     **一致性（ADR-0002 §3.2）**：只读 active 版本，不存在 active 版本时返回 **409** `KG_VERSION_NOT_ACTIVE`，**严禁静默降级**到历史版本。
+         */
+        get: operations["getGraphOverview"];
         put?: never;
         post?: never;
         delete?: never;
@@ -417,6 +499,119 @@ export interface components {
             version_status: "active";
         };
         /**
+         * DocumentListItem
+         * @description `GET /documents` 单条结果。
+         *
+         *     字段对齐 `frontend/src/types/mock.d.ts::DocumentListItem`（Sprint 5 批次 C 收口），
+         *     保证 `npm run gen:api` 生成的 TS 类型可直接替换前端 mock 类型。
+         * @example {
+         *       "entity_count": 128,
+         *       "file_type": "PDF",
+         *       "filename": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+         *       "id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+         *       "status": "completed",
+         *       "task_id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+         *       "time_label": "10:42",
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+         *       "uploaded_at": "2026-09-21T10:42:00Z"
+         *     }
+         */
+        DocumentListItem: {
+            /** Entity Count */
+            entity_count?: number | null;
+            /**
+             * File Type
+             * @description 文件类型标签
+             * @enum {string}
+             */
+            file_type: "PDF" | "DOCX" | "CSV";
+            /**
+             * Filename
+             * @description SHA-256(filename) — 文件名展示用
+             */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description 文档主键 UUID
+             */
+            id: string;
+            /**
+             * Status
+             * @description M1 状态机取值
+             * @enum {string}
+             */
+            status: "pending" | "processing" | "completed" | "failed";
+            /**
+             * Task Id
+             * Format: uuid
+             * @description 任务 id，与 `documents.id` 一致
+             */
+            task_id: string;
+            /**
+             * Time Label
+             * @description 相对时间文案，固定 UTC 计算
+             */
+            time_label: string;
+            /**
+             * Trace Id
+             * @description 贯穿上传→解析→建图全链路的 trace_id
+             */
+            trace_id: string;
+            /**
+             * Uploaded At
+             * @description ISO8601 上传时间（UTC）
+             */
+            uploaded_at: string;
+        };
+        /**
+         * DocumentListResponse
+         * @description `GET /documents` 响应。
+         * @example {
+         *       "items": [
+         *         {
+         *           "entity_count": 128,
+         *           "file_type": "PDF",
+         *           "filename": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+         *           "id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+         *           "status": "completed",
+         *           "task_id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+         *           "time_label": "10:42",
+         *           "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+         *           "uploaded_at": "2026-09-21T10:42:00Z"
+         *         }
+         *       ],
+         *       "page": 1,
+         *       "page_size": 10,
+         *       "total": 27,
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
+         *     }
+         */
+        DocumentListResponse: {
+            /**
+             * Items
+             * @description 当前页结果
+             */
+            items: components["schemas"]["DocumentListItem"][];
+            /**
+             * Page
+             * @description 当前页码（1-based）
+             */
+            page: number;
+            /**
+             * Page Size
+             * @description 每页条目数（请求参数回显）
+             */
+            page_size: number;
+            /**
+             * Total
+             * @description 当前租户下满足过滤条件的文档总数
+             */
+            total: number;
+            /** Trace Id */
+            trace_id: string;
+        };
+        /**
          * DocumentStatusResponse
          * @description `GET /api/v1/documents/{id}/status` 响应（M1 验收 5）。
          *
@@ -450,11 +645,123 @@ export interface components {
             trace_id: string;
         };
         /**
+         * EntityAttribute
+         * @description 实体详情属性项。
+         */
+        EntityAttribute: {
+            /**
+             * Label
+             * @description 属性名（人类可读）
+             */
+            label: string;
+            /**
+             * Value
+             * @description 属性值
+             */
+            value: string;
+        };
+        /**
+         * EntityDetail
+         * @description `GET /entities/{entity_id}` 响应：单个实体的属性 + 出边邻居。
+         *
+         *     邻居数上限由 ``settings`` 或路由层硬上限（默认 50）控制；
+         *     跨租户访问 → 403 ``FORBIDDEN``；不存在 → 404 ``ENTITY_NOT_FOUND``。
+         * @example {
+         *       "attributes": [
+         *         {
+         *           "label": "首次出现",
+         *           "value": "企业知识库架构设计.pdf"
+         *         },
+         *         {
+         *           "label": "置信度",
+         *           "value": "0.98"
+         *         }
+         *       ],
+         *       "canonical_name": "数据安全合规",
+         *       "category": "topic",
+         *       "confidence": 0.98,
+         *       "entity_type": "核心主题",
+         *       "id": "e-001",
+         *       "kg_version": "20260320T1430Z-01H9X9ABCDEF",
+         *       "relation_count": 18,
+         *       "relations": [
+         *         {
+         *           "relation": "包含",
+         *           "target_id": "e-002",
+         *           "target_name": "数据分级分类"
+         *         }
+         *       ],
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
+         *     }
+         */
+        EntityDetail: {
+            /** Attributes */
+            attributes: components["schemas"]["EntityAttribute"][];
+            /**
+             * Canonical Name
+             * @description `:Entity.canonical_name`（消解后标准名）
+             */
+            canonical_name: string;
+            /**
+             * Category
+             * @description 前端图例分类
+             * @enum {string}
+             */
+            category: "topic" | "norm" | "org" | "system";
+            /** Confidence */
+            confidence?: number | null;
+            /**
+             * Entity Type
+             * @description `:Entity.type`
+             */
+            entity_type: string;
+            /**
+             * Id
+             * @description Neo4j `:Entity.id`
+             */
+            id: string;
+            /**
+             * Kg Version
+             * @description active kg_version
+             */
+            kg_version: string;
+            /**
+             * Relation Count
+             * @description 实体的总出度 + 入度
+             */
+            relation_count: number;
+            /** Relations */
+            relations: components["schemas"]["EntityRelation"][];
+            /** Trace Id */
+            trace_id: string;
+        };
+        /**
+         * EntityRelation
+         * @description 实体详情关系项。
+         */
+        EntityRelation: {
+            /**
+             * Relation
+             * @description 关系名
+             */
+            relation: string;
+            /**
+             * Target Id
+             * @description 目标实体 id
+             */
+            target_id: string;
+            /**
+             * Target Name
+             * @description 目标实体名（前端直接展示）
+             */
+            target_name: string;
+        };
+        /**
          * ErrorCode
          * @description 统一业务错误码。HTTP 状态码与业务错误码分离（CODEBUDDY.md 错误响应规范）。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "INTERNAL_ERROR" | "HTTP_ERROR";
+        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "INTERNAL_ERROR" | "HTTP_ERROR";
         /**
          * ErrorResponse
          * @description 统一错误响应体（**所有** 4xx / 5xx 均使用本结构）。
@@ -558,6 +865,136 @@ export interface components {
              * @enum {string}
              */
             label: "Document" | "Chunk" | "Entity" | "Evidence";
+        };
+        /**
+         * GraphOverviewEdge
+         * @description `GET /graph/overview` 边轻量投影。
+         */
+        GraphOverviewEdge: {
+            /** Id */
+            id: string;
+            /**
+             * Relation
+             * @description 关系名（来自 Neo4j ``type(r)``）
+             */
+            relation: string;
+            /**
+             * Source
+             * @description 起点节点 id
+             */
+            source: string;
+            /**
+             * Target
+             * @description 终点节点 id
+             */
+            target: string;
+        };
+        /**
+         * GraphOverviewNode
+         * @description `GET /graph/overview` 节点轻量投影。
+         *
+         *     仅含前端力导向图渲染所需的最小字段集合，**不含** ``label`` /
+         *     ``confidence`` / ``pii_flags`` 等（避免演示字段污染契约可溯源链）。
+         */
+        GraphOverviewNode: {
+            /**
+             * Category
+             * @description 前端图例分类（4 类）
+             * @enum {string}
+             */
+            category: "topic" | "norm" | "org" | "system";
+            /**
+             * Id
+             * @description Neo4j 节点 id（`:Entity.id`）
+             */
+            id: string;
+            /**
+             * Name
+             * @description `:Entity.canonical_name`
+             */
+            name: string;
+            /** Seed X */
+            seed_x: number;
+            /** Seed Y */
+            seed_y: number;
+            /**
+             * Type
+             * @description `:Entity.type`（原始字符串）
+             */
+            type: string;
+            /**
+             * Weight
+             * @description 相对权重，决定节点半径
+             */
+            weight: number;
+        };
+        /**
+         * GraphOverviewResponse
+         * @description `GET /graph/overview` 响应：全局图谱概览。
+         *
+         *     节点 / 边上限 500（与 ``DocumentGraphResponse`` 对齐），超限时
+         *     ``truncated = true`` —— 前端禁用「全部展开」以避免误以为是真实全量。
+         * @example {
+         *       "doc_count": 27,
+         *       "edges": [
+         *         {
+         *           "id": "r-001",
+         *           "relation": "包含",
+         *           "source": "e-001",
+         *           "target": "e-002"
+         *         }
+         *       ],
+         *       "entity_count": 1428,
+         *       "kg_version": "20260320T1430Z-01H9X9ABCDEF",
+         *       "nodes": [
+         *         {
+         *           "category": "topic",
+         *           "id": "e-001",
+         *           "name": "数据安全合规",
+         *           "seed_x": 0.14,
+         *           "seed_y": 0.38,
+         *           "type": "核心主题",
+         *           "weight": 1.65
+         *         }
+         *       ],
+         *       "relation_count": 3604,
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+         *       "truncated": false
+         *     }
+         */
+        GraphOverviewResponse: {
+            /**
+             * Doc Count
+             * @description 当前租户下有 active kg_version 的文档数
+             */
+            doc_count: number;
+            /** Edges */
+            edges: components["schemas"]["GraphOverviewEdge"][];
+            /**
+             * Entity Count
+             * @description active kg_version 内的实体数（总）
+             */
+            entity_count: number;
+            /**
+             * Kg Version
+             * @description active kg_version 版本号
+             */
+            kg_version: string;
+            /** Nodes */
+            nodes: components["schemas"]["GraphOverviewNode"][];
+            /**
+             * Relation Count
+             * @description active kg_version 内的关系数（总）
+             */
+            relation_count: number;
+            /** Trace Id */
+            trace_id: string;
+            /**
+             * Truncated
+             * @description 是否因超过 500 节点上限被截断
+             * @default false
+             */
+            truncated: boolean;
         };
         /** HealthCheckStatus */
         HealthCheckStatus: {
@@ -711,7 +1148,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            /** @description 403 跨租户拒绝，两种成因：① `FORBIDDEN`（ADR-0003 §3.3）——请求资源 org_id 不符；② `KG_TENANT_LEAK`（ADR-0003 §4，Sprint 5 批次 B）——fail-closed 校验发现 active kg_version 内存在不属于当前 org 的节点，属数据质量事故伪装为正常结论，**不**降级为拒答（200） */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -731,6 +1168,67 @@ export interface operations {
             };
             /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listDocuments: {
+        parameters: {
+            query?: {
+                /** @description 按 `filename_hash` 前缀匹配（SHA-256 hex）。示例：`q=e3b0` 匹配 hash 以 `e3b0` 开头的所有文档 */
+                q?: string | null;
+                /** @description 按状态过滤；M1 H1 状态机取值之一 */
+                status?: string | null;
+                /** @description 1-based 页码 */
+                page?: number;
+                /** @description 每页条目数（默认 10，上限 100） */
+                page_size?: number;
+            };
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentListResponse"];
+                };
+            };
+            /** @description 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -922,6 +1420,139 @@ export interface operations {
             };
             /** @description 文档不存在（`DOCUMENT_NOT_FOUND`）。**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1） */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getEntityDetail: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityDetail"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 403 跨租户拒绝，两种成因：① `FORBIDDEN`（ADR-0003 §3.3）——请求资源 org_id 不符；② `KG_TENANT_LEAK`（ADR-0003 §4，Sprint 5 批次 B）——fail-closed 校验发现 active kg_version 内存在不属于当前 org 的节点，属数据质量事故伪装为正常结论，**不**降级为拒答（200） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 实体不存在（`ENTITY_NOT_FOUND`）。**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1；Sprint 5 批次 C） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getGraphOverview: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphOverviewResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 403 跨租户拒绝，两种成因：① `FORBIDDEN`（ADR-0003 §3.3）——请求资源 org_id 不符；② `KG_TENANT_LEAK`（ADR-0003 §4，Sprint 5 批次 B）——fail-closed 校验发现 active kg_version 内存在不属于当前 org 的节点，属数据质量事故伪装为正常结论，**不**降级为拒答（200） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

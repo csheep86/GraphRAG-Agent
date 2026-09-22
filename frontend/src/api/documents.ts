@@ -14,14 +14,17 @@ import {
   MOCK_RECENT_DOCUMENTS,
 } from "./mock/documents";
 
-/** 文档列表。契约缺失：后端需补 `GET /api/v1/documents`（q / status / page） */
+/**
+ * 文档列表。✅ 契约已实装（`GET /api/v1/documents`，Sprint 5 批次 C）：
+ * 支持 `q` / `status` / `page` / `page_size` 四个查询参数。
+ */
 export async function listDocuments(
   query: DocumentListQuery = {},
 ): Promise<DocumentListResponse> {
   if (shouldMock("/api/v1/documents")) {
     await delay(260);
 
-    const keyword = query.keyword?.trim().toLowerCase() ?? "";
+    const keyword = query.q?.trim().toLowerCase() ?? "";
     const status = query.status ?? "all";
 
     const items = MOCK_DOCUMENTS.filter((doc) => {
@@ -35,12 +38,17 @@ export async function listDocuments(
     return {
       total: filtered ? items.length : MOCK_DOCUMENT_TOTAL,
       items,
+      page: query.page ?? 1,
+      page_size: query.page_size ?? 10,
+      trace_id: mockId("trace"),
     };
   }
 
   const search = new URLSearchParams();
-  if (query.keyword) search.set("q", query.keyword);
+  if (query.q) search.set("q", query.q);
   if (query.status && query.status !== "all") search.set("status", query.status);
+  if (query.page) search.set("page", String(query.page));
+  if (query.page_size) search.set("page_size", String(query.page_size));
 
   const qs = search.toString();
   return request<DocumentListResponse>(

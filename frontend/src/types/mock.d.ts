@@ -1,11 +1,15 @@
 /**
- * 设计稿所需的、当前契约（`contracts/openapi.yaml`）尚未覆盖的数据结构。
+ * 设计稿所需的、当前契约（`contracts/openapi.yaml`）**尚未覆盖**的数据结构。
  *
  * ⚠️ 约束（项目规则 §功能预留原则）：
  * - 本文件只在 `frontend/` 内扩展，**不修改 `contracts/` 与 `backend/`**；
  * - `src/types/api.d.ts` 是 `npm run gen:api` 的生成物，**禁止手工修改**；
  * - 一旦后端补齐对应端点与 Pydantic 模型，应删除此处同名字段并改回
  *   `components["schemas"][...]`，同时在前端输出「接口对齐清单」。
+ *
+ * Sprint 5 批次 C 收口（`/documents` 列表、`/graph/overview`、`/entities/{id}` 三端点
+ * 契约补齐）：原 mock 复刻的同名字段已迁移至 `api.d.ts::components["schemas"]`，
+ * 此处仅保留**仍未实装**的预留类型。
  *
  * 字段命名对齐后端既有风格：snake_case。
  */
@@ -19,6 +23,29 @@ export type ConfidenceLevel = components["schemas"]["AgentQueryResponse"]["confi
 export type GraphNode = components["schemas"]["GraphNode"];
 export type GraphEdge = components["schemas"]["GraphEdge"];
 export type TokenUsage = components["schemas"]["TokenUsage"];
+
+/* --------------------------------------------------------------------------
+ * Sprint 5 批次 C 收口：以下类型已迁入契约 `components["schemas"]`，直接复用
+ * ------------------------------------------------------------------------ */
+
+export type DocumentFileType = components["schemas"]["DocumentFileType"];
+export type DocumentListItem = components["schemas"]["DocumentListItem"];
+export type DocumentListQuery = {
+  /** `q` 关键字（前后端命名差异：后端沿用 q，前端 mock 用了 keyword；Sprint 5 批次 C 收口保留后端语义） */
+  q?: string;
+  /** `all` 表示不筛选 */
+  status?: DocumentStatus | "all";
+  page?: number;
+  page_size?: number;
+};
+export type DocumentListResponse = components["schemas"]["DocumentListResponse"];
+export type GraphCategory = components["schemas"]["GraphCategory"];
+export type GraphOverviewNode = components["schemas"]["GraphOverviewNode"];
+export type GraphOverviewEdge = components["schemas"]["GraphOverviewEdge"];
+export type GraphOverviewResponse = components["schemas"]["GraphOverviewResponse"];
+export type EntityAttribute = components["schemas"]["EntityAttribute"];
+export type EntityRelation = components["schemas"]["EntityRelation"];
+export type EntityDetail = components["schemas"]["EntityDetail"];
 
 /* --------------------------------------------------------------------------
  * 工作台概览（p01）—— 契约缺失，需后端补 GET /api/v1/metrics/overview
@@ -44,40 +71,8 @@ export type MetricOverview = {
 };
 
 /* --------------------------------------------------------------------------
- * 文档管理（p01 最近文档处理 / p02 列表）
- * —— 契约缺失，需后端补 GET /api/v1/documents（支持 q / status / page）
+ * 文档管理 —— 仅「重新处理」仍为 Mock 预留（后端未实装 POST /api/v1/documents/{id}/reprocess）
  * ------------------------------------------------------------------------ */
-
-export type DocumentFileType = "PDF" | "DOCX" | "CSV";
-
-export type DocumentListItem = {
-  id: string;
-  /** 后端最终会以 filename_hash 落库，此处 Mock 直接用可读名 */
-  filename: string;
-  file_type: DocumentFileType;
-  status: DocumentStatus;
-  /** 抽取得到的实体数；非 completed 时为 null（表格显示 `--`） */
-  entity_count: number | null;
-  uploaded_at: string;
-  /**
-   * 展示用相对时间文案（如「10:42」「昨天 18:36」）。
-   * Mock 阶段由后端语义直接给出，避免 SSR / CSR 时区差异导致的 hydration 不匹配。
-   */
-  time_label: string;
-  task_id: string;
-  trace_id: string;
-};
-
-export type DocumentListQuery = {
-  keyword?: string;
-  /** `all` 表示不筛选 */
-  status?: DocumentStatus | "all";
-};
-
-export type DocumentListResponse = {
-  total: number;
-  items: DocumentListItem[];
-};
 
 /** 「重新处理」响应；契约缺失，需后端补 POST /api/v1/documents/{id}/reprocess */
 export type ReprocessResponse = {
@@ -145,65 +140,4 @@ export type ChatMessage = {
 export type SendQuestionPayload = {
   session_id: string;
   question: string;
-};
-
-/* --------------------------------------------------------------------------
- * 知识图谱（p04）
- * —— 契约仅有文档级子图 GET /api/v1/documents/{id}/graph，
- *    设计稿为全局图谱 + 实体详情，故为 Mock 预留。
- * ------------------------------------------------------------------------ */
-
-/** 节点分类，与 p04 图例一一对应 */
-export type GraphCategory = "topic" | "norm" | "org" | "system";
-
-export type GraphOverviewNode = {
-  id: string;
-  name: string;
-  /** 类型文案（核心主题 / 规范 / 组织 / 人员 / 数据 / 流程 / 制度） */
-  type: string;
-  category: GraphCategory;
-  /** 相对权重，决定节点半径 */
-  weight: number;
-  /** 初始布局坐标（力导向模拟的种子值，0–1 归一化） */
-  seed_x: number;
-  seed_y: number;
-};
-
-export type GraphOverviewEdge = {
-  id: string;
-  source: string;
-  target: string;
-  relation: string;
-};
-
-export type GraphOverviewResponse = {
-  doc_count: number;
-  entity_count: number;
-  relation_count: number;
-  nodes: GraphOverviewNode[];
-  edges: GraphOverviewEdge[];
-};
-
-export type EntityAttribute = {
-  label: string;
-  value: string;
-};
-
-export type EntityRelation = {
-  relation: string;
-  target_id: string;
-  target_name: string;
-};
-
-export type EntityDetail = {
-  id: string;
-  name: string;
-  /** 实体类型标签，如「核心主题」 */
-  tag: string;
-  category: GraphCategory;
-  /** 外部可读编号，如 ENTITY-008492 */
-  display_code: string;
-  relation_count: number;
-  attributes: EntityAttribute[];
-  relations: EntityRelation[];
 };
