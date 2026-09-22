@@ -117,7 +117,9 @@ def _patch_entity_ok(
     """把 ``fetch_entity_detail`` 打桩成「直接返回指定响应」。"""
     if relations is None:
         relations = [
-            EntityRelation(relation="AFFILIATED_WITH", target_id="e2", target_name="实体2")
+            EntityRelation(
+                relation="AFFILIATED_WITH", target_id="e2", target_name="实体2"
+            )
         ]
         relation_count = 1
     if attributes is None:

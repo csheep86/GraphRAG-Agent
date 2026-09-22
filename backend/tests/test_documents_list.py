@@ -95,9 +95,7 @@ def test_list_pagination_meta_always_present(
     assert isinstance(body["trace_id"], str) and body["trace_id"]
 
 
-def test_list_filter_by_status(
-    client: TestClient, dev_headers: dict[str, str]
-) -> None:
+def test_list_filter_by_status(client: TestClient, dev_headers: dict[str, str]) -> None:
     """按 `status` 过滤：上传 docx（解析跳过 → completed）。"""
     task_id = _upload(client, dev_headers, DOCX)
 
@@ -119,17 +117,13 @@ def test_list_filter_by_status(
     assert response.json()["items"] == []
 
 
-def test_list_pagination(
-    client: TestClient, dev_headers: dict[str, str]
-) -> None:
+def test_list_pagination(client: TestClient, dev_headers: dict[str, str]) -> None:
     """分页：page=1 / page_size=1 时应只返回 1 条（最新）。"""
     # 至少上传 2 条
     _upload(client, dev_headers, PDF)
     _upload(client, dev_headers, PDF)
 
-    response = client.get(
-        "/api/v1/documents?page=1&page_size=1", headers=dev_headers
-    )
+    response = client.get("/api/v1/documents?page=1&page_size=1", headers=dev_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -141,9 +135,7 @@ def test_list_pagination(
     assert set(body["items"][0]) == DOCUMENT_LIST_ITEM_KEYS
 
 
-def test_list_q_prefix_match(
-    client: TestClient, dev_headers: dict[str, str]
-) -> None:
+def test_list_q_prefix_match(client: TestClient, dev_headers: dict[str, str]) -> None:
     """`q` 按 filename_hash 前缀匹配。
 
     先上传一条拿到 hash，再以前缀过滤——能命中，**不**按文件名原文过滤。
@@ -151,9 +143,7 @@ def test_list_q_prefix_match(
     _upload(client, dev_headers, DOCX)
 
     # 全列表 → 拿到第一条 filename_hash
-    response = client.get(
-        "/api/v1/documents?page_size=100", headers=dev_headers
-    )
+    response = client.get("/api/v1/documents?page_size=100", headers=dev_headers)
     assert response.status_code == 200
     items = response.json()["items"]
     assert items
@@ -162,16 +152,12 @@ def test_list_q_prefix_match(
     prefix = first_hash[:4]
 
     # q=prefix → 应命中
-    response = client.get(
-        f"/api/v1/documents?q={prefix}", headers=dev_headers
-    )
+    response = client.get(f"/api/v1/documents?q={prefix}", headers=dev_headers)
     assert response.status_code == 200
     assert response.json()["total"] >= 1
 
     # q=不存在的 hex 前缀 → 命中 0
-    response = client.get(
-        "/api/v1/documents?q=ffffffff", headers=dev_headers
-    )
+    response = client.get("/api/v1/documents?q=ffffffff", headers=dev_headers)
     assert response.status_code == 200
     assert response.json()["total"] == 0
 
@@ -180,9 +166,7 @@ def test_list_status_validation_returns_400(
     client: TestClient, dev_headers: dict[str, str]
 ) -> None:
     """非法 status 触发 400 `VALIDATION_ERROR`。"""
-    response = client.get(
-        "/api/v1/documents?status=invalid", headers=dev_headers
-    )
+    response = client.get("/api/v1/documents?status=invalid", headers=dev_headers)
 
     assert response.status_code == 400
     assert response.json()["code"] == "VALIDATION_ERROR"
@@ -192,9 +176,7 @@ def test_list_page_size_validation_returns_400(
     client: TestClient, dev_headers: dict[str, str]
 ) -> None:
     """`page_size` 超 100 触发 400 `VALIDATION_ERROR`。"""
-    response = client.get(
-        "/api/v1/documents?page_size=999", headers=dev_headers
-    )
+    response = client.get("/api/v1/documents?page_size=999", headers=dev_headers)
 
     assert response.status_code == 400
     assert response.json()["code"] == "VALIDATION_ERROR"
