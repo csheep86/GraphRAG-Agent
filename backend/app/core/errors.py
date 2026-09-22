@@ -23,6 +23,7 @@ class ErrorCode(StrEnum):
     FORBIDDEN = "FORBIDDEN"
     NOT_FOUND = "NOT_FOUND"
     DOCUMENT_NOT_FOUND = "DOCUMENT_NOT_FOUND"
+    ENTITY_NOT_FOUND = "ENTITY_NOT_FOUND"
     FILE_TOO_LARGE = "FILE_TOO_LARGE"
     UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
     KG_VERSION_NOT_ACTIVE = "KG_VERSION_NOT_ACTIVE"
@@ -40,6 +41,7 @@ ERROR_HTTP_STATUS: Mapping[ErrorCode, int] = {
     ErrorCode.FORBIDDEN: 403,
     ErrorCode.NOT_FOUND: 404,
     ErrorCode.DOCUMENT_NOT_FOUND: 404,
+    ErrorCode.ENTITY_NOT_FOUND: 404,
     ErrorCode.FILE_TOO_LARGE: 413,
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: 415,
     ErrorCode.KG_VERSION_NOT_ACTIVE: 409,
@@ -57,6 +59,7 @@ DEFAULT_MESSAGES: Mapping[ErrorCode, str] = {
     ErrorCode.FORBIDDEN: "Cross-tenant access denied",
     ErrorCode.NOT_FOUND: "Resource not found",
     ErrorCode.DOCUMENT_NOT_FOUND: "Document not found",
+    ErrorCode.ENTITY_NOT_FOUND: "Entity not found",
     ErrorCode.FILE_TOO_LARGE: "Uploaded file exceeds the size limit",
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "Unsupported media type",
     ErrorCode.KG_VERSION_NOT_ACTIVE: "Requested kg_version is not active",
@@ -74,6 +77,7 @@ ERROR_CODE_DESCRIPTIONS: Mapping[ErrorCode, str] = {
     ErrorCode.FORBIDDEN: "跨租户访问被拒（ADR-0003：org_id 不符），非本租户资源一律拒绝。",
     ErrorCode.NOT_FOUND: "通用资源不存在（含未注册路由）。",
     ErrorCode.DOCUMENT_NOT_FOUND: "文档不存在或未在本租户可见范围内。",
+    ErrorCode.ENTITY_NOT_FOUND: "实体不存在或不属于当前 active kg_version；与跨租户 403 区分。",
     ErrorCode.FILE_TOO_LARGE: "上传文件超过 MAX_UPLOAD_SIZE_MB（默认 100MB，M1 验收 2）。",
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "上传文件 MIME 不在白名单（M1 验收 3）。",
     ErrorCode.KG_VERSION_NOT_ACTIVE: (
@@ -103,6 +107,7 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.FORBIDDEN: "ADR-0003 §3.3 / M5 §3 验收 1",
     ErrorCode.NOT_FOUND: "CODEBUDDY.md 错误响应规范",
     ErrorCode.DOCUMENT_NOT_FOUND: "M1 §5.4",
+    ErrorCode.ENTITY_NOT_FOUND: "Sprint 5 批次 C / plans §4.2 批次 C",
     ErrorCode.FILE_TOO_LARGE: "M1 §3 验收 2",
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "M1 §3 验收 3",
     ErrorCode.KG_VERSION_NOT_ACTIVE: "ADR-0002 §3.2 / M3 §4.1",

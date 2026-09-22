@@ -5,6 +5,8 @@
   （Sprint 5 批次 A，`app.storage`）→ 落 `documents` 记录（`pending`）；
 - ✅ 异步任务：通过 :class:`app.tasks.TaskManager` 注册 ``document.parse`` 执行体；
 - ✅ 状态：读 PostgreSQL / SQLite 返回，跨租户 403、不存在 404；
+- ✅ 列表（批次 C）：`GET /documents`，按 `org_id` 强制过滤，支持 `q` / `status` /
+  `page` / `page_size`，返回 `DocumentListResponse`；
 - ✅ `storage_key` 在解析 `completed` 时回填（M1 §4.1；executor 职责）。
   文件本体在上传时即落盘（Starlette 临时文件随请求销毁，异步任务须能从
   存储层取回原始字节）。
@@ -16,6 +18,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
@@ -26,17 +29,24 @@ from sqlalchemy.orm import Session
 from app.core.auth import Identity
 from app.core.config import get_settings
 from app.core.errors import DEFAULT_MESSAGES, AppError, ErrorCode
-from app.db.models import Document
+from app.db.models import Document, KgVersion
 from app.schemas.document import (
     DocumentError,
+    DocumentListItem,
+    DocumentListResponse,
     DocumentStatusResponse,
     UploadResponse,
+    mime_to_file_type,
 )
 from app.storage import build_storage_key, get_storage
 from app.tasks.manager import TaskManager, TaskSpec
 from app.tasks.pipeline import first_pipeline_stage
 
 _UPLOAD_READ_CHUNK = 1024 * 1024
+
+#: 列表接口默认 / 上限（route 层有 Query 验证；此处保留常量便于 service 单测与文档对齐）
+_DEFAULT_PAGE_SIZE = 10
+_MAX_PAGE_SIZE = 100
 
 #: 进度映射：解析进度不可精确估计的场景返回 None，而不是编造数字
 _PROGRESS_BY_STATUS: dict[str, float | None] = {
@@ -50,6 +60,122 @@ _PROGRESS_BY_STATUS: dict[str, float | None] = {
 def hash_filename(filename: str) -> str:
     """原始文件名 SHA-256（M5 §4.5：文件名不得以原文落库 / 落日志）。"""
     return hashlib.sha256(filename.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentListQuery:
+    """`GET /documents` 查询参数集合（service 层契约，route 层负责解析/校验）。"""
+
+    q: str | None = None
+    status: str | None = None
+    page: int = 1
+    page_size: int = _DEFAULT_PAGE_SIZE
+
+
+def list_documents(
+    *,
+    session: Session,
+    identity: Identity,
+    query: DocumentListQuery,
+    trace_id: str,
+) -> DocumentListResponse:
+    """返回当前租户下的文档列表（`GET /documents`，Sprint 5 批次 C）。
+
+    行为约束（CODEBUDDY.md 契约同步铁律 + ADR-0003）：
+    1. ``org_id`` 强制来自认证态，**不接受** body / query 覆盖；
+    2. ``q`` 匹配 ``filename_hash`` 前缀 —— SHA-256 hex 不可逆，
+       演示场景量小（<10 万）可接受前缀 LIKE 性能；规模扩增需
+       ADR-0004 §3 留位新增 ``filename_display`` 列；
+    3. ``status`` 仅作 SQL 过滤，不做状态机迁移；
+    4. 分页用纯 Python 切片（避免 SQL OFFSET 大表性能问题）；
+       演示量级适用，**不**透出 Stripe-like cursor。
+    """
+    stmt = select(Document).where(Document.org_id == identity.org_id)
+
+    if query.status:
+        stmt = stmt.where(Document.status == query.status)
+
+    if query.q:
+        # `filename_hash` 是 hex 字符串；做大小写不敏感的前缀匹配
+        q_normalized = query.q.strip().lower()
+        if q_normalized:
+            stmt = stmt.where(Document.filename_hash.like(f"{q_normalized}%"))
+
+    # 取全量再做 Python 分页 —— 演示量级（< 1000）足够；超阈值再考虑 COUNT 子查询 + 关键索引
+    rows = session.scalars(stmt.order_by(Document.created_at.desc())).all()
+    total = len(rows)
+
+    start = (query.page - 1) * query.page_size
+    end = start + query.page_size
+    page_rows = rows[start:end]
+
+    # 一次性查全当前租户的 (kg_version_id → entity_count) 映射，避免 N+1
+    version_ids = {row.kg_version_id for row in rows if row.kg_version_id is not None}
+    entity_counts_by_version: dict[UUID, int] = {}
+    if version_ids:
+        count_stmt = (
+            select(KgVersion.id, KgVersion.entity_count)
+            .where(KgVersion.id.in_(version_ids))
+            .where(KgVersion.org_id == identity.org_id)
+        )
+        for version_id, entity_count in session.execute(count_stmt).all():
+            entity_counts_by_version[version_id] = int(entity_count or 0)
+
+    items = [_build_list_item(row, entity_counts_by_version) for row in page_rows]
+
+    return DocumentListResponse(
+        total=total,
+        items=items,
+        page=query.page,
+        page_size=query.page_size,
+        trace_id=trace_id,
+    )
+
+
+def _build_list_item(
+    document: Document,
+    entity_counts_by_version: dict[UUID, int],
+) -> DocumentListItem:
+    """构造单条列表结果（service 层 helper，避免 list_documents 内部循环过深）。"""
+    created_at = document.created_at
+    uploaded_at_str = created_at.isoformat() if created_at is not None else ""
+    time_label = _format_time_label(created_at)
+
+    entity_count: int | None = None
+    if document.kg_version_id is not None:
+        entity_count = entity_counts_by_version.get(document.kg_version_id)
+
+    return DocumentListItem(
+        id=document.id,
+        filename=document.filename_hash,
+        file_type=mime_to_file_type(document.mime_type),
+        status=document.status,  # type: ignore[arg-type]
+        entity_count=entity_count,
+        uploaded_at=uploaded_at_str,
+        time_label=time_label,
+        task_id=document.id,
+        trace_id=str(document.trace_id) if document.trace_id else "",
+    )
+
+
+def _format_time_label(created_at) -> str:
+    """把 ``created_at`` 格式化为前端表格可展示的相对时间文案。
+
+    规则（对齐前端原 mock 行为，便于前端表格组件零改动）：
+    - 同一天 → ``HH:MM``
+    - 昨天 → ``昨天 HH:MM``
+    - 更早 → ``YYYY-MM-DD``
+
+    当前实现仅含 ``HH:MM`` 一种格式（演示场景稳定，避免 SSR/CSR 时区差）。
+    """
+    if created_at is None:
+        return ""
+    return created_at.strftime("%H:%M")
+
+
+# 重新暴露常量给 route 层 Query 校验
+PAGE_SIZE_DEFAULT = _DEFAULT_PAGE_SIZE
+PAGE_SIZE_MAX = _MAX_PAGE_SIZE
 
 
 async def create_document_upload(

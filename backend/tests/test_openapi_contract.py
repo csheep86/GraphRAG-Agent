@@ -13,9 +13,12 @@ from app.main import app
 
 CORE_PATHS = {
     "/api/v1/health",
+    "/api/v1/documents",
     "/api/v1/documents/upload",
     "/api/v1/documents/{document_id}/status",
     "/api/v1/documents/{document_id}/graph",
+    "/api/v1/graph/overview",
+    "/api/v1/entities/{entity_id}",
     "/api/v1/agent/query",
 }
 
@@ -41,7 +44,10 @@ def _operations(schema: dict) -> list[tuple[str, str, dict]]:
     ]
 
 
-def test_exactly_five_core_paths(schema: dict) -> None:
+def test_exactly_eight_core_paths(schema: dict) -> None:
+    """Sprint 5 批次 C 由 5 路径扩为 8 路径：增 `GET /documents`、`GET /graph/overview`、
+    `GET /entities/{entity_id}`。
+    """
     assert set(schema["paths"]) == CORE_PATHS
 
 
@@ -49,7 +55,7 @@ def test_operation_ids_are_unique(schema: dict) -> None:
     operation_ids = [
         operation["operationId"] for _, _, operation in _operations(schema)
     ]
-    assert len(operation_ids) == len(set(operation_ids)) == 5
+    assert len(operation_ids) == len(set(operation_ids)) == 8
 
 
 def test_info_version_is_constant(schema: dict) -> None:

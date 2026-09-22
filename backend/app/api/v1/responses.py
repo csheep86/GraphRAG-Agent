@@ -47,6 +47,16 @@ DOCUMENT_NOT_FOUND: dict[int, dict[str, Any]] = {
     }
 }
 
+ENTITY_NOT_FOUND: dict[int, dict[str, Any]] = {
+    404: {
+        "model": ErrorResponse,
+        "description": (
+            "实体不存在（`ENTITY_NOT_FOUND`）。"
+            "**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1；Sprint 5 批次 C）"
+        ),
+    }
+}
+
 KG_VERSION_NOT_ACTIVE: dict[int, dict[str, Any]] = {
     409: {
         "model": ErrorResponse,

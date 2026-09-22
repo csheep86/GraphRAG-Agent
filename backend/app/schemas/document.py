@@ -18,6 +18,9 @@ from app.core.errors import ErrorCode
 DocumentStatus = Literal["pending", "processing", "completed", "failed"]
 """M1 硬约束 H1 的状态机取值，**不得新增**。"""
 
+DocumentFileType = Literal["PDF", "DOCX", "CSV"]
+"""文件类型展示标签（M1 §4.1）。后端按 MIME 反推。"""
+
 NodeLabel = Literal["Document", "Chunk", "Entity", "Evidence"]
 """对齐 Neo4j 标签 `:Document` / `:Chunk` / `:Entity` / `:Evidence`（M2 §4.1）。"""
 
@@ -198,4 +201,107 @@ class DocumentGraphResponse(BaseModel):
     node_count: int = Field(ge=0, description="`nodes` 实际条数（截断后）")
     relation_count: int = Field(ge=0, description="`edges` 实际条数（截断后）")
     truncated: bool = Field(default=False, description="是否因超过 500 节点上限被截断")
+    trace_id: str
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5 批次 C：文档列表（`GET /documents`）契约模型
+# ---------------------------------------------------------------------------
+
+
+def mime_to_file_type(mime: str | None) -> DocumentFileType:
+    """按 MIME 反推文件类型展示标签（M1 §4.1）。
+
+    落库字段 `documents.mime_type` 是合同中立的 MIME 字符串，
+    前端表格的「文件类型」列需要更紧凑的标签。
+    未知 MIME 兜底返回 ``"PDF"`` —— 这是最常见的演示文档类型；
+    出现概率极低（白名单已限定 3 类），不做复杂兜底。
+    """
+    if not mime:
+        return "PDF"
+    mime_lower = mime.lower()
+    if mime_lower == "application/pdf":
+        return "PDF"
+    if mime_lower in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    }:
+        return "DOCX"
+    if mime_lower in {"text/csv", "application/csv"}:
+        return "CSV"
+    return "PDF"
+
+
+class DocumentListItem(BaseModel):
+    """`GET /documents` 单条结果。
+
+    字段对齐 `frontend/src/types/mock.d.ts::DocumentListItem`（Sprint 5 批次 C 收口），
+    保证 `npm run gen:api` 生成的 TS 类型可直接替换前端 mock 类型。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+                "filename": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "file_type": "PDF",
+                "status": "completed",
+                "entity_count": 128,
+                "uploaded_at": "2026-09-21T10:42:00Z",
+                "time_label": "10:42",
+                "task_id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+                "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+            }
+        }
+    )
+
+    id: UUID = Field(description="文档主键 UUID")
+    #: 文件名展示——后端以 ``filename_hash`` 落库（M5 §4.5 禁原文），
+    #: 这里透传 hash 给前端展示，避免再伪造文件名。
+    filename: str = Field(description="SHA-256(filename) — 文件名展示用")
+    file_type: DocumentFileType = Field(description="文件类型标签")
+    status: DocumentStatus = Field(description="M1 状态机取值")
+    #: 已抽取的实体数（跨文档累加自 active ``kg_versions``）。
+    #: 未参与建图（``kg_version_id IS NULL``）时为 ``null``，
+    #: 与前端 `entity_count: null` → 表格展示 ``--`` 的语义一致。
+    entity_count: int | None = Field(default=None, ge=0)
+    uploaded_at: str = Field(description="ISO8601 上传时间（UTC）")
+    #: 相对时间文案（如 ``10:42`` / ``昨天 18:36``），由后端语义直接给出，
+    #: 避免 SSR / CSR 时区差异导致的 hydration mismatch。
+    time_label: str = Field(description="相对时间文案，固定 UTC 计算")
+    task_id: UUID = Field(description="任务 id，与 `documents.id` 一致")
+    trace_id: str = Field(description="贯穿上传→解析→建图全链路的 trace_id")
+
+
+class DocumentListResponse(BaseModel):
+    """`GET /documents` 响应。"""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "total": 27,
+                "items": [
+                    {
+                        "id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+                        "filename": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                        "file_type": "PDF",
+                        "status": "completed",
+                        "entity_count": 128,
+                        "uploaded_at": "2026-09-21T10:42:00Z",
+                        "time_label": "10:42",
+                        "task_id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+                        "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+                    }
+                ],
+                "page": 1,
+                "page_size": 10,
+                "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+            }
+        }
+    )
+
+    total: int = Field(ge=0, description="当前租户下满足过滤条件的文档总数")
+    items: list[DocumentListItem] = Field(description="当前页结果")
+    page: int = Field(ge=1, description="当前页码（1-based）")
+    page_size: int = Field(ge=1, description="每页条目数（请求参数回显）")
     trace_id: str
