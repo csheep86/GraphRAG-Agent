@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import get_settings
 from app.core.errors import ErrorCode
 from app.main import app
 
@@ -59,8 +60,13 @@ def test_operation_ids_are_unique(schema: dict) -> None:
 
 
 def test_info_version_is_constant(schema: dict) -> None:
-    """版本必须是常量，否则导出不可复现、CI diff 永远失败。"""
-    assert schema["info"]["version"] == "1.0.0"
+    """版本必须是常量，否则导出不可复现、CI diff 永远失败。
+
+    断言对齐 `settings.app_version`（唯一真源）：v1.1.0 前此处硬编码 `"1.0.0"`，
+    版本 bump 后未同步，且本地 `.env` 的过期 `APP_VERSION` 覆盖了默认值，
+    造成「本地绿、CI 红」（CI #9）。对齐真源后，版本 bump 无需再改此处。
+    """
+    assert schema["info"]["version"] == get_settings().app_version
 
 
 def test_error_code_enum_contains_adr_codes(schema: dict) -> None:

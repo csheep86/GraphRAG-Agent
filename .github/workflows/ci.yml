@@ -78,17 +78,7 @@ jobs:
         run: uv run python scripts/check_seams.py
 
       - name: Pytest
-        run: |
-          set +e
-          uv run pytest -q > pytest.log 2>&1
-          code=$?
-          cat pytest.log
-          if [ "$code" -ne 0 ]; then
-            grep -E "^(FAILED|ERROR)|^E  |assert" pytest.log | head -25 | while IFS= read -r line; do
-              echo "::error::$line"
-            done
-          fi
-          exit $code
+        run: uv run pytest -q
 
       - name: 失败摘要
         if: failure()
@@ -189,11 +179,11 @@ jobs:
           code=$?
           cat openapi.log
           if [ "$code" -ne 0 ]; then
-            # 重新生成并输出与仓库版本的差异，用于定位平台相关的契约漂移
+            # 重新生成并输出与仓库版本的差异：契约漂移在 CI 上最难定位，
+            # 远端日志不可下载时这份 diff 是唯一的现场证据（CI #9 教训）。
             uv run python scripts/export_openapi.py > /dev/null 2>&1
-            git -C .. --no-pager diff -- contracts/openapi.yaml | head -80 | while IFS= read -r line; do
-              echo "::error::$line"
-            done
+            echo "---------- 契约漂移详情 ----------"
+            git -C .. --no-pager diff -- contracts/openapi.yaml
           fi
           exit $code
 
