@@ -63,11 +63,14 @@
 | 缺口 | 现状 | 依据 |
 |---|---|---|
 | PostgreSQL RLS + `SET LOCAL app.current_org` | 未实现；SQLite 下由应用层 `org_id` 过滤兜底 | ADR-0003 §3.1 / §3.2 |
-| `kg_versions` 表（PG 真源） | 未建表；版本状态机暂落 Neo4j `(:KgVersion)` | ADR-0002 §2 |
-| M3 完整 Agentic-RAG | 骨架：单轮 LLM + 图谱文本注入；**无** Tool 调用循环、**无** chunk 级引用反查 | M3 §4 |
+| `kg_versions` 表（PG 真源） | ✅ 已偿还（S5 批次 B 落 PG 真源表）；**S6 定 PG 为真源**（`ready` 即 active 语义）+ 新增 `POST /graph/versions/{version}/activate`（Neo4j 镜像双写，旧版置 `superseded`），读侧 PG 优先、**PG 说没有不回落** | ADR-0002 §2 |
+| M3 完整 Agentic-RAG | 🟡 **S6 已偿还 chunk 级引用反查**：`_to_citation` 按 `chunk_id` 回查真实 `doc_id` / `page` / `snippet`，回查不到即丢弃（F3）；**仍无** Tool 调用循环（P2） | M3 §4 |
 | `AgentQueryResponse` 缺 `kg_nodes` / `kg_relations` / `token_usage` | ✅ 已偿还（Sprint 4.10.0.A）：契约已定义三字段并由 `AgentService` 填充 | 本文件 §3 |
 | `GraphEdge.type` 枚举不含「实体↔实体」关系 | ✅ 已偿还（Sprint 4.10.0.B）：枚举扩展 `HAS_FINANCIAL_INDICATOR` / `OPERATES_SEGMENT` / `RELATED`，桥梁专有类型直通；未知类型仍兜底投影 `MENTIONS` + `properties.relation_name` | 本文件 §3 |
-| 文件写入存储抽象层 | 只落 PG 元数据，`storage_key` 保持 NULL | M1 §4.3 |
+| 文件写入存储抽象层 | ✅ 已偿还（S5 批次 A）：上传真实落盘，completed 回填 `storage_key`（**不再恒 NULL**） | M1 §4.3 |
+| **S6-1** `Citation.char_offset` 恒为 0 | 未偿还：当前值为 **chunk 起点（0）**；实体级偏移待 `:Entity` 落 `char_start` 后细化 | M3 §4 / release notes v1.2.0 §6.2 → **S10** |
+| **S6-2** `_snippet` 使「摘录长度 ≠ 原文区间长度」 | 未偿还：`text.strip()` 截断 200 字**再加 `…`**（真机 `snippet.length=201`）——strip 造成位移、省略号多算 1 字；前端改「去省略号 + `indexOf` 对齐」兜底（真机 `index_of_align_hit=True`）。建议后端改返回 `snippet_start` / `snippet_end` | release notes v1.2.0 §6.3 → **S10** |
+| **S6-3** 实体抽取质量低（整句被抽成实体 / 数值独立成节点 / 同实体重复 3 份） | 未偿还：答案正确性由 **chunk 全文**兜住（引用覆盖率 100%），但图谱侧实体质量不达标 | release notes v1.2.0 §6.1 → **S9 实体消解** |
 | 契约 `description` 描述漂移 | ✅ 已偿还（Sprint 4.10.0.C + C2）——C 批：`/graph`、`/agent/query`；C2 批：`/upload` | 本文件 §3 |
 | C2：`/upload` 的 `description` 过期 | ✅ 已偿还（Sprint 4.10.0.C2）：`routes/documents.py` 原「不注册异步执行体 / `status` 停留在 `pending` / Sprint 3 补齐」已改为真实链路措辞（含 H1 状态机、H8 重试、启动回收、骨架版局限），并同批重导出 `contracts/openapi.yaml` + `frontend/src/types/api.d.ts` | 本文件 §3 |
 | S4-1：`docs/multimodal_rag_backend_api_spec-v1.0.md` L137 | `NOT_IMPLEMENTED` 行仍写「契约已定稿、实现留待 Sprint 3 / 来源：Sprint 1 边界」，与已实装的 5 个接口不符 | ✅ 已偿还（Sprint 4.13） |

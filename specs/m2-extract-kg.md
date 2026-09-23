@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m2
 > **版本**：v1.0
-> **状态**：MVP 规格（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
+> **状态**：MVP 规格（v1.0.0 已交付；**v1.2.0 / Sprint 6 落地 `:Chunk` 证据节点**（原文片段 + `page` / `char_start` / `char_end` + `acl_scope`；`acl_scope` **只落属性、查询不做穿透过滤** → S11）；实现态见 `backend/CODEBUDDY.md` §4）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M2
 > **关联 Prompts**：`prompts/chunk_summary_v1.md`、`prompts/entity_relation_extract_v1.md`
 > **关联研究结论**：`01-research.md` §1.4 P3（应用能力）、§3.1.2 能力 2–3；假设 A3 / A4

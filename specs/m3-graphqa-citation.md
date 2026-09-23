@@ -2,9 +2,9 @@
 
 > **文档编号**：spec-m3
 > **版本**：v1.0
-> **状态**：MVP 规格（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
+> **状态**：MVP 规格（v1.0.0 已交付；**v1.2.0 / Sprint 6 达成 chunk 级引用溯源**——`:Chunk` 证据 + 引用回查 + 前端原文高亮，受控问题集覆盖率 100%；**≥3 跳遍历待 S10**；实现态见 `backend/CODEBUDDY.md` §4）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M3
-> **关联 Prompts**：`prompts/intent_router_v1.md`、`prompts/kg_qa_v1.md`
+> **关联 Prompts**：`prompts/intent_router_v1.md`、`prompts/kg_qa_v1.md`、**`prompts/kg_qa_v2.md`（v1.2.0 / S6 新增：引用口径收窄为"只能取已注入的 `chunk-<id>`"，v1 保持不变）**
 > **关联研究结论**：`01-research.md` §3.1.2 能力 1–2；§3.3 C2（引用覆盖率 = 100%）；§3.3 F3（直接 NO-GO 条件）
 > **关联大纲**：`02-product-outline.md` §3.2 M3 + §6 准入线
 > **关联 ADR**：[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](../docs/adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](../docs/adr/ADR-0003-tenant-isolation-rls.md)
