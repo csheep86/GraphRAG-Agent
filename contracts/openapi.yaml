@@ -1180,7 +1180,7 @@ components:
 info:
   description: "GraphRAG-Agent 后端 API（契约 v1.0，Sprint 1）。\n\n## 租户隔离（ADR-0003，**所有接口强制**）\n- `org_id` **只能**来自认证态：`Authorization: Bearer <token>` 解析结果；\n  **严禁**从请求 body / query 读取。\n- 开发态兜底（`ALLOW_DEV_ORG_HEADER=true` 且非生产）可用 `X-Org-Id` / `X-Actor-Id` 请求头，\n  该兜底 **Sprint 3 必须移除**。\n- 跨租户访问一律 `403 FORBIDDEN`；`org_id` 过滤**必须**经 ORM / 统一注入，禁止裸写 SQL。\n- **例外**：`GET /api/v1/health` 不要求认证、不返回任何业务数据。\n\n## trace_id（M1 验收 7 / M5 §5.3）\n- 请求头 `X-Trace-Id` 可选透传（必须是合法 UUID），缺失则服务端生成 UUIDv4；\n- 响应头 `X-Trace-Id` 恒回显；错误体 `trace_id` 与之一致。\n\n## 统一错误响应\n所有 4xx / 5xx 均为 `{code, message, detail, trace_id}`，`code` 取自 `ErrorCode` 枚举。\n\n## 图谱版本一致性（ADR-0002）\n查询层只认 `kg_version.status = active`。请求显式指定非 active 版本时，\n一律返回 `409 KG_VERSION_NOT_ACTIVE`，**严禁静默降级**到最新版本。\n\n## 实现状态（Sprint 4）\n五个接口均已实装真实链路；`501 NOT_IMPLEMENTED` 不再表示「接口未实现」，而是\n**基础设施故障**（Neo4j 不可用 / LLM 未配置或装配失败）的统一出口。"
   title: GraphRAG-Agent Backend API
-  version: 1.1.0
+  version: 1.2.0
 openapi: 3.1.0
 paths:
   /api/v1/agent/query:
