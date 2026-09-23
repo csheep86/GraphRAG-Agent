@@ -14,23 +14,35 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter
 
-from app.api.deps import CurrentIdentity, TraceId
+from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
     ENTITY_NOT_FOUND,
     KG_TENANT_LEAK,
     KG_VERSION_NOT_ACTIVE,
+    KG_VERSION_NOT_FOUND,
     NOT_IMPLEMENTED,
     TENANT_ERROR_RESPONSES,
 )
 from app.core.errors import AppError, ErrorCode
-from app.schemas.graph import EntityDetail, GraphOverviewResponse
+from app.schemas.graph import (
+    EntityDetail,
+    GraphOverviewResponse,
+    KgVersionActivationResponse,
+)
 from app.services.graphs import (
     EntityNotFoundError,
     GraphService,
     GraphUnavailableError,
     NoActiveKgVersionError,
+)
+from app.services.kg.versioning import (
+    KgVersioningService,
+    KgVersionNotActivatableError,
+    KgVersionNotFoundError,
 )
 
 #: `graph` 标签单独建路由分组 —— 不与 `documents` 混合，便于 OpenAPI 标签筛选
@@ -83,12 +95,14 @@ def _graph_not_available(*, exc: Exception, hint: str) -> AppError:
 async def get_graph_overview(
     identity: CurrentIdentity,
     trace_id: TraceId,
+    db: DbSession,
 ) -> GraphOverviewResponse:
     graph = GraphService.instance()
     try:
         return graph.fetch_graph_overview(
             org_id=identity.org_id,
             trace_id=trace_id,
+            db=db,
         )
     except NoActiveKgVersionError as exc:
         raise AppError(
@@ -129,6 +143,7 @@ async def get_entity_detail(
     entity_id: str,
     identity: CurrentIdentity,
     trace_id: TraceId,
+    db: DbSession,
 ) -> EntityDetail:
     graph = GraphService.instance()
     try:
@@ -136,6 +151,7 @@ async def get_entity_detail(
             entity_id=entity_id,
             org_id=identity.org_id,
             trace_id=trace_id,
+            db=db,
         )
     except EntityNotFoundError as exc:
         raise AppError(
@@ -151,3 +167,97 @@ async def get_entity_detail(
         raise _graph_not_available(
             exc=exc, hint=f"`fetch_entity_detail` entity_id={entity_id}"
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# 激活（Sprint 6.3：真机发现 D1/D2 —— 建图后无人把版本置为可消费）
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/graph/versions/{version}/activate",
+    response_model=KgVersionActivationResponse,
+    operation_id="activateKgVersion",
+    summary="激活指定 kg_version（Sprint 6.3）",
+    description=(
+        "把指定版本置为**可消费**并同步 Neo4j 镜像。\n\n"
+        "**真源语义**：PG `kg_versions` 为真源，其「可消费」语义在本表中写作 "
+        "`ready`；Neo4j `:KgVersion.status='active'` 只是镜像（`superseded` 同理）。"
+        "两者在本响应中同时返回，避免前端误以为存在两个状态机。\n\n"
+        "**为什么需要显式激活（真机背景）**：建图流水线只把 PG 置 `ready`，"
+        "没人同步 Neo4j 镜像，读侧于是长期命中旧导入版本。\n\n"
+        "**错误语义**：\n"
+        "- 版本不存在（PG 查不到，或 Neo4j 无该版本图数据）→ **404** `NOT_FOUND`；\n"
+        "- 版本为 `pending` / `building` / `failed` → **409** `KG_VERSION_NOT_ACTIVE`；\n"
+        "- Neo4j 不可用 → **501** `NOT_IMPLEMENTED`。"
+    ),
+    responses={
+        **TENANT_ERROR_RESPONSES,
+        **KG_VERSION_NOT_FOUND,
+        **KG_VERSION_NOT_ACTIVE,
+        **NOT_IMPLEMENTED,
+    },
+)
+async def activate_kg_version(
+    version: str,
+    identity: CurrentIdentity,
+    trace_id: TraceId,
+    db: DbSession,
+) -> KgVersionActivationResponse:
+    # 1) PG 真源判定（存在性 + 是否允许激活）
+    try:
+        record = KgVersioningService(db).activate_by_version(
+            org_id=identity.org_id, version=version
+        )
+    except KgVersionNotFoundError as exc:
+        raise AppError(
+            ErrorCode.NOT_FOUND,
+            "KgVersion not found",
+            detail={
+                "kg_version": version,
+                "reason": "kg_version_not_found",
+                "trace_id": trace_id,
+            },
+        ) from exc
+    except KgVersionNotActivatableError as exc:
+        raise AppError(
+            ErrorCode.KG_VERSION_NOT_ACTIVE,
+            detail={
+                "kg_version": version,
+                "status": exc.status,
+                "hint": "仅 ready 版本可被激活（pending/building 图未写完，failed 已补偿清理）",
+                "trace_id": trace_id,
+            },
+        ) from exc
+
+    # 2) 图侧存在性：PG 有而图没有 → 激活后仍查不到任何数据，属「假成功」
+    graph = GraphService.instance()
+    try:
+        if graph.fetch_kg_version_status(version) is None:
+            raise AppError(
+                ErrorCode.NOT_FOUND,
+                "KgVersion not found",
+                detail={
+                    "kg_version": version,
+                    "reason": "kg_version_absent_in_graph",
+                    "trace_id": trace_id,
+                },
+            )
+        superseded = graph.activate_kg_version(
+            version=version, org_id=identity.org_id, trace_id=trace_id
+        )
+    except AppError:
+        raise
+    except GraphUnavailableError as exc:
+        raise _graph_not_available(
+            exc=exc, hint=f"`activate_kg_version` version={version}"
+        ) from exc
+
+    return KgVersionActivationResponse(
+        version=record.version,
+        source_status=record.status,
+        graph_mirror_status="active",
+        superseded_versions=superseded,
+        activated_at=datetime.now(UTC).isoformat(),
+        trace_id=trace_id,
+    )

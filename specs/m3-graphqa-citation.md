@@ -2,9 +2,9 @@
 
 > **文档编号**：spec-m3
 > **版本**：v1.0
-> **状态**：MVP 规格（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
+> **状态**：MVP 规格（v1.0.0 已交付；**v1.2.0 / Sprint 6 达成 chunk 级引用溯源**——`:Chunk` 证据 + 引用回查 + 前端原文高亮，受控问题集覆盖率 100%；**≥3 跳遍历待 S10**；实现态见 `backend/CODEBUDDY.md` §4）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M3
-> **关联 Prompts**：`prompts/intent_router_v1.md`、`prompts/kg_qa_v1.md`
+> **关联 Prompts**：`prompts/intent_router_v1.md`、`prompts/kg_qa_v1.md`、**`prompts/kg_qa_v2.md`（v1.2.0 / S6 新增：引用口径收窄为"只能取已注入的 `chunk-<id>`"，v1 保持不变）**
 > **关联研究结论**：`01-research.md` §3.1.2 能力 1–2；§3.3 C2（引用覆盖率 = 100%）；§3.3 F3（直接 NO-GO 条件）
 > **关联大纲**：`02-product-outline.md` §3.2 M3 + §6 准入线
 > **关联 ADR**：[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](../docs/adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](../docs/adr/ADR-0003-tenant-isolation-rls.md)
@@ -71,7 +71,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `answer` | TEXT | 是 | 答案文本（含 `[source: ...]` 标记；拒答时为 `"无法回答"`） |
-| `citations` | LIST | 是 | 引用列表，每条 = `{doc_id, page, chunk_id, char_offset, snippet}` |
+| `citations` | LIST | 是 | 引用列表，每条 = `{doc_id, page, chunk_id, char_offset, snippet}`；**Sprint 6 批次 B 起 `page` 可空**（页码由 MinerU `content_list` 文本对齐反推，失配为 `null`，**严禁兜底伪造 1**） |
 | `route` | TEXT | 是 | `m3_graphqa / m4_affiliation` |
 | `confidence` | TEXT | 是 | `high / medium / low` |
 | `refused` | BOOL | 是 | 是否拒答 |

@@ -2,6 +2,7 @@ import type { components } from "@/types/api";
 import type { DocumentListItem } from "@/types/mock";
 
 type DocumentStatusResponse = components["schemas"]["DocumentStatusResponse"];
+type DocumentChunkResponse = components["schemas"]["DocumentChunkResponse"];
 
 /**
  * 文档列表 Mock（p02 表格逐行还原）。
@@ -115,4 +116,21 @@ export const MOCK_DOCUMENT_STATUS: DocumentStatusResponse = {
   progress: 1,
   task_id: "00000000-0000-4000-8000-000000000001",
   trace_id: "00000000-0000-4000-8000-0000000000aa",
+};
+
+/**
+ * USE_MOCK=true 时 `getDocumentChunk` 的返回（Sprint 6 批次 C 引用溯源抽屉）。
+ *
+ * 字段以契约 `DocumentChunkResponse` 为准。**明确标注为演示文本**：真实链路
+ * （`USE_MOCK=false`）走 `/api/v1/documents/{id}/chunks/{chunk_id}`，与 §5.3
+ * 「关 Mock 硬门槛」一致——本常量只在开发态零依赖时生效。
+ */
+export const MOCK_DOCUMENT_CHUNK: DocumentChunkResponse = {
+  doc_id: "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+  chunk_id: "chunk-mock0001",
+  text: "【Mock 原文】USE_MOCK=true 时的演示文本，不代表任何真实文档内容；置 false 后由后端 chunks.json 返回真实原文片段。",
+  page: 1,
+  char_start: 0,
+  char_end: 120,
+  trace_id: "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
 };

@@ -48,8 +48,8 @@
 | 模块 | 规格 | 条数 | 编号 | 承接 Sprint | 现状 |
 |---|---|---|---|---|---|
 | **M1** | `specs/m1-async-ingest.md` §3 | 8 | 1–8 | S5（docx 解析 S10） | ✅ 上传 / 状态机 / 重试**全部真实**（B1 `retry_count` 回写 + B4 退避读配置已于 S5 收口）；docx 仍只收不解析 → S10 |
-| **M2** | `specs/m2-extract-kg.md` §3 | 7 | 1–7 | S5（四源字段）、S9（实体消解） | 🟡 **S5 批次 B 转正为在线服务**（上传即建图，三段式写入，`kg_versions` 为版本真源）；仍缺 `confidence` 落库 / `char_offset` / 实体消解（S9~S10） |
-| **M3** | `specs/m3-graphqa-citation.md` §3 | 7 | 1–7 | S6（引用溯源）、S10（≥3 跳） | 🟡 链路真实，缺证据节点 |
+| **M2** | `specs/m2-extract-kg.md` §3 | 7 | 1–7 | S5（四源字段）、S6（`:Chunk`）、S9（实体消解） | 🟡 **S5 批次 B 转正为在线服务**（上传即建图，三段式写入，`kg_versions` 为版本真源）；**S6 批次 A 落地 `:Chunk` 证据节点**（原文片段 + `page` / `char_start` / `char_end` + `acl_scope`，`(d)-[:HAS_CHUNK]->(c)` + `(c)-[:MENTIONS]->(e)`；`acl_scope` **只落属性、查询不做穿透过滤** → S11）。仍缺 `confidence` 落库 / 实体级 `char_offset` / 实体消解（S9~S10） |
+| **M3** | `specs/m3-graphqa-citation.md` §3 | 7 | 1–7 | S6（引用溯源）、S10（≥3 跳） | 🟡 **S6 达成 chunk 级引用溯源**：`:Chunk` 证据节点 + 引用按 `chunk_id` 真实回查（`doc_id` / `page` / `snippet`）+ 前端抽屉原文高亮；受控问题集 14 问**覆盖率 100% / 拒答误伤 0**。仍缺 **≥3 跳遍历**（S10） |
 | **M4** | `specs/m4-affiliation-detection.md` §3 | 7 | 1–7 | S7（1 类算法）、S9（三类 + 四源） | ❌ 0% |
 | **M5** | `specs/m5-permission-audit.md` §3 | 8 | 1–8 | S8（审计页）、S11（RBAC / RLS / 双轨） | 🟡 仅 trace_id + 部分脱敏 |
 | **M6** | `specs/m6-ontology-incremental.md` §3 | 11 | 3.1–3.5（1–11） | S12 | 🟡 **v0.1 草案**（定稿闸门 = 倒推文档 §7.1 CP-3） |
@@ -63,7 +63,7 @@
 | 2 | 轮询状态 `pending → processing → completed` | M1 §3 验收 5 | ✅ |
 | 3 | Neo4j 写入 + `kg_version` 落 `kg_versions` | M2 §3 验收 4 | ✅ **S5 批次 B 达成**（`kg_versions` 为版本真源，黄金路径 3/7） |
 | 4 | M4 命中 ≥ 1 疑点且引用覆盖率 100% | M4 §3 验收 4 + 6 | ❌ S9 |
-| 5 | M3 提问 → 引用 100% 或拒答 | M3 §3 验收 2 + 3 | 🟡 S6 / S10 |
+| 5 | M3 提问 → 引用 100% 或拒答 | M3 §3 验收 2 + 3 | 🟡 **引用侧 S6 达成**（chunk 级引用回查，受控问题集 14 问覆盖率 100% / 拒答误伤 0）；剩余**多跳 ≥3 跳** → S10 |
 | 6 | 审计 ≥ 7 条且共享同一 `trace_id` | M5 §3 验收 6 | ❌ S8 |
 | 7 | C1–C3 准入线 | §5.1 | ❌ S13 |
 
@@ -81,10 +81,10 @@
 | **H6** | 私域部署禁云外发（`PRIVATE_DEPLOY_ENABLED=true`） | M5 §3 验收 4 | 机械 | 单元测试断言外发被拦截（503 `PRIVATE_DEPLOY_BLOCKED`） | 后端 B + 架构师 | ⏳ S11。**当前为占位**，例外登记见 `docs/adr/0004-integration-seams.md` §3 |
 | **H7** | slowapi 限流（默认 60 req/min/IP） | M5 §3 验收 5 | 机械 | 集成测试连打超阈值 → 429 `RATE_LIMITED` | CI | ⏳ S11（**尚未落地**） |
 | **H8** | tenacity 指数退避 ≤ 3 次（初始 1s、倍数 2） | M1 §3 验收 4；M2 §3 验收 5 | 半机械 | 注入失败后断言重试次数 = 3 且 `error_code` / `error_detail` 落库；M2 侧断言 `retry_count` 写回 | 后端 B + 架构师 | ✅ **S5 批次 A 已收口**：B1（`retry_count` 回写）+ B4（退避 `exp_base` 读配置）两项缺陷均关闭，`task_retry_multiplier` 现为**有消费者的配置** |
-| **H9** | Prompt 版本管理（MVP 复用 5 个 v1，P2 才新增版本） | 各 spec §"关联 Prompts" | 机械 | `prompts/` 5 份文件名带版本号；`prompt_loader.py` 加载，**代码内无硬编码 Prompt** | 架构师 | ✅ 5 个 v1 就位（S9–S13 不新增版本，plan §19.1 A） |
+| **H9** | Prompt 版本管理（MVP 复用 5 个 v1，P2 才新增版本） | 各 spec §"关联 Prompts" | 机械 | `prompts/` 5 份文件名带版本号；`prompt_loader.py` 加载，**代码内无硬编码 Prompt** | 架构师 | ✅ 5 个 v1 就位（S9–S13 不新增版本，plan §19.1 A）；**S6 新增 1 份 `prompts/kg_qa_v2.md`**（引用口径收窄为"只能取已注入的 `chunk-<id>`"）——按 Prompt 版本管理规范**新增版本、不覆盖 v1**，符合本条判据；`dev-doc-status.md` §5「S9~S13 复用 v1」口径**不受影响**（v2 在 S6 引入） |
 | **H10** | 契约先行 | 各 spec §"API 端点草案" + `contracts/openapi.yaml` | 机械 | `backend/`：`uv run python scripts/export_openapi.py --check`；`frontend/`：`npm run gen:api` 后 `git diff --exit-code -- frontend/src/types/api.d.ts` | CI（`contract` job） | ✅ 门禁在跑 |
 | **H11** | 准入线 C1–C3 | M4 §3 验收 6；M3 §3 验收 2 | 机械 + 人工 | 见 §5.1 | 架构师 + 用户 | ⏳ S13（评测脚本**待建**） |
-| **H12** | 反证 F3 引用覆盖率 < 100% → **直接 NO-GO** | M3 §3 验收 2；M4 §3 验收 4 | 机械 + 人工 | 脚本统计"含可回溯 span 的答案数 / 总答案数"，**必须 = 1.00**；受控问题集人工复核 | 架构师 | ⏳ S10（F3 首次达标，plan §16） |
+| **H12** | 反证 F3 引用覆盖率 < 100% → **直接 NO-GO** | M3 §3 验收 2；M4 §3 验收 4 | 机械 + 人工 | 脚本统计"含可回溯 span 的答案数 / 总答案数"，**必须 = 1.00**；受控问题集人工复核 | 架构师 | 🟡 **S6 首次达标（F3 未触发）**：受控问题集 14 问，引用覆盖率 **100%**、拒答误伤 **0**（`scripts/eval_controlled_qset.py`）。**终局判据仍属 S10**——多跳 ≥3 跳 + 全量问题集；本轮为**演示剧本口径**（单份真机文档），不等同全量召回指标，已按 G5 在 release notes v1.2.0 §6.4 显式声明 |
 
 > **H1–H10 来自 `CODEBUDDY.md`，H11–H12 来自产品准入线**（PRD §4）。**H12 是唯一的"一票否决"项**：它不达标时不允许降级发布。
 
@@ -99,7 +99,7 @@
 | **C1** 图谱相对 RAG 增益 | **≥ 10%** | M4 §3 验收 6；`02` 附录 C | 同一数据集跑图谱版与 RAG 基线，`(图谱 − 基线) / 基线` | S13 | ⏳ 评测脚本**待建** |
 | **C2-a** 隐性关联召回 | **≥ 0.80** | M4 §3 验收 6；`01-research` §1.4 P3 | 正确识别数 / 实际植入数（gold 关系人工植入） | S13 | ⏳ |
 | **C2-b** 误报率 | **≤ 0.15** | M4 §3 验收 6 | 错误识别数 / 识别出总数 | S13 | ⏳ |
-| **C2-c** 引用覆盖率 | **= 1.00**（硬约束） | M3 §3 验收 2；M4 §3 验收 4 | 含可回溯 span 的答案数 / 总答案数 | S6 → S10 | 🟡 |
+| **C2-c** 引用覆盖率 | **= 1.00**（硬约束） | M3 §3 验收 2；M4 §3 验收 4 | 含可回溯 span 的答案数 / 总答案数 | S6 → S10 | 🟡 **S6 达标于受控问题集**（14 问 = 1.00）；S10 用全量问题集终判 |
 | **多跳答对率** | **≥ 0.80** | M3 §3 验收 1 | 3 跳内正确回答数 / 总多跳问题数 | S10 | ⏳ |
 | **C3-a** 单文档处理成本 | 落入阈值（**TBD-7**） | M6 §3 验收 8；`02` 附录 C | `token_usage_total / doc_count`（每日聚合） | S13 | ⏳ |
 | **C3-b** 增量 / 全量成本比 | **显著 < 1.00** | M6 §3 验收 8 | `incremental_cost / full_rebuild_cost` | S13 | ⏳ |

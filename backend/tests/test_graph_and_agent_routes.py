@@ -23,6 +23,7 @@ from app.schemas.agent import (
 from app.schemas.document import DocumentGraphResponse, GraphEdge, GraphNode
 from app.services.agents import AgentService, AgentUnavailableError
 from app.services.graphs import (
+    EvidenceChunk,
     GraphService,
     GraphUnavailableError,
     KgVersion,
@@ -30,6 +31,20 @@ from app.services.graphs import (
 )
 
 PDF = ("合同.pdf", b"%PDF-1.4", "application/pdf")
+
+# Sprint 6 批次 B：证据片段夹具——`chunk_id` 必须与 LLM 桩返回的 evidence 对得上，
+# 否则 `_to_citation` 回查失败 → 引用数 0 → 走拒答分支（F3 的真实语义）。
+EVIDENCE_DOC_ID = UUID("11111111-2222-3333-4444-555555555555")
+EVIDENCE_CHUNKS = [
+    EvidenceChunk(
+        chunk_id="chunk-12",
+        doc_id=EVIDENCE_DOC_ID,
+        text="北京青云科技有限公司营业收入 1.2 亿元。",
+        page=1,
+        char_start=0,
+        char_end=764,
+    )
+]
 
 # 契约字段集（`contracts/openapi.yaml`），用于「不多不少」回归断言
 DOCUMENT_GRAPH_KEYS = {
@@ -107,7 +122,9 @@ def _patch_graph_ok(
     """
     calls: dict[str, object] = {}
 
-    def fake_active(self: GraphService, *, scope: str | None = None) -> KgVersion:
+    def fake_active(
+        self: GraphService, *, scope: str | None = None, **kwargs: object
+    ) -> KgVersion:
         calls["active_scope"] = scope
         return KgVersion(version=version, scope="global")
 
@@ -181,7 +198,9 @@ def test_graph_route_409_when_no_active_kg_version(
     必须与「Neo4j 不可达 → 501」区分：前者是版本状态问题，后者是基础设施故障。
     """
 
-    def boom(self: GraphService, *, scope: str | None = None) -> KgVersion:
+    def boom(
+        self: GraphService, *, scope: str | None = None, **kwargs: object
+    ) -> KgVersion:
         raise NoActiveKgVersionError("Neo4j 中尚无 status='active' 的 KgVersion")
 
     monkeypatch.setattr(GraphService, "fetch_active_kg_version", boom)
@@ -285,6 +304,7 @@ def test_agent_route_success_matches_contract(
         request: AgentQueryRequest,
         org_id: UUID,
         trace_id: str,
+        db: object = None,
     ) -> AgentQueryResponse:
         seen["question"] = request.question
         seen["org_id"] = org_id
@@ -391,6 +411,7 @@ def test_agent_route_passes_explicit_kg_version_after_active_check(
         request: AgentQueryRequest,
         org_id: UUID,
         trace_id: str,
+        db: object = None,
     ) -> AgentQueryResponse:
         seen["requested"] = request.kg_version
         return AgentQueryResponse(
@@ -548,12 +569,18 @@ def _patch_agent_pipeline_ok(
     monkeypatch.setattr(
         GraphService,
         "fetch_active_kg_version",
-        lambda self, scope=None: KgVersion(version="v-test", scope="global"),
+        lambda self, scope=None, **kwargs: KgVersion(version="v-test", scope="global"),
     )
     monkeypatch.setattr(
         GraphService,
         "fetch_all_subgraph",
         lambda self, **kwargs: (nodes, edges, False),
+    )
+    # Sprint 6 批次 B：证据片段（chunk 原文）注入 Prompt + 引用回查索引
+    monkeypatch.setattr(
+        GraphService,
+        "fetch_evidence_chunks",
+        lambda self, **kwargs: list(EVIDENCE_CHUNKS),
     )
     # 批次 B fail-closed 校验（ADR-0003 §4）：打桩放行（同租户无泄漏）
     monkeypatch.setattr(
@@ -738,6 +765,8 @@ def test_stubbed_methods_exist_on_services() -> None:
         "fetch_document_subgraph",
         "fetch_kg_version_status",
         "fetch_all_subgraph",
+        # Sprint 6 批次 B
+        "fetch_evidence_chunks",
     ):
         assert callable(getattr(GraphService, name, None)), name
     assert callable(getattr(AgentService, "query", None))

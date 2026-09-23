@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -31,6 +32,7 @@ from app.core.config import get_settings
 from app.core.errors import DEFAULT_MESSAGES, AppError, ErrorCode
 from app.db.models import Document, KgVersion
 from app.schemas.document import (
+    DocumentChunkResponse,
     DocumentError,
     DocumentListItem,
     DocumentListResponse,
@@ -38,7 +40,12 @@ from app.schemas.document import (
     UploadResponse,
     mime_to_file_type,
 )
-from app.storage import build_storage_key, get_storage
+from app.storage import (
+    StorageKeyError,
+    build_extract_artifact_key,
+    build_storage_key,
+    get_storage,
+)
 from app.tasks.manager import TaskManager, TaskSpec
 from app.tasks.pipeline import first_pipeline_stage
 
@@ -330,6 +337,125 @@ def get_scoped_document(
     raise AppError(
         ErrorCode.FORBIDDEN,
         detail={"document_id": str(document_id), "reason": "cross_tenant_access"},
+    )
+
+
+#: 批次 B：chunk 产物文件名——与 `app/tasks/registry.py::_do_extract` 写入的键**逐字一致**
+_CHUNKS_ARTIFACT = "chunks.json"
+
+
+def _as_int(value: object) -> int:
+    """把产物字段安全转 int（缺失 / 非数字 → 0，不抛）。"""
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_optional_int(value: object) -> int | None:
+    """把产物字段安全转 `int | None`；失配给 `None`（**不**伪造页码）。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def get_document_chunk(
+    *,
+    session: Session,
+    document_id: UUID,
+    chunk_id: str,
+    identity: Identity,
+    trace_id: str,
+) -> DocumentChunkResponse:
+    """按 `chunk_id` 回查原文片段（Sprint 6 批次 B，Q2 落地）。
+
+    租户隔离**两道**：
+    1. :func:`get_scoped_document` —— 不存在 → 404，跨租户 → **403**（M5 §3 验收 1）；
+    2. 存储键以 `org_id` 打头（ADR-0003 §3.5），`storage.get` 会校验前缀与 `org_id` 一致。
+
+    数据源是批次 A 落盘的 `chunks.json`（**不**查 Neo4j）：图谱不可用时溯源仍可用，
+    且片段内容与 `:Chunk.text` 同源同值。
+
+    产物缺失 / 无该 `chunk_id` → **404 `NOT_FOUND`**，**不**返回空串：
+    「没有这段原文」与「原文是空串」必须可区分，否则前端会渲染出空白高亮区。
+    """
+    # 文档可见性（纯 PG，先于任何外部依赖）：不存在 → 404，跨租户 → 403
+    get_scoped_document(session=session, document_id=document_id, identity=identity)
+
+    key = build_extract_artifact_key(
+        org_id=identity.org_id, doc_id=document_id, filename=_CHUNKS_ARTIFACT
+    )
+    storage = get_storage()
+    try:
+        raw = storage.get(key, org_id=identity.org_id)
+    except StorageKeyError as exc:
+        logger.bind(trace_id=trace_id, document_id=str(document_id), key=key).warning(
+            "document_chunk_artifact_missing"
+        )
+        raise AppError(
+            ErrorCode.NOT_FOUND,
+            "Chunk artifact not found",
+            detail={
+                "document_id": str(document_id),
+                "chunk_id": chunk_id,
+                "reason": "chunks_artifact_missing",
+            },
+        ) from exc
+
+    try:
+        chunks = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.bind(trace_id=trace_id, key=key).error("document_chunk_artifact_invalid")
+        raise AppError(
+            ErrorCode.NOT_FOUND,
+            "Chunk artifact is unreadable",
+            detail={
+                "document_id": str(document_id),
+                "chunk_id": chunk_id,
+                "reason": "chunks_artifact_invalid",
+            },
+        ) from exc
+
+    if not isinstance(chunks, list):
+        raise AppError(
+            ErrorCode.NOT_FOUND,
+            "Chunk artifact is unreadable",
+            detail={
+                "document_id": str(document_id),
+                "chunk_id": chunk_id,
+                "reason": "chunks_artifact_not_a_list",
+            },
+        )
+
+    for chunk in chunks:
+        if isinstance(chunk, dict) and chunk.get("id") == chunk_id:
+            return DocumentChunkResponse(
+                doc_id=document_id,
+                chunk_id=chunk_id,
+                text=str(chunk.get("text") or ""),
+                page=_as_optional_int(chunk.get("page")),
+                char_start=_as_int(chunk.get("char_start")),
+                char_end=_as_int(chunk.get("char_end")),
+                trace_id=trace_id,
+            )
+
+    raise AppError(
+        ErrorCode.NOT_FOUND,
+        "Chunk not found",
+        detail={
+            "document_id": str(document_id),
+            "chunk_id": chunk_id,
+            "reason": "chunk_id_not_in_artifact",
+        },
     )
 
 

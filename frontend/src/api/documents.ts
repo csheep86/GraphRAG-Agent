@@ -9,6 +9,7 @@ import type {
 import { delay, mockId, request, shouldMock } from "./client";
 import {
   MOCK_DOCUMENTS,
+  MOCK_DOCUMENT_CHUNK,
   MOCK_DOCUMENT_STATUS,
   MOCK_DOCUMENT_TOTAL,
   MOCK_RECENT_DOCUMENTS,
@@ -46,7 +47,8 @@ export async function listDocuments(
 
   const search = new URLSearchParams();
   if (query.q) search.set("q", query.q);
-  if (query.status && query.status !== "all") search.set("status", query.status);
+  if (query.status && query.status !== "all")
+    search.set("status", query.status);
   if (query.page) search.set("page", String(query.page));
   if (query.page_size) search.set("page_size", String(query.page_size));
 
@@ -109,6 +111,29 @@ export async function getDocumentStatus(
 
   return request<components["schemas"]["DocumentStatusResponse"]>(
     `/api/v1/documents/${documentId}/status`,
+  );
+}
+
+/**
+ * 引用溯源：取单个原文片段全文。
+ * ✅ 契约已存在（Sprint 6 批次 B）：`GET /api/v1/documents/{id}/chunks/{chunk_id}`
+ *
+ * 用法（批次 C）：点击引用标注 → 按 `Citation.doc_id` / `chunk_id` 取全文，
+ * 再按 `Citation.char_offset`（**chunk 内**偏移，见契约 `Citation` 注释）在 `text` 内高亮。
+ * 跨租户返回 403、缺失返回 404（`reason=chunk_id_not_in_artifact`）——UI 需显式呈现，
+ * **不**能用空文本冒充原文。
+ */
+export async function getDocumentChunk(
+  documentId: string,
+  chunkId: string,
+): Promise<components["schemas"]["DocumentChunkResponse"]> {
+  if (shouldMock("/api/v1/documents/{document_id}/chunks/{chunk_id}")) {
+    await delay(240);
+    return { ...MOCK_DOCUMENT_CHUNK, doc_id: documentId, chunk_id: chunkId };
+  }
+
+  return request<components["schemas"]["DocumentChunkResponse"]>(
+    `/api/v1/documents/${documentId}/chunks/${encodeURIComponent(chunkId)}`,
   );
 }
 

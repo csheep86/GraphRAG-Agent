@@ -57,6 +57,28 @@ ENTITY_NOT_FOUND: dict[int, dict[str, Any]] = {
     }
 }
 
+CHUNK_NOT_FOUND: dict[int, dict[str, Any]] = {
+    404: {
+        "model": ErrorResponse,
+        "description": (
+            "原文片段不存在（`NOT_FOUND`）：该文档尚未产出 `chunks.json`，"
+            "或其中没有该 `chunk_id`。"
+            "**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1）"
+        ),
+    }
+}
+
+KG_VERSION_NOT_FOUND: dict[int, dict[str, Any]] = {
+    404: {
+        "model": ErrorResponse,
+        "description": (
+            "指定的 `kg_version` 不存在（`NOT_FOUND`）：PG `kg_versions` 真源表中"
+            "查不到该 (org_id, version)，或 Neo4j 侧没有该版本的图数据。复用"
+            "`ErrorCode.NOT_FOUND`，**不**新增错误码。"
+        ),
+    }
+}
+
 KG_VERSION_NOT_ACTIVE: dict[int, dict[str, Any]] = {
     409: {
         "model": ErrorResponse,

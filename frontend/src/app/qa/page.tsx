@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 
 import { ChatPanel } from "@/components/qa/chat-panel";
+import { ChunkViewer } from "@/components/qa/chunk-viewer";
 import { EvidencePanel } from "@/components/qa/evidence-panel";
 import { SessionList } from "@/components/qa/session-list";
 import { useChatStore } from "@/store/use-chat-store";
@@ -22,6 +23,9 @@ export default function QaPage() {
         <ChatPanel />
         <EvidencePanel />
       </div>
+
+      {/* 批次 C：引用溯源抽屉（不占三栏栅格，按需滑出） */}
+      <ChunkViewer />
     </div>
   );
 }

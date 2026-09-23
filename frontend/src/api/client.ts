@@ -35,6 +35,9 @@ const CONTRACT_COVERED_PATTERNS: RegExp[] = [
   /^\/api\/v1\/documents\/upload$/,
   /^\/api\/v1\/documents\/[^/]+\/graph$/,
   /^\/api\/v1\/documents\/[^/]+\/status$/,
+  // Sprint 6 批次 C：引用溯源端点。漏登记会让 USE_MOCK=false 时该端点走 Mock，
+  // 与 §5.3「关 Mock 硬门槛」直接冲突 —— 契约新增端点必须同步此处。
+  /^\/api\/v1\/documents\/[^/]+\/chunks\/[^/]+$/,
   /^\/api\/v1\/graph\/overview$/,
   /^\/api\/v1\/entities\/[^/]+$/,
 ];

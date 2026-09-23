@@ -40,6 +40,23 @@ class KgVersionRecord:
     trace_id: uuid.UUID
 
 
+class KgVersionNotFoundError(Exception):
+    """``kg_versions`` 中不存在该 (org_id, version)（路由层 → 404）。"""
+
+
+class KgVersionNotActivatableError(Exception):
+    """该版本不可被激活（当前为 ``failed`` / ``pending``；路由层 → 409）。
+
+    **严禁静默降级**：failed 版本的图数据不完整（ADR-0002 §3.2 三段式已补偿清理），
+    把它置为可消费等于把事故伪装成正常结论（plan §4.4 纪律）。
+    """
+
+    def __init__(self, *, version: str, status: str) -> None:
+        super().__init__(f"kg_version={version} 当前 status={status}，不可激活")
+        self.version = version
+        self.status = status
+
+
 def _to_record(row: KgVersion) -> KgVersionRecord:
     return KgVersionRecord(
         id=row.id,
@@ -153,6 +170,34 @@ class KgVersioningService:
         ).warning("kg_version_failed")
         return _to_record(row)
 
+    # -------------------------------------------------------------- 激活
+
+    def activate_by_version(
+        self, *, org_id: uuid.UUID, version: str
+    ) -> KgVersionRecord:
+        """把指定版本置为**可消费**——PG 真源的 active 语义在本表中写作 ``ready``。
+
+        幂等：已是 ``ready`` 时只回读不写。``pending`` / ``building`` / ``failed``
+        一律拒绝（:class:`KgVersionNotActivatableError`）：前两者图尚未写完，
+        后者已被三段式补偿清理——把它们置为可消费等于把事故伪装成正常结论
+        （plan §4.4 纪律）。不存在 → :class:`KgVersionNotFoundError`。
+        """
+        stmt = select(KgVersion).where(
+            KgVersion.org_id == org_id, KgVersion.version == version
+        )
+        row = self._db.execute(stmt).scalar_one_or_none()
+        if row is None:
+            raise KgVersionNotFoundError(
+                f"kg_version 不存在: org_id={org_id} version={version}"
+            )
+        if row.status != "ready":
+            raise KgVersionNotActivatableError(version=version, status=row.status)
+
+        logger.bind(
+            version=version, org_id=str(org_id), kg_version_id=str(row.id)
+        ).info("kg_version_activated")
+        return _to_record(row)
+
     # -------------------------------------------------------------- 查询
 
     def get_active(self, *, org_id: uuid.UUID) -> KgVersionRecord | None:
@@ -189,4 +234,9 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-__all__ = ["KgVersionRecord", "KgVersioningService"]
+__all__ = [
+    "KgVersionNotActivatableError",
+    "KgVersionNotFoundError",
+    "KgVersionRecord",
+    "KgVersioningService",
+]

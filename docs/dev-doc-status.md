@@ -28,6 +28,8 @@
 
 **2026-09-21 追加（无人值守执行协议固化为技能）**：新增 `.codebuddy/skills/unattended-sprint-execution/SKILL.md`（用户选 A 方案授权）——`executing-plans` 的预授权变体：默认按 plan v3.0 + sprint-calendar + CODEBUDDY 逐批次推进、免请求自动提交、决策点一律采纳文档建议项，**仅 4 类情况升级用户**（CP-2 PoC 不通 / F1~F5 触发 / 文档未覆盖决策 / S13 上线 gate 终审）。已在 `using-superpowers/SKILL.md` 技能地图登记。
 
+**2026-09-23 追加（Sprint 6 收尾登记）**：S6 于 **2026-09-23 功能达标**（较计划区间 10-12→10-20 提前 27 天；批次 A / B / C + 6.3 真机修复全完成，第 3 天 go/no-go 通过——chunk 级引用跑通，未降级为文档级）。① 新增 **[`docs/release-notes/v1.2.0.md`](./release-notes/v1.2.0.md)**（5 commit ／ 56 files ／ 契约路径 8→10 ／ pytest 297 passed ／ 受控问题集 14 问覆盖率 100%）；② `sprint-calendar.md` §5 S6 → ✅ 功能收尾（**tag `v1.2.0` 待打**）+ §6 变更记录 v1.2；③ `settings.app_version` **1.1.0 → 1.2.0**（与打 tag 同一动作，§3.3；`check_seams.py` 版本闸门输入）；④ **未完项显式登记（不伪装完成）**：P2-3 矩阵对账、`changes/Sprint6.*` 归档、tag / merge main / push 均未执行（收尾 B 清单）；⑤ 遗留：实体抽取质量低（整句成实体、数值独立成节点、同实体重复 3 份）推 **S9**；`Citation.char_offset` 恒 0、`_snippet` 的 strip + 省略号导致摘录≠原文区间，推 **S10**（见 release notes v1.2.0 §6.1 / §6.2 / §6.3）。
+
 **2026-09-22 追加（Sprint 5 收尾登记）**：S5 于 **2026-09-22** 完成（tag `v1.1.0`，较计划区间 09-21→10-11 提前 19 天，验收不跳过）。① **归档**：`changes/Sprint5.1`~`Sprint5.4` → `changes/archive/2026-09-22-Sprint5.N/`；② **矩阵对账**（`acceptance-traceability-matrix.md`）：H4（`_refuse()` 出口 `trace_id` 为空）、H8（B1 `retry_count` 回写 + B4 退避路径未读 `task_retry_multiplier`）**两项「已知缺陷」关闭**，M1 / M2 现状与黄金路径步骤 3 同步刷新；③ **口径更正（重要）**：接缝门禁的 Sprint 收尾判据由 `--strict` 更正为 **默认档 + ERROR = 0**——依据 `check_seams.py` docstring 第 5–6 行，`--strict` 仅适用 v1.4.0 Demo-MVP 完成点；实测 v1.1.0 跑 `--strict` 必红，6 条 WARN 全为**未到期**接缝（5/6/7/8，分属 v1.3.0~v1.4.0）而非越界。已同步修 `sprint-calendar.md` §3 与矩阵 §5.3（原两处均误写为 `--strict`）；④ **遗留降级**：E1 / E2 数据质量评估登记 **unresolved**（抽取器为 mockable 正则占位，统计无意义），归 S13 条件吸收，见 release notes v1.1.0 §6.1。
 
 ---
@@ -62,7 +64,7 @@
 |---|---|---|---|---|---|
 | **P2-1** | release notes 撰写（v1.5.0 / v1.6.0 / v1.7.0 / v1.8.0 / v2.0.0） | ⏳ 未开始 | 架构师 + 后端 B | — | 每个 Sprint 收尾时跟，**不堆积**；§15.4 纪律要求 |
 | **P2-2** | 操作手册 Sprint 9~13 章节（阶段十八~二十二） | ⏳ 未开始 | 架构师 | — | 每个 Sprint 收尾跟一节 |
-| **P2-3** | **`acceptance-traceability-matrix.md` 对账**：本 Sprint 承接的 spec §3 验收条逐个勾选 + 涉及的 H 行「现状」列刷新 | ⏳ 未开始 | 架构师 + 各模块负责人 | — | 已写入 §9.2 第 3 项；**任一行「判据」或「验收人」为空 → 不得收尾** |
+| **P2-3** | **`acceptance-traceability-matrix.md` 对账**：本 Sprint 承接的 spec §3 验收条逐个勾选 + 涉及的 H 行「现状」列刷新 | ⏳ 未开始（**S6 待办**） | 架构师 + 各模块负责人 | — | 已写入 §9.2 第 3 项；**任一行「判据」或「验收人」为空 → 不得收尾**。**2026-09-23**：S6 功能与门禁已达标但**本项未做**，随「tag 前 B 清单」执行（不得借"功能收尾"跳过） |
 
 ---
 

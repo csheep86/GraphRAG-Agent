@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.deps import CurrentIdentity, TraceId
+from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
     KG_TENANT_LEAK,
     KG_VERSION_NOT_ACTIVE,
@@ -54,6 +54,7 @@ async def query_agent(
     payload: AgentQueryRequest,
     identity: CurrentIdentity,
     trace_id: TraceId,
+    db: DbSession,
 ) -> AgentQueryResponse:
     # 1) 显式指定 kg_version 时校验 active（ADR-0002 §3.2，严禁静默降级）
     if payload.kg_version is not None:
@@ -65,6 +66,7 @@ async def query_agent(
             request=payload,
             org_id=identity.org_id,
             trace_id=trace_id,
+            db=db,
         )
     except AgentTenantLeakError as exc:
         # 必须先于 AgentUnavailableError（它是其子类）——数据质量事故 ≠ 基础设施故障
