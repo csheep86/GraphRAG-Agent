@@ -38,7 +38,7 @@
       （我无法自动化点击，已在 integration-log §4 列出步骤）
 - [ ] 错误态人工确认：不存在 `chunk_id` → 抽屉呈现 404 `reason`，不显示空原文
 
-## 6. 收尾
-- [x] `changes/Sprint6.4/integration-log.md` 补实测证据链
-- [x] 提交：`feat(qa): Sprint 6.4 批次 C——引用溯源抽屉与原文高亮`
-- [ ] 回 §5.3 验收：受控问题集（10~15 问真机覆盖率）随后集中跑
+## 6. 受控问题集（§5.3 验收第 1 条）
+- [x] 新增评估器 `backend/scripts/eval_controlled_qset.py`（只评估、不调 Prompt，退出码可作机械判据）
+- [x] 真机跑 14 问：引用覆盖率 **100%**（12/12 非拒答全为 `chunk-` 前缀）、拒答误伤 **0**、请求失败 0
+- [x] 证据链写入 `integration-log.md` §6
