@@ -9,7 +9,8 @@
 5. 未知 provider / 非法上限 / 空输入 → :class:`LangextractError`；
 6. trace_id / document_id 透传。
 
-真实 LLM 调用留位（``extraction_provider`` 别档显式报错），不在本模块范围。
+``llm`` 档（真实调用 LLM）由 :mod:`tests.test_extraction_llm_engine` 覆盖——
+本模块固定 ``engine="mock"``，保住零外部依赖。
 """
 
 from __future__ import annotations
@@ -43,6 +44,9 @@ def _client(**overrides: object) -> LangextractClient:
         "max_entities_per_doc": 500,
         "max_relations_per_doc": 1000,
         "prompt_version": "kg_extraction_v1",
+        # Sprint 7.0：抽取引擎已是显式开关（默认 'llm' 会真调 LLM）；
+        # CI / 单测必须**显式**落 'mock' 档，保住零外部依赖。
+        "engine": "mock",
     }
     kwargs.update(overrides)
     return LangextractClient(**kwargs)  # type: ignore[arg-type]

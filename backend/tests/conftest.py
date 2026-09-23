@@ -37,6 +37,11 @@ os.environ["NEO4J_PASSWORD"] = ""
 # 需要「真实调用」的用例请用 monkeypatch 显式开启，不要依赖本机 / CI 的密钥。
 os.environ["MINERU_TOKEN"] = ""
 os.environ["LLM_API_KEY"] = ""
+# 同理中和**抽取引擎**：Sprint 7.0 起 extraction_engine 默认 'llm'（生产 / 演示要真数据），
+# 测试必须**显式**落到 'mock' 档——否则用例会带着空 key 去真连 DeepSeek，
+# 结果与外部服务漂移（与上方 MINERU_TOKEN / LLM_API_KEY 同一条纪律）。
+# 需要验证「真实 LLM 抽取」的用例请 monkeypatch 注入假 invoker，不要依赖外部服务。
+os.environ["EXTRACTION_ENGINE"] = "mock"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

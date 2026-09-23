@@ -7,7 +7,8 @@
 3. 已 completed 早 return（幂等）；
 4. tenacity 指数退避后成功 → ``extract_retry_count`` 回写；
 5. 重试用尽 → 阶段级 ``failed`` + ``error_code / error_detail``；
-6. 真实路径：storage ``full.md`` → LangExtract（mockable 默认抽取器）→
+6. 真实路径：storage ``full.md`` → LangExtract（``mock`` 档，由 conftest 的
+   ``EXTRACTION_ENGINE=mock`` 注入——Sprint 7.0 起引擎是显式开关，默认 ``llm``）→
    ``entities.json`` / ``relations.json`` 落 storage；
 7. 文档记录缺失时 graceful。
 
@@ -135,7 +136,7 @@ def _place_full_md(document_id: UUID) -> None:
 def test_extract_happy_path_completes_stage_status(
     seed_document: Callable[..., UUID],
 ) -> None:
-    """真实路径：full.md → 默认 mockable 抽取器 → 产物落 storage。"""
+    """真实路径：full.md → mock 档抽取器 → 产物落 storage。"""
     settings = get_settings()
     document_id = seed_document("pending")
     _place_full_md(document_id)

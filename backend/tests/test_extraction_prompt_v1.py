@@ -106,6 +106,8 @@ def test_extraction_result_shape_matches_prompt_schema() -> None:
         max_entities_per_doc=500,
         max_relations_per_doc=1000,
         prompt_version="kg_extraction_v1",
+        # Sprint 7.0：本文件只验产物结构与模板 Schema 对齐，显式落 'mock' 档
+        engine="mock",
     )
     result = client.extract_entities_relations(
         document_id=uuid4(),

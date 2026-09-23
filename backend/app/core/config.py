@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     # 与 MineruClient 同模式：单实现 + 切换键，不抽接口；
     # `extraction_provider` 默认 'langextract'，未实现别档显式报错（与 llm_provider 同策略）。
     extraction_provider: str = "langextract"
+    #: 抽取引擎（Sprint 7.0 新增，偿 v1.1.0 §6.3「注入 provider 后启用」悬空债）：
+    #:   'llm'  = 真实调用 LLM（经接缝 3 build_chat_model，不新建客户端）；
+    #:   'mock' = 正则占位器（仅 CI / 单测注入，产物不代表真实抽取质量）。
+    #: 未知档位由 LangextractClient 显式报错，**绝不静默回退**（plan §4.4）。
+    #: 唯一消费点：app/services/extraction/langextract.py::LangextractClient.from_settings
+    extraction_engine: str = "llm"
     #: 单次送入 LLM 的最大字符数；超长在客户端内切分
     extraction_max_chars_per_chunk: int = Field(default=4000, gt=0)
     #: 单文档实体上限（防 LLM 失控批量生成）

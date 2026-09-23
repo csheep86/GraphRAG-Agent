@@ -23,6 +23,8 @@ def _client(max_chars: int = 4000) -> LangextractClient:
         max_entities_per_doc=50,
         max_relations_per_doc=50,
         prompt_version="v1",
+        # Sprint 7.0：本文件只验切块，显式落 'mock' 档（默认 'llm' 会真调 LLM）
+        engine="mock",
     )
 
 

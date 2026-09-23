@@ -5,7 +5,9 @@
 无需登记」一致——接缝登记要求"集合 = 登记集合"，单实现不构成接缝）。
 
 公开面：
-- :class:`LangextractClient`：唯一实现（默认档 ``langextract``，未知档显式报错）；
+- :class:`LangextractClient`：唯一实现（``extraction_provider`` 未知档显式报错；
+  抽取引擎由 ``settings.extraction_engine`` 显式指定：``llm`` 真调 LLM /
+  ``mock`` 正则占位器仅供 CI 注入，未知档同样显式报错）；
 - :class:`LangextractError`：业务错误（与 :class:`MineruApiError` 对位）；
 - :class:`ExtractionResult`：抽取产物（entities / relations 严格 JSON Schema，
   见 ``prompts/kg_extraction_v1.md``）。

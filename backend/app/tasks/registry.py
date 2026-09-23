@@ -461,7 +461,11 @@ async def _do_extract(
         markdown = markdown_bytes.decode("utf-8")
 
         client = LangextractClient.from_settings()
-        result = client.extract_entities_relations(
+        # Sprint 7.0：``extraction_engine='llm'`` 时本函数是**同步阻塞**的（逐 chunk
+        # 串行调 LLM，一份年报可跑数分钟）。放进工作线程，避免占住事件循环——
+        # 否则一次抽取会把整个 uvicorn 的请求处理全卡住。异常语义不变。
+        result = await asyncio.to_thread(
+            client.extract_entities_relations,
             document_id=document_id,
             full_md_text=markdown,
             trace_id=UUID(trace_id) if isinstance(trace_id, str) else trace_id,

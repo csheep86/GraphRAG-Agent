@@ -2,31 +2,38 @@
 
 对齐 `langextract_mvp/run_mvp.py` 实测口径（CODEBUDDY.md「实测结果反哺规则」）：
 - 按 ``settings.extraction_max_chars_per_chunk`` 切分输入；
-- 单 chunk 调一次 LLM 抽取（默认 mockable 路径——零外部依赖）；
+- 单 chunk 调一次 LLM 抽取（引擎由 ``settings.extraction_engine`` 显式指定）；
 - 严格按 ``kg_extraction_v1`` 模板的 JSON Schema 输出；
 - 超 ``extraction_max_entities_per_doc`` / ``extraction_max_relations_per_doc`` 按
   ``confidence`` 降序裁剪（防 LLM 失控批量生成）。
 
-设计边界：
-- **默认 mockable**——``_default_extract_chunk`` 用正则占位实现，保证 CI / 单元测试
-  无外部依赖；生产真实 LLM 调用留 ``_evaluate_client_call_llm`` 占位（受
-  ``extraction_provider`` 切换键约束，未实现别档显式报错）；
+设计边界（Sprint 7.0 起）：
+- **引擎是显式开关，不再是隐式默认**：``extraction_engine`` 只有 ``llm`` / ``mock``
+  两档，未知档位 **显式报错、绝不静默回退**（plan §4.4 纪律）。
+  ``mock``（``_default_extract_chunk`` 正则占位器）仅供 CI / 单测注入——
+  **其产物不代表真实抽取质量**，不得冒充业务结论；``llm`` 档真实调用模型。
+- **真实调用走接缝 3**：经 ``app.services.providers.build_chat_model()`` 构造客户端，
+  **不新建第二套 LLM 通道**（ADR-0004 §2.1 接缝 3）。
+- **失败不静默**：调用失败 / 超时 / 返回非法 JSON → :class:`LangextractError`，
+  **绝不回落 mock**——那会把基础设施故障伪装成业务结论（LC1-9）。
 - **不**做内层 tenacity 重试——外层 ``document.extract`` 执行体已有指数退避
   （同 MineruClient 的纪律，双层重试会放大等待）。
 """
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 from loguru import logger
 
 from app.core.config import get_settings
 from app.prompts.prompt_loader import load_prompt
+from app.services.providers import build_chat_model
 
 #: entity_type 合法取值（与 prompts/kg_extraction_v1.md 输出一致）
 ENTITY_TYPES: Final[tuple[str, ...]] = (
@@ -49,6 +56,24 @@ RELATION_TYPES: Final[tuple[str, ...]] = (
     "RELATED",
     "AFFILIATED_WITH",
     "SUPPORTED_BY",
+)
+
+#: 抽取引擎档位（``settings.extraction_engine``；未知档位显式报错）
+ENGINE_LLM: Final[str] = "llm"
+ENGINE_MOCK: Final[str] = "mock"
+ENGINES: Final[tuple[str, ...]] = (ENGINE_LLM, ENGINE_MOCK)
+
+#: 未知 ``entity_type`` / ``relation_type`` 的统一降级目标
+#: （``prompts/kg_extraction_v1.md`` 第 47–48 行；原始名由日志留痕）
+_FALLBACK_TYPE: Final[str] = "RELATED"
+#: ``confidence`` 低于此值即丢弃（``prompts/kg_extraction_v1.md`` 第 50 行）
+_MIN_CONFIDENCE: Final[float] = 0.5
+#: Prompt 的 ``{{language}}`` 取值（语种常量，非配置；改语种须走 Prompt 新版本）
+_PROMPT_LANGUAGE: Final[str] = "chinese"
+#: llm 档里跟随 System 指令的用户侧指令（约束"只输出 JSON"，不承载模板语义）
+_LLM_USER_INSTRUCTION: Final[str] = (
+    "请严格按上述输出约定对 System 中的文本做抽取，只输出 JSON 对象，"
+    "不要附加任何解释或代码围栏说明。"
 )
 
 
@@ -152,10 +177,14 @@ class ExtractionResult:
         }
 
 
-#: 测试可注入的 chunk 抽取函数签名（默认 mockable，真实 LLM 调用留位）
+#: chunk 抽取函数签名（``(chunk_text, char_offset) -> (entities, relations)``）；
+#: 两档引擎与测试注入都实现这个签名，切分 / 裁剪逻辑因此完全共用
 ChunkExtractorFn = Callable[
     [str, int], tuple[list[ExtractedEntity], list[ExtractedRelation]]
 ]
+#: 可注入的 LLM 调用签名（渲染后的 Prompt 进，模型原文出）。
+#: 单测注入假实现即可零外部依赖；默认实现走接缝 3 的 ``build_chat_model()``
+LlmInvokerFn = Callable[[str], str]
 
 
 # ------------------------------------------------------------------------------
@@ -181,9 +210,10 @@ _RE_DATE = re.compile(
 def _default_extract_chunk(
     text: str, char_offset: int
 ) -> tuple[list[ExtractedEntity], list[ExtractedRelation]]:
-    """mockable 默认抽取器：基于正则的占位实现。
+    """``extraction_engine='mock'`` 档的抽取器：基于正则的**占位**实现。
 
-    真实 LLM 调用留 ``_evaluate_client_call_llm``（受 settings 切换键约束）。
+    只出 ORG / PERSON / MONEY / DATE 四类，**不代表真实抽取质量**——
+    仅用于 CI / 单测在零外部依赖下跑通链路（生产与演示走 ``llm`` 档）。
     输入空白 / 无任何匹配时返回空列表，由裁剪逻辑保证不污染下游。
     """
     entities: list[ExtractedEntity] = []
@@ -226,6 +256,269 @@ def _default_extract_chunk(
     return entities, relations
 
 
+# ------------------------------------------------------------------------------
+# llm 档：真实 LLM 抽取（Sprint 7.0 落地，接 _default_extract_chunk 的位）
+# ------------------------------------------------------------------------------
+
+
+def _default_llm_invoke(prompt: str) -> str:
+    """默认 LLM 调用：经接缝 3 的 ``build_chat_model()``，**不**自建客户端。
+
+    同步 ``invoke``（抽取链路整体是同步的；``document.extract`` 执行体把它放进
+    工作线程，不阻塞事件循环）。异常由 :func:`_build_llm_chunk_extractor` 统一包装
+    成 :class:`LangextractError`——**不在此静默回落 mock**。
+
+    每次调用打点**耗时与 token 用量**（CODEBUDDY.md「日志与可观测性规则」）；
+    日志只记数值，**不落** prompt 原文与密钥。
+    """
+    from time import perf_counter
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    started = perf_counter()
+    model = build_chat_model()
+    response = model.invoke(
+        [
+            SystemMessage(content=prompt),
+            HumanMessage(content=_LLM_USER_INSTRUCTION),
+        ]
+    )
+    elapsed_ms = round((perf_counter() - started) * 1000)
+
+    logger.bind(elapsed_ms=elapsed_ms, **_extract_token_usage(response)).info(
+        "langextract_llm_call"
+    )
+    return str(response.content)
+
+
+def _extract_token_usage(response: object) -> dict[str, int | None]:
+    """从 LangChain 响应里取 token 用量；取不到返回 ``None``（**严禁造数据**）。"""
+    metadata = getattr(response, "response_metadata", None)
+    usage = metadata.get("token_usage") if isinstance(metadata, dict) else None
+    if not isinstance(usage, dict):
+        return {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+        }
+    return {
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "completion_tokens": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+    }
+
+
+def _build_llm_chunk_extractor(
+    *, prompt_version: str, invoker: LlmInvokerFn
+) -> ChunkExtractorFn:
+    """构造 llm 档的 chunk 抽取器：单 chunk → 一次 LLM 调用 → 严格解析。
+
+    与 mock 档**共用**外层的切分 / 裁剪逻辑（``_split_into_chunks`` /
+    ``_clamp_*``），本函数只替换"文本 → entities/relations"这一步。
+    """
+
+    def _extract_chunk(
+        text: str, char_offset: int
+    ) -> tuple[list[ExtractedEntity], list[ExtractedRelation]]:
+        if not text.strip():
+            return [], []
+
+        prompt = load_prompt(
+            "kg_extraction", version=_prompt_version_number(prompt_version)
+        ).render(text=text, language=_PROMPT_LANGUAGE)
+
+        try:
+            raw = invoker(prompt)
+        except LangextractError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 第三方异常统一包装为可重试业务错误
+            raise LangextractError(
+                f"LLM 调用失败（chunk_offset={char_offset}）: "
+                f"{type(exc).__name__}: {str(exc)[:200]}"
+            ) from exc
+
+        payload = _parse_llm_payload(raw)
+        entities, id_map = _entities_from_payload(
+            payload, chunk_text=text, char_offset=char_offset
+        )
+        relations = _relations_from_payload(payload, id_map)
+
+        logger.bind(
+            chunk_offset=char_offset,
+            entity_count=len(entities),
+            relation_count=len(relations),
+        ).info("langextract_llm_chunk_done")
+        return entities, relations
+
+    return _extract_chunk
+
+
+def _parse_llm_payload(raw: str) -> dict[str, Any]:
+    """把模型原文解析为 JSON 对象；**解析不出就抛**，绝不返回"假装空"的 dict。
+
+    分档（与 v1 模板第 59 行拒答兜底不冲突）：
+    - 合法 JSON 且 ``entities`` 为空 → **正常空结果**（模型真的没抽到）；
+    - 空响应 / 非法 JSON / 顶层非对象 → :class:`LangextractError`（可重试）。
+    """
+    text = (raw or "").strip()
+    if not text:
+        raise LangextractError("LLM 返回内容为空，无法解析为 JSON")
+
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, flags=re.DOTALL)
+    candidate = fenced.group(1) if fenced is not None else text
+
+    try:
+        payload: Any = json.loads(candidate)
+    except json.JSONDecodeError:
+        # 模型常在 JSON 前后加解释文字：截取首个完整 {...} 再试一次
+        block = re.search(r"\{.*\}", candidate, flags=re.DOTALL)
+        if block is None:
+            raise LangextractError(
+                f"LLM 输出非法 JSON：未找到 JSON 对象（前 200 字: {text[:200]!r}）"
+            ) from None
+        try:
+            payload = json.loads(block.group(0))
+        except json.JSONDecodeError as exc:
+            raise LangextractError(f"LLM 输出非法 JSON: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise LangextractError(
+            f"LLM 输出结构非法（应为 JSON 对象，实际={type(payload).__name__}）"
+        )
+    return payload
+
+
+def _entities_from_payload(
+    payload: Mapping[str, Any], *, chunk_text: str, char_offset: int
+) -> tuple[list[ExtractedEntity], dict[str, str]]:
+    """按 Schema 解析实体；返回 ``(entities, 原id → 新id 映射)``。
+
+    处置口径：
+    - 未知 ``entity_type`` → 降级 ``RELATED``（原始名 log 留痕，v1 第 47 行）；
+    - ``confidence`` < 0.5 或缺失 → 丢弃（v1 第 50 行，**不猜值**）；
+    - ``char_start`` / ``char_end`` 合法 → 原样透传（仅加回块起点，与 mock 档同坐标系）；
+      缺失 / 越界 → 用 ``mention`` 在 chunk 内回查；回查不到 → 丢弃（**不伪造偏移**）；
+    - 模型给的 id **一律换新**：它会复用 few-shot 的 ``ent_001`` 之类，跨 chunk 撞 id。
+    """
+    raw_entities = payload.get("entities", [])
+    if not isinstance(raw_entities, list):
+        raise LangextractError(
+            f"LLM 输出的 entities 结构非法（应为 list，实际={type(raw_entities).__name__}）"
+        )
+
+    entities: list[ExtractedEntity] = []
+    id_map: dict[str, str] = {}
+    malformed = 0
+    low_confidence = 0
+
+    for raw in raw_entities:
+        if not isinstance(raw, dict):
+            malformed += 1
+            continue
+
+        canonical_name = (
+            str(raw.get("canonical_name") or "").strip()
+            or str(raw.get("mention") or "").strip()
+        )
+        mention = str(raw.get("mention") or canonical_name).strip()
+        confidence = _coerce_confidence(raw.get("confidence"))
+        span = _resolve_char_span(
+            raw, chunk_text=chunk_text, mention=mention, char_offset=char_offset
+        )
+
+        if not canonical_name or confidence is None or span is None:
+            malformed += 1
+            continue
+        if confidence < _MIN_CONFIDENCE:
+            low_confidence += 1
+            continue
+
+        raw_type = str(raw.get("entity_type") or "").strip()
+        entity_type = raw_type if raw_type in ENTITY_TYPES else _FALLBACK_TYPE
+        if raw_type and raw_type != entity_type:
+            logger.bind(unknown_entity_type=raw_type).warning(
+                "langextract_entity_type_downgraded"
+            )
+
+        entity_id = f"ent_{uuid.uuid4().hex[:12]}"
+        original_id = str(raw.get("id") or "").strip()
+        if original_id:
+            id_map[original_id] = entity_id
+
+        entities.append(
+            ExtractedEntity(
+                id=entity_id,
+                canonical_name=canonical_name,
+                entity_type=entity_type,
+                mention=mention,
+                char_start=span[0],
+                char_end=span[1],
+                confidence=confidence,
+            )
+        )
+
+    if malformed or low_confidence:
+        logger.bind(malformed=malformed, low_confidence=low_confidence).warning(
+            "langextract_entities_dropped"
+        )
+    return entities, id_map
+
+
+def _relations_from_payload(
+    payload: Mapping[str, Any], id_map: Mapping[str, str]
+) -> list[ExtractedRelation]:
+    """按 Schema 解析关系；端点不在实体集合内 → 丢弃（与 ``_clamp_relations`` 同口径）。"""
+    raw_relations = payload.get("relations", [])
+    if not isinstance(raw_relations, list):
+        raise LangextractError(
+            f"LLM 输出的 relations 结构非法（应为 list，实际={type(raw_relations).__name__}）"
+        )
+
+    relations: list[ExtractedRelation] = []
+    malformed = 0
+    low_confidence = 0
+
+    for raw in raw_relations:
+        if not isinstance(raw, dict):
+            malformed += 1
+            continue
+
+        source = id_map.get(str(raw.get("source_entity_id") or "").strip())
+        target = id_map.get(str(raw.get("target_entity_id") or "").strip())
+        confidence = _coerce_confidence(raw.get("confidence"))
+
+        if source is None or target is None or confidence is None:
+            malformed += 1
+            continue
+        if confidence < _MIN_CONFIDENCE:
+            low_confidence += 1
+            continue
+
+        raw_type = str(raw.get("relation_type") or "").strip()
+        relation_type = raw_type if raw_type in RELATION_TYPES else _FALLBACK_TYPE
+        if raw_type and raw_type != relation_type:
+            logger.bind(unknown_relation_type=raw_type).warning(
+                "langextract_relation_type_downgraded"
+            )
+
+        relations.append(
+            ExtractedRelation(
+                id=f"rel_{uuid.uuid4().hex[:12]}",
+                source_entity_id=source,
+                target_entity_id=target,
+                relation_type=relation_type,
+                evidence=str(raw.get("evidence") or "").strip(),
+                confidence=confidence,
+            )
+        )
+
+    if malformed or low_confidence:
+        logger.bind(malformed=malformed, low_confidence=low_confidence).warning(
+            "langextract_relations_dropped"
+        )
+    return relations
+
+
 class LangextractClient:
     """LangExtract 唯一实现（默认档 ``langextract``）。"""
 
@@ -237,13 +530,20 @@ class LangextractClient:
         max_entities_per_doc: int,
         max_relations_per_doc: int,
         prompt_version: str,
+        engine: str = ENGINE_LLM,
         chunk_extractor: ChunkExtractorFn | None = None,
+        llm_invoker: LlmInvokerFn | None = None,
     ) -> None:
         if provider != "langextract":
             # 未知档位显式报错（与 llm_provider / parser_provider 同策略，
             # 静默回退会掩盖配置错误——plan §4.4 纪律）。
             raise LangextractError(
                 f"未知 extraction_provider={provider!r}（当前仅支持 'langextract'）"
+            )
+        if engine not in ENGINES:
+            # 同上：未知档位**绝不**静默回退到 mock（那会把配置错误伪装成"抽到了"）
+            raise LangextractError(
+                f"未知 extraction_engine={engine!r}（当前仅支持 'llm' / 'mock'）"
             )
         if max_chars_per_chunk <= 0:
             raise LangextractError(
@@ -257,15 +557,28 @@ class LangextractClient:
         self._max_chars_per_chunk = max_chars_per_chunk
         self._max_entities_per_doc = max_entities_per_doc
         self._max_relations_per_doc = max_relations_per_doc
-        # Prompt 版本仅用于校验存在；真实 LLM 调用留位
         self._prompt_version = prompt_version
-        self._chunk_extractor = chunk_extractor or _default_extract_chunk
+        self._engine = engine
+        # 优先级：显式注入 > 引擎档位。注入永远是第一位的（单测零外部依赖靠它）
+        if chunk_extractor is not None:
+            self._chunk_extractor: ChunkExtractorFn = chunk_extractor
+        elif engine == ENGINE_MOCK:
+            self._chunk_extractor = _default_extract_chunk
+        else:
+            self._chunk_extractor = _build_llm_chunk_extractor(
+                prompt_version=prompt_version,
+                invoker=llm_invoker or _default_llm_invoke,
+            )
 
     # -------------------------------------------------------------- 工厂
 
     @classmethod
     def from_settings(cls) -> LangextractClient:
-        """从 settings 构造默认客户端（``document.extract`` 执行体使用）。"""
+        """从 settings 构造默认客户端（``document.extract`` 执行体使用）。
+
+        ``settings.extraction_engine`` 的**唯一消费点**（check_seams 判据 2）：
+        ``llm`` 档在这里把真实 LLM 通道接进链路。
+        """
         settings = get_settings()
         return cls(
             provider=settings.extraction_provider,
@@ -273,6 +586,7 @@ class LangextractClient:
             max_entities_per_doc=settings.extraction_max_entities_per_doc,
             max_relations_per_doc=settings.extraction_max_relations_per_doc,
             prompt_version=settings.extraction_prompt_version,
+            engine=settings.extraction_engine,
         )
 
     # -------------------------------------------------------------- 主入口
@@ -291,7 +605,7 @@ class LangextractClient:
         # 校验 prompt 版本存在（fail-fast：版本错配查文档链路）
         try:
             template = load_prompt(
-                "kg_extraction", version=int(self._prompt_version.rsplit("v", 1)[-1])
+                "kg_extraction", version=_prompt_version_number(self._prompt_version)
             )
             _ = template.placeholders  # 触发属性校验
         except Exception as exc:  # noqa: BLE001 - 校验失败统一包装
@@ -319,10 +633,19 @@ class LangextractClient:
 
         all_entities: list[ExtractedEntity] = []
         all_relations: list[ExtractedRelation] = []
-        for chunk_start, chunk_text in raw_chunks:
-            entities, relations = self._chunk_extractor(chunk_text, chunk_start)
-            all_entities.extend(entities)
-            all_relations.extend(relations)
+        # contextualize：让 chunk 级日志（含 llm 档的调用日志）自动带上 trace_id
+        with logger.contextualize(
+            trace_id=str(trace_id),
+            document_id=str(document_id),
+            engine=self._engine,
+        ):
+            for chunk_index, (chunk_start, chunk_text) in enumerate(raw_chunks):
+                with logger.contextualize(
+                    chunk_index=chunk_index, chunk_offset=chunk_start
+                ):
+                    entities, relations = self._chunk_extractor(chunk_text, chunk_start)
+                all_entities.extend(entities)
+                all_relations.extend(relations)
 
         entities = _clamp_entities(all_entities, self._max_entities_per_doc)
         relations = _clamp_relations(
@@ -332,6 +655,7 @@ class LangextractClient:
         logger.bind(
             trace_id=str(trace_id),
             document_id=str(document_id),
+            engine=self._engine,
             chunk_count=len(chunks),
             entity_count=len(entities),
             relation_count=len(relations),
@@ -357,6 +681,60 @@ def _new_chunk_id() -> str:
     前缀 ``chunk-`` 与 ``agents.py`` 的引用前缀校验对齐（``doc-`` 为文档级降级档）。
     """
     return f"chunk-{uuid.uuid4().hex[:12]}"
+
+
+def _prompt_version_number(prompt_version: str) -> int:
+    """``kg_extraction_v1`` / ``v1`` → 1（``prompt_loader`` 的版本参数）。"""
+    try:
+        return int(prompt_version.rsplit("v", 1)[-1])
+    except (ValueError, IndexError) as exc:
+        raise LangextractError(
+            f"无法解析 extraction_prompt_version={prompt_version!r}"
+            "（应形如 'kg_extraction_v1' / 'v1'）"
+        ) from exc
+
+
+def _is_int(value: object) -> bool:
+    """``bool`` 是 ``int`` 子类，必须排除（`True` 当偏移会静默错位）。"""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _coerce_confidence(raw: object) -> float | None:
+    """置信度 → float；缺失 / 非数值 → ``None``（由调用方丢弃，**不猜值**）。"""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        try:
+            return float(raw.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _resolve_char_span(
+    raw: Mapping[str, Any], *, chunk_text: str, mention: str, char_offset: int
+) -> tuple[int, int] | None:
+    """定出实体在**全文**中的绝对区间；定不出来返回 ``None``（绝不伪造偏移）。
+
+    1. 模型给了合法的 ``char_start`` / ``char_end`` → 原样透传（加回块起点，
+       与 mock 档同一坐标系，为 ``S6-1`` 的证据回溯留真值）；
+    2. 否则用 ``mention`` 在 chunk 内回查（这是原文定位，不是猜）；
+    3. 都失败 → ``None``（调用方丢弃该实体）。
+    """
+    start_raw = raw.get("char_start")
+    end_raw = raw.get("char_end")
+    if _is_int(start_raw) and _is_int(end_raw):
+        start = char_offset + int(start_raw)  # type: ignore[arg-type]
+        end = char_offset + int(end_raw)  # type: ignore[arg-type]
+        if 0 <= start <= end <= char_offset + len(chunk_text):
+            return start, end
+    if mention:
+        found = chunk_text.find(mention)
+        if found >= 0:
+            return char_offset + found, char_offset + found + len(mention)
+    return None
 
 
 def _split_into_chunks(text: str, max_chars: int) -> list[tuple[int, str]]:
@@ -415,6 +793,9 @@ def _clamp_relations(
 
 
 __all__ = [
+    "ENGINES",
+    "ENGINE_LLM",
+    "ENGINE_MOCK",
     "ENTITY_TYPES",
     "ExtractedChunk",
     "ExtractedEntity",
@@ -422,5 +803,6 @@ __all__ = [
     "ExtractionResult",
     "LangextractClient",
     "LangextractError",
+    "LlmInvokerFn",
     "RELATION_TYPES",
 ]
