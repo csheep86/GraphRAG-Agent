@@ -5,16 +5,19 @@ import { ChevronDown, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { ChatMessage } from "@/types/mock";
+import type { ChatMessage, Citation } from "@/types/mock";
 
 type ChatMessageItemProps = {
   message: ChatMessage;
   onSelectEvidence: (messageId: string) => void;
+  /** 批次 C：点击引用条目 → 回查原文全文并高亮（与右侧面板共用同一抽屉） */
+  onOpenChunk: (citation: Citation) => void;
 };
 
 export function ChatMessageItem({
   message,
   onSelectEvidence,
+  onOpenChunk,
 }: ChatMessageItemProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -75,7 +78,13 @@ export function ChatMessageItem({
           {expanded ? (
             <div className="space-y-3 border-t border-border px-3 py-3">
               {citations.map((citation, index) => (
-                <div key={citation.chunk_id} className="flex gap-2">
+                <button
+                  key={citation.chunk_id}
+                  type="button"
+                  onClick={() => onOpenChunk(citation)}
+                  title="查看原文片段"
+                  className="-mx-1.5 flex w-[calc(100%+0.75rem)] gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-white/[0.05]"
+                >
                   <span className="mt-px shrink-0 text-[11px] text-muted-foreground tabular-nums">
                     [{index + 1}]
                   </span>
@@ -85,11 +94,15 @@ export function ChatMessageItem({
                     </p>
                     <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
                       {/* Sprint 6 批次 B（Q1）：页码失配为 null，显示「页码未知」而非空白 */}
-                      {citation.doc_id.slice(0, 8)} · 第 {citation.page ?? "?"} 页 ·{" "}
-                      {citation.chunk_id}
+                      {citation.doc_id.slice(0, 8)} · 第 {citation.page ?? "?"}{" "}
+                      页 · {citation.chunk_id}
+                    </p>
+                    {/* 批次 C：溯源入口 */}
+                    <p className="mt-0.5 text-[10px] text-primary">
+                      查看原文 →
                     </p>
                   </div>
-                </div>
+                </button>
               ))}
 
               {citations.length === 0 ? (

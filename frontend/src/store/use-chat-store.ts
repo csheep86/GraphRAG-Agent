@@ -1,7 +1,22 @@
 import { create } from "zustand";
 
+import { ApiError } from "@/api/client";
+import { getDocumentChunk } from "@/api/documents";
 import { listMessages, listSessions, sendQuestion } from "@/api/qa";
-import type { ChatMessage, ChatSession } from "@/types/mock";
+import type { ChatMessage, ChatSession, Citation } from "@/types/mock";
+import type { components } from "@/types/api";
+
+type DocumentChunkResponse = components["schemas"]["DocumentChunkResponse"];
+
+/**
+ * 批次 C 原文抽屉的错误态：保留 HTTP 状态与后端 `detail.reason`，
+ * 便于 UI 区分「跨租户 403 / 片段缺失 404 / 其它」——**不**降级为空原文。
+ */
+export type ChunkViewerError = {
+  status: number;
+  message: string;
+  reason: string | null;
+};
 
 /** 稳定的空数组引用，避免 selector 每次返回新引用导致无限重渲染 */
 const EMPTY_MESSAGES: ChatMessage[] = [];
@@ -18,11 +33,21 @@ type ChatStore = {
   /** 当前在右侧「引用证据」面板中聚焦的 assistant 消息 */
   evidenceMessageId: string | null;
 
+  /* ---- 批次 C：引用溯源抽屉 ---- */
+  /** 抽屉聚焦的引用条目；非 null 即抽屉打开 */
+  chunkCitation: Citation | null;
+  /** 回查到的原文片段全文（失败时为 null） */
+  chunk: DocumentChunkResponse | null;
+  chunkLoading: boolean;
+  chunkError: ChunkViewerError | null;
+
   initialize: () => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
   createSession: () => void;
   send: (question: string) => Promise<void>;
   selectEvidence: (messageId: string) => void;
+  openChunk: (citation: Citation) => Promise<void>;
+  closeChunk: () => void;
 };
 
 function createId(prefix: string): string {
@@ -46,6 +71,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sending: false,
 
   evidenceMessageId: null,
+
+  chunkCitation: null,
+  chunk: null,
+  chunkLoading: false,
+  chunkError: null,
 
   initialize: async () => {
     if (get().sessions.length > 0) return;
@@ -134,12 +164,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       sending: true,
       messagesBySession: {
         ...state.messagesBySession,
-        [sessionId]: [...(state.messagesBySession[sessionId] ?? []), userMessage],
+        [sessionId]: [
+          ...(state.messagesBySession[sessionId] ?? []),
+          userMessage,
+        ],
       },
     }));
 
     try {
-      const answer = await sendQuestion({ session_id: sessionId, question: trimmed });
+      const answer = await sendQuestion({
+        session_id: sessionId,
+        question: trimmed,
+      });
 
       set((state) => ({
         sending: false,
@@ -174,6 +210,47 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   selectEvidence: (messageId) => set({ evidenceMessageId: messageId }),
+
+  /**
+   * 批次 C：点击引用标注 → 回查该 `chunk_id` 的原文全文。
+   * 失败时保留状态与 `reason`（403 跨租户 / 404 片段缺失），**不**写入占位文本。
+   */
+  openChunk: async (citation) => {
+    set({
+      chunkCitation: citation,
+      chunk: null,
+      chunkError: null,
+      chunkLoading: true,
+    });
+
+    try {
+      const chunk = await getDocumentChunk(citation.doc_id, citation.chunk_id);
+      set({ chunk, chunkLoading: false });
+    } catch (error) {
+      const apiError = error instanceof ApiError ? error : null;
+      const reason = apiError?.detail?.["reason"];
+
+      set({
+        chunk: null,
+        chunkLoading: false,
+        chunkError: {
+          status: apiError?.status ?? 0,
+          message:
+            apiError?.message ??
+            (error instanceof Error ? error.message : "未知错误"),
+          reason: typeof reason === "string" ? reason : null,
+        },
+      });
+    }
+  },
+
+  closeChunk: () =>
+    set({
+      chunkCitation: null,
+      chunk: null,
+      chunkLoading: false,
+      chunkError: null,
+    }),
 }));
 
 /* ------------------------------ 派生选择器 ------------------------------ */
@@ -198,7 +275,9 @@ export function selectEvidenceMessage(state: ChatStore): ChatMessage | null {
   const messages = selectActiveMessages(state);
 
   if (state.evidenceMessageId) {
-    const hit = messages.find((message) => message.id === state.evidenceMessageId);
+    const hit = messages.find(
+      (message) => message.id === state.evidenceMessageId,
+    );
     if (hit) return hit;
   }
 

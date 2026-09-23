@@ -13,7 +13,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { selectActiveMessages, selectActiveSession, useChatStore } from "@/store/use-chat-store";
+import {
+  selectActiveMessages,
+  selectActiveSession,
+  useChatStore,
+} from "@/store/use-chat-store";
 
 export function ChatPanel() {
   const session = useChatStore(selectActiveSession);
@@ -21,6 +25,8 @@ export function ChatPanel() {
   const messagesLoading = useChatStore((state) => state.messagesLoading);
   const sending = useChatStore((state) => state.sending);
   const selectEvidence = useChatStore((state) => state.selectEvidence);
+  // 批次 C：对话区引用条目 → 打开原文抽屉
+  const openChunk = useChatStore((state) => state.openChunk);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -83,6 +89,7 @@ export function ChatPanel() {
                 key={message.id}
                 message={message}
                 onSelectEvidence={selectEvidence}
+                onOpenChunk={openChunk}
               />
             ))}
 

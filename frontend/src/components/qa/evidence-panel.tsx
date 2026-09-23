@@ -23,6 +23,8 @@ function relationLabel(edge: GraphEdge): string {
 
 export function EvidencePanel() {
   const message = useChatStore(selectEvidenceMessage);
+  // 批次 C：点击引用标注 → 回查原文全文并高亮（抽屉状态在 store，对话区共用）
+  const openChunk = useChatStore((state) => state.openChunk);
 
   // 批次 A：直接消费契约字段 kg_nodes / kg_relations（原 graph_paths 降级退役）
   const nodes = message?.kg_nodes ?? [];
@@ -90,7 +92,13 @@ export function EvidencePanel() {
                 </p>
                 <div className="mt-2.5 space-y-2.5">
                   {citations.map((citation, index) => (
-                    <div key={citation.chunk_id} className="flex gap-2">
+                    <button
+                      key={citation.chunk_id}
+                      type="button"
+                      onClick={() => openChunk(citation)}
+                      title="查看原文片段"
+                      className="-mx-1.5 flex w-[calc(100%+0.75rem)] gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-white/[0.05]"
+                    >
                       <span className="mt-px shrink-0 text-[11px] text-muted-foreground tabular-nums">
                         [{index + 1}]
                       </span>
@@ -102,8 +110,12 @@ export function EvidencePanel() {
                           {/* Sprint 6 批次 B（Q1）：页码失配为 null，显示「页码未知」而非空白 */}
                           第 {citation.page ?? "?"} 页 · {citation.chunk_id}
                         </p>
+                        {/* 批次 C：溯源入口 */}
+                        <p className="mt-0.5 text-[10px] text-primary">
+                          查看原文 →
+                        </p>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </>
@@ -112,7 +124,9 @@ export function EvidencePanel() {
             <Separator className="my-4" />
 
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">相关实体</span>
+              <span className="text-[11px] text-muted-foreground">
+                相关实体
+              </span>
               <span className="text-sm font-semibold text-foreground tabular-nums">
                 {nodes.length}
               </span>
