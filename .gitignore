@@ -34,6 +34,9 @@ yarn-error.log*
 
 # 项目特定
 uploads/
+
+# 演示用年报 PDF（本机素材，约 47MB，不入库；来源与 STEP-BY-STEP 用法见 changes/Sprint7.0/demo-docs-checklist.md）
+docs/annualreport/
 **/output/*
 *.log
 
