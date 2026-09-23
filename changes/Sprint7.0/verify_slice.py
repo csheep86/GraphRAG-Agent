@@ -20,6 +20,7 @@ uv run python ../changes/Sprint7.0/verify_slice.py --engine llm  --chunk 1200
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -48,6 +49,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk", type=int, default=1200)
     parser.add_argument("--slice", type=Path, default=DEFAULT_SLICE)
     parser.add_argument("--top", type=int, default=20)
+    parser.add_argument(
+        "--probe",
+        default="",
+        help="逗号分隔的探针关键词，覆盖默认 PROBE_KEYWORDS",
+    )
+    parser.add_argument(
+        "--save",
+        type=Path,
+        default=None,
+        help="把抽取结果落盘为 JSON，便于事后分析（避免重复花钱重跑）",
+    )
     return parser.parse_args()
 
 
@@ -102,11 +114,27 @@ def main() -> int:
         print(f"  {entity.confidence:.2f} {entity.entity_type:<16} "
               f"{entity.canonical_name[:38]:<38} span_ok={span_ok}")
 
+    #: 法人 / 地址的落点就是这两个类型，光看 top-N（ORG 占满）会漏判
+    print("--- PERSON / VENUE 明细（法人 / 地址候选，去重）---")
+    seen: set[tuple[str, str]] = set()
+    for entity in result.entities:
+        if entity.entity_type not in ("PERSON", "VENUE"):
+            continue
+        key = (entity.entity_type, entity.canonical_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        print(f"  {entity.entity_type:<7} {entity.canonical_name[:52]}")
+
+    keywords = (
+        tuple(k.strip() for k in args.probe.split(",") if k.strip())
+        or PROBE_KEYWORDS
+    )
     print("--- D6① probe：法人 / 地址是否出现在抽取产物里 ---")
     haystack = "\n".join(
         f"{e.canonical_name} {e.mention}" for e in result.entities
     )
-    for keyword in PROBE_KEYWORDS:
+    for keyword in keywords:
         hit = keyword in haystack
         print(f"  {keyword:<24} hit={hit}")
 
@@ -128,6 +156,31 @@ def main() -> int:
             totals["prompt_tokens"] * 2 + totals["completion_tokens"] * 8
         ) / 1_000_000
         print(f"  estimated_cost=¥{cost:.4f}")
+
+    if args.save is not None:
+        payload = {
+            "engine": args.engine,
+            "slice": args.slice.name,
+            "chunk_count": len(result.chunks),
+            "entities": [
+                {
+                    "type": e.entity_type,
+                    "name": e.canonical_name,
+                    "mention": e.mention,
+                    "confidence": e.confidence,
+                }
+                for e in result.entities
+            ],
+            "relations": [
+                {"type": r.relation_type, "confidence": r.confidence}
+                for r in result.relations
+            ],
+            "tokens": totals,
+        }
+        args.save.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"  saved={args.save}")
     return 0
 
 
