@@ -305,3 +305,44 @@ class DocumentListResponse(BaseModel):
     page: int = Field(ge=1, description="当前页码（1-based）")
     page_size: int = Field(ge=1, description="每页条目数（请求参数回显）")
     trace_id: str
+
+
+# ---------------------------------------------------------------------------
+# Sprint 6 批次 B：原文片段回查（`GET /documents/{id}/chunks/{chunk_id}`）
+# ---------------------------------------------------------------------------
+
+
+class DocumentChunkResponse(BaseModel):
+    """`GET /api/v1/documents/{id}/chunks/{chunk_id}` 响应：单个原文片段。
+
+    **Q2 拍板**：溯源走**独立端点**回查原文，chunk 全文**不**塞进 `Citation`
+    （`Citation.snippet` 只带 ≤ 200 字摘录），故前端点击引用标注时按
+    `chunk_id` 取本响应，再按 `Citation.char_offset` 在 `text` 内高亮。
+
+    数据源：批次 A 落盘的 `chunks.json`（存储层中间产物，**不进契约**）；
+    与 Neo4j `:Chunk` 同源同值，但不依赖图谱可用。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "doc_id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+                "chunk_id": "chunk-581e8912827d",
+                "text": "甲方：北京青云科技有限公司（以下简称甲方）……",
+                "page": 1,
+                "char_start": 0,
+                "char_end": 764,
+                "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+            }
+        }
+    )
+
+    doc_id: UUID = Field(description="片段所属文档 id")
+    chunk_id: str = Field(description="片段 id（`chunk-<12 hex>`）")
+    text: str = Field(description="片段原文（前端高亮的定位基准）")
+    page: int | None = Field(
+        default=None, description="页码（1-based）；页码无法判定时为 `null`"
+    )
+    char_start: int = Field(description="片段在文档全文中的起始字符偏移（含）")
+    char_end: int = Field(description="片段在文档全文中的结束字符偏移（不含）")
+    trace_id: str

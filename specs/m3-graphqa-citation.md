@@ -71,7 +71,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `answer` | TEXT | 是 | 答案文本（含 `[source: ...]` 标记；拒答时为 `"无法回答"`） |
-| `citations` | LIST | 是 | 引用列表，每条 = `{doc_id, page, chunk_id, char_offset, snippet}` |
+| `citations` | LIST | 是 | 引用列表，每条 = `{doc_id, page, chunk_id, char_offset, snippet}`；**Sprint 6 批次 B 起 `page` 可空**（页码由 MinerU `content_list` 文本对齐反推，失配为 `null`，**严禁兜底伪造 1**） |
 | `route` | TEXT | 是 | `m3_graphqa / m4_affiliation` |
 | `confidence` | TEXT | 是 | `high / medium / low` |
 | `refused` | BOOL | 是 | 是否拒答 |

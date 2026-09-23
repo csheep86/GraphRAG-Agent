@@ -25,7 +25,9 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -51,26 +53,43 @@ from app.schemas.agent import (
 )
 from app.schemas.document import GraphEdge, GraphNode
 from app.services.graphs import (
+    EvidenceChunk,
     GraphService,
     GraphUnavailableError,
 )
 from app.services.providers import build_chat_model
 
-# DeepSeek 是 OpenAI 兼容 API，故使用 langchain_openai.ChatOpenAI 而非 ChatDeepSeek，
-# 这样切换到其它 OpenAI 兼容厂商零代码改动。
+#: DeepSeek 是 OpenAI 兼容 API，故经 ``langchain_openai.ChatOpenAI`` 接入
+#: （切换到其它 OpenAI 兼容厂商零代码改动）。
+#:
+#: **真机教训（2026-09-22 批次 B 冒烟）**：本模块**不得**直接引用 ``ChatOpenAI``
+#: 这个名字——它只在下方 ``except`` 分支被赋值为 ``None``，导入**成功**时从未定义，
+#: 于是 ``_ensure_chat`` 里那句 ``ChatOpenAI is None`` 会抛 ``NameError`` →
+#: 全局兜底成 500（单测把 LLM 全打桩，该分支永远走不到，只能由真机暴露）。
+#: 构造统一交给 :func:`app.services.providers.build_chat_model`；这里只探测
+#: **可用性**（模块 + 消息类型），失败则降级为 501 而非 500。
 _LLM_LANGCHAIN_IMPORT_ERROR: Exception | None = None
 try:
     import langchain_openai  # noqa: F401 - 可用性探测；构造经 providers.build_chat_model
     from langchain_core.messages import HumanMessage, SystemMessage
 except Exception as exc:  # noqa: BLE001 - 兼容失败时优雅降级
     _LLM_LANGCHAIN_IMPORT_ERROR = exc
-    ChatOpenAI = None  # type: ignore[assignment]
     HumanMessage = None  # type: ignore[assignment]
     SystemMessage = None  # type: ignore[assignment]
 
 
 #: 单次送入 Prompt 的图谱节点上限（与契约 `DocumentGraphResponse` 的 500 对齐）
 _GRAPH_NODE_LIMIT = 500
+
+#: `Citation.snippet` 上限：引用只带摘录，chunk 全文由 `GET /documents/{id}/chunks/{id}`
+#: 回查（Q2 拍板——不把全文塞进 `citations`，否则响应随答案条数线性膨胀）
+_SNIPPET_LIMIT = 200
+
+#: 证据条目中的 chunk id（``chunk-<12 hex>``）。
+#: 长度刻意**宽松**（1~64 位字母数字）：本处只负责从自由文本里**抠出** id，
+#: 真正的闸门是后续的 ``chunk_id`` 索引回查——回查不到即丢弃（F3），
+#: 因此无需在正则层面卡死位数（历史占位 / 契约示例里的短 id 也能正确解析）。
+_CITATION_ID_PATTERN = re.compile(r"chunk-[0-9A-Za-z]{1,64}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +166,8 @@ class AgentService:
         if self._chat is not None:
             return self._chat
 
-        if _LLM_LANGCHAIN_IMPORT_ERROR is not None or ChatOpenAI is None:
+        # 只判可用性探测结果：**不**再引用 ChatOpenAI 名字（真机 NameError，见上方注释）
+        if _LLM_LANGCHAIN_IMPORT_ERROR is not None:
             self._failure_reason = (
                 f"LangChain 装配失败: {_LLM_LANGCHAIN_IMPORT_ERROR!r}"
             )
@@ -177,12 +197,15 @@ class AgentService:
         request: AgentQueryRequest,
         org_id: UUID,
         trace_id: str,
+        db: Any = None,
     ) -> AgentQueryResponse:
         """执行一次图谱问答。
 
         实现策略（阶段九 9.3）：
         1. 取 ``active kg_version``（强一致过滤，ADR-0002 §3.2）；
         2. 从 Neo4j 拉取与问题相关的子图；
+        2.5 拉取证据片段（Sprint 6 批次 B：chunk 原文注入 ``kg_qa`` 的 ``text_chunks``，
+           并建 ``chunk_id`` 索引供引用回查）；
         3. 经 :mod:`app.prompts.prompt_loader` 加载 ``kg_qa`` Prompt；
         4. tenacity 重试调用 LLM；
         5. 解析 LLM 输出 → 映射为契约 :class:`AgentQueryResponse`。
@@ -195,7 +218,9 @@ class AgentService:
 
         # 1) active kg_version
         try:
-            kg_version = GraphService.instance().fetch_active_kg_version()
+            kg_version = GraphService.instance().fetch_active_kg_version(
+                org_id=org_id, db=db
+            )
         except GraphUnavailableError as exc:
             # 基础设施故障（Neo4j 不可用 / 无 active 版本）**不**等同于「检索不到证据」：
             # 后者才是 refused=true，前者必须上抛为 501，否则会把故障伪装成正常拒答。
@@ -251,12 +276,38 @@ class AgentService:
                 kg_version=version,
             ).warning("agent_query_tenant_leak_warn_only")
 
+        # 2.6) 证据片段（Sprint 6 批次 B）：把 chunk 原文注入 Prompt，
+        #      并建立 `chunk_id -> EvidenceChunk` 索引供第 6 步回查引用。
+        #      故障语义与子图查询一致：Neo4j 故障上抛 501，
+        #      **不**降级为「无片段」——空片段会让 LLM 无从引用，进而伪装成正常拒答。
+        entity_ids = [node.id for node in subgraph.nodes if node.label == "Entity"]
+        try:
+            evidence_chunks = GraphService.instance().fetch_evidence_chunks(
+                kg_version=version,
+                org_id=org_id,
+                entity_ids=entity_ids,
+                doc_id=request.doc_id,
+            )
+        except GraphUnavailableError as exc:
+            logger.bind(trace_id=trace_id, reason=str(exc)).error(
+                "agent_query_evidence_chunks_unavailable"
+            )
+            raise AgentUnavailableError(f"Neo4j 证据片段查询失败: {exc}") from exc
+
+        chunk_index = {chunk.chunk_id: chunk for chunk in evidence_chunks}
+        text_chunks = _serialize_chunks(evidence_chunks)
+        logger.bind(
+            trace_id=trace_id,
+            entity_count=len(entity_ids),
+            chunk_count=len(evidence_chunks),
+        ).info("agent_query_evidence_chunks")
+
         # 3) 加载 Prompt（任何占位符错误都立即暴露，禁止硬编码）
         template = load_prompt("kg_qa")
         try:
             system_prompt = template.render(
                 graph_subgraph=subgraph.serialized,
-                text_chunks="<chunks not provided in Sprint 3 phase 9 skeleton>",
+                text_chunks=text_chunks,
                 chat_history="",
                 question=request.question,
             )
@@ -296,9 +347,9 @@ class AgentService:
         parsed = _parse_llm_answer(answer)
 
         # 6) 引用覆盖率为 0 → 拒答（F3：引用覆盖率 < 100% 直接 NO-GO）
-        citations = [
-            _to_citation(item) for item in parsed.evidence if _looks_like_citation(item)
-        ]
+        #    批次 B：`_to_citation` 回查本轮注入的证据片段，
+        #    回查不到的条目（LLM 编造 / 未注入的 chunk id）直接丢弃——不得进入 citations。
+        citations = _build_citations(parsed.evidence, chunk_index)
         # 注意：`QueryRoute` / `QueryConfidence` / `RefusalReason` 是 `Literal` **类型别名**
         # 而非 Enum，**禁止**属性访问——`QueryRoute.M3_GRAPHQA` 会经
         # `typing._BaseGenericAlias.__getattr__` 转发到 `typing.Literal` 而抛
@@ -589,18 +640,88 @@ def _looks_like_citation(item: str) -> bool:
     )
 
 
-def _to_citation(item: str) -> Citation:
-    """把 LLM 证据条目映射为契约 :class:`Citation`（骨架版：缺字段填默认值）。
+def _to_citation(item: str, chunks: Mapping[str, EvidenceChunk]) -> Citation | None:
+    """把 LLM 证据条目映射为契约 :class:`Citation`（Sprint 6 批次 B：真实回查）。
 
-    Sprint 3 后段替换为 Cypher 反查以拿到真实 ``doc_id`` / ``page`` / ``snippet``。
+    骨架版恒返回 ``doc_id=UUID(int=0)`` / ``page=1`` / ``snippet=""`` 的占位；
+    批次 B 起改为按 ``chunk_id`` 回查**本轮注入 Prompt 的证据片段**：
+
+    - 命中 → 填真实 ``doc_id`` / ``page``（失配为 ``None``，**不**伪造 1，Q1）/ ``snippet``；
+    - 未命中（LLM 编造的 id，或该 chunk 未挂 ``:Document``）→ 返回 ``None``，
+      由 :func:`_build_citations` 丢弃——F3 严禁不可溯源的引用进入响应。
+
+    :param chunks: ``chunk_id -> EvidenceChunk`` 索引（本轮 :meth:`fetch_evidence_chunks` 结果）
     """
+    match = _CITATION_ID_PATTERN.search(item)
+    if match is None:
+        return None
+
+    chunk_id = match.group(0)
+    chunk = chunks.get(chunk_id)
+    if chunk is None:
+        logger.bind(evidence=item, chunk_id=chunk_id).warning(
+            "agent_citation_chunk_not_injected"
+        )
+        return None
+    if chunk.doc_id is None:
+        # chunk 未挂 :Document → doc_id 无从得知。丢弃而非回落 UUID(int=0) 占位。
+        logger.bind(chunk_id=chunk_id).warning("agent_citation_chunk_without_document")
+        return None
+
     return Citation(
-        doc_id=UUID(int=0),  # 骨架版不解析真实 UUID
-        page=1,
-        chunk_id=item,
+        doc_id=chunk.doc_id,
+        page=chunk.page,
+        chunk_id=chunk_id,
         char_offset=0,
-        snippet="",
+        snippet=_snippet(chunk.text),
     )
+
+
+def _build_citations(
+    evidence: Sequence[str], chunks: Mapping[str, EvidenceChunk]
+) -> list[Citation]:
+    """把 LLM ``evidence`` 列表转为契约引用列表（丢弃一切不可回查的条目）。"""
+    citations: list[Citation] = []
+    for item in evidence:
+        if not _looks_like_citation(item):
+            continue
+        citation = _to_citation(item, chunks)
+        if citation is not None:
+            citations.append(citation)
+    return citations
+
+
+def _snippet(text: str) -> str:
+    """引用摘录（≤ ``_SNIPPET_LIMIT`` 字）；超长截断并加省略号。
+
+    刻意**不**回传 chunk 全文（Q2）：全文由 ``GET /documents/{id}/chunks/{chunk_id}``
+    按需回查，避免 ``citations`` 随答案条数线性膨胀。
+    """
+    stripped = text.strip()
+    if len(stripped) <= _SNIPPET_LIMIT:
+        return stripped
+    return f"{stripped[:_SNIPPET_LIMIT]}…"
+
+
+def _serialize_chunks(chunks: Sequence[EvidenceChunk]) -> str:
+    """把证据片段序列化进 ``kg_qa`` Prompt 的 ``text_chunks`` 占位符。
+
+    空列表给 ``<chunks: empty>``（与子图的 ``<graph: empty>`` 同思路）：
+    让 LLM 明确「没有原文证据」，**不**留白——留白会被当成「随便答」。
+    """
+    if not chunks:
+        return "<chunks: empty>"
+
+    lines = [f"<chunks count={len(chunks)}>"]
+    for chunk in chunks:
+        page = chunk.page if chunk.page is not None else "unknown"
+        lines.append(
+            f"  chunk id={chunk.chunk_id} doc={chunk.doc_id} "
+            f"page={page} chars=[{chunk.char_start},{chunk.char_end})"
+        )
+        lines.append(f"    {chunk.text}")
+    lines.append("</chunks>")
+    return "\n".join(lines)
 
 
 def _serialize_subgraph(

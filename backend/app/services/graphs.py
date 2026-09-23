@@ -12,7 +12,9 @@
 - :meth:`GraphService.fetch_graph_overview`：批次 C 的「全局图谱概览」
   （节点 + 边轻量投影 + 文档/实体/关系总数 + kg_version）；
 - :meth:`GraphService.fetch_entity_detail`：批次 C 的「实体详情」
-  （属性 + 出边邻居 0–50 条）。
+  （属性 + 出边邻居 0–50 条）；
+- :meth:`GraphService.fetch_evidence_chunks`：Sprint 6 批次 B 的「证据片段」
+  （``:Chunk`` 文本 + 页码 + 字符区间，供引用回查与 Prompt 注入）。
 
 设计要点：
 1. **懒加载 driver**：模块导入时不连接 Neo4j；第一次调用 ``instance()`` 时
@@ -37,7 +39,9 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -61,6 +65,10 @@ _ENTITY_NEIGHBOR_LIMIT = 50
 
 #: 批次 C：图谱概览节点上限，与 ``DocumentGraphResponse`` 对齐（500）。
 _GRAPH_OVERVIEW_NODE_LIMIT = 500
+
+#: Sprint 6 批次 B：单次问答注入 Prompt 的证据片段上限。
+#: 与 ``_GRAPH_NODE_LIMIT`` 同源思路——片段是**全文**，过量会直接撑爆 Prompt token。
+_EVIDENCE_CHUNK_LIMIT = 20
 
 
 class GraphUnavailableError(Exception):
@@ -108,6 +116,27 @@ class KgVersion:
     scope: str  # "doc:<uuid>" 或 "global"
 
 
+@dataclass(frozen=True, slots=True)
+class EvidenceChunk:
+    """Sprint 6 批次 B：证据片段（``:Chunk`` 投影）。
+
+    与契约层 :class:`DocumentChunkResponse` **刻意分离**：本类是服务层内部
+    结构（不进契约），``AgentService`` 用它注入 ``kg_qa`` Prompt 的
+    ``text_chunks`` 并回查引用；契约只暴露单条回查端点（Q2）。
+
+    ``doc_id`` 为 ``None`` 表示该 chunk 未挂到任何 ``:Document``
+    （``HAS_CHUNK`` 缺失）——此时**不能**构造 ``Citation``（``doc_id`` 是必填 UUID），
+    调用方须丢弃，严禁回落到 ``UUID(int=0)`` 这类占位。
+    """
+
+    chunk_id: str
+    doc_id: UUID | None
+    text: str
+    page: int | None
+    char_start: int
+    char_end: int
+
+
 #: Cypher 查询：当前 active kg_version（ADR-0002 §3.2 —— **仅** active 可被消费）。
 #: 阶段九由 ``scripts/import_to_neo4j.py`` 在 Neo4j 侧维护 :KgVersion 状态机；
 #: Sprint 4 接入 PG ``kg_versions`` 后，PG 为真源、此查询退化为兜底。
@@ -127,6 +156,28 @@ RETURN v.status AS status
 LIMIT 1
 """
 
+
+#: Sprint 6.3：激活 —— 目标版本置 ``active``、其余置 ``superseded``（**Neo4j 镜像侧**）。
+#: PG ``kg_versions`` 才是真源（其 active 语义写作 ``ready``）；这里只同步镜像，
+#: **不**反过来用镜像判定。真机背景：建图只写到 PG ``ready``，没人同步镜像，
+#: 于是读侧一直拿到旧导入版本（`20260917T090000Z-phase09`，无 `:Chunk`）。
+_CYPHER_ACTIVATE_KG_VERSION = """
+MERGE (v:KgVersion {version: $version})
+SET v.status = 'active',
+    v.scope = $scope,
+    v.org_id = $org_id,
+    v.trace_id = $trace_id,
+    v.updated_at = $now
+RETURN v.version AS version
+"""
+
+_CYPHER_SUPERSEDE_OTHER_VERSIONS = """
+MATCH (v:KgVersion)
+WHERE v.version <> $version
+SET v.status = 'superseded',
+    v.updated_at = $now
+RETURN v.version AS version
+"""
 
 #: fail-closed 接缝 Cypher（Sprint 5 批次 B）：校验 active kg_version 内
 #: **任何** Entity 节点的 ``org_id`` 都属于 ``current_org_id``。
@@ -188,6 +239,44 @@ RETURN
     target: toString(id(e)),
     properties: properties(r)
   }] AS mentions
+"""
+
+
+#: Sprint 6 批次 B：按实体反查证据片段（``(:Chunk)-[:MENTIONS]->(:Entity)``）。
+#: 读侧（``_QUERY_DOCUMENT_SUBGRAPH``）早已按证据链查询，本段把 chunk **文本**取出，
+#: 注入 ``kg_qa`` Prompt 的 ``text_chunks``——批次 B「子图注入时携带 chunk 文本」的落点。
+#: ``OPTIONAL MATCH`` 取 ``:Document``：chunk 未挂文档时 ``doc_id`` 为 ``null``，
+#: 由服务层投影为 ``None``（**不**伪造 UUID）。
+_QUERY_EVIDENCE_CHUNKS_BY_ENTITIES = """
+MATCH (e:Entity {kg_version: $kg_version})
+WHERE e.id IN $entity_ids
+  AND ($org_id IS NULL OR e.org_id IS NULL OR e.org_id = $org_id)
+MATCH (c:Chunk {kg_version: $kg_version})-[:MENTIONS]->(e)
+WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
+OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
+RETURN DISTINCT
+  c.id AS chunk_id,
+  d.id AS doc_id,
+  c.text AS text,
+  c.page AS page,
+  c.char_start AS char_start,
+  c.char_end AS char_end
+LIMIT $limit
+"""
+
+#: 同上，“scope = single_doc” 分支：直接从 ``:Document`` 出发取全部 chunk（不看实体）。
+_QUERY_EVIDENCE_CHUNKS_BY_DOCUMENT = """
+MATCH (d:Document {id: $doc_id, kg_version: $kg_version})
+      -[:HAS_CHUNK]->(c:Chunk {kg_version: $kg_version})
+WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
+RETURN DISTINCT
+  c.id AS chunk_id,
+  d.id AS doc_id,
+  c.text AS text,
+  c.page AS page,
+  c.char_start AS char_start,
+  c.char_end AS char_end
+LIMIT $limit
 """
 
 
@@ -316,11 +405,39 @@ class GraphService:
         except GraphUnavailableError:
             return False
 
-    def fetch_active_kg_version(self, *, scope: str | None = None) -> KgVersion:
-        """读 Neo4j ``:KgVersion`` 返回**唯一** active 版本（ADR-0002 §3.2）。
+    def fetch_active_kg_version(
+        self,
+        *,
+        scope: str | None = None,
+        org_id: UUID | None = None,
+        db: Any = None,
+    ) -> KgVersion:
+        """返回**唯一**可消费版本。
+
+        **真源策略（Sprint 6.3 收口，真机教训）**：
+        - 传入 ``db`` + ``org_id`` 时以 **PG ``kg_versions`` 为真源**（``status='ready'``
+          即 active 语义，取 ``ready_at`` 最新的一条）；PG 说没有就抛
+          ``NoActiveKgVersionError``，**不**回落到 Neo4j 镜像（否则又会把「未激活」
+          伪装成「命中旧版本」——真机正是这样拿到无 ``:Chunk`` 的旧版本）。
+        - 未传 ``db``（脚本 / 无会话的内部调用）才走 Neo4j ``:KgVersion`` 兜底。
 
         ``writing`` / ``failed`` 版本一律**不**返回，从源头杜绝脏读。
         """
+        if db is not None and org_id is not None:
+            # 延迟导入：避免 graphs（被 agents 依赖）在模块级牵上 db 会话依赖
+            from app.services.kg.versioning import KgVersioningService
+
+            record = KgVersioningService(db).get_active(org_id=org_id)
+            if record is None:
+                raise NoActiveKgVersionError(
+                    "PG kg_versions 中无 ready 版本（PG 为真源；"
+                    "请先建图并调用 POST /graph/versions/{version}/activate）"
+                )
+            logger.bind(version=record.version, source="pg").debug(
+                "kg_version_active_resolved"
+            )
+            return KgVersion(version=record.version, scope="global")
+
         try:
             with self._session() as session:
                 result = session.run(_QUERY_ACTIVE_KG_VERSION, scope=scope).single()
@@ -365,6 +482,47 @@ class GraphService:
         status = result["status"] if result else None
         return str(status) if status else None
 
+    def activate_kg_version(
+        self, *, version: str, org_id: UUID, trace_id: str
+    ) -> list[str]:
+        """同步 **Neo4j 镜像**：目标版本置 ``active``，其余置 ``superseded``。
+
+        真源判定在 PG（:meth:`KgVersioningService.activate_by_version`）；本方法只做
+        镜像写入，供「无 db 会话」的读路径（:meth:`fetch_active_kg_version` 的 Neo4j
+        兜底分支、脚本）保持一致。
+
+        :returns: 本次被置 ``superseded`` 的版本号列表（可为空）
+        :raises GraphUnavailableError: Neo4j 不可用 / 写入失败
+        """
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._session() as session:
+                superseded = [
+                    str(record["version"])
+                    for record in session.run(
+                        _CYPHER_SUPERSEDE_OTHER_VERSIONS, version=version, now=now
+                    )
+                ]
+                session.run(
+                    _CYPHER_ACTIVATE_KG_VERSION,
+                    version=version,
+                    scope="global",
+                    org_id=str(org_id),
+                    trace_id=trace_id,
+                    now=now,
+                ).consume()
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"激活 kg_version 镜像失败: version={version}: {exc}"
+            ) from exc
+
+        logger.bind(version=version, superseded=superseded, trace_id=trace_id).info(
+            "kg_version_mirror_activated"
+        )
+        return superseded
+
     def validate_kg_version_tenant_boundary(
         self, *, kg_version: str, current_org_id: UUID
     ) -> bool:
@@ -403,6 +561,7 @@ class GraphService:
         kg_version: str | None = None,
         org_id: UUID | None = None,
         node_limit: int = 500,
+        db: Any = None,
     ) -> tuple[list[GraphNode], list[GraphEdge], bool]:
         """取**全部**已导入实体子图，不依赖 PG ``document_id``。
 
@@ -415,7 +574,9 @@ class GraphService:
         if node_limit <= 0:
             raise ValueError("node_limit 必须为正整数")
 
-        version = kg_version or self.fetch_active_kg_version().version
+        version = (
+            kg_version or self.fetch_active_kg_version(org_id=org_id, db=db).version
+        )
 
         try:
             with self._session() as session:
@@ -521,6 +682,81 @@ class GraphService:
 
         return nodes, edges, truncated
 
+    def fetch_evidence_chunks(
+        self,
+        *,
+        kg_version: str,
+        org_id: UUID | None = None,
+        entity_ids: Sequence[str] = (),
+        doc_id: UUID | None = None,
+        limit: int = _EVIDENCE_CHUNK_LIMIT,
+    ) -> list[EvidenceChunk]:
+        """取证据片段（Sprint 6 批次 B）：``:Chunk`` 文本 + 页码 + 字符区间。
+
+        两条取数路径，与 :meth:`AgentService._fetch_subgraph_for_question` 的
+        ``scope`` 语义对齐：
+
+        - ``doc_id`` 非空（``scope = single_doc``）→ 从 ``:Document`` 直达；
+        - 否则按 ``entity_ids`` 经 ``MENTIONS`` 反查（跨文档）。
+
+        两者都为空 → 返回空列表（**不**全量扫描 chunk，避免把无关原文喂给 LLM）。
+
+        :raises GraphUnavailableError: Neo4j 不可用，或原始数据与投影契约不符
+            （沿用设计要点 5：失败即显式暴露，**不**静默返回空列表——
+            空片段会让上层误判为「图谱里没有证据」而拒答）。
+        """
+        if limit <= 0:
+            raise ValueError("limit 必须为正整数")
+
+        if doc_id is not None:
+            query = _QUERY_EVIDENCE_CHUNKS_BY_DOCUMENT
+            params: dict[str, Any] = {
+                "kg_version": kg_version,
+                "org_id": str(org_id) if org_id else None,
+                "doc_id": str(doc_id),
+                "limit": limit,
+            }
+        elif entity_ids:
+            query = _QUERY_EVIDENCE_CHUNKS_BY_ENTITIES
+            params = {
+                "kg_version": kg_version,
+                "org_id": str(org_id) if org_id else None,
+                "entity_ids": list(entity_ids),
+                "limit": limit,
+            }
+        else:
+            return []
+
+        try:
+            with self._session() as session:
+                records = list(session.run(query, **params))
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"查询证据片段失败: kg_version={kg_version}: {exc}"
+            ) from exc
+
+        projection_context = f"fetch_evidence_chunks kg_version={kg_version}"
+        chunks: list[EvidenceChunk] = []
+        for index, record in enumerate(records):
+            try:
+                chunks.append(_to_evidence_chunk(record))
+            except Exception as exc:  # noqa: BLE001 - 投影失败必须显式暴露
+                logger.bind(
+                    context=projection_context, kind="chunk", record_index=index
+                ).warning("graph_projection_failed")
+                raise GraphUnavailableError(
+                    _projection_failure_message(
+                        context=projection_context,
+                        kind="chunk",
+                        label=None,
+                        index=index,
+                        exc=exc,
+                    )
+                ) from exc
+        return chunks
+
     # ------------------------------------------------------------------ 批次 C
 
     def fetch_graph_overview(
@@ -529,6 +765,7 @@ class GraphService:
         org_id: UUID | None = None,
         trace_id: str,
         node_limit: int = _GRAPH_OVERVIEW_NODE_LIMIT,
+        db: Any = None,
     ) -> GraphOverviewResponse:
         """全局图谱概览（`GET /graph/overview`，Sprint 5 批次 C）。
 
@@ -540,7 +777,7 @@ class GraphService:
         :raises GraphUnavailableError: Neo4j 连接 / 查询失败（路由层 501）
         :raises NoActiveKgVersionError: 无 active 版本（路由层 409）
         """
-        version = self.fetch_active_kg_version().version
+        version = self.fetch_active_kg_version(org_id=org_id, db=db).version
         stats = self._fetch_graph_overview_stats(version=version, org_id=org_id)
 
         try:
@@ -623,6 +860,7 @@ class GraphService:
         org_id: UUID | None = None,
         trace_id: str,
         neighbor_limit: int = _ENTITY_NEIGHBOR_LIMIT,
+        db: Any = None,
     ) -> EntityDetail:
         """实体详情（`GET /entities/{entity_id}`，Sprint 5 批次 C）。
 
@@ -638,7 +876,7 @@ class GraphService:
         if neighbor_limit <= 0:
             raise ValueError("neighbor_limit 必须为正整数")
 
-        version = self.fetch_active_kg_version().version
+        version = self.fetch_active_kg_version(org_id=org_id, db=db).version
 
         try:
             with self._session() as session:
@@ -740,6 +978,38 @@ def _to_node(record: Any, *, kg_version: str, label: str) -> GraphNode:
     )
 
 
+def _to_evidence_chunk(record: Any) -> EvidenceChunk:
+    """把证据片段 record 投影为 :class:`EvidenceChunk`（Sprint 6 批次 B）。
+
+    与 :func:`_to_node` 同族：字段非法**抛**而不是兜底——
+    ``doc_id`` 不是合法 UUID 时尤其不能静默置 ``None``，
+    否则上层会把「数据坏了」当成「这个 chunk 没挂文档」而丢弃证据。
+    """
+    chunk_id = str(record.get("chunk_id") or "")
+    raw_doc_id = record.get("doc_id")
+    doc_id: UUID | None = None
+    if raw_doc_id:
+        try:
+            doc_id = UUID(str(raw_doc_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"doc_id 不是合法 UUID: {raw_doc_id!r}") from exc
+
+    raw_page = record.get("page")
+    page = (
+        int(raw_page)
+        if isinstance(raw_page, int) and not isinstance(raw_page, bool)
+        else None
+    )
+    return EvidenceChunk(
+        chunk_id=chunk_id,
+        doc_id=doc_id,
+        text=str(record.get("text") or ""),
+        page=page,
+        char_start=int(record.get("char_start") or 0),
+        char_end=int(record.get("char_end") or 0),
+    )
+
+
 def _project_nodes(
     records: Any,
     *,
@@ -804,7 +1074,11 @@ def _edge_from_record(record: Any) -> GraphEdge:
         )
     return GraphEdge(
         id=str(record.get("id", "")),
-        type=_relation_type(record.get("type")),
+        # 语义优先：真机的 type(r) 是通用 RELATION，真实语义在 properties.relation_type
+        type=_relation_type(
+            record.get("type"),
+            semantic=raw_properties.get("relation_type"),
+        ),
         source=str(record.get("source", "")),
         target=str(record.get("target", "")),
         properties=_sanitize_properties(raw_properties),
@@ -846,8 +1120,14 @@ def _describe_projection_error(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-def _relation_type(raw: Any) -> RelationType:
+def _relation_type(raw: Any, *, semantic: Any = None) -> RelationType:
     """把 Cypher ``type(r)`` 的字符串映射为契约 ``RelationType`` 枚举。
+
+    **语义优先（2026-09-22 真机修复）**：抽取产物把**真实语义**写在
+    ``properties.relation_type``（真机实测 ``PARTY_TO``），而 Neo4j 的 ``type(r)``
+    是通用 token ``RELATION``——后者不在契约枚举里，会被兜底成 ``MENTIONS``，
+    于是图谱页与 Prompt 里的所有关系都显示成 ``MENTIONS``（真机污染）。
+    故取数顺序为：**先语义、后类型**，两者都不命中才兜底。
 
     **契约对齐说明（Sprint 4.10.0.B）**：``RelationType`` 已扩展
     ``HAS_FINANCIAL_INDICATOR`` / ``OPERATES_SEGMENT`` / ``RELATED`` 三个
@@ -868,9 +1148,10 @@ def _relation_type(raw: Any) -> RelationType:
         "RELATED",
     }
 
-    raw_name = str(raw)
-    if raw_name in contract_enum:
-        return raw_name  # type: ignore[return-value]
+    for candidate in (semantic, raw):
+        name = str(candidate)
+        if name in contract_enum:
+            return name  # type: ignore[return-value]
     # 未知类型兜底投影：真实关系名由 properties["relation_name"] 承载
     return "MENTIONS"  # type: ignore[return-value]
 
@@ -999,12 +1280,13 @@ def _project_overview_edges(records: Any, *, context: str) -> list[GraphOverview
                 raise TypeError(
                     f"properties 字段应为 dict，实际为 {type(raw_properties).__name__}"
                 )
-            rel_name = str(record.get("type") or "")
-            if rel_name not in {"HAS_CHUNK", "MENTIONS", "SUPPORTED_BY"}:
-                # 仅展示实体间可引用边（演示）；其它（含桥梁抽取的
-                # HAS_FINANCIAL_INDICATOR / OPERATES_SEGMENT / RELATED）由
-                # ``MOCK_GRAPH_OVERVIEW`` 风格数据补齐。**不**静默跳过。
-                rel_name = rel_name or "MENTIONS"
+            # 与 :func:`_relation_type` 同款「语义优先」：真机 ``type(r)`` 是通用
+            # ``RELATION``，真实语义在 ``properties.relation_type``（如 ``PARTY_TO``）。
+            # 不优先取语义，图谱页就会把所有关系都显示成 ``RELATION``（真机实测）。
+            rel_name = _relation_type(
+                record.get("type"),
+                semantic=raw_properties.get("relation_type"),
+            )
             edges.append(
                 GraphOverviewEdge(
                     id=str(record.get("id") or ""),
@@ -1040,6 +1322,7 @@ def _seed_coords_from_id(node_id: str) -> tuple[float, float]:
 
 
 __all__ = [
+    "EvidenceChunk",
     "GraphService",
     "GraphUnavailableError",
     "EntityNotFoundError",

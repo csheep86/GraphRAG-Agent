@@ -55,13 +55,25 @@ class Citation(BaseModel):
     """引用条目：答案的每一个事实句都必须能回溯到此结构（M3 §4.2）。
 
     引用覆盖率必须为 100%，否则必须拒答（反证条件 F3）。
+
+    **Sprint 6 批次 B（Q1 拍板）**：``page`` 改为 nullable——页码来自 MinerU
+    ``content_list`` 文本对齐反推（批次 A 的 ``PageIndex``），
+    **对齐失配时必须给 ``null``，严禁兜底伪造 1**。
     """
 
     doc_id: UUID
-    page: int = Field(description="页码（1-based）")
+    page: int | None = Field(
+        default=None,
+        description="页码（1-based）；页码无法判定时为 `null`（严禁伪造）",
+    )
     chunk_id: str
-    char_offset: int = Field(description="原文 span 在 chunk 内的字符偏移")
-    snippet: str = Field(description="用于 UI 高亮的原文片段")
+    char_offset: int = Field(
+        description=(
+            "引用在 chunk 内的字符偏移。"
+            "批次 B 为 chunk 起点（0）；实体级偏移待 `:Entity` 落 `char_start` 后细化"
+        )
+    )
+    snippet: str = Field(description="用于 UI 高亮的原文片段（≤ 200 字的 chunk 摘录）")
 
 
 class TokenUsage(BaseModel):

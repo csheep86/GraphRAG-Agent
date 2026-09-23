@@ -40,7 +40,9 @@ def _patch_graph(
     """打桩 GraphService：active 版本 + 子图 + 租户边界校验。"""
     calls: dict[str, object] = {}
 
-    def fake_active(self: GraphService, *, scope: str | None = None) -> KgVersion:
+    def fake_active(
+        self: GraphService, *, scope: str | None = None, **kwargs: object
+    ) -> KgVersion:
         return KgVersion(version="v-test", scope="global")
 
     def fake_subgraph(
@@ -67,6 +69,11 @@ def _patch_graph(
     monkeypatch.setattr(
         GraphService, "validate_kg_version_tenant_boundary", fake_validate
     )
+    # Sprint 6 批次 B：问答链路在本步之后还会拉一次证据片段（Neo4j）。
+    # 本文件只测 fail-closed，遂打桩为空——否则用例会因真实 Neo4j 不可用而偏离断言目标。
+    monkeypatch.setattr(
+        GraphService, "fetch_evidence_chunks", lambda self, **kwargs: []
+    )
 
     # 确定性收尾：无论本地 .env 是否配置 LLM_API_KEY，都止步于装配检查
     def fail_chat(self: AgentService) -> object:
@@ -77,7 +84,15 @@ def _patch_graph(
 
 
 class _StubSubgraph:
+    """``_fetch_subgraph_for_question`` 的返回值替身。
+
+    只补齐链路**实际消费**的字段：``serialized``（Prompt 渲染）+ ``nodes``
+    （批次 B 取实体 id 拉证据片段）；其余字段不伪造，缺失即说明被测代码越界。
+    """
+
     serialized = "<graph: stub/>"
+    nodes: list = []
+    edges: list = []
 
 
 def _query() -> object:
@@ -166,6 +181,7 @@ def test_route_returns_403_on_tenant_leak(
         request: AgentQueryRequest,
         org_id: UUID,
         trace_id: str,
+        db: object = None,
     ) -> AgentQueryResponse:
         raise AgentTenantLeakError("跨租户子图泄漏检测到（kg_version=v-test）")
 
@@ -197,6 +213,7 @@ def test_route_returns_501_on_plain_unavailable(
         request: AgentQueryRequest,
         org_id: UUID,
         trace_id: str,
+        db: object = None,
     ) -> AgentQueryResponse:
         raise AgentUnavailableError("LLM_API_KEY 未配置")
 

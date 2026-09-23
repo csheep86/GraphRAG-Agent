@@ -9,6 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Query, UploadFile
 
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
+    CHUNK_NOT_FOUND,
     DOCUMENT_NOT_FOUND,
     FILE_TOO_LARGE,
     KG_VERSION_NOT_ACTIVE,
@@ -19,6 +20,7 @@ from app.api.v1.responses import (
 )
 from app.core.errors import AppError, ErrorCode
 from app.schemas.document import (
+    DocumentChunkResponse,
     DocumentGraphResponse,
     DocumentListResponse,
     DocumentStatusResponse,
@@ -29,6 +31,7 @@ from app.services.documents import (
     PAGE_SIZE_MAX,
     DocumentListQuery,
     create_document_upload,
+    get_document_chunk,
     get_document_status,
     get_scoped_document,
     list_documents,
@@ -263,6 +266,40 @@ async def read_document_graph(
         node_count=len(nodes),
         relation_count=len(edges),
         truncated=truncated,
+        trace_id=trace_id,
+    )
+
+
+@router.get(
+    "/{document_id}/chunks/{chunk_id}",
+    response_model=DocumentChunkResponse,
+    operation_id="getDocumentChunk",
+    summary="按 chunk_id 回查原文片段（引用溯源）",
+    description=(
+        "返回该文档下指定 `chunk_id` 的原文片段，供前端「点击引用标注 → 跳转到原文并高亮」"
+        "（M3 §3 验收 2 / F3；Sprint 6 批次 B，Q2 拍板）；"
+        "`Citation.snippet` 只带 ≤ 200 字摘录，chunk 全文**不**进引用体，"
+        "故前端拿到 `Citation.char_offset` 后再按本端点取全文做高亮；"
+        "数据源是批次 A 落盘的 `chunks.json`（存储层中间产物，位于 extract 段，"
+        "与 Neo4j `:Chunk.text` 同源同值，**不**依赖图谱可用）；"
+        "错误分支：文档不存在 → 404 `DOCUMENT_NOT_FOUND`，"
+        "跨租户 → **403**（非 404，ADR-0003 / M5 §3 验收 1），"
+        "产物缺失或其中无该 `chunk_id` → 404 `NOT_FOUND`。"
+    ),
+    responses={**TENANT_ERROR_RESPONSES, **CHUNK_NOT_FOUND},
+)
+async def read_document_chunk(
+    document_id: UUID,
+    chunk_id: str,
+    identity: CurrentIdentity,
+    session: DbSession,
+    trace_id: TraceId,
+) -> DocumentChunkResponse:
+    return get_document_chunk(
+        session=session,
+        document_id=document_id,
+        chunk_id=chunk_id,
+        identity=identity,
         trace_id=trace_id,
     )
 

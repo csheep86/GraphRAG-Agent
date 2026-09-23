@@ -84,7 +84,8 @@ export function ChatMessageItem({
                       {citation.snippet}
                     </p>
                     <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
-                      {citation.doc_id.slice(0, 8)} · 第 {citation.page} 页 ·{" "}
+                      {/* Sprint 6 批次 B（Q1）：页码失配为 null，显示「页码未知」而非空白 */}
+                      {citation.doc_id.slice(0, 8)} · 第 {citation.page ?? "?"} 页 ·{" "}
                       {citation.chunk_id}
                     </p>
                   </div>
