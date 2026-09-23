@@ -76,7 +76,7 @@
 
 ---
 
-## 5. prompts S9~S13 核账（已澄清，**无缺口**）
+## 5. prompts S9~S13 核账（已澄清；**2026-09-23 追加两笔 Prompt 治理欠账**）
 
 **结论**：**Sprint 9~13 全部复用 v1（5 件），不新增 Prompt 版本**，符合 PRD §7 与 CODEBUDDY H9。
 
@@ -101,6 +101,16 @@
 ```
 
 **关键证据**：`entity_relation_extract_v1.md` 第 16~18 行已含 `{{entity_types}}` / `{{relation_types}}` / `{{domain_description}}` 占位符——**v1 已支持模板参数化**。
+
+**2026-09-23 追加（S6 收尾盘点：两笔 Prompt 治理欠账 → Sprint 8 批次 C 治理）**
+
+> 上述「参数化」结论本身没错，但**对生产链路不成立**，必须一并记录，否则后续 Sprint 会照着它做错设计。
+
+1. **`entity_relation_extract_v1.md` 无代码消费者**：上表 S9 / S12 两行假定「复用该模板做参数化」，但生产链路在 `backend/app/services/extraction/langextract.py` 第 293–295 行**硬绑** `load_prompt("kg_extraction", …)`，实际消费的是 `kg_extraction_v1.md`；而 `entity_relation_extract_v1.md` 全仓仅出现在 `app/tasks/registry.py` 第 182 行**注释**中——两套抽取模板语义重叠、其一悬空。
+   **连带后果**：给 M4 扩实体类型（法人 / 地址）**不能靠参数注入**，只能走**新增 `kg_extraction_v2.md`**（详见 `changes/Sprint7.1/proposal.md` What Changes 第 1 条与其「纠正」说明）。
+2. **类型枚举两侧不一致**：`kg_extraction_v1.md` 第 25 / 37 行的 `entity_type` / `relation_type` 枚举含 `VENUE` / `PRODUCT`，而 `langextract.py` 的 `ENTITY_TYPES` 仅 6 类——**谁为准尚未裁决**。
+
+两笔与 `backend/CODEBUDDY.md` §4 的 **S6-5 / S6-6** 是同一批事项；处置落点统一为 **Sprint 8 批次 C 治理**（销毁 / 合并模板 + 统一枚举口径），本次只登记、不处置。
 
 ---
 

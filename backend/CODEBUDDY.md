@@ -70,7 +70,10 @@
 | 文件写入存储抽象层 | ✅ 已偿还（S5 批次 A）：上传真实落盘，completed 回填 `storage_key`（**不再恒 NULL**） | M1 §4.3 |
 | **S6-1** `Citation.char_offset` 恒为 0 | 未偿还：当前值为 **chunk 起点（0）**；实体级偏移待 `:Entity` 落 `char_start` 后细化 | M3 §4 / release notes v1.2.0 §6.2 → **S10** |
 | **S6-2** `_snippet` 使「摘录长度 ≠ 原文区间长度」 | 未偿还：`text.strip()` 截断 200 字**再加 `…`**（真机 `snippet.length=201`）——strip 造成位移、省略号多算 1 字；前端改「去省略号 + `indexOf` 对齐」兜底（真机 `index_of_align_hit=True`）。建议后端改返回 `snippet_start` / `snippet_end` | release notes v1.2.0 §6.3 → **S10** |
-| **S6-3** 实体抽取质量低（整句被抽成实体 / 数值独立成节点 / 同实体重复 3 份） | 未偿还：答案正确性由 **chunk 全文**兜住（引用覆盖率 100%），但图谱侧实体质量不达标 | release notes v1.2.0 §6.1 → **S9 实体消解** |
+| **S6-3** 实体抽取质量低（整句被抽成实体 / 数值独立成节点 / 同实体重复 3 份） | 未偿还：答案正确性由 **chunk 全文**兜住（引用覆盖率 100%），但图谱侧实体质量不达标。**2026-09-23 归因订正**：「整句成实体」是 `_RE_ORG` 贪婪匹配的产物（根因见 **S6-4**），并非 LLM 抽取质量问题 | release notes v1.2.0 §6.1 → **S9 实体消解**（根因由 S6-4 先行处置） |
+| **S6-4** 抽取链路「名义 provider、实为 stub」（2026-09-23 新增） | 未偿还：`LangextractClient.from_settings()`（`langextract.py` 267–276 行）**不传 LLM client** → 走 `_default_extract_chunk`（191–196 行正则占位器，只出 ORG / PERSON / MONEY / DATE）；`_evaluate_client_call_llm` **全仓无实现**；**配了 `LLM_API_KEY` 也不调 LLM**；v1.1.0 §6.3 的「注入 provider 后启用」从未落到任何 Sprint | release notes v1.1.0 §6.1 / §6.3 → **`changes/Sprint7.0`**（已批准的前置还债批次） |
+| **S6-5** `prompts/entity_relation_extract_v1.md` 无代码消费者（2026-09-23 新增） | 未偿还：生产链路硬绑 `load_prompt("kg_extraction", …)`（`langextract.py` 293–295 行）；该模板全仓仅出现在 `tasks/registry.py` 第 182 行注释里，与 `kg_extraction_v1.md` **语义重叠、两套抽取模板并存** | 2026-09-23 S6 收尾盘点（决策点 D4）→ **Sprint 8 批次 C 治理**（裁决销毁 / 合并） |
+| **S6-6** Prompt 侧与代码侧的类型枚举不一致（2026-09-23 新增） | 未偿还：`kg_extraction_v1.md` 第 25 / 37 行的枚举含 `VENUE` / `PRODUCT`，而 `langextract.py` 的 `ENTITY_TYPES` 仅 6 类——**谁为准尚未裁决** | 2026-09-23 S6 收尾盘点 → **Sprint 8 批次 C 治理**（与 S6-5 一并收） |
 | 契约 `description` 描述漂移 | ✅ 已偿还（Sprint 4.10.0.C + C2）——C 批：`/graph`、`/agent/query`；C2 批：`/upload` | 本文件 §3 |
 | C2：`/upload` 的 `description` 过期 | ✅ 已偿还（Sprint 4.10.0.C2）：`routes/documents.py` 原「不注册异步执行体 / `status` 停留在 `pending` / Sprint 3 补齐」已改为真实链路措辞（含 H1 状态机、H8 重试、启动回收、骨架版局限），并同批重导出 `contracts/openapi.yaml` + `frontend/src/types/api.d.ts` | 本文件 §3 |
 | S4-1：`docs/multimodal_rag_backend_api_spec-v1.0.md` L137 | `NOT_IMPLEMENTED` 行仍写「契约已定稿、实现留待 Sprint 3 / 来源：Sprint 1 边界」，与已实装的 5 个接口不符 | ✅ 已偿还（Sprint 4.13） |
