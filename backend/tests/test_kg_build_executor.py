@@ -52,6 +52,17 @@ _RELATIONS = [
         "confidence": 0.95,
     }
 ]
+#: Sprint 6 批次 A-1：``chunks.json``（Chunk 证据层输入）。
+#: 区间 [0, 50) 覆盖 ``_ENTITIES[0].char_start = 2`` —— 供 stage-4 归属断言使用。
+_CHUNKS = [
+    {
+        "id": "chunk-aaaabbbbcccc",
+        "char_start": 0,
+        "char_end": 50,
+        "text": "甲方：北京青云科技有限公司（以下简称甲方）",
+        "page": 1,
+    }
+]
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -100,6 +111,12 @@ def _place_extract_artifacts(document_id: UUID) -> None:
             filename="relations.json",
         ),
         json.dumps(_RELATIONS, ensure_ascii=False).encode("utf-8"),
+    )
+    storage.put(
+        build_extract_artifact_key(
+            org_id=settings.default_org_id, doc_id=document_id, filename="chunks.json"
+        ),
+        json.dumps(_CHUNKS, ensure_ascii=False).encode("utf-8"),
     )
 
 
@@ -222,6 +239,10 @@ def test_kg_build_happy_path(
     assert str(request.org_id) == str(settings.default_org_id)
     assert request.entities == _ENTITIES
     assert request.relations == _RELATIONS
+    # Sprint 6 批次 A-3：Chunk 证据层入参与文档引用（acl_scope 预留字段不进契约）
+    assert request.chunks == _CHUNKS
+    assert request.document is not None
+    assert str(request.document.doc_id) == str(document_id)
 
 
 def test_kg_build_reuses_existing_kg_version_row(

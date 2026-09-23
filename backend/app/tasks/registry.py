@@ -20,6 +20,7 @@ import asyncio
 import json
 import traceback
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -39,10 +40,13 @@ from app.core.errors import ErrorCode
 from app.db.models import Document, KgVersion
 from app.db.session import SessionLocal
 from app.services.extraction import LangextractClient, LangextractError
+from app.services.extraction.langextract import ExtractionResult
 from app.services.graphs import GraphUnavailableError
 from app.services.kg import ThreeStageKgBuilder
+from app.services.kg.builder import KgDocumentRef
 from app.services.kg.versioning import KgVersioningService
 from app.services.parsing import MineruApiError, MineruClient
+from app.services.parsing.page_index import build_page_index
 from app.storage import (
     build_extract_artifact_key,
     build_parse_artifact_key,
@@ -364,10 +368,80 @@ async def document_extract_executor(spec: TaskSpec) -> None:
         db.close()
 
 
+def _read_optional_parse_artifact(
+    *, org_id: UUID, doc_id: UUID, filename: str
+) -> bytes | None:
+    """读解析产物；不存在 / 读失败 → ``None``。
+
+    ``content_list.json`` 是**可选**输入：docx / csv 走「跳过解析」路径时本就没有它，
+    缺了不应让抽取失败——只是页码判不出来（``page = None``），降级由调用方登记。
+    """
+    key = build_parse_artifact_key(org_id=org_id, doc_id=doc_id, filename=filename)
+    try:
+        return get_storage().get(key, org_id=org_id)
+    except Exception as exc:  # noqa: BLE001 - 缺产物是预期内的降级分支
+        logger.bind(
+            document_id=str(doc_id),
+            artifact=filename,
+            exc_type=type(exc).__name__,
+        ).warning("parse_artifact_unavailable")
+        return None
+
+
+def _apply_page_numbers(
+    *,
+    result: ExtractionResult,
+    markdown: str,
+    content_list_raw: bytes | None,
+    document_id: UUID,
+) -> ExtractionResult:
+    """给抽取产物的每个 chunk 回填页码（Sprint 6 批次 A-2，best-effort）。
+
+    ``content_list.json`` 缺失 / 非法 / 对齐 0 命中时**不**失败：chunk 的 ``page``
+    保持 ``None``，由下游按「无页码」处理（**不**兜底成 1）。
+    """
+    if content_list_raw is None:
+        logger.bind(document_id=str(document_id)).warning(
+            "page_index_skipped_content_list_missing"
+        )
+        return result
+
+    try:
+        content_list = json.loads(content_list_raw.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - 产物损坏是数据问题，不阻断抽取
+        logger.bind(document_id=str(document_id), exc_type=type(exc).__name__).warning(
+            "page_index_skipped_invalid_content_list"
+        )
+        return result
+
+    if not isinstance(content_list, list):
+        logger.bind(document_id=str(document_id)).warning(
+            "page_index_skipped_content_list_not_list"
+        )
+        return result
+
+    index = build_page_index(markdown, content_list)
+    logger.bind(
+        document_id=str(document_id),
+        page_spans=len(index.spans),
+        matched=index.matched,
+        total=index.total,
+        coverage=index.coverage,
+    ).info("page_index_built")
+
+    return replace(
+        result,
+        chunks=[
+            replace(chunk, page=index.locate_range(chunk.char_start, chunk.char_end))
+            for chunk in result.chunks
+        ],
+    )
+
+
 async def _do_extract(
     *, document_id: UUID, trace_id: str, payload: Mapping[str, object]
 ) -> None:
-    """真实抽取：读 full.md → LangExtract → 写 entities / relations JSON。"""
+    """真实抽取：读 full.md → LangExtract → 写 entities / relations / chunks JSON。"""
     storage = get_storage()
     db: Session = SessionLocal()
     try:
@@ -393,6 +467,18 @@ async def _do_extract(
             trace_id=UUID(trace_id) if isinstance(trace_id, str) else trace_id,
         )
 
+        # Sprint 6 批次 A-2：用 content_list.json 给 chunk 判页（best-effort，失配 → None）
+        result = _apply_page_numbers(
+            result=result,
+            markdown=markdown,
+            content_list_raw=_read_optional_parse_artifact(
+                org_id=document.org_id,
+                doc_id=document_id,
+                filename="content_list.json",
+            ),
+            document_id=document_id,
+        )
+
         entities_key = build_extract_artifact_key(
             org_id=document.org_id, doc_id=document_id, filename="entities.json"
         )
@@ -405,14 +491,25 @@ async def _do_extract(
         relations_payload = json.dumps(
             result.to_json_dict()["relations"], ensure_ascii=False
         ).encode("utf-8")
+        # Sprint 6 批次 A-1：切块产物落盘，供 kg.build 建 :Chunk 证据节点
+        chunks_key = build_extract_artifact_key(
+            org_id=document.org_id, doc_id=document_id, filename="chunks.json"
+        )
+        chunks_payload = json.dumps(
+            result.to_json_dict()["chunks"], ensure_ascii=False
+        ).encode("utf-8")
         storage.put(entities_key, entities_payload)
         storage.put(relations_key, relations_payload)
+        storage.put(chunks_key, chunks_payload)
 
+        paged = sum(1 for chunk in result.chunks if chunk.page is not None)
         logger.bind(
             trace_id=trace_id,
             document_id=str(document_id),
             entity_count=len(result.entities),
             relation_count=len(result.relations),
+            chunk_count=len(result.chunks),
+            chunk_with_page=paged,
         ).info("document_extract_artifacts_stored")
     finally:
         db.close()
@@ -558,6 +655,26 @@ async def _do_kg_build(
         entities = json.loads(entities_raw.decode("utf-8"))
         relations = json.loads(relations_raw.decode("utf-8"))
 
+        # Sprint 6 批次 A-1：chunks.json 是 Chunk 证据层的**唯一**输入。
+        # 缺失即 pipeline 断裂（extract 阶段没跑或产物损坏）——**显式报错**，
+        # 不静默降级为「只写实体」：那样 go/no-go 判据①会以一个看不出原因的
+        # 「:Chunk 数 = 0」失败（plan §4.4：数据质量故障不得伪装成正常结论）。
+        chunks_key = build_extract_artifact_key(
+            org_id=document.org_id, doc_id=document_id, filename="chunks.json"
+        )
+        try:
+            chunks_raw = storage.get(chunks_key, org_id=document.org_id)
+        except Exception as exc:  # noqa: BLE001 - 统一包装为可重试业务错误
+            raise LangextractError(
+                f"读取 chunks.json 失败（Chunk 证据层缺失）: key={chunks_key}: {exc}"
+            ) from exc
+        chunks = json.loads(chunks_raw.decode("utf-8"))
+        if not isinstance(chunks, list):
+            raise LangextractError(
+                f"chunks.json 结构非法（应为 list）: key={chunks_key}, "
+                f"实际={type(chunks).__name__}"
+            )
+
         builder = ThreeStageKgBuilder()
         from app.services.kg.builder import KgBuildRequest
 
@@ -567,6 +684,10 @@ async def _do_kg_build(
                 version=kg_version.version,
                 entities=entities,
                 relations=relations,
+                chunks=chunks,
+                document=KgDocumentRef(
+                    doc_id=document_id, acl_scope=document.acl_scope
+                ),
                 trace_id=UUID(str(payload.get("trace_id", "")))
                 if payload.get("trace_id")
                 else kg_version.trace_id,
@@ -586,6 +707,8 @@ async def _do_kg_build(
             kg_version_id=str(kg_version_id),
             entity_count=stats.entity_count,
             relation_count=stats.relation_count,
+            chunk_count=stats.chunk_count,
+            evidence_edge_count=stats.evidence_edge_count,
         ).info("kg_build_artifacts_loaded")
     finally:
         db.close()

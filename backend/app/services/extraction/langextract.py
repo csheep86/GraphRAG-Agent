@@ -85,13 +85,33 @@ class ExtractedRelation:
 
 
 @dataclass(frozen=True, slots=True)
+class ExtractedChunk:
+    """抽取切块（Sprint 6 批次 A-1：Chunk 证据节点的写侧输入）。
+
+    ``char_start`` / ``char_end`` 是相对 ``full.md`` 全文的**绝对**字符区间
+    （``_split_into_chunks`` 已把块内偏移加回块起点），与 :class:`ExtractedEntity`
+    的区间同一坐标系 —— 这是 stage-4 判定「实体属于哪个 chunk」的唯一依据。
+
+    ``page`` 由调用方（``document.extract`` 执行体）用 :class:`PageIndex` 回填；
+    未判到页时为 ``None``（**不**兜底成 1 —— 假页码比没有页码更危险）。
+    """
+
+    id: str
+    char_start: int
+    char_end: int
+    text: str
+    page: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractionResult:
-    """一次抽取的完整产物（entities + relations，按 confidence 已裁剪）。"""
+    """一次抽取的完整产物（entities + relations + chunks，按 confidence 已裁剪）。"""
 
     document_id: uuid.UUID
     trace_id: uuid.UUID
     entities: list[ExtractedEntity] = field(default_factory=list)
     relations: list[ExtractedRelation] = field(default_factory=list)
+    chunks: list[ExtractedChunk] = field(default_factory=list)
 
     def to_json_dict(self) -> dict[str, object]:
         """导出 ``kg_versions`` 持久化 / Neo4j 写入共用的 JSON 结构。"""
@@ -118,6 +138,16 @@ class ExtractionResult:
                     "confidence": r.confidence,
                 }
                 for r in self.relations
+            ],
+            "chunks": [
+                {
+                    "id": c.id,
+                    "char_start": c.char_start,
+                    "char_end": c.char_end,
+                    "text": c.text,
+                    "page": c.page,
+                }
+                for c in self.chunks
             ],
         }
 
@@ -274,11 +304,22 @@ class LangextractClient:
                 f"document_id={document_id} 的 full.md 为空，无法抽取"
             )
 
-        chunks = _split_into_chunks(full_md_text, self._max_chars_per_chunk)
+        # Sprint 6 批次 A-1：切块本身即 Chunk 证据节点的来源。
+        # 与 entities 同坐标系（绝对字符区间），落 chunks.json 供 kg.build 消费。
+        raw_chunks = _split_into_chunks(full_md_text, self._max_chars_per_chunk)
+        chunks = [
+            ExtractedChunk(
+                id=_new_chunk_id(),
+                char_start=chunk_start,
+                char_end=chunk_start + len(chunk_text),
+                text=chunk_text,
+            )
+            for chunk_start, chunk_text in raw_chunks
+        ]
 
         all_entities: list[ExtractedEntity] = []
         all_relations: list[ExtractedRelation] = []
-        for chunk_start, chunk_text in chunks:
+        for chunk_start, chunk_text in raw_chunks:
             entities, relations = self._chunk_extractor(chunk_text, chunk_start)
             all_entities.extend(entities)
             all_relations.extend(relations)
@@ -301,12 +342,21 @@ class LangextractClient:
             trace_id=trace_id,
             entities=entities,
             relations=relations,
+            chunks=chunks,
         )
 
 
 # ------------------------------------------------------------------------------
 # 内部辅助
 # ------------------------------------------------------------------------------
+
+
+def _new_chunk_id() -> str:
+    """生成 ``chunk-<hex12>`` 形式的 ``chunk_id``。
+
+    前缀 ``chunk-`` 与 ``agents.py`` 的引用前缀校验对齐（``doc-`` 为文档级降级档）。
+    """
+    return f"chunk-{uuid.uuid4().hex[:12]}"
 
 
 def _split_into_chunks(text: str, max_chars: int) -> list[tuple[int, str]]:
@@ -366,6 +416,7 @@ def _clamp_relations(
 
 __all__ = [
     "ENTITY_TYPES",
+    "ExtractedChunk",
     "ExtractedEntity",
     "ExtractedRelation",
     "ExtractionResult",
