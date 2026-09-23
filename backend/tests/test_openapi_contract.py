@@ -18,9 +18,13 @@ CORE_PATHS = {
     "/api/v1/documents/upload",
     "/api/v1/documents/{document_id}/status",
     "/api/v1/documents/{document_id}/graph",
+    # Sprint 6 批次 B：chunk 回查端点（引用溯源，Q2）
+    "/api/v1/documents/{document_id}/chunks/{chunk_id}",
     "/api/v1/graph/overview",
     "/api/v1/entities/{entity_id}",
     "/api/v1/agent/query",
+    # Sprint 6.3：在线激活端点（真机发现：建图后无人把版本置为可消费）
+    "/api/v1/graph/versions/{version}/activate",
 }
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
@@ -45,18 +49,30 @@ def _operations(schema: dict) -> list[tuple[str, str, dict]]:
     ]
 
 
-def test_exactly_eight_core_paths(schema: dict) -> None:
-    """Sprint 5 批次 C 由 5 路径扩为 8 路径：增 `GET /documents`、`GET /graph/overview`、
-    `GET /entities/{entity_id}`。
+def test_core_paths_match_contract(schema: dict) -> None:
+    """Sprint 5 批次 C 由 5 路径扩为 8 路径；Sprint 6 批次 B 再增
+    `GET /documents/{document_id}/chunks/{chunk_id}`（引用溯源，Q2）→ 9 路径；
+    Sprint 6.3 再增 `POST /graph/versions/{version}/activate`（在线激活）→ 10 路径。
     """
     assert set(schema["paths"]) == CORE_PATHS
+
+
+def test_chunk_endpoint_declares_tenant_isolation(schema: dict) -> None:
+    """新增的 chunk 回查端点必须自带租户隔离与 401/403/404（ADR-0003 / M5 §3 验收 1）。"""
+    operation = schema["paths"]["/api/v1/documents/{document_id}/chunks/{chunk_id}"][
+        "get"
+    ]
+    assert operation["operationId"] == "getDocumentChunk"
+    parameter_names = {parameter.get("name") for parameter in operation["parameters"]}
+    assert {"document_id", "chunk_id"} <= parameter_names
+    assert set(operation["responses"]) == {"200", "401", "403", "404"}
 
 
 def test_operation_ids_are_unique(schema: dict) -> None:
     operation_ids = [
         operation["operationId"] for _, _, operation in _operations(schema)
     ]
-    assert len(operation_ids) == len(set(operation_ids)) == 8
+    assert len(operation_ids) == len(set(operation_ids)) == 10
 
 
 def test_info_version_is_constant(schema: dict) -> None:

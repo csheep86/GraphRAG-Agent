@@ -59,7 +59,7 @@ def _patch_active_version(
     monkeypatch.setattr(
         GraphService.instance(),
         "fetch_active_kg_version",
-        lambda: KgVersion(version=version, status="active"),
+        lambda **kwargs: KgVersion(version=version, status="active"),
     )
 
 
@@ -168,7 +168,9 @@ def test_overview_returns_409_when_no_active_version(
     monkeypatch.setattr(
         GraphService.instance(),
         "fetch_active_kg_version",
-        lambda: (_ for _ in ()).throw(NoActiveKgVersionError("no active version")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            NoActiveKgVersionError("no active version")
+        ),
     )
 
     response = client.get("/api/v1/graph/overview", headers=dev_headers)
@@ -283,7 +285,9 @@ def test_entity_detail_409_when_no_active_version(
     monkeypatch.setattr(
         GraphService.instance(),
         "fetch_active_kg_version",
-        lambda: (_ for _ in ()).throw(NoActiveKgVersionError("no active version")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            NoActiveKgVersionError("no active version")
+        ),
     )
 
     response = client.get("/api/v1/entities/entity-x", headers=dev_headers)

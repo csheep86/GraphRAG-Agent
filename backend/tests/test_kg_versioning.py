@@ -133,7 +133,13 @@ def test_missing_version_raises_lookup_error() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_get_active_returns_latest_ready_for_same_org(created_ids: list) -> None:
+def test_get_active_returns_latest_ready_for_same_org(
+    created_ids: list, real_pg_get_active: None
+) -> None:
+    """PG 真源：同 org 下取 `ready_at` 最新的 ready 版本。
+
+    ``real_pg_get_active`` 用于撤销 conftest 的默认桩（本文件验的正是真源本身）。
+    """
     with SessionLocal() as session:
         service = KgVersioningService(session)
         older = service.create_pending(
@@ -159,7 +165,10 @@ def test_get_active_returns_latest_ready_for_same_org(created_ids: list) -> None
         assert service.get_by_version(org_id=ORG_B, version="v-old") is None
 
 
-def test_get_active_none_when_only_pending_or_failed(created_ids: list) -> None:
+def test_get_active_none_when_only_pending_or_failed(
+    created_ids: list, real_pg_get_active: None
+) -> None:
+    """只有 pending / failed 时 `get_active` 返回 `None`（不静默挑一个）。"""
     with SessionLocal() as session:
         service = KgVersioningService(session)
         pending = service.create_pending(

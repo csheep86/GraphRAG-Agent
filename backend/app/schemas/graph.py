@@ -163,6 +163,43 @@ class EntityDetail(BaseModel):
     trace_id: str
 
 
+class KgVersionActivationResponse(BaseModel):
+    """`POST /graph/versions/{version}/activate` 响应（Sprint 6.3）。
+
+    **两套词汇的显式映射（真机实测）**：PG ``kg_versions`` 为真源，用 ``ready``
+    表达「可消费」；Neo4j ``:KgVersion`` 只是镜像，用 ``active`` 表达同一语义。
+    两个字段同时返回，**不**合并成一个模糊的 ``status``，免得前端误以为存在
+    两个不同的状态机。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "version": "v-3e381d36",
+                "source_status": "ready",
+                "graph_mirror_status": "active",
+                "superseded_versions": ["20260917T090000Z-phase09"],
+                "activated_at": "2026-09-22T12:34:56.789012+00:00",
+                "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+            }
+        }
+    )
+
+    version: str = Field(description="被激活的 kg_version 版本号")
+    source_status: str = Field(
+        description="PG 真源状态（active 语义在本表中写作 `ready`）"
+    )
+    graph_mirror_status: str = Field(
+        description="Neo4j `:KgVersion.status` 镜像值（恒为 `active`）"
+    )
+    superseded_versions: list[str] = Field(
+        default_factory=list,
+        description="本次被置为 `superseded` 的历史版本（Neo4j 镜像侧；可为空）",
+    )
+    activated_at: str = Field(description="激活时刻（UTC ISO-8601）")
+    trace_id: str
+
+
 __all__ = [
     "EntityAttribute",
     "EntityDetail",
@@ -171,4 +208,5 @@ __all__ = [
     "GraphOverviewEdge",
     "GraphOverviewNode",
     "GraphOverviewResponse",
+    "KgVersionActivationResponse",
 ]

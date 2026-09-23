@@ -93,6 +93,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{document_id}/chunks/{chunk_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 按 chunk_id 回查原文片段（引用溯源）
+         * @description 返回该文档下指定 `chunk_id` 的原文片段，供前端「点击引用标注 → 跳转到原文并高亮」（M3 §3 验收 2 / F3；Sprint 6 批次 B，Q2 拍板）；`Citation.snippet` 只带 ≤ 200 字摘录，chunk 全文**不**进引用体，故前端拿到 `Citation.char_offset` 后再按本端点取全文做高亮；数据源是批次 A 落盘的 `chunks.json`（存储层中间产物，位于 extract 段，与 Neo4j `:Chunk.text` 同源同值，**不**依赖图谱可用）；错误分支：文档不存在 → 404 `DOCUMENT_NOT_FOUND`，跨租户 → **403**（非 404，ADR-0003 / M5 §3 验收 1），产物缺失或其中无该 `chunk_id` → 404 `NOT_FOUND`。
+         */
+        get: operations["getDocumentChunk"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{document_id}/graph": {
         parameters: {
             query?: never;
@@ -191,6 +211,35 @@ export interface paths {
         get: operations["getGraphOverview"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/graph/versions/{version}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 激活指定 kg_version（Sprint 6.3）
+         * @description 把指定版本置为**可消费**并同步 Neo4j 镜像。
+         *
+         *     **真源语义**：PG `kg_versions` 为真源，其「可消费」语义在本表中写作 `ready`；Neo4j `:KgVersion.status='active'` 只是镜像（`superseded` 同理）。两者在本响应中同时返回，避免前端误以为存在两个状态机。
+         *
+         *     **为什么需要显式激活（真机背景）**：建图流水线只把 PG 置 `ready`，没人同步 Neo4j 镜像，读侧于是长期命中旧导入版本。
+         *
+         *     **错误语义**：
+         *     - 版本不存在（PG 查不到，或 Neo4j 无该版本图数据）→ **404** `NOT_FOUND`；
+         *     - 版本为 `pending` / `building` / `failed` → **409** `KG_VERSION_NOT_ACTIVE`；
+         *     - Neo4j 不可用 → **501** `NOT_IMPLEMENTED`。
+         */
+        post: operations["activateKgVersion"];
         delete?: never;
         options?: never;
         head?: never;
@@ -373,11 +422,15 @@ export interface components {
          * @description 引用条目：答案的每一个事实句都必须能回溯到此结构（M3 §4.2）。
          *
          *     引用覆盖率必须为 100%，否则必须拒答（反证条件 F3）。
+         *
+         *     **Sprint 6 批次 B（Q1 拍板）**：``page`` 改为 nullable——页码来自 MinerU
+         *     ``content_list`` 文本对齐反推（批次 A 的 ``PageIndex``），
+         *     **对齐失配时必须给 ``null``，严禁兜底伪造 1**。
          */
         Citation: {
             /**
              * Char Offset
-             * @description 原文 span 在 chunk 内的字符偏移
+             * @description 引用在 chunk 内的字符偏移。批次 B 为 chunk 起点（0）；实体级偏移待 `:Entity` 落 `char_start` 后细化
              */
             char_offset: number;
             /** Chunk Id */
@@ -389,14 +442,69 @@ export interface components {
             doc_id: string;
             /**
              * Page
-             * @description 页码（1-based）
+             * @description 页码（1-based）；页码无法判定时为 `null`（严禁伪造）
              */
-            page: number;
+            page?: number | null;
             /**
              * Snippet
-             * @description 用于 UI 高亮的原文片段
+             * @description 用于 UI 高亮的原文片段（≤ 200 字的 chunk 摘录）
              */
             snippet: string;
+        };
+        /**
+         * DocumentChunkResponse
+         * @description `GET /api/v1/documents/{id}/chunks/{chunk_id}` 响应：单个原文片段。
+         *
+         *     **Q2 拍板**：溯源走**独立端点**回查原文，chunk 全文**不**塞进 `Citation`
+         *     （`Citation.snippet` 只带 ≤ 200 字摘录），故前端点击引用标注时按
+         *     `chunk_id` 取本响应，再按 `Citation.char_offset` 在 `text` 内高亮。
+         *
+         *     数据源：批次 A 落盘的 `chunks.json`（存储层中间产物，**不进契约**）；
+         *     与 Neo4j `:Chunk` 同源同值，但不依赖图谱可用。
+         * @example {
+         *       "char_end": 764,
+         *       "char_start": 0,
+         *       "chunk_id": "chunk-581e8912827d",
+         *       "doc_id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+         *       "page": 1,
+         *       "text": "甲方：北京青云科技有限公司（以下简称甲方）……",
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
+         *     }
+         */
+        DocumentChunkResponse: {
+            /**
+             * Char End
+             * @description 片段在文档全文中的结束字符偏移（不含）
+             */
+            char_end: number;
+            /**
+             * Char Start
+             * @description 片段在文档全文中的起始字符偏移（含）
+             */
+            char_start: number;
+            /**
+             * Chunk Id
+             * @description 片段 id（`chunk-<12 hex>`）
+             */
+            chunk_id: string;
+            /**
+             * Doc Id
+             * Format: uuid
+             * @description 片段所属文档 id
+             */
+            doc_id: string;
+            /**
+             * Page
+             * @description 页码（1-based）；页码无法判定时为 `null`
+             */
+            page?: number | null;
+            /**
+             * Text
+             * @description 片段原文（前端高亮的定位基准）
+             */
+            text: string;
+            /** Trace Id */
+            trace_id: string;
         };
         /**
          * DocumentError
@@ -1043,6 +1151,54 @@ export interface components {
             version: string;
         };
         /**
+         * KgVersionActivationResponse
+         * @description `POST /graph/versions/{version}/activate` 响应（Sprint 6.3）。
+         *
+         *     **两套词汇的显式映射（真机实测）**：PG ``kg_versions`` 为真源，用 ``ready``
+         *     表达「可消费」；Neo4j ``:KgVersion`` 只是镜像，用 ``active`` 表达同一语义。
+         *     两个字段同时返回，**不**合并成一个模糊的 ``status``，免得前端误以为存在
+         *     两个不同的状态机。
+         * @example {
+         *       "activated_at": "2026-09-22T12:34:56.789012+00:00",
+         *       "graph_mirror_status": "active",
+         *       "source_status": "ready",
+         *       "superseded_versions": [
+         *         "20260917T090000Z-phase09"
+         *       ],
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+         *       "version": "v-3e381d36"
+         *     }
+         */
+        KgVersionActivationResponse: {
+            /**
+             * Activated At
+             * @description 激活时刻（UTC ISO-8601）
+             */
+            activated_at: string;
+            /**
+             * Graph Mirror Status
+             * @description Neo4j `:KgVersion.status` 镜像值（恒为 `active`）
+             */
+            graph_mirror_status: string;
+            /**
+             * Source Status
+             * @description PG 真源状态（active 语义在本表中写作 `ready`）
+             */
+            source_status: string;
+            /**
+             * Superseded Versions
+             * @description 本次被置为 `superseded` 的历史版本（Neo4j 镜像侧；可为空）
+             */
+            superseded_versions?: string[];
+            /** Trace Id */
+            trace_id: string;
+            /**
+             * Version
+             * @description 被激活的 kg_version 版本号
+             */
+            version: string;
+        };
+        /**
          * TokenUsage
          * @description LLM token 用量（对齐 DeepSeek / OpenAI 兼容 API 的 `usage` 格式）。
          *
@@ -1303,6 +1459,61 @@ export interface operations {
             };
         };
     };
+    getDocumentChunk: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                document_id: string;
+                chunk_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentChunkResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 原文片段不存在（`NOT_FOUND`）：该文档尚未产出 `chunks.json`，或其中没有该 `chunk_id`。**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     getDocumentGraph: {
         parameters: {
             query?: never;
@@ -1535,6 +1746,78 @@ export interface operations {
             };
             /** @description 403 跨租户拒绝，两种成因：① `FORBIDDEN`（ADR-0003 §3.3）——请求资源 org_id 不符；② `KG_TENANT_LEAK`（ADR-0003 §4，Sprint 5 批次 B）——fail-closed 校验发现 active kg_version 内存在不属于当前 org 的节点，属数据质量事故伪装为正常结论，**不**降级为拒答（200） */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    activateKgVersion: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KgVersionActivationResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 不存在（`NOT_FOUND`）：PG `kg_versions` 真源表中查不到该 (org_id, version)，或 Neo4j 侧没有该版本的图数据。复用`ErrorCode.NOT_FOUND`，**不**新增错误码。 */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
