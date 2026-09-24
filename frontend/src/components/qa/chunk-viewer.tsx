@@ -4,42 +4,14 @@ import { FileText, Loader2, TriangleAlert } from "lucide-react";
 
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { splitHighlight } from "@/lib/highlight";
 import { useChatStore } from "@/store/use-chat-store";
 
-type Segments = { before: string; hit: string; after: string };
-
 /**
- * 切分高亮区间。
- *
- * **真机教训（2026-09-23 批次 C）**：后端 `_snippet` 是 `text.strip()` 后截断
- * 200 字**再加省略号**（真机 `snippet.length=201`），且 strip 会让摘录相对原文
- * **位移**。所以直接按契约口径「`char_offset` 起点 + `snippet.length` 长度」切，
- * 高亮内容会与摘录对不上（实测 `highlight_match=false`）。
- *
- * 故本处两步走：
- * 1. 去掉尾部省略号，用 `indexOf` 在全文里定位摘录**实际位置**——命中即用它；
- * 2. 找不到（摘录被 LLM 改写等）才回退到契约口径 `char_offset` 起点；
- * 3. 两者都不成立 → 返回纯文本（**不高亮**，绝不伪造位置）。
+ * 切分高亮区间原在本文件实装（2026-09-23 批次 C），Sprint 7.3 批次 C 提取到
+ * `@/lib/highlight`——疑点证据要用同一套口径，两份实现必然漂移，故合并为一份。
+ * 真机教训与降级口径见 `lib/highlight.ts`。
  */
-function splitHighlight(
-  text: string,
-  offset: number | null | undefined,
-  snippet: string,
-): Segments | string {
-  const base = snippet.endsWith("…") ? snippet.slice(0, -1) : snippet;
-  if (base.length === 0) return text;
-
-  const exact = text.indexOf(base);
-  const start = exact >= 0 ? exact : (offset ?? -1);
-  if (start < 0 || start >= text.length) return text;
-
-  const end = Math.min(start + base.length, text.length);
-  return {
-    before: text.slice(0, start),
-    hit: text.slice(start, end),
-    after: text.slice(end),
-  };
-}
 
 /**
  * 引用溯源抽屉（Sprint 6 批次 C）。

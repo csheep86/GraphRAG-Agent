@@ -24,6 +24,26 @@ export type GraphNode = components["schemas"]["GraphNode"];
 export type GraphEdge = components["schemas"]["GraphEdge"];
 export type TokenUsage = components["schemas"]["TokenUsage"];
 
+/* ---- Sprint 7.2 批次 B 已进契约的 M4 疑点类型（Sprint 7.3 批次 C 前端消费） ---- */
+export type AffiliationDetectResponse =
+  components["schemas"]["AffiliationDetectResponse"];
+export type AffiliationTaskResponse =
+  components["schemas"]["AffiliationTaskResponse"];
+export type AffiliationSuspicionItem =
+  components["schemas"]["AffiliationSuspicionItem"];
+export type AffiliationSuspicionListResponse =
+  components["schemas"]["AffiliationSuspicionListResponse"];
+export type AffiliationSuspicionPatchResponse =
+  components["schemas"]["AffiliationSuspicionPatchResponse"];
+export type AffiliationEvidenceRef =
+  components["schemas"]["AffiliationEvidenceRef"];
+/** 复核状态：`open` 为初始态（不可作为 PATCH 入参，契约已限定） */
+export type AffiliationSuspicionStatus =
+  AffiliationSuspicionItem["status"];
+export type AffiliationSuspicionType =
+  AffiliationSuspicionItem["suspicion_type"];
+export type AffiliationSeverity = AffiliationSuspicionItem["severity"];
+
 /* --------------------------------------------------------------------------
  * Sprint 5 批次 C 收口：以下类型已迁入契约 `components["schemas"]`，直接复用
  * ------------------------------------------------------------------------ */

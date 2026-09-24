@@ -4,6 +4,7 @@ import {
   MessageSquare,
   Network,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
@@ -25,6 +26,14 @@ export const workspaceNav: NavItem[] = [
   { label: "文档管理", breadcrumb: "文档管理", href: "/documents", icon: FileText },
   { label: "知识问答", breadcrumb: "知识问答", href: "/qa", icon: MessageSquare },
   { label: "知识图谱", breadcrumb: "知识图谱", href: "/graph", icon: Network },
+  // Sprint 7.3 批次 C：M4 疑点清单（真实接后端四端点，非 placeholder）。
+  // 图标用 ShieldAlert（告警）而非 ShieldCheck——后者已归 system 组的「权限审计」。
+  {
+    label: "疑点清单",
+    breadcrumb: "疑点清单",
+    href: "/affiliation",
+    icon: ShieldAlert,
+  },
 ];
 
 /** 侧栏分组 SYSTEM —— 设计稿仅给出入口，功能预留 */
