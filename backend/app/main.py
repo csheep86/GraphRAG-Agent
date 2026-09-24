@@ -24,7 +24,9 @@ from app.tasks import recover_orphan_tasks
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    setup_logging()
+    # log_export 是 ADR-0004 §3 第 5 条登记的合规占位：置 true 时这里显式报错，
+    # 不允许"开关存在却不生效"的假做（唯一消费点 core/logging.py）。
+    setup_logging(log_export=settings.log_export)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

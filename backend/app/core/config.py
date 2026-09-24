@@ -154,6 +154,12 @@ class Settings(BaseSettings):
     #: 同一 IP 每分钟对同一接口的请求上限。唯一消费点：core/limiter.py::get_limiter
     rate_limit_per_minute: int = Field(default=60, ge=1)
 
+    # -- 可观测导出（ADR-0004 §2.1 注：不单列接缝；§3 第 5 条的"合规占位"）--
+    #: 统一日志平台 / OTLP 导出开关。**Demo-MVP 阶段未实现**：置 true 时
+    #: core/logging.py 显式抛 NOT_IMPLEMENTED，绝不静默无效（占位≠假做）。
+    #: 唯一消费点：core/logging.py::setup_logging
+    log_export: bool = False
+
     @field_validator("allowed_mime_types")
     @classmethod
     def _normalize_mime_types(cls, value: list[str]) -> list[str]:

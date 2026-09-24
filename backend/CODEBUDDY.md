@@ -96,7 +96,7 @@
 | B4：Settings.task_retry_multiplier 在**任务退避路径**未被读取 | 字段定义 default=2.0, gt=1；`app/tasks/registry.py` 只用 `task_retry_initial_seconds` 作 multiplier——**任务重试改该配置无效果** | ✅ **已偿还（Sprint 5 批次 A）**：三个执行体（parse / extract / kg.build）的 `wait_exponential` 均改为 `exp_base=settings.task_retry_multiplier`；`test_graph_and_agent_routes.py` 断言退避随次数增长 |
 | `_refuse()` 构造响应体未注入 trace_id | 10.4 联调发现：响应头 X-Trace-Id 正确，但 body.trace_id 在拒答分支为 None | ✅ **已偿还（Sprint 5 批次 A）**：`agents.py::_refuse()` 构造 `AgentQueryResponse` 时注入 `trace_id=trace_id` |
 | S4-1 遗留：api-spec 同文件还有 6 处同类过期描述 | L31-32 / L191 / L273 / L334 / L343 / §7 整节（含「TaskManager.recover() 未实现」，实际已实现） | v1.1.0 文档刷新专项 |
-| 集成接缝预留（`documents` 8 字段 / `AuthProvider` / provider 抽象 / `external_refs` / `domain_events` / 外部数据导入） | 未落。Sprint 5 批次 A2 落 provider 抽象 + `documents` 8 字段 + `AuthProvider` + 流水线阶段配置；Sprint 7 批次 B/D 落 `external_refs` + 外部数据导入接缝 + `domain_events`；Sprint 8 批次 E 落 `ExportSink`。**全部 nullable 且不进契约** | ADR-0004 / 本文件 §3 第 5 条 |
+| 集成接缝预留（`documents` 8 字段 / `AuthProvider` / provider 抽象 / `external_refs` / `domain_events` / 外部数据导入 / `ExportSink`） | ✅ **已全部落地（Sprint 8 批次 E，2026-09-24 收口）**：Sprint 5 批次 A2 落 provider 抽象 + `documents` 8 字段 + `AuthProvider` + 流水线阶段配置；Sprint 7 批次 B/D 落 `external_refs` + 外部数据导入接缝 + `domain_events`；**Sprint 8 批次 E 落 `ExportSink`**（`app/services/export/`，唯一实现 `JsonCsvExportSink` 同提供 json / csv，**无 HTTP 端点**）+ 合规占位 `settings.log_export`（置 true 显式报 501，不静默）。**全部 nullable 且不进契约** | ADR-0004 / 本文件 §3 第 5 条 |
 
 ### 4.1 阶段九已偿还的缺口
 
