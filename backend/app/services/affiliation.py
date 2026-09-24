@@ -23,6 +23,8 @@ from sqlalchemy.orm import Session
 from app.core.auth import Identity
 from app.core.errors import AppError, ErrorCode
 from app.db.models import AffiliationSuspicion, AffiliationTask, Document
+from app.services.events import DomainEvent, build_event_bus
+from app.services.events.types import RISK_SUSPECT_CREATED
 
 #: 严重度排序权重（``result_summary.top_5_severity`` 用它决定"最严重的 5 条"）
 _SEVERITY_ORDER: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
@@ -253,6 +255,12 @@ def persist_detection_result(
             )
         )
     session.add_all(records)
+    # flush 后 record.id 才就位（UUID 是 INSERT 时才生成的默认值）——事件要用它做 aggregate_id
+    session.flush()
+
+    _emit_suspect_created(
+        session=session, task=task, records=records, trace_id=trace_uuid
+    )
 
     by_type: dict[str, int] = {}
     for record in records:
@@ -270,6 +278,46 @@ def persist_detection_result(
     }
     session.commit()
     return len(records)
+
+
+def _emit_suspect_created(
+    *,
+    session: Session,
+    task: AffiliationTask,
+    records: list[AffiliationSuspicion],
+    trace_id: uuid.UUID,
+) -> None:
+    """每条疑点发一条 ``risk.suspect_created``（接缝 5 首个真实事件源）。
+
+    与疑点**同 session**：业务失败回滚时事件一并回滚，不会出现"疑点没落库但事件
+    留下了"；``db`` sink 自己**不** commit（见 :class:`app.services.events.db.DbEventSink`）。
+
+    ``org_id`` / ``trace_id`` 取自任务上下文，**不**在事件里新造；``payload`` 只带
+    订阅方定位与判断所需的最小集（不含证据全文——那是回查端点的事）。
+    """
+
+    if not records:
+        return
+
+    bus = build_event_bus(session)
+    for record in records:
+        bus.emit(
+            DomainEvent(
+                event_type=RISK_SUSPECT_CREATED,
+                aggregate_type="affiliation_suspicion",
+                aggregate_id=str(record.id),
+                org_id=task.org_id,
+                trace_id=trace_id,
+                payload={
+                    "task_id": str(task.id),
+                    "suspicion_type": record.suspicion_type,
+                    "severity": record.severity,
+                    "entity_names": list(record.entity_names),
+                    "evidence_count": len(record.evidence),
+                    "kg_version": record.kg_version,
+                },
+            )
+        )
 
 
 def mark_task_failed(

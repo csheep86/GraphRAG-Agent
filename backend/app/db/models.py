@@ -374,3 +374,47 @@ class ExternalRef(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
+
+
+class DomainEvent(Base):
+    """`domain_events` 表（ADR-0004 §2.1 接缝 5 事件出口；Sprint 7.4 批次 D）。
+
+    **只落库不派发**（plan §6.2 批次 D 口径）：``dispatched_at`` **恒为 NULL**——
+    本阶段无订阅方、无重试、无 webhook；未来接 OA / BPM / ITSM 时由新增的 sink
+    消费本表并回写该字段（ADR-0004 §4）。
+
+    **预留表不进契约**（CODEBUDDY §功能预留原则第 4 条）：本表**不**出现在
+    `contracts/openapi.yaml`，前端也不消费它。
+
+    事件类型按 ADR-0004 登记四个；本批次**只有** ``risk.suspect_created`` 有真实
+    事件源（疑点落库处），其余三个仅定义取值、**不发送**——没有真实触发点却发，
+    就是假事件。
+    """
+
+    __tablename__ = "domain_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('document.parsed', 'kg.updated', "
+            "'risk.suspect_created', 'qa.answered')",
+            name="ck_domain_events_event_type",
+        ),
+        Index("ix_domain_events_org_id_event_type", "org_id", "event_type"),
+        Index("ix_domain_events_org_id_created_at", "org_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: 聚合根类型 / id（疑点事件为 ``affiliation_suspicion`` / ``<suspicion_id>``）
+    aggregate_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: 事件体（JSON；各事件类型自定字段）
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    #: 派发时间；**本阶段恒为 NULL**（只落不派），未来由新增 sink 回写
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
