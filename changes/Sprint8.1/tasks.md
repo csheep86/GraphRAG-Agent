@@ -13,7 +13,7 @@
 - [ ] **核实 trace_id 链路现状**：`core/middleware.py` 的 `X-Trace-Id` 生成 / 回显 / `reset_trace_id` 时机，确认审计中间件挂在**其之后**才拿得到 trace_id
 - [ ] **核实 `frontend/src/app/audit/page.tsx` 现状**（占位实现读到什么程度），避免覆盖掉既有 UI 骨架
 - [ ] **试装 `slowapi` 可行性**（A11，批次 B 前置）：`pyproject.toml:10-23` 与 `uv.lock` 现均无 `slowapi` / `limits`；装不上**立即升级用户**，不要硬扛、不要自造中间件绕过 spec 点名
-- [ ] **向用户确认 DeepSeek 余额**（A13）：真机走查里「提问」要调 LLM；**余额数字不得推测**，没有数字就没有真机判据
+- [ ] ~~**向用户确认 DeepSeek 余额**（A13）~~ **已确认（2026-09-24，用户截图）：充值余额 ¥38.61、累计消费 ¥31.38**——足够真机走查；护栏不变：单次调用预计超 ¥1 先停下问用户；余额数字抄进 integration-log（以截图为准，不推测）
 - [ ] **核实建表模板**（`models.py:221` UUID 主键 / `:222` `org_id` 打头索引 / `:234-236` `created_at` / `:212-215` 枚举常量 + `CheckConstraint`），两张新表照抄，不另创风格
 - [ ] **核实 `router.py:15-16` 的注释**（现写"`/audit*` 留草案态、禁止提前注册"）——本批次注册 audit 路由时须一并改掉这句，否则自相矛盾
 - [ ] **核实审计中间件挂载顺序**：必须挂在 `TraceIdMiddleware`（`main.py:68`）**之后**才拿得到 trace_id；注意 `main.py:58-59`「后加者在外层」
