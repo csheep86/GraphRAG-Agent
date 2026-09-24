@@ -50,7 +50,8 @@ export const systemNav: NavItem[] = [
     breadcrumb: "权限审计",
     href: "/audit",
     icon: ShieldCheck,
-    placeholder: true,
+    // Sprint 8.1 批次 A 起已是真实页（`GET /api/v1/audit` 进契约），不再是预留位。
+    // 该标记当前无 UI 消费点，但留着 true 就是一条假声明——与 A16「诚实可核」冲突。
   },
 ];
 
