@@ -11,7 +11,7 @@
 > - 验收条文：`specs/m1..m6-*.md` §3
 > - 指标定义：`docs/02-product-outline.md` 附录 C；反证条件：`docs/01-research.md` §3.3
 >
-> **状态**：v1.1（2026-09-21 建立，架构师；**2026-09-22 更新**：S5 收尾对账——H4 / H8 两项「已知缺陷」关闭、M1 / M2 与黄金路径步骤 3 现状刷新、§5.3 `--strict` 口径更正为默认档）
+> **状态**：v1.2（2026-09-21 建立，架构师；**2026-09-22 更新**：S5 收尾对账——H4 / H8 两项「已知缺陷」关闭、M1 / M2 与黄金路径步骤 3 现状刷新、§5.3 `--strict` 口径更正为默认档；**2026-09-24 更新**：**S7 收尾对账**——新增 §3.3「M4 §3 验收 1–7 逐条对账」；M4 行与黄金路径步骤 4 补批次 C / D；H1 / H3 / H4 / H5 / H10 / H12 现状刷新；C2-c 补 M4 侧证据）
 
 ---
 
@@ -67,24 +67,40 @@
 | 6 | 审计 ≥ 7 条且共享同一 `trace_id` | M5 §3 验收 6 | ❌ S8 |
 | 7 | C1–C3 准入线 | §5.1 | ❌ S13 |
 
+### 3.3 M4 §3 验收 1–7 逐条对账（S7 收尾，2026-09-24）
+
+> 本节按 §9.2 第 3 项对 Sprint 7 承接的 M4 §3 验收条**逐条打勾**。未达成的写明承接 Sprint，**不靠叙述糊过去**。
+
+| 验收 | 摘要 | 判据 | 现状 | 承接 |
+|---|---|---|---|---|
+| **1** | 四源主体对齐，成功率 ≥ 0.95，未对齐主体入 `unaligned_subjects` | 对齐成功率统计 + `unaligned_subjects` 行数 | ❌ **未做**：表已建（spec §4.5）但**无人写入**（缺口 **S7.2-1**）；四源对齐与 0.95 成功率**未测** | S9 批次 D |
+| **2** | 建「主体-地址-法人-股东-电话」多类节点，节点带 `kg_version` 且**共用 `status=active` 版本**（ADR-0002 不分裂版本） | 图中节点 label 计数；节点 `kg_version` 与 `kg_versions.status` 比对 | 🟡 **部分达成**：`:Subject` / `:Address` / `:LegalPerson` 三类已入图并带 `kg_version`，**共用 active 版本**（跨版本隔离已证：旧版本 `v-3e381d36` 无 `:Subject`，`detect` 返回 0 条、不串数据）；`:Phone` / `:Invoice` / `:Voucher` / `:Contract` 未建 | S9 批次 B（节点）；版本纪律**持续满足** |
+| **3** | 三类算法（连通分量 / 共享邻居 / 环路）任一命中即出疑点，`type ∈ {shared_address, shared_legal_rep, shared_phone, cycle, amount_mismatch}` | 算法族实装 + `suspicion_type` 取值校验 | 🟡 **部分达成**：已落**两类规则**（共享法人 / 共享地址），`type` 取值在 spec 枚举内；spec 的**三类图算法**未做 | S9 |
+| **4** | 每条疑点可回溯 ≥ 1 具体原文，**引用覆盖率 = 100%**，不允许「无原文证据」的疑点 | 含证据疑点数 / 总疑点数；反证 F3 | ✅ **达成（演示数据集口径）**：**10 / 10** 疑点含 3–6 条 `:Chunk` 证据（合计 42 条）= **100%**；取不到证据的命中**直接丢弃**并打 `affiliation_suspicions_dropped_no_evidence` WARNING；UI 侧可点开原文（**证据粒度为 chunk 级**，提及级定位归 S10） | 终局判据 **S13**（spec 全量样本） |
+| **5** | 三方金额不一致 → `amount_mismatch` 疑点，`severity=high` | 构造合同 / 发票 / 凭证三方金额不等 | ❌ **未做**（依赖 `:Invoice` / `:Voucher` / `:Contract` 节点，均属 S9） | S9 |
+| **6** | 场景准入：200 合同 + 500 发票 + 100 凭证 + 20 组植入 → 召回 ≥ 0.80、误报 ≤ 0.15、覆盖率 = 100% | 评测脚本（**待建**） | ❌ **未测量**：演示数据集为 6 片年报切片，**非** spec 样本；评测脚本未建 | S13 |
+| **7** | 提交 → 异步执行返回 `task_id` → `GET /tasks/{id}` 查结果 → 结果含 `affiliation_suspicions` 列表 + 回溯引用 → 重启回收置 `failed`（`error_code = TASK_INTERRUPTED`） | 四端点联调（关 Mock）+ 重启回收用例 | ✅ **达成**：四端点已进契约并可关 Mock 消费（`USE_MOCK=false` 时 Mock 不参与）；一次检测 = 一条 `affiliation_tasks`，经 `TaskManager` 双载体投递并纳入 `recover_orphan_tasks()` 启动回收（ADR-0001 第 73 行要求扫两张表）；复用 `TASK_INTERRUPTED`。**残留**：`list_in_flight_task_ids()` 仍只扫 `documents`（缺口 **S7.2-2**） | 保持；S7.2-2 → **S8** |
+
+**对账结论（不伪装）**：7 条中 **2 条达成**（验收 4 / 7）、**2 条部分达成**（验收 2 / 3）、**3 条未做**（验收 1 / 5 / 6）。**M4 尚未通过 §3 验收 6 的场景准入**——召回 / 误报**未测量**，见 release notes v1.3.0 §6.7 与 §5.1（C1 / C2 仍 ⏳ S13）。
+
 ---
 
 ## 4. H1–H12 硬约束 → 验收锚点 → 判据（**本矩阵核心**）
 
 | # | 约束（摘要，全文见 PRD §4） | 锚点 | 判据类型 | 判据 / 命令 | 验收人 | 现状 |
 |---|---|---|---|---|---|---|
-| **H1** | 异步任务状态机 `pending → processing → completed / failed` | M1 §3 验收 1 / 5；M1 §3 验收 8（启动回收 → `TASK_INTERRUPTED`）；**M4 §3 验收 7** | 机械 | 集成测试断言 `status` 仅在四值内 + 重启回收用例；契约 `documents.status` 枚举 | CI | ✅ M1 侧；⏳ M4 侧（S9） |
+| **H1** | 异步任务状态机 `pending → processing → completed / failed` | M1 §3 验收 1 / 5；M1 §3 验收 8（启动回收 → `TASK_INTERRUPTED`）；**M4 §3 验收 7** | 机械 | 集成测试断言 `status` 仅在四值内 + 重启回收用例；契约 `documents.status` 枚举 | CI | ✅ M1 侧；✅ **M4 侧（S7 达成）**：`affiliation_tasks.status` 四值内、经 `TaskManager` 双载体投递并纳入 `recover_orphan_tasks()` 启动回收（置 `failed` / `error_code = TASK_INTERRUPTED`）。**残留**：`list_in_flight_task_ids()` 仍只扫 `documents`（缺口 **S7.2-2** → S8） |
 | **H2** | 上传 ≤ 100MB + MIME 白名单（pdf/docx/csv） | M1 §3 验收 2 / 3 | 机械 | 集成测试各 1 例：超限 → 413 `FILE_TOO_LARGE`；非白名单 → 415 `UNSUPPORTED_MEDIA_TYPE` 且不落存储 | CI | ✅（docx 解析 S10） |
-| **H3** | 错误响应统一 `{code, message, detail, trace_id}` | M1 §3 验收 2 / 3；M5 §3 验收 1；M3 §3 验收 3 | 机械 | 契约 `ErrorResponse` schema + 各错误分支响应体断言 | CI | 🟡 M1 侧已统一；M3 / M4 / M5 侧随模块落地 |
-| **H4** | loguru JSON 日志 + `trace_id` 全链路 | M1 §3 验收 7；**M2 §3 验收 7**；M5 §3 验收 6；**M6 §3 验收 10** | 半机械 | 断言响应头 `X-Trace-Id` 回显且与 `detail.trace_id` 一致；E2E 断言同一 `trace_id` 贯穿 M1→M5 | 后端 B | ✅ **S5 已收口**：`_refuse()` 出口 `trace_id` 已补，原「已知缺陷」关闭；M6 侧 ⏳ S12 |
-| **H5** | 敏感字段脱敏（金额 / 发票号 / 税号 / 法人 / 银行 / 身份证 / 电话 / 文件名） | **M5 §3 验收 3 + §4.5** | 机械 | 单元测试断言日志与响应中**无原文**；`filename_hash` 替代原文 | 后端 B | 🟡 部分；完整脱敏 S11 |
+| **H3** | 错误响应统一 `{code, message, detail, trace_id}` | M1 §3 验收 2 / 3；M5 §3 验收 1；M3 §3 验收 3 | 机械 | 契约 `ErrorResponse` schema + 各错误分支响应体断言 | CI | 🟡 M1 侧已统一；**M4 侧已统一**（新增 `AFFILIATION_TASK_NOT_FOUND` / `AFFILIATION_SUSPICION_NOT_FOUND` 两个 404 均走统一 `ErrorResponse`；跨租户 **403 而非 404**）；M3 / M5 侧随模块落地 |
+| **H4** | loguru JSON 日志 + `trace_id` 全链路 | M1 §3 验收 7；**M2 §3 验收 7**；M5 §3 验收 6；**M6 §3 验收 10** | 半机械 | 断言响应头 `X-Trace-Id` 回显且与 `detail.trace_id` 一致；E2E 断言同一 `trace_id` 贯穿 M1→M5 | 后端 B | ✅ **S5 已收口**：`_refuse()` 出口 `trace_id` 已补，原「已知缺陷」关闭；**M4 侧已贯穿**（`POST detect` 的 `trace_id` 与 `affiliation_tasks.trace_id` / `domain_events.trace_id` 同值，真机复核一致）；M6 侧 ⏳ S12 |
+| **H5** | 敏感字段脱敏（金额 / 发票号 / 税号 / 法人 / 银行 / 身份证 / 电话 / 文件名） | **M5 §3 验收 3 + §4.5** | 机械 | 单元测试断言日志与响应中**无原文**；`filename_hash` 替代原文 | 后端 B | 🟡 部分；完整脱敏 S11。**M4 侧**：`:LegalPerson.id_hash` 在无统一社会信用代码时**为 `null`**（严禁兜底造哈希），节点属性逐字照 spec §4.2 |
 | **H6** | 私域部署禁云外发（`PRIVATE_DEPLOY_ENABLED=true`） | M5 §3 验收 4 | 机械 | 单元测试断言外发被拦截（503 `PRIVATE_DEPLOY_BLOCKED`） | 后端 B + 架构师 | ⏳ S11。**当前为占位**，例外登记见 `docs/adr/0004-integration-seams.md` §3 |
 | **H7** | slowapi 限流（默认 60 req/min/IP） | M5 §3 验收 5 | 机械 | 集成测试连打超阈值 → 429 `RATE_LIMITED` | CI | ⏳ S11（**尚未落地**） |
 | **H8** | tenacity 指数退避 ≤ 3 次（初始 1s、倍数 2） | M1 §3 验收 4；M2 §3 验收 5 | 半机械 | 注入失败后断言重试次数 = 3 且 `error_code` / `error_detail` 落库；M2 侧断言 `retry_count` 写回 | 后端 B + 架构师 | ✅ **S5 批次 A 已收口**：B1（`retry_count` 回写）+ B4（退避 `exp_base` 读配置）两项缺陷均关闭，`task_retry_multiplier` 现为**有消费者的配置** |
 | **H9** | Prompt 版本管理（MVP 复用 5 个 v1，P2 才新增版本） | 各 spec §"关联 Prompts" | 机械 | `prompts/` 5 份文件名带版本号；`prompt_loader.py` 加载，**代码内无硬编码 Prompt** | 架构师 | ✅ 5 个 v1 就位（S9–S13 不新增版本，plan §19.1 A）；**S6 新增 1 份 `prompts/kg_qa_v2.md`**（引用口径收窄为"只能取已注入的 `chunk-<id>`"）——按 Prompt 版本管理规范**新增版本、不覆盖 v1**，符合本条判据；`dev-doc-status.md` §5「S9~S13 复用 v1」口径**不受影响**（v2 在 S6 引入）；**S7.1 批次 A 再新增 1 份 `prompts/kg_extraction_v2.md`**（枚举参数化为 `{{entity_types}}` / `{{relation_types}}`，扩 `LEGAL_PERSON` / `ADDRESS` 与 `LEGAL_REP` / `REGISTERED_AT`，供 M4 共享法人 / 共享地址疑点；`kg_extraction_v1.md` 文件**未被修改**，单测 `test_v1_template_is_untouched` 守着），`dev-doc-status.md` §5 已同步 |
-| **H10** | 契约先行 | 各 spec §"API 端点草案" + `contracts/openapi.yaml` | 机械 | `backend/`：`uv run python scripts/export_openapi.py --check`；`frontend/`：`npm run gen:api` 后 `git diff --exit-code -- frontend/src/types/api.d.ts` | CI（`contract` job） | ✅ 门禁在跑 |
+| **H10** | 契约先行 | 各 spec §"API 端点草案" + `contracts/openapi.yaml` | 机械 | `backend/`：`uv run python scripts/export_openapi.py --check`；`frontend/`：`npm run gen:api` 后 `git diff --exit-code -- frontend/src/types/api.d.ts` | CI（`contract` job） | ✅ 门禁在跑；**S7 批次 C / D 各跑一次 `gen:api` 均零 diff**；bump 1.3.0 连带重导契约（`info.version` 取自 `app_version`，不同步则必红）后仍零漂移 |
 | **H11** | 准入线 C1–C3 | M4 §3 验收 6；M3 §3 验收 2 | 机械 + 人工 | 见 §5.1 | 架构师 + 用户 | ⏳ S13（评测脚本**待建**） |
-| **H12** | 反证 F3 引用覆盖率 < 100% → **直接 NO-GO** | M3 §3 验收 2；M4 §3 验收 4 | 机械 + 人工 | 脚本统计"含可回溯 span 的答案数 / 总答案数"，**必须 = 1.00**；受控问题集人工复核 | 架构师 | 🟡 **S6 首次达标（F3 未触发）**：受控问题集 14 问，引用覆盖率 **100%**、拒答误伤 **0**（`scripts/eval_controlled_qset.py`）。**终局判据仍属 S10**——多跳 ≥3 跳 + 全量问题集；本轮为**演示剧本口径**（单份真机文档），不等同全量召回指标，已按 G5 在 release notes v1.2.0 §6.4 显式声明 |
+| **H12** | 反证 F3 引用覆盖率 < 100% → **直接 NO-GO** | M3 §3 验收 2；M4 §3 验收 4 | 机械 + 人工 | 脚本统计"含可回溯 span 的答案数 / 总答案数"，**必须 = 1.00**；受控问题集人工复核 | 架构师 | 🟡 **S6 首次达标（F3 未触发）**：受控问题集 14 问，引用覆盖率 **100%**、拒答误伤 **0**（`scripts/eval_controlled_qset.py`）。**终局判据仍属 S10**——多跳 ≥3 跳 + 全量问题集；本轮为**演示剧本口径**（单份真机文档），不等同全量召回指标，已按 G5 在 release notes v1.2.0 §6.4 显式声明。**M4 侧首次达标（F3 未触发）**：**10 / 10** 疑点含可回溯 `:Chunk` 证据（合计 42 条，覆盖率 100%，见 §3.3 验收 4）；数据集为 6 片年报切片，**终局仍待 S13 全量样本**，已在 release notes v1.3.0 §6.7 声明 |
 
 > **H1–H10 来自 `CODEBUDDY.md`，H11–H12 来自产品准入线**（PRD §4）。**H12 是唯一的"一票否决"项**：它不达标时不允许降级发布。
 
@@ -99,7 +115,7 @@
 | **C1** 图谱相对 RAG 增益 | **≥ 10%** | M4 §3 验收 6；`02` 附录 C | 同一数据集跑图谱版与 RAG 基线，`(图谱 − 基线) / 基线` | S13 | ⏳ 评测脚本**待建** |
 | **C2-a** 隐性关联召回 | **≥ 0.80** | M4 §3 验收 6；`01-research` §1.4 P3 | 正确识别数 / 实际植入数（gold 关系人工植入） | S13 | ⏳ |
 | **C2-b** 误报率 | **≤ 0.15** | M4 §3 验收 6 | 错误识别数 / 识别出总数 | S13 | ⏳ |
-| **C2-c** 引用覆盖率 | **= 1.00**（硬约束） | M3 §3 验收 2；M4 §3 验收 4 | 含可回溯 span 的答案数 / 总答案数 | S6 → S10 | 🟡 **S6 达标于受控问题集**（14 问 = 1.00）；S10 用全量问题集终判 |
+| **C2-c** 引用覆盖率 | **= 1.00**（硬约束） | M3 §3 验收 2；M4 §3 验收 4 | 含可回溯 span 的答案数 / 总答案数 | S6 → S10 | 🟡 **S6 达标于受控问题集**（14 问 = 1.00）；**M4 侧 10 / 10 疑点含证据 = 1.00**（演示数据集，见 §3.3 验收 4）；S10 用全量问题集终判；**C1 / C2-a / C2-b 仍未测量** → S13 |
 | **多跳答对率** | **≥ 0.80** | M3 §3 验收 1 | 3 跳内正确回答数 / 总多跳问题数 | S10 | ⏳ |
 | **C3-a** 单文档处理成本 | 落入阈值（**TBD-7**） | M6 §3 验收 8；`02` 附录 C | `token_usage_total / doc_count`（每日聚合） | S13 | ⏳ |
 | **C3-b** 增量 / 全量成本比 | **显著 < 1.00** | M6 §3 验收 8 | `incremental_cost / full_rebuild_cost` | S13 | ⏳ |
