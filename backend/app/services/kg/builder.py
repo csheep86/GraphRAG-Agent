@@ -24,6 +24,28 @@ Sprint 6 批次 A-3 新增的证据层（**均为可跳过段**：无 ``document
      :func:`_assign_entities_to_chunks`）。读侧 ``graphs.py::_QUERY_DOCUMENT_SUBGRAPH``
      自 Sprint 4 起就是按这条链路查的——**读侧等写侧两年，本批次补齐**。
 
+Sprint 7.1 批次 A 新增的主体层（`specs/m4-affiliation-detection.md` §4.1 / §4.2 的
+增量建模，**同样是可跳过段**：抽取产物里没有 ``LEGAL_PERSON`` / ``ADDRESS`` 时
+一段都不跑）：
+
+2.6. **stage-2.6 affiliation LOAD**——``:Subject`` / ``:Address`` / ``:LegalPerson``
+     三类节点，``id`` 由**规范化名称的 sha256** 决定（同名跨文档天然合成同一节点，
+     M4 的共享法人 / 共享地址两跳算法就建立在这个「合并」上，见
+     :func:`build_affiliation_rows`）；
+3.2. **stage-3.2 affiliation links**——``(:Subject)-[:LEGAL_REP]->(:LegalPerson)``
+     与 ``(:Subject)-[:REGISTERED_AT]->(:Address)``。
+
+设计边界（批次 A，超出部分一律留给后续 Sprint）：
+- **不与 ``:Entity`` 桥接**：三类节点 / 两条边只按 M2 抽取产物生成，不额外补节点、
+  也不往 ``:Entity`` 上打补丁（``changes/Sprint7.1/tasks.md`` §2.2「不桥接」决策）——
+  两套坐标混用会让"同一家公司到底在图里是几个点"失去确定性；M4 算法只查这三类
+  节点，不受 M2 通用图干扰。
+- **缺失即 ``null``，严禁兜底生成**：``tax_id`` / ``region_code`` / ``id_hash``
+  在分销材料里拿不到就写 ``null``（**不**拿名字凑哈希、不猜行政区划），
+  否则「同名不同组织机构」会被伪造的统一信用代码误合并。
+- 新节点一律带 ``kg_version``（ADR-0002：与 M2 共享同一 active 版本，不分裂）；
+  ``acl_scope`` 沿用 :class:`KgDocumentRef` 口径从文档继承，为 S11 的 RLS 穿透留属性。
+
 设计边界：
 - **不**做内层事务——Neo4j 事务 + PG 事务分离（ADR-0002 §3.1 跨库一致性靠
   ``kg_versions`` 状态机 + 回填校验）；
@@ -34,10 +56,11 @@ Sprint 6 批次 A-3 新增的证据层（**均为可跳过段**：无 ``document
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Final, Protocol
 
 from loguru import logger
 
@@ -56,6 +79,14 @@ class BuildStats:
     chunk_count: int = 0
     #: Sprint 6 批次 A-3：写入的 ``HAS_CHUNK`` + ``MENTIONS`` 边数
     evidence_edge_count: int = 0
+    #: Sprint 7.1 批次 A（M4）：``:Subject`` 节点数（无 affiliation 数据时为 0）
+    subject_count: int = 0
+    #: Sprint 7.1 批次 A（M4）：``:Address`` 节点数
+    address_count: int = 0
+    #: Sprint 7.1 批次 A（M4）：``:LegalPerson`` 节点数
+    legal_person_count: int = 0
+    #: Sprint 7.1 批次 A（M4）：``LEGAL_REP`` + ``REGISTERED_AT`` 边数
+    affiliation_edge_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +151,14 @@ _CYPHER_STAGE1B_INDEXES = (
     "CREATE CONSTRAINT entity_id_version IF NOT EXISTS "
     "FOR (n:Entity) REQUIRE (n.id, n.kg_version) IS UNIQUE",
     "CREATE INDEX entity_org_id IF NOT EXISTS FOR (n:Entity) ON (n.org_id)",
+    # Sprint 7.1 批次 A（M4 增量建模）：三类主体节点的幂等 MERGE 前提。
+    # 写法与 Entity 一致——社区版只能要复合唯一约束（见上方实测反哺）。
+    "CREATE CONSTRAINT subject_id_version IF NOT EXISTS "
+    "FOR (n:Subject) REQUIRE (n.id, n.kg_version) IS UNIQUE",
+    "CREATE CONSTRAINT address_id_version IF NOT EXISTS "
+    "FOR (n:Address) REQUIRE (n.id, n.kg_version) IS UNIQUE",
+    "CREATE CONSTRAINT legalperson_id_version IF NOT EXISTS "
+    "FOR (n:LegalPerson) REQUIRE (n.id, n.kg_version) IS UNIQUE",
 )
 
 #: stage-1.5（Sprint 6 批次 A-3）：MERGE ``:Document`` 节点。
@@ -181,7 +220,101 @@ ON CREATE SET r.org_id = $org_id,
               r.trace_id = $trace_id
 """
 
-#: stage-2：单批 LOAD entities
+#: stage-2.6（Sprint 7.1 批次 A，M4 §4.1）：分批 MERGE ``:Subject`` 主体节点。
+#: ``tax_id`` 缺失即 ``null``——**不**拿名字凑统一社会信用代码（那会让不同机构误合并）。
+_CYPHER_STAGE2C_LOAD_SUBJECTS = """
+UNWIND $batch AS s
+MERGE (n:Subject {id: s.id, kg_version: $kg_version})
+ON CREATE SET n.name = s.name,
+              n.tax_id = s.tax_id,
+              n.type = s.type,
+              n.source_entity_ids = s.source_entity_ids,
+              n.org_id = $org_id,
+              n.acl_scope = $acl_scope,
+              n.trace_id = $trace_id
+ON MATCH SET n.name = s.name,
+             n.tax_id = s.tax_id,
+             n.type = s.type,
+             n.source_entity_ids = reduce(
+                 acc = coalesce(n.source_entity_ids, []),
+                 x IN s.source_entity_ids |
+                 CASE WHEN x IN acc THEN acc ELSE acc + x END
+             ),
+             n.org_id = $org_id,
+             n.acl_scope = $acl_scope
+"""
+
+#: stage-2.6（Sprint 7.1 批次 A，M4 §4.1）：分批 MERGE ``:Address`` 地址节点。
+#: ``region_code`` 缺失即 ``null``（不猜行政区划）。
+#: ``source_entity_ids`` 的 ON MATCH 用 ``reduce`` 累加去重（社区版无 apoc.coll.toSet）：
+#: 同一法人 / 地址会在多份文档里被抽到，**每份贡献不同的源实体 id**，直接覆盖会丢溯源。
+_CYPHER_STAGE2D_LOAD_ADDRESSES = """
+UNWIND $batch AS a
+MERGE (n:Address {id: a.id, kg_version: $kg_version})
+ON CREATE SET n.full_address = a.full_address,
+              n.region_code = a.region_code,
+              n.source_entity_ids = a.source_entity_ids,
+              n.org_id = $org_id,
+              n.acl_scope = $acl_scope,
+              n.trace_id = $trace_id
+ON MATCH SET n.full_address = a.full_address,
+             n.region_code = a.region_code,
+             n.source_entity_ids = reduce(
+                 acc = coalesce(n.source_entity_ids, []),
+                 x IN a.source_entity_ids |
+                 CASE WHEN x IN acc THEN acc ELSE acc + x END
+             ),
+             n.org_id = $org_id,
+             n.acl_scope = $acl_scope
+"""
+
+#: stage-2.6（Sprint 7.1 批次 A，M4 §4.1）：分批 MERGE ``:LegalPerson`` 法人节点。
+#: ``id_type`` / ``id_hash`` 缺失即 ``null``——**严禁兜底生成哈希**：
+#: 分销材料里没有证件号，拿名字造 id_hash 会让"同名不同人"被误合并（比缺失更危险）。
+_CYPHER_STAGE2E_LOAD_LEGAL_PERSONS = """
+UNWIND $batch AS p
+MERGE (n:LegalPerson {id: p.id, kg_version: $kg_version})
+ON CREATE SET n.name = p.name,
+              n.id_type = p.id_type,
+              n.id_hash = p.id_hash,
+              n.source_entity_ids = p.source_entity_ids,
+              n.org_id = $org_id,
+              n.acl_scope = $acl_scope,
+              n.trace_id = $trace_id
+ON MATCH SET n.name = p.name,
+             n.id_type = p.id_type,
+             n.id_hash = p.id_hash,
+             n.source_entity_ids = reduce(
+                 acc = coalesce(n.source_entity_ids, []),
+                 x IN p.source_entity_ids |
+                 CASE WHEN x IN acc THEN acc ELSE acc + x END
+             ),
+             n.org_id = $org_id,
+             n.acl_scope = $acl_scope
+"""
+
+#: stage-3.2（Sprint 7.1 批次 A，M4 §4.2）：``(:Subject)-[:LEGAL_REP]->(:LegalPerson)``。
+#: 两端有一端 MATCH 不到就**不造**——与 stage-3 的 MATCH-MERGE 纪律一致：没有证据不写边。
+_CYPHER_STAGE3B_LEGAL_REP = """
+UNWIND $batch AS r
+MATCH (s:Subject {id: r.source_id, kg_version: $kg_version})
+MATCH (p:LegalPerson {id: r.target_id, kg_version: $kg_version})
+MERGE (s)-[rel:LEGAL_REP {id: r.id, kg_version: $kg_version}]->(p)
+ON CREATE SET rel.org_id = $org_id,
+              rel.trace_id = $trace_id
+"""
+
+#: stage-3.2（Sprint 7.1 批次 A，M4 §4.2）：``(:Subject)-[:REGISTERED_AT]->(:Address)``
+_CYPHER_STAGE3C_REGISTERED_AT = """
+UNWIND $batch AS r
+MATCH (s:Subject {id: r.source_id, kg_version: $kg_version})
+MATCH (a:Address {id: r.target_id, kg_version: $kg_version})
+MERGE (s)-[rel:REGISTERED_AT {id: r.id, kg_version: $kg_version}]->(a)
+ON CREATE SET rel.org_id = $org_id,
+              rel.trace_id = $trace_id
+"""
+
+#: stage-2：单批 LOAD entities（M2 通用实体，**不与 M4 主体层桥接**）
 _CYPHER_STAGE2_LOAD_ENTITIES = """
 UNWIND $batch AS e
 MERGE (n:Entity {id: e.id, kg_version: $kg_version})
@@ -280,6 +413,196 @@ def _assign_entities_to_chunks(
     ]
 
 
+# ------------------------------------------------------------------------------
+# Sprint 7.1 批次 A：M4 主体层行构造（纯函数，**不触 Neo4j**，便于单测）
+# ------------------------------------------------------------------------------
+
+#: 能当 M4 ``:Subject`` 的抽取类型（``specs/m4-affiliation-detection.md`` §4.1：
+#: 主体 = 公司 / 个体工商户 / 个人；分销材料里能落到位的是 ``ORG``）
+_SUBJECT_ENTITY_TYPE: Final[str] = "ORG"
+_LEGAL_PERSON_ENTITY_TYPE: Final[str] = "LEGAL_PERSON"
+_ADDRESS_ENTITY_TYPE: Final[str] = "ADDRESS"
+_RELATION_LEGAL_REP: Final[str] = "LEGAL_REP"
+_RELATION_REGISTERED_AT: Final[str] = "REGISTERED_AT"
+
+
+def _stable_node_id(prefix: str, key: str) -> str:
+    """按**规范化名称**生成稳定节点 id。
+
+    M4 的共享法人 / 共享地址是**两跳**查询（``s1 -[:LEGAL_REP]-> p <-[:LEGAL_REP]- s2``），
+    它能否成立完全取决于「不同文档里同名的法人必须合成同一个节点」——所以这里用
+    拿 SHA-256(**name.strip()**) 当 id，而不是 LLM 给的 ``ent_<uuid>``（那份 id 每次抽取
+    都不同，**跨文档必然连不上**）。
+
+    :param prefix: 节点前缀（``sub`` / ``adr`` / ``lpr``），避免三类撞 namespaces。
+    """
+    normalized = key.strip()
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
+
+
+@dataclass(frozen=True, slots=True)
+class AffiliationRows:
+    """由抽取产物算出的 M4 主体层写入行（全部去重、id 稳定）。"""
+
+    subjects: list[dict[str, Any]] = field(default_factory=list)
+    addresses: list[dict[str, Any]] = field(default_factory=list)
+    legal_persons: list[dict[str, Any]] = field(default_factory=list)
+    legal_rep_edges: list[dict[str, Any]] = field(default_factory=list)
+    registered_at_edges: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.subjects or self.addresses or self.legal_persons)
+
+
+def _upsert(
+    target: dict[str, dict[str, Any]],
+    node_id: str,
+    row: dict[str, Any],
+    *,
+    source_entity_id: str,
+) -> None:
+    """登记一行主体层数据，并把它**源自哪个 M2 实体**累加进 ``source_entity_ids``。
+
+    ``source_entity_ids`` 是本批次在 spec §4.1 属性之外**新增的溯源字段**，用途单一：
+    M4 的疑点必须能回原文（§3 验收 4「引用覆盖率 = 100%」），而 ``:Chunk`` 只
+    ``MENTIONS`` 到 ``:Entity``——没有这层溯源，疑点就没有任何可点击的证据。
+    **它不构成 ``:Entity`` ↔ ``:Subject`` 的图桥接**（只存 id 字符串，不建关系）。
+    """
+    if node_id not in target:
+        target[node_id] = {**row, "source_entity_ids": []}
+    ids = target[node_id]["source_entity_ids"]
+    if source_entity_id and source_entity_id not in ids:
+        ids.append(source_entity_id)
+
+
+def _register_subject(
+    subjects: dict[str, dict[str, Any]], source: dict[str, Any]
+) -> str:
+    """按需把 source 登记为 :Subject——**只有真要落一条边时才登记**。
+
+    先登记再判目标类型会产出「没有任何关系边的孤儿 :Subject」，既污染 M4 算法的
+    分母，也让本函数对无关关系（``PARTY_TO`` 等）产出垃圾行。
+    """
+    name = str(source.get("canonical_name") or "").strip()
+    identifier = _stable_node_id("sub", name)
+    _upsert(
+        subjects,
+        identifier,
+        {
+            "id": identifier,
+            "name": name,
+            "tax_id": None,
+            "type": str(source.get("entity_type")),
+        },
+        source_entity_id=str(source.get("id") or ""),
+    )
+    return identifier
+
+
+def build_affiliation_rows(
+    entities: Sequence[dict[str, Any]],
+    relations: Sequence[dict[str, Any]],
+    *,
+    version: str,
+) -> AffiliationRows:
+    """把 M2 抽取产物翻译成 M4 三类节点 + 两条边；**不是**就不写。
+
+    只有当关系两侧的抽取类型都对得上（``ORG`` → ``LEGAL_PERSON`` / ``ADDRESS``）
+    才产出一行；类型不匹配（如 ``PERSON`` 当 source）直接丢弃——M4 算法的分母是
+    ``:Subject``，塞错实体会让"共享法人"结论失去意义。
+
+    ``tax_id`` / ``region_code`` / ``id_type`` / ``id_hash`` 一律写 ``None``：
+    分销材料里没有这些主数据字段，**缺失就 null**（内部纪律：严禁兜底生成）。
+    """
+    by_id: dict[str, dict[str, Any]] = {}
+    for entity in entities:
+        entity_id = entity.get("id")
+        if entity_id is not None:
+            by_id[str(entity_id)] = entity
+
+    subjects: dict[str, dict[str, Any]] = {}
+    addresses: dict[str, dict[str, Any]] = {}
+    legal_persons: dict[str, dict[str, Any]] = {}
+    legal_rep_edges: dict[str, dict[str, Any]] = {}
+    registered_at_edges: dict[str, dict[str, Any]] = {}
+
+    for relation in relations:
+        relation_type = relation.get("relation_type")
+        source = by_id.get(str(relation.get("source_entity_id")))
+        target = by_id.get(str(relation.get("target_entity_id")))
+        if source is None or target is None:
+            continue  # 悬空端点：与其在 Neo4j 里 MATCH 不到，不如这里就丢掉
+
+        source_type = source.get("entity_type")
+        target_type = target.get("entity_type")
+        if source_type != _SUBJECT_ENTITY_TYPE:
+            # M4 的 :Subject 只收 ORG：把 PERSON / DATE 之类硬塞进来会让
+            # "共享法人"的两跳查询分母失真
+            continue
+
+        if relation_type == _RELATION_LEGAL_REP and (
+            target_type == _LEGAL_PERSON_ENTITY_TYPE
+        ):
+            target_name = str(target.get("canonical_name") or "").strip()
+            if not target_name:
+                continue
+            person_id = _stable_node_id("lpr", target_name)
+            _upsert(
+                legal_persons,
+                person_id,
+                {
+                    "id": person_id,
+                    "name": target_name,
+                    "id_type": None,
+                    "id_hash": None,
+                },
+                source_entity_id=str(target.get("id") or ""),
+            )
+            subject_node_id = _register_subject(subjects, source)
+            # 边 id **按端点生成**（与节点 id 同源），而**不用抽取侧的 relation id**：
+            # "甲公司法人是张三"是一条**事实**，在 6 份文档里被抽到 3 次就该是 3 条
+            # ``source_entity_ids`` 溯源 + **1 条边**；用 relation id 会 MERGE 出 3 条
+            # 并行边，直接后果是 M4 两跳按路径匹配 → 同一疑点重复出 3 遍（真机踩到）。
+            legal_rep_edges[f"{subject_node_id}->{person_id}"] = {
+                "id": f"{version}:lr:{subject_node_id}:{person_id}",
+                "source_id": subject_node_id,
+                "target_id": person_id,
+            }
+        elif relation_type == _RELATION_REGISTERED_AT and (
+            target_type == _ADDRESS_ENTITY_TYPE
+        ):
+            full_address = str(target.get("canonical_name") or "").strip()
+            if not full_address:
+                continue
+            address_id = _stable_node_id("adr", full_address)
+            _upsert(
+                addresses,
+                address_id,
+                {
+                    "id": address_id,
+                    "full_address": full_address,
+                    "region_code": None,
+                },
+                source_entity_id=str(target.get("id") or ""),
+            )
+            subject_node_id = _register_subject(subjects, source)
+            registered_at_edges[f"{subject_node_id}->{address_id}"] = {
+                "id": f"{version}:ra:{subject_node_id}:{address_id}",
+                "source_id": subject_node_id,
+                "target_id": address_id,
+            }
+
+    return AffiliationRows(
+        subjects=list(subjects.values()),
+        addresses=list(addresses.values()),
+        legal_persons=list(legal_persons.values()),
+        legal_rep_edges=list(legal_rep_edges.values()),
+        registered_at_edges=list(registered_at_edges.values()),
+    )
+
+
 class ThreeStageKgBuilder:
     """ADR-0002 三段式 Neo4j 写入器（Sprint 6 批次 A-3 扩为五段式）。"""
 
@@ -329,6 +652,12 @@ class ThreeStageKgBuilder:
         relation_count = self._stage3(request)
         evidence_edge_count = self._stage4(request)
 
+        # Sprint 7.1 批次 A：M4 主体层（无 affiliation 数据时一段都不跑）
+        affiliation = build_affiliation_rows(
+            request.entities, request.relations, version=request.version
+        )
+        affiliation_stats = self._stage_affiliation(request, affiliation)
+
         batch_count = sum(
             1
             for _ in (
@@ -347,6 +676,10 @@ class ThreeStageKgBuilder:
             chunk_count=chunk_count,
             evidence_edge_count=evidence_edge_count,
             document_written=document_written,
+            subject_count=affiliation_stats[0],
+            address_count=affiliation_stats[1],
+            legal_person_count=affiliation_stats[2],
+            affiliation_edge_count=affiliation_stats[3],
         ).info("kg_build_done")
 
         return BuildStats(
@@ -355,6 +688,10 @@ class ThreeStageKgBuilder:
             batch_count=batch_count,
             chunk_count=chunk_count,
             evidence_edge_count=evidence_edge_count,
+            subject_count=affiliation_stats[0],
+            address_count=affiliation_stats[1],
+            legal_person_count=affiliation_stats[2],
+            affiliation_edge_count=affiliation_stats[3],
         )
 
     # -------------------------------------------------------------- 阶段实现
@@ -514,6 +851,57 @@ class ThreeStageKgBuilder:
         except Exception as exc:  # noqa: BLE001 - 统一包装
             raise GraphUnavailableError(f"stage-4 失败: {exc}") from exc
 
+    # ------------------------------------------------------- M4 主体层
+
+    def _stage_affiliation(
+        self, request: KgBuildRequest, rows: AffiliationRows
+    ) -> tuple[int, int, int, int]:
+        """stage-2.6 + stage-3.2：写入 M4 三类节点与两条边。
+
+        :returns: ``(subject_count, address_count, legal_person_count, affiliation_edge_count)``
+        ``rows.is_empty`` 时**一段都不跑**（保持既有调用方与单测观察到的行为）。
+        """
+        if rows.is_empty:
+            return (0, 0, 0, 0)
+
+        acl_scope = request.document.acl_scope if request.document else None
+        common_params = {
+            "kg_version": request.version,
+            "org_id": str(request.org_id),
+            "acl_scope": acl_scope,
+            "trace_id": str(request.trace_id),
+        }
+        try:
+            written = {"subjects": 0, "addresses": 0, "persons": 0}
+            for cypher, batch, key in (
+                (_CYPHER_STAGE2C_LOAD_SUBJECTS, rows.subjects, "subjects"),
+                (_CYPHER_STAGE2D_LOAD_ADDRESSES, rows.addresses, "addresses"),
+                (_CYPHER_STAGE2E_LOAD_LEGAL_PERSONS, rows.legal_persons, "persons"),
+            ):
+                for chunk in _chunks_by_batches(batch, self._batch_size):
+                    self._run(cypher, {"batch": list(chunk), **common_params})
+                    written[key] += len(chunk)
+
+            edges = 0
+            for cypher, batch in (
+                (_CYPHER_STAGE3B_LEGAL_REP, rows.legal_rep_edges),
+                (_CYPHER_STAGE3C_REGISTERED_AT, rows.registered_at_edges),
+            ):
+                for chunk in _chunks_by_batches(batch, self._batch_size):
+                    self._run(cypher, {"batch": list(chunk), **common_params})
+                    edges += len(chunk)
+
+            return (
+                written["subjects"],
+                written["addresses"],
+                written["persons"],
+                edges,
+            )
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(f"stage-2.6/3.2 失败: {exc}") from exc
+
     # -------------------------------------------------------------- 内部
 
     def _run(self, cypher: str, params: dict[str, Any]) -> Any:  # noqa: ANN401
@@ -527,9 +915,11 @@ class ThreeStageKgBuilder:
 
 
 __all__ = [
+    "AffiliationRows",
     "BuildStats",
     "KgBuildRequest",
     "KgBuilder",
     "KgDocumentRef",
     "ThreeStageKgBuilder",
+    "build_affiliation_rows",
 ]

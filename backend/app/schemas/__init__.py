@@ -1,5 +1,16 @@
 """对外契约的 Pydantic 模型（契约唯一真源）。"""
 
+from app.schemas.affiliation import (
+    AffiliationDetectRequest,
+    AffiliationDetectResponse,
+    AffiliationEvidenceRef,
+    AffiliationSuspicionItem,
+    AffiliationSuspicionListResponse,
+    AffiliationSuspicionPatchRequest,
+    AffiliationSuspicionPatchResponse,
+    AffiliationTaskResponse,
+    AffiliationTaskResultSummary,
+)
 from app.schemas.agent import (
     AgentQueryRequest,
     AgentQueryResponse,
@@ -29,6 +40,15 @@ from app.schemas.graph import (
 from app.schemas.health import HealthCheckStatus, HealthResponse
 
 __all__ = [
+    "AffiliationDetectRequest",
+    "AffiliationDetectResponse",
+    "AffiliationEvidenceRef",
+    "AffiliationSuspicionItem",
+    "AffiliationSuspicionListResponse",
+    "AffiliationSuspicionPatchRequest",
+    "AffiliationSuspicionPatchResponse",
+    "AffiliationTaskResponse",
+    "AffiliationTaskResultSummary",
     "AgentQueryRequest",
     "AgentQueryResponse",
     "Citation",

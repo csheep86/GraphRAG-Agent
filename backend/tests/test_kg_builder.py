@@ -117,12 +117,17 @@ def test_stage_order_mirror_then_entities_then_relations() -> None:
     assert calls[0][0] == _CYPHER_STAGE1A_VERSION_MIRROR.strip()
     assert calls[0][1]["version"] == "v-test"
     assert calls[0][1]["status"] == "building"
-    # 第二、三段：索引约束（幂等）
-    assert "CREATE CONSTRAINT" in calls[1][0]
-    assert "CREATE INDEX" in calls[2][0]
-    # 第四段起：实体 LOAD（UNWIND）→ 关系 LOAD（MATCH + MERGE）
-    assert "UNWIND" in calls[3][0] and "MERGE (n:Entity" in calls[3][0]
-    assert "UNWIND" in calls[4][0] and "MERGE (a)-[rel:RELATION" in calls[4][0]
+    # 紧随其后：索引 / 约束段（幂等）。Sprint 7.1 起含 M4 三类节点的约束，
+    # 条数会随建模增长——按内容筛而不是按写死下标断言。
+    index_calls = [c[0] for c in calls[1:] if c[0].startswith("CREATE ")]
+    assert index_calls[0].startswith("CREATE CONSTRAINT entity_id_version")
+    assert any(c.startswith("CREATE INDEX entity_org_id") for c in index_calls)
+    assert any("IS UNIQUE" in c for c in index_calls)
+    # 随后：实体 LOAD（UNWIND）→ 关系 LOAD（MATCH + MERGE）
+    first_index = next(i for i, c in enumerate(calls) if "MERGE (n:Entity" in c[0])
+    assert "UNWIND" in calls[first_index][0]
+    assert "UNWIND" in calls[first_index + 1][0]
+    assert "MERGE (a)-[rel:RELATION" in calls[first_index + 1][0]
 
 
 def test_build_params_carry_tenant_and_version() -> None:
@@ -140,7 +145,8 @@ def test_build_params_carry_tenant_and_version() -> None:
         )
     )
 
-    entity_call = calls[3]
+    # 按 Cypher 内容定位实体批（stage-1b 的约束条目会随建模增长，下标不可靠）
+    entity_call = next(c for c in calls if "MERGE (n:Entity" in c[0])
     assert entity_call[1]["kg_version"] == "v-tenant"
     assert entity_call[1]["org_id"] == str(org_id)
     assert [e["id"] for e in entity_call[1]["batch"]] == ["e1"]

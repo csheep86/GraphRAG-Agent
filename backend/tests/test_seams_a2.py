@@ -140,12 +140,16 @@ def test_local_provider_no_credentials_returns_none(
 
 
 def test_resolve_pipeline_stages_skips_unregistered() -> None:
-    """默认四阶段中仅已登记执行体的阶段生效（批次 B 后登记集合 = parse + extract + kg.build）。"""
+    """默认四阶段均已登记（Sprint 7.1 批次 A 起 ``risk.detect`` 落地）。"""
     stages = resolve_pipeline_stages()
 
-    # 批次 B 后 ``document.parse`` / ``document.extract`` / ``kg.build`` 三个执行体已登记，
-    # ``risk.detect`` 仍待 Sprint 7 落地——未登记的阶段被 resolve_pipeline_stages 跳过。
-    assert stages == ["document.parse", "document.extract", "kg.build"]
+    # ``risk.detect`` 在 Sprint 7.1 批次 A 登记后自动进入管线（未登记的阶段会被跳过）
+    assert stages == [
+        "document.parse",
+        "document.extract",
+        "kg.build",
+        "risk.detect",
+    ]
 
 
 def test_resolve_pipeline_stages_respects_order_and_toggle(
@@ -158,15 +162,19 @@ def test_resolve_pipeline_stages_respects_order_and_toggle(
         ["kg.build", "document.parse", "risk.detect", "document.extract"],
     )
 
-    # risk.detect 尚未登记 → 跳过；其余按配置顺序保留
+    # 顺序 = 配置顺序（risk.detect 已登记，故保留在配置给的位置）
     assert resolve_pipeline_stages() == [
         "kg.build",
         "document.parse",
+        "risk.detect",
         "document.extract",
     ]
 
-    monkeypatch.setattr(get_settings(), "pipeline_stages", ["risk.detect"])
-    assert resolve_pipeline_stages() == []
+    # 只留一个**未登记**的阶段 → 空（证明「未登记即跳过」仍成立）
+    monkeypatch.setattr(
+        get_settings(), "pipeline_stages", ["risk.detect", "not.registered"]
+    )
+    assert resolve_pipeline_stages() == ["risk.detect"]
 
 
 def test_first_pipeline_stage_none_when_all_disabled(

@@ -101,6 +101,26 @@ KG_TENANT_LEAK: dict[int, dict[str, Any]] = {
     }
 }
 
+AFFILIATION_TASK_NOT_FOUND: dict[int, dict[str, Any]] = {
+    404: {
+        "model": ErrorResponse,
+        "description": (
+            "检测任务不存在（`NOT_FOUND`）。"
+            "**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1）"
+        ),
+    }
+}
+
+AFFILIATION_SUSPICION_NOT_FOUND: dict[int, dict[str, Any]] = {
+    404: {
+        "model": ErrorResponse,
+        "description": (
+            "疑点不存在（`NOT_FOUND`）。"
+            "**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1）"
+        ),
+    }
+}
+
 VALIDATION_ERROR: dict[int, dict[str, Any]] = {
     400: {
         "model": ErrorResponse,

@@ -280,6 +280,77 @@ LIMIT $limit
 """
 
 
+#: Sprint 7.1 批次 A（M4 §5.4 第 159 行**照抄**）：共享法人 —— ≥ 2 个 :Subject 由同一
+#: :LegalPerson 代表。两点偏离 spec 原文，均为纪律要求而非自由发挥：
+#: ① ``s1.id < s2.id`` 代替 ``s1 <> s2``（把 (A,B) / (B,A) 对称对压成一条，
+#:    否则同一疑点会出两遍）；② 额外加 ``org_id`` 租户过滤（ADR-0003）——
+#:    spec 只按 ``kg_version`` 过滤，但 ``kg_version`` 不等于租户边界。
+#: 用 ``properties(n)['org_id']`` 而非 ``n.org_id``：属性键不存在时后者会触发
+#: ``01N52 property key does not exist`` 通知（与既有查询同口径）。
+_QUERY_SHARED_LEGAL_REP = """
+MATCH (s1:Subject)-[:LEGAL_REP]->(l:LegalPerson)<-[:LEGAL_REP]-(s2:Subject)
+WHERE s1.id < s2.id
+  AND s1.kg_version = $kg_version
+  AND s2.kg_version = $kg_version
+  AND l.kg_version = $kg_version
+  AND ($org_id IS NULL OR properties(s1)['org_id'] IS NULL
+       OR properties(s1)['org_id'] = $org_id)
+  AND ($org_id IS NULL OR properties(s2)['org_id'] IS NULL
+       OR properties(s2)['org_id'] = $org_id)
+RETURN
+  s1.id AS subject_a_id, s1.name AS subject_a_name,
+  s2.id AS subject_b_id, s2.name AS subject_b_name,
+  l.id AS shared_id, l.name AS shared_name
+ORDER BY subject_a_id, subject_b_id
+LIMIT $limit
+"""
+
+#: Sprint 7.1 批次 A（M4 §5.4 第 154 行**照抄**）：共享地址 —— 同上两处同样偏离。
+_QUERY_SHARED_ADDRESS = """
+MATCH (s1:Subject)-[:REGISTERED_AT]->(a:Address)<-[:REGISTERED_AT]-(s2:Subject)
+WHERE s1.id < s2.id
+  AND s1.kg_version = $kg_version
+  AND s2.kg_version = $kg_version
+  AND a.kg_version = $kg_version
+  AND ($org_id IS NULL OR properties(s1)['org_id'] IS NULL
+       OR properties(s1)['org_id'] = $org_id)
+  AND ($org_id IS NULL OR properties(s2)['org_id'] IS NULL
+       OR properties(s2)['org_id'] = $org_id)
+RETURN
+  s1.id AS subject_a_id, s1.name AS subject_a_name,
+  s2.id AS subject_b_id, s2.name AS subject_b_name,
+  a.id AS shared_id, a.full_address AS shared_name
+ORDER BY subject_a_id, subject_b_id
+LIMIT $limit
+"""
+
+#: Sprint 7.1 批次 A：疑点证据 —— 由主体层节点（``:Subject`` / ``:LegalPerson`` /
+#: ``:Address``）经 ``source_entity_ids`` 溯源到 M2 ``:Entity``，再走 S6 的
+#: ``(:Chunk)-[:MENTIONS]->(:Entity)`` 反查原文片段（tasks §2.3 明确要求复用 :Chunk）。
+#: **不**回退到「按名字模糊匹配 Entity」——那等于在两层之间偷偷搭了一座文本桥。
+_QUERY_AFFILIATION_EVIDENCE = """
+MATCH (n {kg_version: $kg_version})
+WHERE n.id IN $node_ids
+  AND (n:Subject OR n:LegalPerson OR n:Address)
+  AND ($org_id IS NULL OR properties(n)['org_id'] IS NULL
+       OR properties(n)['org_id'] = $org_id)
+UNWIND coalesce(n.source_entity_ids, []) AS eid
+MATCH (c:Chunk {kg_version: $kg_version})-[:MENTIONS]->(e:Entity {id: eid, kg_version: $kg_version})
+WHERE $org_id IS NULL OR properties(c)['org_id'] IS NULL
+   OR properties(c)['org_id'] = $org_id
+OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
+RETURN DISTINCT
+  n.id AS node_id,
+  c.id AS chunk_id,
+  d.id AS doc_id,
+  c.text AS text,
+  c.page AS page,
+  c.char_start AS char_start,
+  c.char_end AS char_end
+ORDER BY node_id, chunk_id
+LIMIT $limit
+"""
+
 #: 批次 C：全局图谱概览的 Cypher（节点轻量投影 + 全部边）。
 #: 与 ``_QUERY_ALL_ENTITY_SUBGRAPH`` 不同：去掉了 ``total_nodes`` 字段（由服务层算），
 #: 投影阶段只取 ``id`` / ``canonical_name`` / ``type`` / ``category`` 4 个字段。
@@ -756,6 +827,78 @@ class GraphService:
                     )
                 ) from exc
         return chunks
+
+    # ------------------------------------------------- Sprint 7.1 批次 A（M4）
+
+    def fetch_shared_affiliations(
+        self, *, kg_version: str, org_id: UUID | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """M4 两跳查询：**共享法人** + **共享地址**（``specs/m4-affiliation-detection.md`` §5.4）。
+
+        :returns: ``[{"suspicion_type": "shared_legal_rep"|"shared_address",
+            "subject_a_id", "subject_a_name", "subject_b_id", "subject_b_name",
+            "shared_id", "shared_name"}, ...]``；先法人后地址，各自按 id 排序。
+        :raises GraphUnavailableError: Neo4j 不可用（**不**静默返回 []——
+            空列表会被上层误读成「没有疑点」，与「没有跑成」无法区分）。
+        """
+        records: list[dict[str, Any]] = []
+        for suspicion_type, query in (
+            ("shared_legal_rep", _QUERY_SHARED_LEGAL_REP),
+            ("shared_address", _QUERY_SHARED_ADDRESS),
+        ):
+            try:
+                with self._session() as session:
+                    rows = list(
+                        session.run(
+                            query,
+                            kg_version=kg_version,
+                            org_id=str(org_id) if org_id else None,
+                            limit=limit,
+                        )
+                    )
+            except GraphUnavailableError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 统一包装
+                raise GraphUnavailableError(
+                    f"查询共享{suspicion_type}失败: kg_version={kg_version}: {exc}"
+                ) from exc
+            for row in rows:
+                records.append({"suspicion_type": suspicion_type, **dict(row)})
+        return records
+
+    def fetch_affiliation_evidence(
+        self,
+        *,
+        kg_version: str,
+        node_ids: Sequence[str],
+        org_id: UUID | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """疑点证据：主体层节点 → 源实体 → ``:Chunk`` 原文片段（含 ``node_id`` 归属）。
+
+        ``node_id`` 是区分「这条证据支撑的是哪家公司 / 哪个法人」的关键——没有它，
+        证据就退化成一堆无主的原文片段，前端无法做「可点击」。
+        """
+        if not node_ids:
+            return []
+        try:
+            with self._session() as session:
+                rows = list(
+                    session.run(
+                        _QUERY_AFFILIATION_EVIDENCE,
+                        kg_version=kg_version,
+                        node_ids=list(node_ids),
+                        org_id=str(org_id) if org_id else None,
+                        limit=limit,
+                    )
+                )
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"查询疑点证据失败: kg_version={kg_version}: {exc}"
+            ) from exc
+        return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------ 批次 C
 

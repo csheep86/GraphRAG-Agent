@@ -3,6 +3,488 @@
 # 重新生成：cd backend && uv run python scripts/export_openapi.py
 components:
   schemas:
+    AffiliationDetectRequest:
+      description: '`POST /affiliation/detect` 请求体。
+
+
+        `doc_ids` 是本次检测要覆盖的文档集合；**空则为 400**（校验在 Pydantic 层完成）。
+
+        文档是否属于当前租户由**服务层**按 `documents.org_id` 校验——跨租户文档 → **403**
+
+        （ADR-0003），不静默剔除。
+
+
+        **注意**：`org_id` **严禁**出现在请求体里（ADR-0003 §3.3，只认 `X-Org-Id` 请求头）。'
+      example:
+        doc_ids:
+        - 3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11
+        - b7d0c4a1-8e2f-4c6b-9a35-1f7e2d9c4b08
+      properties:
+        doc_ids:
+          description: 纳入本次检测的文档 id 列表（须均属当前租户，至少一个）
+          items:
+            format: uuid
+            type: string
+          maxItems: 200
+          minItems: 1
+          title: Doc Ids
+          type: array
+      required:
+      - doc_ids
+      title: AffiliationDetectRequest
+      type: object
+    AffiliationDetectResponse:
+      description: '`POST /affiliation/detect` 的 **202** 响应（spec §5.5）。
+
+
+        检测异步执行，不阻塞请求。任务状态的**唯一真值源是 PG `affiliation_tasks` 表**
+
+        （ADR-0001 要求 1：严禁保存于进程内存，进程重启靠 `recover()` 回收）——前端用
+
+        `task_id` 轮询 `GET /affiliation/tasks/{id}`，**不**依赖任何进程内状态。'
+      example:
+        status: pending
+        task_id: 9a4b2c6d-1e3f-4a8b-8c2d-5e7f0a1b3c5d
+        trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
+      properties:
+        status:
+          description: 任务初始状态，恒为 `pending`
+          enum:
+          - pending
+          - processing
+          - completed
+          - failed
+          title: Status
+          type: string
+        task_id:
+          description: '`affiliation_tasks.id`，后续轮询状态用'
+          format: uuid
+          title: Task Id
+          type: string
+        trace_id:
+          description: 贯穿本次检测与所产疑点的 trace_id
+          title: Trace Id
+          type: string
+      required:
+      - task_id
+      - status
+      - trace_id
+      title: AffiliationDetectResponse
+      type: object
+    AffiliationEvidenceRef:
+      description: '一条原文证据引用（复用 S6 的 `:Chunk` 反查链路）。
+
+
+        来源：`:Subject` / `:LegalPerson` / `:Address` 的 `source_entity_ids` → `:Entity`
+
+        → `(:Chunk)-[:MENTIONS]->`；**不**是 LLM 自报的实体偏移。`doc_id` 为 `null` 表示
+
+        该 chunk 未挂 `:Document`（**不**伪造 UUID）。'
+      example:
+        char_end: 764
+        char_start: 0
+        chunk_id: chunk-581e8912827d
+        doc_id: 3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11
+        node_id: v-s71a:sub:8f2c1b7e9d4a4c1e
+        page: 12
+        text: 甲方的法定代表人为缪建民……
+      properties:
+        char_end:
+          description: 片段在页内结束字符偏移
+          minimum: 0.0
+          title: Char End
+          type: integer
+        char_start:
+          description: 片段在页内起始字符偏移
+          minimum: 0.0
+          title: Char Start
+          type: integer
+        chunk_id:
+          description: 原文片段 id（`chunk-<12 hex>`）
+          title: Chunk Id
+          type: string
+        doc_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: 片段所属文档 id；未挂载为 `null`
+          title: Doc Id
+        node_id:
+          description: 该证据支撑的主体层节点 id（`:Subject` / `:LegalPerson` / `:Address`）
+          title: Node Id
+          type: string
+        page:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: 片段所在页码；未知为 `null`
+          title: Page
+        text:
+          description: 片段原文（用于前端高亮回显）
+          title: Text
+          type: string
+      required:
+      - node_id
+      - chunk_id
+      - char_start
+      - char_end
+      - text
+      title: AffiliationEvidenceRef
+      type: object
+    AffiliationSuspicionItem:
+      description: '一条疑点（结构对齐 M4 §3 验收 3：`{type, severity, entities[], evidence[]}`）。
+
+
+        **引用覆盖率 = 100%** 是硬要求：产不出 `evidence` 的命中在算法层就被丢弃
+
+        （`affiliation_suspicion_dropped_no_evidence`），因此这里的 `evidence` **非空**。'
+      example:
+        created_at: '2026-09-24T10:16:12Z'
+        entities:
+        - v-s71a:sub:8f2c1b7e9d4a4c1e
+        - v-s71a:sub:1d4e7a9b3c6f2e80
+        entity_names:
+        - 招商局集团有限公司
+        - 招商局轮船有限公司
+        evidence: []
+        id: 2c6d1e3f-9a4b-4a8b-8c2d-5e7f0a1b3c5d
+        kg_version: v-s71a-fe1c4dc3
+        severity: medium
+        status: open
+        suspicion_type: shared_legal_rep
+        task_id: 9a4b2c6d-1e3f-4a8b-8c2d-5e7f0a1b3c5d
+        trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
+      properties:
+        created_at:
+          description: 疑点落库时间
+          format: date-time
+          title: Created At
+          type: string
+        entities:
+          description: 涉及节点 id：[主体A, 主体B, 共享节点]
+          items:
+            type: string
+          title: Entities
+          type: array
+        entity_names:
+          description: 与 `entities` 对应的名称，仅用于展示；判重与落库以 id 为准
+          items:
+            type: string
+          title: Entity Names
+          type: array
+        evidence:
+          description: 原文证据引用列表（非空：无证据的疑点不会落库）
+          items:
+            $ref: '#/components/schemas/AffiliationEvidenceRef'
+          title: Evidence
+          type: array
+        id:
+          description: 疑点 id（`affiliation_suspicions.id`）
+          format: uuid
+          title: Id
+          type: string
+        kg_version:
+          description: 疑点所属的图谱版本
+          title: Kg Version
+          type: string
+        reviewed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: 复核时间；未复核为 `null`
+          title: Reviewed At
+        reviewed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: 复核人（`X-Actor-Id`；M5 落地后改为 token 主体）
+          title: Reviewed By
+        severity:
+          description: 严重度
+          enum:
+          - high
+          - medium
+          - low
+          title: Severity
+          type: string
+        status:
+          description: 复核状态；初始恒为 `open`
+          enum:
+          - open
+          - dismissed
+          - confirmed
+          title: Status
+          type: string
+        suspicion_type:
+          description: 疑点类型
+          enum:
+          - shared_address
+          - shared_legal_rep
+          title: Suspicion Type
+          type: string
+        task_id:
+          description: 产出该疑点的任务 id（批次 B 决策 B2 新增列；用于回答「返回哪一批疑点」）
+          format: uuid
+          title: Task Id
+          type: string
+        trace_id:
+          description: 与产出它的任务 trace_id 同值
+          title: Trace Id
+          type: string
+      required:
+      - id
+      - task_id
+      - suspicion_type
+      - severity
+      - entities
+      - entity_names
+      - evidence
+      - kg_version
+      - status
+      - created_at
+      - trace_id
+      title: AffiliationSuspicionItem
+      type: object
+    AffiliationSuspicionListResponse:
+      description: '`GET /affiliation/suspicions` 响应（spec §5.5）。
+
+
+        **不支持分页**（spec 未规定，不引入无消费者的 `page` / `page_size`）；
+
+        默认返回当前租户**最近一条 completed 任务**产出的疑点（批次 B 决策 B2），
+
+        显式传 `task_id` 则按该任务过滤。'
+      example:
+        items: []
+        task_id: 9a4b2c6d-1e3f-4a8b-8c2d-5e7f0a1b3c5d
+        total: 0
+        trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
+      properties:
+        items:
+          description: 疑点列表
+          items:
+            $ref: '#/components/schemas/AffiliationSuspicionItem'
+          title: Items
+          type: array
+        task_id:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: 本次结果对应的任务 id；当前租户从未跑过检测时为 `null`
+          title: Task Id
+        total:
+          description: 疑点条数（与 `len(items)` 一致）
+          minimum: 0.0
+          title: Total
+          type: integer
+        trace_id:
+          description: 本次请求的 trace_id
+          title: Trace Id
+          type: string
+      required:
+      - items
+      - total
+      - trace_id
+      title: AffiliationSuspicionListResponse
+      type: object
+    AffiliationSuspicionPatchRequest:
+      description: '`PATCH /affiliation/suspicions/{id}` 请求体（spec §5.5）。
+
+
+        只允许 `dismissed` / `confirmed`：`open` 不是合法输入（不允许把已复核的疑点"改回"未复核，
+
+        避免复核留痕被抹掉）。'
+      example:
+        status: confirmed
+      properties:
+        status:
+          description: 目标复核状态
+          enum:
+          - dismissed
+          - confirmed
+          title: Status
+          type: string
+      required:
+      - status
+      title: AffiliationSuspicionPatchRequest
+      type: object
+    AffiliationSuspicionPatchResponse:
+      description: '`PATCH /affiliation/suspicions/{id}` 响应（200）。
+
+
+        只回写状态相关字段——复核动作不改变疑点本体（`entities` / `evidence` 一律不变）。'
+      example:
+        id: 2c6d1e3f-9a4b-4a8b-8c2d-5e7f0a1b3c5d
+        reviewed_at: '2026-09-24T11:02:45Z'
+        reviewed_by: 00000000-0000-4000-8000-000000000001
+        status: confirmed
+        trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
+      properties:
+        id:
+          description: 疑点 id
+          format: uuid
+          title: Id
+          type: string
+        reviewed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: 复核时间
+          title: Reviewed At
+        reviewed_by:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: 复核人 id
+          title: Reviewed By
+        status:
+          description: 更新后的复核状态
+          enum:
+          - open
+          - dismissed
+          - confirmed
+          title: Status
+          type: string
+        trace_id:
+          description: 本次请求的 trace_id
+          title: Trace Id
+          type: string
+      required:
+      - id
+      - status
+      - trace_id
+      title: AffiliationSuspicionPatchResponse
+      type: object
+    AffiliationTaskResponse:
+      description: '`GET /affiliation/tasks/{id}` 响应（spec §5.5）。
+
+
+        任务不存在 → 404；**跨租户 → 403**（ADR-0003：不泄露资源存在性也不返回空 200）。'
+      example:
+        completed_at: '2026-09-24T10:16:12Z'
+        created_at: '2026-09-24T10:15:30Z'
+        doc_ids:
+        - 3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11
+        result_summary:
+          by_type:
+            shared_address: 9
+            shared_legal_rep: 1
+          top_5_severity:
+          - medium
+          total: 10
+        status: completed
+        task_id: 9a4b2c6d-1e3f-4a8b-8c2d-5e7f0a1b3c5d
+        trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
+        updated_at: '2026-09-24T10:16:12Z'
+      properties:
+        completed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: 进入 `completed` 的时间；未完成为 `null`
+          title: Completed At
+        created_at:
+          description: 任务创建时间
+          format: date-time
+          title: Created At
+          type: string
+        doc_ids:
+          description: 本次检测覆盖的文档 id 列表
+          items:
+            format: uuid
+            type: string
+          title: Doc Ids
+          type: array
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 失败错误码（`TASK_INTERRUPTED` 表示进程重启回收，ADR-0001 §3.2）
+          title: Error Code
+        result_summary:
+          anyOf:
+          - $ref: '#/components/schemas/AffiliationTaskResultSummary'
+          - type: 'null'
+          description: 完成后的摘要；`pending` / `processing` / `failed` 时为 `null`
+        status:
+          description: 任务状态（PG 为唯一真值源）
+          enum:
+          - pending
+          - processing
+          - completed
+          - failed
+          title: Status
+          type: string
+        task_id:
+          description: 任务 id（与 `affiliation_tasks.id` 一致）
+          format: uuid
+          title: Task Id
+          type: string
+        trace_id:
+          description: 任务级 trace_id（与它产出的每条疑点同值）
+          title: Trace Id
+          type: string
+        updated_at:
+          description: 最近一次状态变更时间
+          format: date-time
+          title: Updated At
+          type: string
+      required:
+      - task_id
+      - status
+      - doc_ids
+      - created_at
+      - updated_at
+      - trace_id
+      title: AffiliationTaskResponse
+      type: object
+    AffiliationTaskResultSummary:
+      description: '任务完成后的结果摘要（spec §4.4 `result_summary`）。
+
+
+        未完成 / 失败的任务**不返回**该结构（字段为 `null`），失败信息走 `error_code`。'
+      example:
+        by_type:
+          shared_address: 9
+          shared_legal_rep: 1
+        top_5_severity:
+        - medium
+        - medium
+        - medium
+        - medium
+        - medium
+        total: 10
+      properties:
+        by_type:
+          additionalProperties:
+            type: integer
+          description: '按疑点类型统计（`{type: 条数}`），键取自本次实际产出的 `suspicion_type`'
+          title: By Type
+          type: object
+        top_5_severity:
+          description: 按严重度排序的前 5 条疑点的 `severity`（不足 5 条则按实际条数）
+          items:
+            type: string
+          title: Top 5 Severity
+          type: array
+        total:
+          description: 检出的疑点总条数
+          minimum: 0.0
+          title: Total
+          type: integer
+      required:
+      - total
+      - by_type
+      - top_5_severity
+      title: AffiliationTaskResultSummary
+      type: object
     AgentQueryRequest:
       description: '`POST /api/v1/agent/query` 请求体（M3 §4.1）。'
       example:
@@ -1183,6 +1665,333 @@ info:
   version: 1.2.0
 openapi: 3.1.0
 paths:
+  /api/v1/affiliation/detect:
+    post:
+      description: '对 `doc_ids` 覆盖的文档集合跑 M4 规则型算法（**当前只做两类**：「同一法人跨公司」/「同一地址跨公司」），检出结果写 `affiliation_suspicions`。
+
+
+        **异步语义**：请求只保证任务落库为 `pending` 并已投递，随即返回 **202** （`task_id` + `status`）；真值在 PG `affiliation_tasks` 表里，请用 `GET /affiliation/tasks/{task_id}` 轮询。
+
+
+        **每次提交都新建一条任务**（决策 B3：幂等由任务承载，不是「复用上次的疑点」）——重复提交会得到第二批疑点，前端可用 `task_id` 区分批次。
+
+
+        **错误分支**：`doc_ids` 为空 → 400 `VALIDATION_ERROR`；文档不存在 → 404 `DOCUMENT_NOT_FOUND`；**任一文档跨租户 → 403**（不静默剔除）。'
+      operationId: detectAffiliation
+      parameters:
+      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+        in: header
+        name: X-Org-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          title: X-Org-Id
+      - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+        in: header
+        name: X-Actor-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+          title: X-Actor-Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AffiliationDetectRequest'
+        required: true
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AffiliationDetectResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+      security:
+      - bearerAuth: []
+      summary: 提交一次关联交易检测（异步，202）
+      tags:
+      - affiliation
+  /api/v1/affiliation/suspicions:
+    get:
+      description: '返回当前租户的疑点列表，每条含 `entities` / `entity_names` / `evidence`（引用覆盖率 = 100%：产不出原文证据的命中在算法层就被丢弃，**不会**出现在这里）。
+
+
+        **批次口径**（决策 B2）：不带 `task_id` 时返回**最近一条 completed 任务**产出的疑点——重复跑检测会产生多批疑点，靠 `created_at` 猜「最新」在并发 / 补跑下不稳，故用 `task_id` 列精确归属。
+
+
+        **不支持分页**（spec §5.5 未规定，不引入无消费者的 `page` / `page_size`）；租户从未跑过检测时返回**空列表** + `task_id = null`（200，非 404）。'
+      operationId: listAffiliationSuspicions
+      parameters:
+      - description: 指定批次（任务 id）；缺省=最近一条 completed 任务
+        in: query
+        name: task_id
+        required: false
+        schema:
+          anyOf:
+          - format: uuid
+            type: string
+          - type: 'null'
+          description: 指定批次（任务 id）；缺省=最近一条 completed 任务
+          title: Task Id
+      - description: 按疑点类型过滤：`shared_legal_rep` / `shared_address`
+        in: query
+        name: type
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 按疑点类型过滤：`shared_legal_rep` / `shared_address`
+          title: Type
+      - description: 按严重度过滤：`high` / `medium` / `low`
+        in: query
+        name: severity
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 按严重度过滤：`high` / `medium` / `low`
+          title: Severity
+      - description: 按复核状态过滤：`open` / `confirmed` / `dismissed`
+        in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 按复核状态过滤：`open` / `confirmed` / `dismissed`
+          title: Status
+      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+        in: header
+        name: X-Org-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          title: X-Org-Id
+      - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+        in: header
+        name: X-Actor-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+          title: X-Actor-Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AffiliationSuspicionListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+      security:
+      - bearerAuth: []
+      summary: 列出疑点（默认最近一批）
+      tags:
+      - affiliation
+  /api/v1/affiliation/suspicions/{suspicion_id}:
+    patch:
+      description: '把疑点从 `open` 流转到 `confirmed` / `dismissed`（spec §3 验收 2：状态流转落库）。
+
+
+        **只改状态**：`entities` / `evidence` 一律不动，复核留痕不会被抹掉——已非 `open` 的疑点再次提交 → **400** `VALIDATION_ERROR`（不允许改回未复核）。
+
+
+        `reviewed_by` 取当前请求头的 `X-Actor-Id`（决策 B4；M5 落地后改为 token 主体）。
+
+
+        **错误分支**：疑点不存在 → 404，跨租户 → **403**（非 404）。'
+      operationId: reviewAffiliationSuspicion
+      parameters:
+      - in: path
+        name: suspicion_id
+        required: true
+        schema:
+          format: uuid
+          title: Suspicion Id
+          type: string
+      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+        in: header
+        name: X-Org-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          title: X-Org-Id
+      - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+        in: header
+        name: X-Actor-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+          title: X-Actor-Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AffiliationSuspicionPatchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AffiliationSuspicionPatchResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 疑点不存在（`NOT_FOUND`）。**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1）
+      security:
+      - bearerAuth: []
+      summary: 复核一条疑点（确认 / 驳回）
+      tags:
+      - affiliation
+  /api/v1/affiliation/tasks/{task_id}:
+    get:
+      description: '返回 `affiliation_tasks` 的**当前状态**（PG 唯一真值源，非进程内存）。
+
+
+        - `pending` / `processing`：执行中，`result_summary` 为 `null`；
+
+        - `completed`：带 `result_summary`（`{total, by_type, top_5_severity}`）；
+
+        - `failed`：带 `error_code`（`TASK_INTERRUPTED` 表示进程重启回收，ADR-0001 §3.2）。
+
+
+        **错误分支**：任务不存在 → 404 `NOT_FOUND`，跨租户 → **403**（非 404）。'
+      operationId: getAffiliationTask
+      parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema:
+          format: uuid
+          title: Task Id
+          type: string
+      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+        in: header
+        name: X-Org-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          title: X-Org-Id
+      - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+        in: header
+        name: X-Actor-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+          title: X-Actor-Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AffiliationTaskResponse'
+          description: Successful Response
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 检测任务不存在（`NOT_FOUND`）。**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1）
+      security:
+      - bearerAuth: []
+      summary: 查询检测任务状态
+      tags:
+      - affiliation
   /api/v1/agent/query:
     post:
       description: '单轮问答 + 可溯源引用。每个事实句必须能回溯到 `citations[]`，引用覆盖率不足时**必须拒答**（`refused = true`），严禁编造引用（M3 验收 3）。

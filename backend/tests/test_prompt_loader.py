@@ -67,7 +67,15 @@ def test_unknown_version_raises() -> None:
 
 
 def test_kg_extraction_v1_registered() -> None:
-    """Sprint 5 批次 B：kg_extraction_v1（E1/E2 共用模板）必须可发现。"""
-    template = load_prompt("kg_extraction")
-    assert template.version == 1
-    assert set(template.placeholders) == {"text", "language"}
+    """Sprint 5 批次 B：kg_extraction_v1（E1/E2 共用模板）必须可发现。
+
+    Sprint 7.1 批次 A：新增 ``kg_extraction_v2`` 后，``load_prompt("kg_extraction")``
+    （不指定版本）按"取最大版本"语义返回 **v2**；v1 仍必须**可发现且未被改动**
+    （Prompt 版本管理规范：只增不改）。
+    """
+    v1 = load_prompt("kg_extraction", version=1)
+    assert v1.version == 1
+    assert set(v1.placeholders) == {"text", "language"}
+
+    latest = load_prompt("kg_extraction")
+    assert latest.version == 2, "不指定版本时取最大版本"

@@ -40,6 +40,12 @@ const CONTRACT_COVERED_PATTERNS: RegExp[] = [
   /^\/api\/v1\/documents\/[^/]+\/chunks\/[^/]+$/,
   /^\/api\/v1\/graph\/overview$/,
   /^\/api\/v1\/entities\/[^/]+$/,
+  // Sprint 7.2 批次 B：M4 疑点四端点（spec §5.5）。批次 C 的疑点页要能关 Mock 跑真实接口，
+  // 漏登记会让 §5.3「关 Mock 硬门槛」直接失败 —— 契约新增端点必须同步此处。
+  /^\/api\/v1\/affiliation\/detect$/,
+  /^\/api\/v1\/affiliation\/tasks\/[^/]+$/,
+  /^\/api\/v1\/affiliation\/suspicions$/,
+  /^\/api\/v1\/affiliation\/suspicions\/[^/]+$/,
 ];
 
 /**

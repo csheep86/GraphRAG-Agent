@@ -92,11 +92,18 @@
 | `entities` | JSONB | 是 | 否 | 涉及主体 id 列表 |
 | `evidence` | JSONB | 是 | 否 | 引用列表（合同 / 发票 / 凭证的具体标识） |
 | `kg_version` | TEXT | 是 | 否 | 关联的图谱版本 |
+| `task_id` | UUID | 是 | 否 | 产出该疑点的 `affiliation_tasks.id`（**S7.2 决策 B2 新增**，见文末注记） |
 | `trace_id` | UUID | 是 | 否 | - |
 | `status` | TEXT | 是 | 否 | `open / dismissed / confirmed` |
 | `created_at` | TIMESTAMP | 是 | 否 | - |
 | `reviewed_by` | UUID | 否 | 否 | 复核人（M5 用户） |
 | `reviewed_at` | TIMESTAMP | 否 | 否 | - |
+
+> **字段变更登记（2026-09-24，Sprint 7.2 批次 B，决策 B2，已人工确认）**：上表新增 `task_id`。
+> **理由**：「一次检测 = 一条 `affiliation_tasks` 记录」后，`GET /affiliation/suspicions` 必须能回答「返回哪一批疑点」；无该字段时只能靠 `created_at` 判定最新批次（并发 / 补跑下不稳）或返回全部历史疑点（新旧混杂）。
+> **执行注意**：建表即须保证有写入方——`risk.detect` 落库时写入当前任务 id，**不得建成「列存在但无人写」**（CODEBUDDY.md §功能预留原则 第 6 条：登记集合 = 实现集合）。
+>
+> **类型降维说明（实现期，非 spec 变更）**：本表 `entities` / `evidence` 在 spec 中为 `JSONB`、`task_id` 为 `UUID`；在 **development 的 SQLite 替身**下降维为跨方言 `JSON` 列与字符串（沿用 `kg_versions.source_doc_ids` 既有写法），**语义以 PostgreSQL 为准**（`backend/CODEBUDDY.md` §1）。
 
 ### 4.4 PostgreSQL 表 `affiliation_tasks`（新增）
 

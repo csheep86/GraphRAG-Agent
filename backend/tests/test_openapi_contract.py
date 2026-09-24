@@ -25,6 +25,11 @@ CORE_PATHS = {
     "/api/v1/agent/query",
     # Sprint 6.3：在线激活端点（真机发现：建图后无人把版本置为可消费）
     "/api/v1/graph/versions/{version}/activate",
+    # Sprint 7.2 批次 B：M4 疑点四端点（spec §5.5；路径口径以 spec 为准）
+    "/api/v1/affiliation/detect",
+    "/api/v1/affiliation/tasks/{task_id}",
+    "/api/v1/affiliation/suspicions",
+    "/api/v1/affiliation/suspicions/{suspicion_id}",
 }
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
@@ -52,7 +57,9 @@ def _operations(schema: dict) -> list[tuple[str, str, dict]]:
 def test_core_paths_match_contract(schema: dict) -> None:
     """Sprint 5 批次 C 由 5 路径扩为 8 路径；Sprint 6 批次 B 再增
     `GET /documents/{document_id}/chunks/{chunk_id}`（引用溯源，Q2）→ 9 路径；
-    Sprint 6.3 再增 `POST /graph/versions/{version}/activate`（在线激活）→ 10 路径。
+    Sprint 6.3 再增 `POST /graph/versions/{version}/activate`（在线激活）→ 10 路径；
+    Sprint 7.2 批次 B 再增 M4 疑点四端点（`/affiliation/detect` / `/affiliation/tasks/{id}` /
+    `/affiliation/suspicions` / `PATCH /affiliation/suspicions/{id}`，spec §5.5）→ **14 路径**。
     """
     assert set(schema["paths"]) == CORE_PATHS
 
@@ -72,7 +79,8 @@ def test_operation_ids_are_unique(schema: dict) -> None:
     operation_ids = [
         operation["operationId"] for _, _, operation in _operations(schema)
     ]
-    assert len(operation_ids) == len(set(operation_ids)) == 10
+    # 10 → 14：Sprint 7.2 批次 B 新增四个 affiliation 端点（operation_id 不得重复）
+    assert len(operation_ids) == len(set(operation_ids)) == 14
 
 
 def test_info_version_is_constant(schema: dict) -> None:

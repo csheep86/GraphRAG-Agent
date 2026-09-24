@@ -28,6 +28,8 @@
 
 **2026-09-21 追加（无人值守执行协议固化为技能）**：新增 `.codebuddy/skills/unattended-sprint-execution/SKILL.md`（用户选 A 方案授权）——`executing-plans` 的预授权变体：默认按 plan v3.0 + sprint-calendar + CODEBUDDY 逐批次推进、免请求自动提交、决策点一律采纳文档建议项，**仅 4 类情况升级用户**（CP-2 PoC 不通 / F1~F5 触发 / 文档未覆盖决策 / S13 上线 gate 终审）。已在 `using-superpowers/SKILL.md` 技能地图登记。
 
+**2026-09-24 追加（Sprint 7.2 批次 B：M4 疑点持久化 + 对外端点）**：① **契约路径 10 → 14**：新增 `/affiliation/detect`、`/affiliation/tasks/{id}`、`/affiliation/suspicions`、`PATCH /affiliation/suspicions/{id}`（逐字照 `specs/m4-affiliation-detection.md` §5.5）；**顺带纠一处口径不一致**——plan §6.2 原摘要写 `GET /affiliation/suspects`，与 spec 的 `suspicions` 冲突，已按「spec 优先」统一 plan（`plan.md:275` / `plan.md:289`），历史批次 `changes/Sprint7.1/proposal.md:48` 加口径消歧，**未静默**。② **三张 PG 表** `affiliation_tasks` / `affiliation_suspicions` / `unaligned_subjects` 就位（表名逐字 = PRD §6.2，均带 `org_id` 且索引以 `org_id` 打头）；其中 `affiliation_suspicions` 按决策 B2 **新增 `task_id` 列**并已在 spec §4.3 登记变更（回答「GET 返回哪一批疑点」靠列不靠 `created_at` 猜）。③ **`TaskManager` 扩展为双载体**（决策 B8）：原 `submit()` 硬绑 `payload["document_id"]` 且 task_id 恒为 `documents.id`，无法承载「一次检测覆盖多份文档」的任务 → 增加 `affiliation_task_id` 分支，**既有三种 task_type 行为零改动**（守住 ADR-0001 要求 2：业务代码只依赖该接口）；`recover_orphan_tasks()` 同步扩到扫 `affiliation_tasks`（ADR-0001 第 73 行原就已要求扫两张表）。④ **接缝 7 / 8 落地**：`external_refs` 表 + `app/services/external_data/`（导入文件 schema JSON/CSV + 手工导入 CLI，默认 dry-run），`check_seams.py` 由 **WARN 6 → WARN 4**（余下两条为**未到期**的接缝 5 / 6）。⑤ **真机**：6 片演示数据 + `v-s71a-fe1c4dc3` → `POST detect` 202 → 任务 completed → **10 条疑点落库**（共享法人 1 + 共享地址 9，与批次 A 一致）、`trace_id` 贯穿、`PATCH` 复核留痕。pytest **352 → 364 passed**；`export_openapi.py --check` 无 diff。⑥ **未完登记（不伪装）**：`unaligned_subjects` **只建表不写**（写入点随 S9 批次 D 四源对齐，已登记缺口 **S7.2-1**）；`TaskManager.list_in_flight_task_ids()` 仍只扫 `documents`（**S7.2-2**）。
+
 **2026-09-23 追加（Sprint 6 收尾登记）**：S6 于 **2026-09-23 功能达标**（较计划区间 10-12→10-20 提前 27 天；批次 A / B / C + 6.3 真机修复全完成，第 3 天 go/no-go 通过——chunk 级引用跑通，未降级为文档级）。① 新增 **[`docs/release-notes/v1.2.0.md`](./release-notes/v1.2.0.md)**（5 commit ／ 56 files ／ 契约路径 8→10 ／ pytest 297 passed ／ 受控问题集 14 问覆盖率 100%）；② `sprint-calendar.md` §5 S6 → ✅ 功能收尾（**tag `v1.2.0` 待打**）+ §6 变更记录 v1.2；③ `settings.app_version` **1.1.0 → 1.2.0**（与打 tag 同一动作，§3.3；`check_seams.py` 版本闸门输入）；④ **未完项显式登记（不伪装完成）**：P2-3 矩阵对账、`changes/Sprint6.*` 归档、tag / merge main / push 均未执行（收尾 B 清单）；⑤ 遗留：实体抽取质量低（整句成实体、数值独立成节点、同实体重复 3 份）推 **S9**；`Citation.char_offset` 恒 0、`_snippet` 的 strip + 省略号导致摘录≠原文区间，推 **S10**（见 release notes v1.2.0 §6.1 / §6.2 / §6.3）。
 
 **2026-09-22 追加（Sprint 5 收尾登记）**：S5 于 **2026-09-22** 完成（tag `v1.1.0`，较计划区间 09-21→10-11 提前 19 天，验收不跳过）。① **归档**：`changes/Sprint5.1`~`Sprint5.4` → `changes/archive/2026-09-22-Sprint5.N/`；② **矩阵对账**（`acceptance-traceability-matrix.md`）：H4（`_refuse()` 出口 `trace_id` 为空）、H8（B1 `retry_count` 回写 + B4 退避路径未读 `task_retry_multiplier`）**两项「已知缺陷」关闭**，M1 / M2 现状与黄金路径步骤 3 同步刷新；③ **口径更正（重要）**：接缝门禁的 Sprint 收尾判据由 `--strict` 更正为 **默认档 + ERROR = 0**——依据 `check_seams.py` docstring 第 5–6 行，`--strict` 仅适用 v1.4.0 Demo-MVP 完成点；实测 v1.1.0 跑 `--strict` 必红，6 条 WARN 全为**未到期**接缝（5/6/7/8，分属 v1.3.0~v1.4.0）而非越界。已同步修 `sprint-calendar.md` §3 与矩阵 §5.3（原两处均误写为 `--strict`）；④ **遗留降级**：E1 / E2 数据质量评估登记 **unresolved**（抽取器为 mockable 正则占位，统计无意义），归 S13 条件吸收，见 release notes v1.1.0 §6.1。
@@ -111,6 +113,17 @@
 2. **类型枚举两侧不一致**：`kg_extraction_v1.md` 第 25 / 37 行的 `entity_type` / `relation_type` 枚举含 `VENUE` / `PRODUCT`，而 `langextract.py` 的 `ENTITY_TYPES` 仅 6 类——**谁为准尚未裁决**。
 
 两笔与 `backend/CODEBUDDY.md` §4 的 **S6-5 / S6-6** 是同一批事项；处置落点统一为 **Sprint 8 批次 C 治理**（销毁 / 合并模板 + 统一枚举口径），本次只登记、不处置。
+
+**2026-09-23 追加（Sprint 7.1 批次 A：`kg_extraction_v2` 已落地，本节口径需随之更新）**
+
+| 项 | 内容 |
+|---|---|
+| 新增版本 | `prompts/kg_extraction_v2.md`（**v1 文件不动**；`EXTRACTION_PROMPT_VERSION` 默认切 v2，`.env` / `.env.example` 同步） |
+| 为什么必须新增 | 上表 S9 / S12 假定的「参数化」走的是 `entity_relation_extract_v1.md`（无代码消费者）；生产链路消费 `kg_extraction`，而 v1 的枚举是**写死**的 → 扩 M4 法人 / 地址只能新增 v2 |
+| v2 相对 v1 的改动 | ① 枚举参数化为 `{{entity_types}}` / `{{relation_types}}`（由 `langextract.py::_render_extraction_prompt` 注入，**按模板声明给值**，v1 不会收到这两个变量）；② 新增「法定代表人 / 注册地址」few-shot 示例 3 |
+| 新增类型 | 实体 `LEGAL_PERSON`（自然人法定代表人）/ `ADDRESS`（注册地址）；关系 `LEGAL_REP`（ORG→LEGAL_PERSON）/ `REGISTERED_AT`（ORG→ADDRESS） |
+| 未变 | 未知类型降级 `RELATED`、`confidence < 0.5` 丢弃、拒答兜底、上限裁剪——v1 第 47–50 行约束全部沿用 |
+| 连带 | 上表「S9~S13 复用 v1（5 件）」的 5 件**统计不含**本次 v2（v2 属 S7.1 引入，与 H9 行同口径）；S8 批次 C 治理时须把 v2 一并纳入「销毁 / 合并」裁决范围 |
 
 ---
 

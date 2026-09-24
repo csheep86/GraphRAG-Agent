@@ -28,7 +28,7 @@ from loguru import logger
 from sqlalchemy import select, update
 
 from app.core.errors import ErrorCode
-from app.db.models import Document
+from app.db.models import AffiliationTask, Document
 from app.db.session import SessionLocal
 from app.tasks.registry import resolve_executor
 from app.tasks.types import RecoveryReport, TaskExecutorFn, TaskSpec, TaskStatus
@@ -58,10 +58,20 @@ class TaskManager:
         self._background_tasks = background_tasks
 
     def submit(self, spec: TaskSpec) -> str:
-        """落 ``pending`` + 注册执行体，返回 task_id（与 ``documents.id`` 一致）。
+        """落 ``pending`` + 注册执行体，返回 task_id。
 
-        支持 ``document.parse`` / ``document.extract`` / ``kg.build`` 三种 task_type
-        （Sprint 5 批次 B 扩展；批次 B 起每个 task_type 对应一个执行体段）。
+        **两类任务载体**（批次 B 决策 **B8**；新增 task_type 时必须先想清楚是哪种）：
+
+        - **document 类**（``document.parse`` / ``document.extract`` / ``kg.build`` /
+          ``risk.detect``）：一次任务绑定**一份**文档，``task_id`` 恒等于
+          ``documents.id``，要求 ``payload["document_id"]``；
+        - **affiliation 类**（``affiliation.detect``）：一次检测覆盖**多份**文档，
+          ``task_id`` 来自 ``affiliation_tasks.id``，要求
+          ``payload["affiliation_task_id"]``。
+
+        为什么必须改在**这里**而不是让路由层直接 ``BackgroundTasks.add_task``：
+        ADR-0001 要求 2 规定「业务代码只依赖 ``TaskManager`` 接口」——第二个投递入口
+        等于第二个任务真值源，违背该要求。
         """
         # 用「执行体是否登记」代替硬编码白名单——新增阶段后只改 registry 即可
         try:
@@ -72,6 +82,13 @@ class TaskManager:
                 f"app.tasks.registry.EXECUTOR_REGISTRY"
             ) from exc
 
+        affiliation_id_raw = spec.payload.get("affiliation_task_id")
+        if isinstance(affiliation_id_raw, str) and affiliation_id_raw:
+            return self._submit_affiliation(spec, UUID(affiliation_id_raw))
+        return self._submit_document(spec)
+
+    def _submit_document(self, spec: TaskSpec) -> str:
+        """document 类投递（``task_id == documents.id``）。"""
         document_id_raw = spec.payload.get("document_id")
         if not isinstance(document_id_raw, str) or not document_id_raw:
             raise ValueError("TaskSpec.payload.document_id 必填且须为字符串 UUID")
@@ -103,6 +120,31 @@ class TaskManager:
         ).info("task_submitted")
         return str(document_id)
 
+    def _submit_affiliation(self, spec: TaskSpec, task_id: UUID) -> str:
+        """affiliation 类投递（``task_id == affiliation_tasks.id``，一次任务覆盖多份文档）。"""
+        with SessionLocal() as session:
+            row = session.get(AffiliationTask, task_id)
+            if row is None:
+                raise LookupError(f"affiliation_tasks 不存在: id={task_id}")
+            if row.status not in {"pending", "processing"}:
+                # 与 document 类同款幂等语义：completed / failed 不再重投
+                logger.bind(
+                    trace_id=spec.trace_id,
+                    task_id=str(task_id),
+                    current_status=row.status,
+                ).info("task_submit_skipped_non_pending")
+                return str(task_id)
+
+        executor = resolve_executor(spec.task_type)
+        self._background_tasks.add_task(_run_with_semaphore, executor, spec)
+
+        logger.bind(
+            trace_id=spec.trace_id,
+            task_type=spec.task_type,
+            task_id=str(task_id),
+        ).info("task_submitted")
+        return str(task_id)
+
     def get_status(self, task_id: str | UUID) -> TaskStatus | None:
         """读 PostgreSQL；不存在返回 ``None``。**不**读内存。"""
         task_uuid = UUID(str(task_id))
@@ -131,11 +173,13 @@ def recover_orphan_tasks() -> RecoveryReport:
 
     依据：
     - ADR-0001 §3.2：进程重启回收；
-    - M1 §3 验收 8：``error_code = TASK_INTERRUPTED`` + ``error_detail`` 记录「进程重启导致任务中断」。
+    - M1 §3 验收 8：``error_code = TASK_INTERRUPTED`` + ``error_detail`` 记录「进程重启导致任务中断」；
+    - **ADR-0001 第 73 行**：扫描必须覆盖 ``documents`` **与** ``affiliation_tasks``
+      两张表（Sprint 7.2 批次 B 补齐后者——``affiliation_tasks`` 一落地就必须被回收，
+      否则它是张「可能永远卡在 processing」的表）。
 
     由 FastAPI lifespan startup 调用；幂等，可重复执行。
     """
-    reclaimed = 0
     with SessionLocal() as session:
         result = session.execute(
             update(Document)
@@ -146,12 +190,32 @@ def recover_orphan_tasks() -> RecoveryReport:
                 error_detail="process restarted while task was in-flight",
             )
         )
-        reclaimed = result.rowcount or 0
+        document_reclaimed = result.rowcount or 0
+
+        affiliation_result = session.execute(
+            update(AffiliationTask)
+            .where(AffiliationTask.status.in_(("pending", "processing")))
+            .values(
+                status="failed",
+                error_code=ErrorCode.TASK_INTERRUPTED.value,
+                error_detail="process restarted while task was in-flight",
+            )
+        )
+        affiliation_reclaimed = affiliation_result.rowcount or 0
         session.commit()
 
-    report = RecoveryReport(reclaimed=reclaimed)
+    reclaimed = document_reclaimed + affiliation_reclaimed
+    report = RecoveryReport(
+        reclaimed=reclaimed,
+        document_reclaimed=document_reclaimed,
+        affiliation_reclaimed=affiliation_reclaimed,
+    )
     if reclaimed:
-        logger.bind(reclaimed=reclaimed).warning("task_recover_orphan_executed")
+        logger.bind(
+            reclaimed=reclaimed,
+            document_reclaimed=document_reclaimed,
+            affiliation_reclaimed=affiliation_reclaimed,
+        ).warning("task_recover_orphan_executed")
     else:
         logger.bind(reclaimed=0).info("task_recover_orphan_noop")
     return report

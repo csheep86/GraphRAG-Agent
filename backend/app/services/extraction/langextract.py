@@ -16,8 +16,18 @@
   **不新建第二套 LLM 通道**（ADR-0004 §2.1 接缝 3）。
 - **失败不静默**：调用失败 / 超时 / 返回非法 JSON → :class:`LangextractError`，
   **绝不回落 mock**——那会把基础设施故障伪装成业务结论（LC1-9）。
-- **不**做内层 tenacity 重试——外层 ``document.extract`` 执行体已有指数退避
-  （同 MineruClient 的纪律，双层重试会放大等待）。
+
+Sprint 7.1 批次 A 新增（真机驱动，详见 ``changes/Sprint7.1/integration-log.md`` §3）：
+- **单 chunk 容错**：真机上一个 chunk 撞模型输出上限（非法 JSON）会让**整份文档**
+  被外层 tenacity 全量重跑 3 次（实测：一份 124-chunk 的文档烧 ¥6.55 且无产物）。
+  现改为「该 chunk 就地重试 1 次 → 仍失败则**跳过并记账**」（日志
+  ``langextract_chunk_failed`` + :class:`FailedChunk` 落进产物），
+  **整份文档不再因为一个 chunk 重跑**；
+- **但整份全败仍必须报错**：全部 chunk 都失败 ⇒ 基础设施故障（API key / 网络 / 配额），
+  抛 :class:`LangextractError` 交外层重试——**不许把"没抽到"伪装成"没有实体"**；
+- **``char_offset`` 以 ``mention`` 回查为准**：模型自报偏移与 ``mention`` 不符时
+  （7.0 实测 top20 中 14/20 不符），丢弃模型偏移、用 ``mention`` 回查定位，
+  否则 §2.3 的证据回查会漂到错误位置。
 """
 
 from __future__ import annotations
@@ -32,10 +42,11 @@ from typing import Any, Final
 from loguru import logger
 
 from app.core.config import get_settings
-from app.prompts.prompt_loader import load_prompt
+from app.prompts.prompt_loader import PromptTemplate, load_prompt
 from app.services.providers import build_chat_model
 
-#: entity_type 合法取值（与 prompts/kg_extraction_v1.md 输出一致）
+#: entity_type 合法取值（与 prompts/kg_extraction_v2.md 的 ``{{entity_types}}`` 一致；
+#: v1 枚举 + Sprint 7.1 批次 A 新增的 ``LEGAL_PERSON`` / ``ADDRESS``）
 ENTITY_TYPES: Final[tuple[str, ...]] = (
     "PERSON",
     "ORG",
@@ -45,8 +56,12 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     "REGULATION",
     "VENUE",
     "PRODUCT",
+    # Sprint 7.1 批次 A（M4 数据与算法）：法定代表人（自然人）与注册地址
+    "LEGAL_PERSON",
+    "ADDRESS",
 )
-#: relation_type 合法取值（与 import_to_neo4j.py RELATION_TOKEN_MAP 对齐）
+#: relation_type 合法取值（与 import_to_neo4j.py RELATION_TOKEN_MAP 对齐；
+#: 新增 ``LEGAL_REP`` / ``REGISTERED_AT`` 对应 :Subject 的两条边）
 RELATION_TYPES: Final[tuple[str, ...]] = (
     "EMPLOYED_BY",
     "SUPPLIES_TO",
@@ -56,7 +71,15 @@ RELATION_TYPES: Final[tuple[str, ...]] = (
     "RELATED",
     "AFFILIATED_WITH",
     "SUPPORTED_BY",
+    # Sprint 7.1 批次 A：``(:Subject)-[:LEGAL_REP]->(:LegalPerson)`` /
+    # ``(:Subject)-[:REGISTERED_AT]->(:Address)`` 的抽取侧对位
+    "LEGAL_REP",
+    "REGISTERED_AT",
 )
+
+#: 单 chunk 的**总尝试次数**（首次 + 就地重试 1 次；再失败即跳过）。
+#: 为什么不是更多：真机失败形态是"输出被截断"，重试多半仍截断，多试只是烧钱。
+_CHUNK_MAX_ATTEMPTS: Final[int] = 2
 
 #: 抽取引擎档位（``settings.extraction_engine``；未知档位显式报错）
 ENGINE_LLM: Final[str] = "llm"
@@ -68,6 +91,8 @@ ENGINES: Final[tuple[str, ...]] = (ENGINE_LLM, ENGINE_MOCK)
 _FALLBACK_TYPE: Final[str] = "RELATED"
 #: ``confidence`` 低于此值即丢弃（``prompts/kg_extraction_v1.md`` 第 50 行）
 _MIN_CONFIDENCE: Final[float] = 0.5
+#: 失败原因进日志 / 产物的截断长度（防把模型原文整段写进日志）
+_REASON_SNIPPET: Final[int] = 200
 #: Prompt 的 ``{{language}}`` 取值（语种常量，非配置；改语种须走 Prompt 新版本）
 _PROMPT_LANGUAGE: Final[str] = "chinese"
 #: llm 档里跟随 System 指令的用户侧指令（约束"只输出 JSON"，不承载模板语义）
@@ -129,6 +154,20 @@ class ExtractedChunk:
 
 
 @dataclass(frozen=True, slots=True)
+class FailedChunk:
+    """抽取失败被**跳过**的 chunk（Sprint 7.1 批次 A：单 chunk 容错）。
+
+    **跳过必须留痕**（否则就是静默降级）：每个失败的 chunk 都会
+    ① 打 ``langextract_chunk_failed`` WARNING 日志；② 以本结构进 :class:`ExtractionResult`。
+    ``reason`` 截断到 :data:`_REASON_SNIPPET` 字，避免把整段模型原文灌进日志 / 产物。
+    """
+
+    index: int
+    char_offset: int
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractionResult:
     """一次抽取的完整产物（entities + relations + chunks，按 confidence 已裁剪）。"""
 
@@ -137,6 +176,9 @@ class ExtractionResult:
     entities: list[ExtractedEntity] = field(default_factory=list)
     relations: list[ExtractedRelation] = field(default_factory=list)
     chunks: list[ExtractedChunk] = field(default_factory=list)
+    #: 被跳过的 chunk（**诊断字段**：下游只消费 ``entities`` / ``relations`` /
+    #: ``chunks`` 三个键，本字段供真机对账"这一份丢了多少证据"）
+    failed_chunks: list[FailedChunk] = field(default_factory=list)
 
     def to_json_dict(self) -> dict[str, object]:
         """导出 ``kg_versions`` 持久化 / Neo4j 写入共用的 JSON 结构。"""
@@ -173,6 +215,14 @@ class ExtractionResult:
                     "page": c.page,
                 }
                 for c in self.chunks
+            ],
+            "failed_chunks": [
+                {
+                    "index": f.index,
+                    "char_offset": f.char_offset,
+                    "reason": f.reason,
+                }
+                for f in self.failed_chunks
             ],
         }
 
@@ -308,6 +358,23 @@ def _extract_token_usage(response: object) -> dict[str, int | None]:
     }
 
 
+def _render_extraction_prompt(template: PromptTemplate, *, text: str) -> str:
+    """渲染 ``kg_extraction`` 模板；**按模板实际声明的占位符**给值。
+
+    v1 只声明 ``{{text}}`` / ``{{language}}``；v2（Sprint 7.1）把类型枚举参数化为
+    ``{{entity_types}}`` / ``{{relation_types}}``。这里不按版本号硬分支，而是看模板
+    声明——**加版本不必改代码**，也避免把 v2 的变量喂给 v1（prompt_loader 会报
+    "未声明的变量"，等于把模板升级变成运行期地雷）。
+    """
+    values: dict[str, str] = {"text": text, "language": _PROMPT_LANGUAGE}
+    declared = set(template.placeholders)
+    if "entity_types" in declared:
+        values["entity_types"] = "|".join(ENTITY_TYPES)
+    if "relation_types" in declared:
+        values["relation_types"] = "|".join(RELATION_TYPES)
+    return template.render(**values)
+
+
 def _build_llm_chunk_extractor(
     *, prompt_version: str, invoker: LlmInvokerFn
 ) -> ChunkExtractorFn:
@@ -323,9 +390,12 @@ def _build_llm_chunk_extractor(
         if not text.strip():
             return [], []
 
-        prompt = load_prompt(
-            "kg_extraction", version=_prompt_version_number(prompt_version)
-        ).render(text=text, language=_PROMPT_LANGUAGE)
+        prompt = _render_extraction_prompt(
+            load_prompt(
+                "kg_extraction", version=_prompt_version_number(prompt_version)
+            ),
+            text=text,
+        )
 
         try:
             raw = invoker(prompt)
@@ -633,6 +703,7 @@ class LangextractClient:
 
         all_entities: list[ExtractedEntity] = []
         all_relations: list[ExtractedRelation] = []
+        failed_chunks: list[FailedChunk] = []
         # contextualize：让 chunk 级日志（含 llm 档的调用日志）自动带上 trace_id
         with logger.contextualize(
             trace_id=str(trace_id),
@@ -643,9 +714,27 @@ class LangextractClient:
                 with logger.contextualize(
                     chunk_index=chunk_index, chunk_offset=chunk_start
                 ):
-                    entities, relations = self._chunk_extractor(chunk_text, chunk_start)
+                    entities, relations, reason = self._extract_chunk_tolerant(
+                        chunk_text, chunk_start
+                    )
+                if reason is not None:
+                    failed_chunks.append(
+                        FailedChunk(
+                            index=chunk_index,
+                            char_offset=chunk_start,
+                            reason=reason[:_REASON_SNIPPET],
+                        )
+                    )
+                    continue
                 all_entities.extend(entities)
                 all_relations.extend(relations)
+
+            if chunks and len(failed_chunks) == len(chunks):
+                # 全败 = 基础设施故障（key / 网络 / 配额），**不许**当成"这份文档没实体"
+                raise LangextractError(
+                    f"全部 {len(chunks)} 个 chunk 抽取失败（首个错误: "
+                    f"{failed_chunks[0].reason}）"
+                )
 
         entities = _clamp_entities(all_entities, self._max_entities_per_doc)
         relations = _clamp_relations(
@@ -657,7 +746,13 @@ class LangextractClient:
             document_id=str(document_id),
             engine=self._engine,
             chunk_count=len(chunks),
+            failed_chunk_count=len(failed_chunks),
+            # 裁剪前后都留痕：S7.1 真机发现，单文档上限会把法人 / 地址这类
+            # 低密度但高价值的实体裁掉（蛇口 p1-190：裁剪后 500，缪建民 / 建国路
+            # 全部落榜）。没有这个字段，事后根本看不出"丢了多少"。
+            entity_count_before_clamp=len(all_entities),
             entity_count=len(entities),
+            relation_count_before_clamp=len(all_relations),
             relation_count=len(relations),
         ).info("langextract_done")
 
@@ -667,7 +762,36 @@ class LangextractClient:
             entities=entities,
             relations=relations,
             chunks=chunks,
+            failed_chunks=failed_chunks,
         )
+
+    # -------------------------------------------------------------- 容错
+
+    def _extract_chunk_tolerant(
+        self, chunk_text: str, char_offset: int
+    ) -> tuple[list[ExtractedEntity], list[ExtractedRelation], str | None]:
+        """跑一个 chunk；失败就地重试 1 次，仍失败则返回 ``reason`` 交上层跳过。
+
+        **只**兜 :class:`LangextractError`（可重试的业务错误）。注入抽取器抛出的其它
+        异常一律向上冒泡——那不是"模型抽风"，是 bug，吞掉会让缺陷隐形。
+        """
+        reason: str | None = None
+        for attempt in range(1, _CHUNK_MAX_ATTEMPTS + 1):
+            try:
+                entities, relations = self._chunk_extractor(chunk_text, char_offset)
+            except LangextractError as exc:
+                reason = str(exc)[:_REASON_SNIPPET]
+                if attempt < _CHUNK_MAX_ATTEMPTS:
+                    logger.bind(attempt=attempt, reason=reason).warning(
+                        "langextract_chunk_retry"
+                    )
+                    continue
+                logger.bind(
+                    attempts=attempt, char_offset=char_offset, reason=reason
+                ).warning("langextract_chunk_failed")
+                return [], [], reason
+            return entities, relations, None
+        return [], [], reason  # pragma: no cover - _CHUNK_MAX_ATTEMPTS >= 1 保证不可达
 
 
 # ------------------------------------------------------------------------------
@@ -718,9 +842,14 @@ def _resolve_char_span(
 ) -> tuple[int, int] | None:
     """定出实体在**全文**中的绝对区间；定不出来返回 ``None``（绝不伪造偏移）。
 
-    1. 模型给了合法的 ``char_start`` / ``char_end`` → 原样透传（加回块起点，
-       与 mock 档同一坐标系，为 ``S6-1`` 的证据回溯留真值）；
-    2. 否则用 ``mention`` 在 chunk 内回查（这是原文定位，不是猜）；
+    Sprint 7.1 口径（用户已拍板，见 ``changes/Sprint7.1/tasks.md`` §2.1 末条）：
+    **模型自报偏移与 ``mention`` 不符时，以 ``mention`` 回查为准**——7.0 真机
+    top20 里 14/20 的模型偏移并不指向它自己的 ``mention``（LLM 自报偏移不可靠），
+    照单全收会让证据回查漂到错误位置。
+
+    1. 模型给了合法区间**且**区间文本 == ``mention`` → 采用（原文锚点一致）；
+    2. 否则用 ``mention`` 在 chunk 内回查（原文定位，不是猜）；不一致时打
+       ``langextract_char_span_mismatch`` WARNING 留痕；
     3. 都失败 → ``None``（调用方丢弃该实体）。
     """
     start_raw = raw.get("char_start")
@@ -729,7 +858,12 @@ def _resolve_char_span(
         start = char_offset + int(start_raw)  # type: ignore[arg-type]
         end = char_offset + int(end_raw)  # type: ignore[arg-type]
         if 0 <= start <= end <= char_offset + len(chunk_text):
-            return start, end
+            if chunk_text[start - char_offset : end - char_offset] == mention:
+                return start, end
+            logger.bind(
+                model_span=(int(start_raw), int(end_raw)),  # type: ignore[arg-type]
+                mention=mention[:_REASON_SNIPPET],
+            ).warning("langextract_char_span_mismatch")
     if mention:
         found = chunk_text.find(mention)
         if found >= 0:
@@ -798,6 +932,7 @@ __all__ = [
     "ENGINE_MOCK",
     "ENTITY_TYPES",
     "ExtractedChunk",
+    "FailedChunk",
     "ExtractedEntity",
     "ExtractedRelation",
     "ExtractionResult",

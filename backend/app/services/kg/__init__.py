@@ -14,7 +14,21 @@
   （与 ``extraction_provider`` / ``llm_provider`` 同策略）。
 """
 
+from app.services.kg.affiliation import (
+    AffiliationService,
+    Suspicion,
+    SuspicionEvidence,
+    detect_suspicions,
+)
 from app.services.kg.builder import KgBuilder, ThreeStageKgBuilder
 from app.services.kg.versioning import KgVersioningService
 
-__all__ = ["KgBuilder", "KgVersioningService", "ThreeStageKgBuilder"]
+__all__ = [
+    "AffiliationService",
+    "KgBuilder",
+    "KgVersioningService",
+    "Suspicion",
+    "SuspicionEvidence",
+    "ThreeStageKgBuilder",
+    "detect_suspicions",
+]

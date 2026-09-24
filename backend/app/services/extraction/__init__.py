@@ -10,13 +10,19 @@
   ``mock`` 正则占位器仅供 CI 注入，未知档同样显式报错）；
 - :class:`LangextractError`：业务错误（与 :class:`MineruApiError` 对位）；
 - :class:`ExtractionResult`：抽取产物（entities / relations 严格 JSON Schema，
-  见 ``prompts/kg_extraction_v1.md``）。
+  见 ``prompts/kg_extraction_v2.md``；``failed_chunks`` 记录被跳过的 chunk）。
 """
 
 from app.services.extraction.langextract import (
     ExtractionResult,
+    FailedChunk,
     LangextractClient,
     LangextractError,
 )
 
-__all__ = ["ExtractionResult", "LangextractClient", "LangextractError"]
+__all__ = [
+    "ExtractionResult",
+    "FailedChunk",
+    "LangextractClient",
+    "LangextractError",
+]

@@ -45,7 +45,11 @@ M4（财务关联交易识别）当前 **0%**（矩阵 §3.1：`❌ 0%`），是
 
 ## Impact
 
-**影响的契约（`contracts/openapi.yaml`）**：**本批次无变更**（算法为内部能力，对外端点在批次 B 的 `GET /affiliation/suspects`）。收尾须仍能通过 `export_openapi.py --check`（无 diff）。
+**影响的契约（`contracts/openapi.yaml`）**：**本批次无变更**（算法为内部能力，对外端点在批次 B 的 `GET /affiliation/suspects`）。
+
+> **口径消歧（2026-09-24，Sprint7.2 决策 B1）**：此处的 `/affiliation/suspects` 已统一为 **`/affiliation/suspicions`**（以本文批次 B 的实际口径为准，四端点见 `specs/m4-affiliation-detection.md` §5.5）。本文件为已收尾批次的历史记录，**正文保持原样**，仅在此消歧。
+
+收尾须仍能通过 `export_openapi.py --check`（无 diff）。
 
 **影响的前端（`frontend/`）**：**无**（疑点清单页属批次 C，届时须同步 `CONTRACT_COVERED_PATTERNS`——S6 批次 B 在此栽过一次，见 release notes v1.2.0 §3）。
 

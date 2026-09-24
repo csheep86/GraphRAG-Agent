@@ -6,6 +6,11 @@ ADR-0003 要求在实现期给所有核心表补 `org_id`，本表已预留并�
 
 Sprint 5 批次 B 新增 `kg_versions` 表（ADR-0002 §3.2：状态机迁 PG），
 与 `documents` 同样以 `org_id` 打头建复合索引。
+
+Sprint 7.2 批次 B 新增 M4 三张表（`affiliation_tasks` / `affiliation_suspicions` /
+`unaligned_subjects`）：表名与字段逐字照 `specs/m4-affiliation-detection.md` §4.3–4.5，
+三表**均带 `org_id` 且复合索引以 `org_id` 打头**（ADR-0003 第 54–56 行）。
+**无 Alembic**：建表靠启动时的 ``create_all``（见 :mod:`app.db.session`）。
 """
 
 from __future__ import annotations
@@ -166,3 +171,206 @@ class KgVersion(Base):
         DateTime(timezone=True), nullable=True
     )
     trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+
+
+AFFILIATION_TASK_STATUS_VALUES = ("pending", "processing", "completed", "failed")
+"""`affiliation_tasks.status` 合法值（ADR-0001：PG 为唯一真值源）。"""
+
+SUSPICION_STATUS_VALUES = ("open", "dismissed", "confirmed")
+"""`affiliation_suspicions.status` 合法值（spec §4.3）。"""
+
+SUSPICION_TYPE_VALUES = ("shared_legal_rep", "shared_address")
+"""本批次能产出的疑点类型（spec §3 验收 3 的最小集）。
+
+spec 全集还含 ``shared_phone`` / ``cycle`` / ``amount_mismatch``，但它们依赖
+``:Phone`` / ``:Invoice`` / ``:Voucher`` / ``:Contract`` 节点（**Sprint 9 批次 B**）。
+**不提前把产不出的数据写进允许集合**——那等于向调用方承诺不存在的能力；
+S9 落地时同步扩本常量 + CheckConstraint + 契约枚举。
+"""
+
+SUSPICION_SEVERITY_VALUES = ("high", "medium", "low")
+UNALIGNED_SUBJECT_STATUS_VALUES = ("pending", "aligned", "ignored")
+#: ADR-0004 §4：`external_refs.object_type` 取值（外来 ID ↔ 图谱 ID 的映射对象类型）
+EXTERNAL_OBJECT_TYPES = ("entity", "document", "org")
+
+
+class AffiliationTask(Base):
+    """`affiliation_tasks` 表（M4 §4.4：一次关联交易检测 = 一条任务）。
+
+    状态机**逐字**照 ADR-0001 §3：``pending → processing → completed / failed``，
+    **唯一真值源 = PostgreSQL**（严禁进程内存），且必须被
+    :func:`app.tasks.manager.recover_orphan_tasks` 扫到（同 ADR 第 73 行要求扫
+    ``documents`` + ``affiliation_tasks`` 两张表）。
+
+    与其它任务表的差异：一次检测覆盖**多份**文档（``doc_ids``），所以
+    ``task_id`` 是本表主键，**不是** ``documents.id``——这正是批次 B 决策 **B8**
+    要扩展 ``TaskManager.submit()`` 的原因。
+    """
+
+    __tablename__ = "affiliation_tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'completed', 'failed')",
+            name="ck_affiliation_tasks_status",
+        ),
+        # ADR-0003 §3.1：复合索引必须 org_id 打头
+        Index("ix_affiliation_tasks_org_id_status", "org_id", "status"),
+        Index("ix_affiliation_tasks_org_id_created_at", "org_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 本次检测覆盖的文档 id（JSON 数组，元素为 UUID 字符串——沿用
+    #: ``KgVersion.source_doc_ids`` 的写法：``json.dumps`` 不支持 UUID 原生类型）
+    doc_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: 已重试次数（H8；每次重试写回——有列必须有消费者，同 B1 纪律）
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: 失败明细（**敏感**，日志禁输出）
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 完成后填入 ``{total, by_type, top_5_severity}``
+    result_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+
+
+class AffiliationSuspicion(Base):
+    """`affiliation_suspicions` 表（M4 §4.3：疑点 + 状态 + 证据引用）。
+
+    两条硬约束：
+
+    1. **引用覆盖率 = 100%**：证据取不到的命中在算法层就被丢弃
+       （``affiliation_suspicion_dropped_no_evidence``），故 ``evidence`` **非空**；
+    2. ``task_id``（批次 B 决策 **B2** 新增）回答「这条疑点属于哪一批检测」——
+       没有它，``GET /affiliation/suspicions`` 只能靠 ``created_at`` 猜最新批次
+       （并发 / 补跑下不稳）或返回全部历史疑点（新旧混杂）。
+    """
+
+    __tablename__ = "affiliation_suspicions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'dismissed', 'confirmed')",
+            name="ck_affiliation_suspicions_status",
+        ),
+        CheckConstraint(
+            "suspicion_type IN ('shared_legal_rep', 'shared_address')",
+            name="ck_affiliation_suspicions_type",
+        ),
+        CheckConstraint(
+            "severity IN ('high', 'medium', 'low')",
+            name="ck_affiliation_suspicions_severity",
+        ),
+        Index("ix_affiliation_suspicions_org_id_status", "org_id", "status"),
+        # 「返回哪一批疑点」的主查询路径（B2）
+        Index("ix_affiliation_suspicions_org_id_task_id", "org_id", "task_id"),
+        Index("ix_affiliation_suspicions_org_id_created_at", "org_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 产出该疑点的 ``affiliation_tasks.id``（B2 新增，必有写入方）
+    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    suspicion_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity: Mapped[str] = mapped_column(String(8), nullable=False)
+    #: 涉及节点 id 列表（[主体A, 主体B, 共享节点]）
+    entities: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    #: 与 entities 对应的名称（仅展示用；判重以 id 为准）
+    entity_names: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    #: 原文证据引用列表（**非空**：无证据的疑点不落库）
+    evidence: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    kg_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    #: 复核人（`X-Actor-Id`；M5 落地后改为 token 主体）
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+
+
+class UnalignedSubject(Base):
+    """`unaligned_subjects` 表（M4 §4.5：未对齐主体）。
+
+    **本批次只建表不写**（批次 B 决策 **B5**）：四源主体对齐属 **Sprint 9 批次 D**，
+    spec §3 验收 1 的「对齐成功率 ≥ 0.95」同样在那里才可能判定。现在写只能靠凑——
+    与其塞假数据，不如诚实留空，并把「空表」登记到
+    `backend/CODEBUDDY.md` §4（避免变成无人知晓的死表）。
+    """
+
+    __tablename__ = "unaligned_subjects"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'aligned', 'ignored')",
+            name="ck_unaligned_subjects_status",
+        ),
+        Index("ix_unaligned_subjects_org_id_status", "org_id", "status"),
+        Index("ix_unaligned_subjects_org_id_created_at", "org_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    raw_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_doc_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    candidates: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class ExternalRef(Base):
+    """`external_refs` 表（ADR-0004 §4 接缝 7：外来 ID ↔ 本系统 ID 的唯一映射）。
+
+    **本批次只建表 + 写入点**（plan §6.2 批次 B）：写入点是
+    `python -m app.services.external_data.cli`（外部数据导入 CLI，接缝 8）。
+    **不对接任何真实外部系统**——按 ADR-0004 §5 难题 2：接 1 个系统时映射很简单，
+    难的是接 8 个系统后「同一个供应商在 ERP / OA / CLM / MDM 里是 4 个 ID」；
+    本阶段**不预判**那个解法，只把映射面本身准备好。
+
+    字段与类型控制在受socket范围内下降维：``local_id`` / ``external_id`` 用字符串
+    （外部 ID 不一定是 UUID，造 UUID 就是编数据），``object_type`` / ``external_system``
+    按 ADR-0004 §4 取值。
+    """
+
+    __tablename__ = "external_refs"
+    __table_args__ = (
+        CheckConstraint(
+            "object_type IN ('entity', 'document', 'org')",
+            name="ck_external_refs_object_type",
+        ),
+        Index("ix_external_refs_org_id_object_type", "org_id", "object_type"),
+        # 唯一性：同一外部系统里一个外来 ID 只能映射到本系统的一个对象
+        Index(
+            "ux_external_refs_org_sys_ext",
+            "org_id",
+            "external_system",
+            "external_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    object_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: 本系统 ID（图谱实体 ID / 文档 ID）——**字符串**，因为外部系统侧的 ID 未必是 UUID
+    local_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    external_system: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # mdm / erp / gsxt / hr …
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )

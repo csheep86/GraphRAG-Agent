@@ -250,7 +250,9 @@ def test_unknown_types_downgrade_to_related() -> None:
             {
                 "id": "ent_001",
                 "canonical_name": "北京青云科技有限公司",
-                "entity_type": "LEGAL_PERSON",  # 未命中枚举（v1 第 47 行）
+                # 未命中枚举（v1 第 47 行）。注：`LEGAL_PERSON` 自 Sprint 7.1 的
+                # kg_extraction_v2 起已是**合法**类型，不能再用它当"未知类型"样例
+                "entity_type": "SHAREHOLDER_ORG",
                 "mention": "北京青云科技有限公司",
                 "char_start": 3,
                 "char_end": 13,

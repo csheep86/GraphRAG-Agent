@@ -12,6 +12,12 @@
   产物落存储层 ``{org_id}/{doc_id}/extract/{entities,relations}.json``。
 - ``kg.build``（批次 B）：三段式写入 Neo4j（ADR-0002 §3.1），
   并把状态机迁移到 ``kg_versions`` 表（ADR-0002 §3.2 PG 真源）。
+- ``risk.detect``（Sprint 7.1 批次 A）：M4 关联交易疑点检出
+  （共享法人 / 共享地址两跳，作用域是 ``kg_version`` 而非单文档）。
+  **注**：本仓库当前**没有**跨阶段投递——``pipeline_stages`` 只决定上传时提交
+  哪一个**首个**阶段，后续阶段由脚本 / 人工按序驱动（根因：``TaskManager``
+  依赖请求级 ``BackgroundTasks``，请求结束即失效，无法在阶段间续投）。
+  已登记为缺口，承接 Sprint 8。
 """
 
 from __future__ import annotations
@@ -36,9 +42,14 @@ from tenacity import (
 )
 
 from app.core.config import get_settings
-from app.core.errors import ErrorCode
-from app.db.models import Document, KgVersion
+from app.core.errors import AppError, ErrorCode
+from app.db.models import AffiliationTask, Document, KgVersion
 from app.db.session import SessionLocal
+from app.services.affiliation import (
+    mark_task_failed,
+    mark_task_processing,
+    persist_detection_result,
+)
 from app.services.extraction import LangextractClient, LangextractError
 from app.services.extraction.langextract import ExtractionResult
 from app.services.graphs import GraphUnavailableError
@@ -49,6 +60,7 @@ from app.services.parsing import MineruApiError, MineruClient
 from app.services.parsing.page_index import build_page_index
 from app.storage import (
     build_extract_artifact_key,
+    build_kg_artifact_key,
     build_parse_artifact_key,
     build_storage_key,
     get_storage,
@@ -779,11 +791,334 @@ def _mark_kg_build_failed(
     ).error("kg_build_failed")
 
 
+# ---------------------------------------------------------------------------
+# risk.detect（Sprint 7.1 批次 A：M4 关联交易疑点，接缝 4 管线第四段）
+# ---------------------------------------------------------------------------
+
+
+async def risk_detect_executor(spec: TaskSpec) -> None:
+    """``risk.detect`` 执行体：在 **kg_version** 作用域上跑 M4 规则疑点。
+
+    与其它三段的关键差异：
+
+    - **作用域是 kg_version 不是单文档**：共享法人 / 共享地址只有**跨公司**才成立，
+      单文档内自环已被排除（``graphs.py`` 的 ``s1.id < s2.id``）；
+    - **只在 ``kg_versions.status = 'ready'`` 上跑**（ADR-0002：只有 ready 版本可被消费）；
+      未建图 / 版本未 ready → **显式跳过并记账**（``risk_detect_skipped``），
+      **不**当成「无嫌疑」；
+    - **本批次不落 PG**：``affiliation_suspicions`` 表属 Sprint 8 批次 B，当前产物
+      = 结构化日志 + ``{org_id}/{doc_id}/kg/suspicions.json``；
+    - Neo4j 不可达 → :class:`GraphUnavailableError` 走 tenacity，重试用尽后
+      由框架层落 failed——**绝不**降级为「没有疑点」。
+    """
+    settings = get_settings()
+    document_id = UUID(spec.payload["document_id"])
+
+    db: Session = SessionLocal()
+    try:
+        document = db.get(Document, document_id)
+        if document is None:
+            logger.bind(trace_id=spec.trace_id, document_id=str(document_id)).error(
+                "risk_detect_missing_record"
+            )
+            return
+
+        kg_version_id = document.kg_version_id
+        if kg_version_id is None:
+            logger.bind(trace_id=spec.trace_id, document_id=str(document_id)).warning(
+                "risk_detect_skipped_no_kg_version"
+            )
+            return
+        kg_version = db.get(KgVersion, kg_version_id)
+        if kg_version is None or kg_version.status != "ready":
+            logger.bind(
+                trace_id=spec.trace_id,
+                document_id=str(document_id),
+                kg_version_id=str(kg_version_id),
+                status=kg_version.status if kg_version else None,
+            ).warning("risk_detect_skipped_version_not_ready")
+            return
+        version = kg_version.version
+
+        attempt_count = 0
+
+        def _on_retry(retry_state: Any) -> None:  # noqa: ANN401
+            nonlocal attempt_count
+            attempt_count = retry_state.attempt_number
+            logger.bind(
+                trace_id=spec.trace_id,
+                document_id=str(document_id),
+                attempt=attempt_count,
+            ).warning("risk_detect_retry")
+
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(settings.task_retry_max_attempts),
+                wait=wait_exponential(
+                    multiplier=settings.task_retry_initial_seconds,
+                    exp_base=settings.task_retry_multiplier,
+                ),
+                retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+                reraise=True,
+            ):
+                with attempt:
+                    _on_retry(attempt.retry_state)
+                    await _do_risk_detect(
+                        document_id=document_id,
+                        org_id=document.org_id,
+                        kg_version=version,
+                        payload=spec.payload,
+                    )
+        except RetryError as exc:
+            if (
+                exc.last_attempt is not None
+                and exc.last_attempt.exception() is not None
+            ):
+                raise exc.last_attempt.exception() from exc  # type: ignore[misc]
+            raise
+
+        logger.bind(
+            trace_id=spec.trace_id,
+            document_id=str(document_id),
+            kg_version=version,
+        ).info("risk_detect_completed")
+    except Exception as exc:  # noqa: BLE001 - 框架层吞错并落库
+        db.rollback()
+        # risk.detect 是管线末段且**没有**自己的阶段列（documents 表无 risk_detect_status）；
+        # 借用 kg_build_status 会把「疑点检出失败」标成「建图失败」——**错标比不标更糟**，
+        # 故直接把整体 status 推进 failed（末段语义与 kg.build 一致）。
+        document = db.get(Document, document_id)
+        if document is None:
+            return
+        document.status = "failed"
+        document.error_code = ErrorCode.INTERNAL_ERROR.value
+        document.error_detail = "".join(
+            traceback.format_exception_only(type(exc), exc)
+        ).strip()
+        db.commit()
+        logger.bind(
+            trace_id=spec.trace_id,
+            document_id=str(document_id),
+            error_code=document.error_code,
+            exc_type=type(exc).__name__,
+        ).error("risk_detect_failed")
+    finally:
+        db.close()
+
+
+async def _do_risk_detect(
+    *,
+    document_id: UUID,
+    org_id: UUID,
+    kg_version: str,
+    payload: Mapping[str, object],
+) -> None:
+    """跑一次疑点检出：结果进日志 + ``kg/suspicions.json`` 产物。
+
+    疑点**逐条**打点（``affiliation_suspicion_detected``）——汇总一条日志会让
+    「到底哪几家公司、凭哪段原文被判成疑点」在真机上无法核对。
+    """
+    from app.services.kg import AffiliationService
+
+    trace_id = payload.get("trace_id")
+    suspicions = AffiliationService().detect(
+        kg_version=kg_version,
+        org_id=org_id,
+        trace_id=trace_id,
+    )
+
+    for suspicion in suspicions:
+        logger.bind(
+            trace_id=str(trace_id) if trace_id else None,
+            document_id=str(document_id),
+            kg_version=kg_version,
+            suspicion_type=suspicion.suspicion_type,
+            severity=suspicion.severity,
+            entity_names=list(suspicion.entity_names),
+            evidence_chunk_ids=[item.chunk_id for item in suspicion.evidence],
+        ).info("affiliation_suspicion_detected")
+
+    artifact_key = build_kg_artifact_key(
+        org_id=org_id, doc_id=document_id, filename="suspicions.json"
+    )
+    payload_json = json.dumps(
+        {
+            "kg_version": kg_version,
+            "document_id": str(document_id),
+            "trace_id": str(trace_id) if trace_id else None,
+            "total": len(suspicions),
+            "suspicions": [item.to_dict() for item in suspicions],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    # 注意：``put(key, data)`` **不**接 ``org_id``（租户隔离靠 key 前缀，ADR-0003 §3.5）
+    get_storage().put(artifact_key, payload_json.encode("utf-8"))
+    logger.bind(
+        trace_id=str(trace_id) if trace_id else None,
+        document_id=str(document_id),
+        kg_version=kg_version,
+        total=len(suspicions),
+        artifact_key_present=True,
+    ).info("risk_detect_artifacts_written")
+
+
+async def affiliation_detect_executor(spec: TaskSpec) -> None:
+    """执行 ``affiliation.detect``：跑 M4 规则算法并把疑点**落库**（Sprint 7.2 批次 B）。
+
+    与 ``risk_detect_executor`` 的差异——**两者不可合并**：
+
+    - **任务载体**：本执行体以 ``affiliation_tasks.id`` 为主键（一次检测覆盖**多份**
+      文档，批次 B 决策 **B8**）；``risk.detect`` 以 ``documents.id`` 为主键（单文档）；
+    - **产物落点**：本执行体写 ``affiliation_suspicions`` 表（对外经端点可读、可复核）；
+      ``risk.detect`` 仍只写日志 + ``suspicions.json``；
+    - **触发方式**：本执行体由 ``POST /affiliation/detect`` 显式提交；``risk.detect``
+      挂在上传管线的末段（``settings.pipeline_stages``）。
+
+    无 active ``kg_version`` → 任务置 **failed**（``KG_VERSION_NOT_ACTIVE``）：
+    「没有可读的版本」不等于「没有疑点」，按 ADR-0002 §3.2 **不**静默产出 0 条。
+    """
+    settings = get_settings()
+    task_id = UUID(str(spec.payload.get("affiliation_task_id")))
+
+    db: Session = SessionLocal()
+    attempt_count = 0
+    try:
+        task = db.get(AffiliationTask, task_id)
+        if task is None:
+            logger.bind(trace_id=spec.trace_id, task_id=str(task_id)).error(
+                "affiliation_detect_missing_record"
+            )
+            return
+
+        mark_task_processing(session=db, task=task)
+
+        def _on_retry(retry_state: Any) -> None:  # noqa: ANN401
+            nonlocal attempt_count
+            attempt_count = retry_state.attempt_number
+            # 有列必须有消费者：retry_count 在每次重试时真实写回（H8）
+            task.retry_count = max(attempt_count - 1, 0)
+            db.commit()
+            logger.bind(
+                trace_id=spec.trace_id,
+                task_id=str(task_id),
+                attempt=attempt_count,
+            ).warning("affiliation_detect_retry")
+
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(settings.task_retry_max_attempts),
+                wait=wait_exponential(
+                    multiplier=settings.task_retry_initial_seconds,
+                    exp_base=settings.task_retry_multiplier,
+                ),
+                retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+                reraise=True,
+            ):
+                with attempt:
+                    _on_retry(attempt.retry_state)
+                    await _do_affiliation_detect(
+                        task=task, session=db, trace_id=spec.trace_id
+                    )
+        except RetryError as exc:
+            if (
+                exc.last_attempt is not None
+                and exc.last_attempt.exception() is not None
+            ):
+                raise exc.last_attempt.exception() from exc  # type: ignore[misc]
+            raise
+
+        logger.bind(
+            trace_id=spec.trace_id,
+            task_id=str(task_id),
+            total=(task.result_summary or {}).get("total"),
+        ).info("affiliation_detect_completed")
+    except Exception as exc:  # noqa: BLE001 - 框架层吞错并落库
+        db.rollback()
+        row = db.get(AffiliationTask, task_id)
+        if row is None:
+            return
+        code = (
+            exc.code.value
+            if isinstance(exc, AppError)
+            else ErrorCode.INTERNAL_ERROR.value
+        )
+        mark_task_failed(
+            session=db,
+            task=row,
+            error_code=code,
+            # error_detail 属**敏感**字段：只留异常首行，**不**含原文 / 证据内容
+            error_detail="".join(
+                traceback.format_exception_only(type(exc), exc)
+            ).strip(),
+        )
+        logger.bind(
+            trace_id=spec.trace_id,
+            task_id=str(task_id),
+            error_code=code,
+            exc_type=type(exc).__name__,
+        ).error("affiliation_detect_failed")
+    finally:
+        db.close()
+
+
+async def _do_affiliation_detect(
+    *,
+    task: AffiliationTask,
+    session: Session,
+    trace_id: str,
+) -> None:
+    """跑一次检测并落库（ ``_do_*`` 家族：真正干活的那一层）。"""
+    from app.services.kg import AffiliationService
+
+    # ADR-0002：只消费 ready（= active）版本；这里读 PG 真源，不用 Neo4j 镜像兜底
+    record = KgVersioningService(session).get_active(org_id=task.org_id)
+    if record is None:
+        raise AppError(
+            ErrorCode.KG_VERSION_NOT_ACTIVE,
+            detail={"reason": "no_active_kg_version", "org_id": str(task.org_id)},
+        )
+
+    suspicions = AffiliationService().detect(
+        kg_version=record.version,
+        org_id=task.org_id,
+        trace_id=trace_id,
+    )
+
+    # 疑点**逐条**打点：汇总一条日志会让「哪几家公司、凭哪段原文被判成疑点」无法核对
+    for suspicion in suspicions:
+        logger.bind(
+            trace_id=trace_id,
+            task_id=str(task.id),
+            kg_version=record.version,
+            suspicion_type=suspicion.suspicion_type,
+            severity=suspicion.severity,
+            entity_names=list(suspicion.entity_names),
+            evidence_chunk_ids=[item.chunk_id for item in suspicion.evidence],
+        ).info("affiliation_suspicion_detected")
+
+    total = persist_detection_result(
+        session=session,
+        task=task,
+        suspicions=suspicions,
+        kg_version=record.version,
+        trace_id=trace_id,
+    )
+    logger.bind(
+        trace_id=trace_id,
+        task_id=str(task.id),
+        kg_version=record.version,
+        total=total,
+    ).info("affiliation_detect_persisted")
+
+
 #: 任务类型 → 执行体的注册表。新增任务类型在此登记即可。
 EXECUTOR_REGISTRY: dict[str, TaskExecutorFn] = {
     "document.parse": document_parse_executor,
     "document.extract": document_extract_executor,
     "kg.build": kg_build_executor,
+    "risk.detect": risk_detect_executor,
+    "affiliation.detect": affiliation_detect_executor,
 }
 
 

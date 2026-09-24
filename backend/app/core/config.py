@@ -121,12 +121,19 @@ class Settings(BaseSettings):
     extraction_engine: str = "llm"
     #: 单次送入 LLM 的最大字符数；超长在客户端内切分
     extraction_max_chars_per_chunk: int = Field(default=4000, gt=0)
-    #: 单文档实体上限（防 LLM 失控批量生成）
-    extraction_max_entities_per_doc: int = Field(default=500, gt=0)
-    #: 单文档关系上限
-    extraction_max_relations_per_doc: int = Field(default=1000, gt=0)
-    #: Prompt 版本（CODEBUDDY.md 版本管理规范）；prompt_loader 必须有对应版本文件
-    extraction_prompt_version: str = "kg_extraction_v1"
+    #: 单文档实体上限（防 LLM 失控批量生成）。
+    #: Sprint 7.1 批次 A 真机校准：**500 对 190 页级文档不够**——蛇口 p1-190 抽完后
+    #: 裁剪到 500，`招商局集团有限公司` 还在，`缪建民` / 注册地址这类"低密度但高价值"
+    #: 实体全部被按 confidence 挤掉（M4 的数据前提直接落空）。
+    #: 该上限是**容量护栏**不是疑点阈值：放宽它不会制造任何疑点，只会少丢真实实体；
+    #: 裁剪前后的数量都记在 ``langextract_done`` 日志里（``*_before_clamp``）。
+    extraction_max_entities_per_doc: int = Field(default=2000, gt=0)
+    #: 单文档关系上限（同上：``LEGAL_REP`` / ``REGISTERED_AT`` 不能被挤掉）
+    extraction_max_relations_per_doc: int = Field(default=4000, gt=0)
+    #: Prompt 版本（CODEBUDDY.md 版本管理规范）；prompt_loader 必须有对应版本文件。
+    #: Sprint 7.1 批次 A：v2 = v1 + 类型枚举参数化（``{{entity_types}}`` /
+    #: ``{{relation_types}}``）+ 法人 / 地址两类（M4 算法的数据前提）；v1 文件保留不动。
+    extraction_prompt_version: str = "kg_extraction_v2"
 
     # -- KG 构建（Sprint 5 批次 B：ADR-0002 三段式写入 Neo4j）--
     #: stage-2 / stage-3 batch LOAD 的批大小（防内存峰值）
