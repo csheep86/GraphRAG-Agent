@@ -47,8 +47,8 @@
 - 不许 push（推送由用户执行）；不许为了凑结果改阈值 / 伪造数据 / 静默降级。
 - 环境：后端用 uv（uv run pytest -q / uv run ruff check .）；本机 Neo4j 容器常 Exited，跑真机前先 docker ps，不在就 docker start neo4j 并等约 25 秒。
 
-【开工前必须先做的一件（阻塞项，别硬扛）+ 一件已确认】
-1. **试装 slowapi**（批次 B 前置）：`pyproject.toml:10-23` 与 `uv.lock` 现均无 `slowapi` / `limits`。装不上就**停下来告诉我**，不要自造中间件绕过 spec 点名。
+【开工前状态：两件阻塞项均已关闭，可直接开跑】
+1. ~~试装 slowapi~~ **已装并实测通过（2026-09-24）**：`slowapi 0.1.10` + `limits 5.8.0` 已入 `pyproject.toml` / `uv.lock`（纯新增、零删改），`368 passed` 不变，冒烟 `2/minute` 下第 3 次请求真出 429。**本批次不用它**，但批次 B 有一条由实测得出的**必做项**（见"常见坑"第 6 条）。
 2. ~~向我确认 DeepSeek 余额~~ **已确认（2026-09-24 用户截图）：充值余额 ¥38.61、累计消费 ¥31.38**，足够本次真机走查。护栏不变：**单次调用预计超 ¥1 就停下来问我**；策略是**复用现有图谱、不重建**（不许全量重抽语料）。
 
 【执行顺序】
@@ -64,7 +64,7 @@ tasks.md §0 事前核实（含跑一次 check_seams.py 记基线）→ §1 契�
 ## 备用：精简版（上下文紧张时）
 
 ```text
-读根 CODEBUDDY.md / backend/CODEBUDDY.md 的纪律部分 + changes/Sprint8.1/proposal.md 与 tasks.md，按 tasks.md 从 §0 开始做 Sprint 8 批次 A（审计最小闭环）：建 qa_logs + audit_log 两表（UUID 主键、org_id 打头索引、不写迁移脚本），加 GET /api/v1/audit 与 GET /api/v1/audit/trace/{trace_id} 两个只读端点（契约先行 + 同步 CONTRACT_COVERED_PATTERNS），前端 audit 页关 Mock。审计由中间件全量写（排除 health、action 走路由映射、失败只记日志不抛异常），qa_logs 在 agents.py 产出响应后落一条（成功/拒答都落、不记原文）。决策 A1–A16 已采纳，不要重裁。禁止：push、bump app_version、改既有 7 张表、改 patch_suspicion_status 签名、动接缝、写响应体原文进 detail。余额已确认（¥38.61），开工前唯一阻塞项是试装 slowapi。每项都要有真机/命令证据，写进 changes/Sprint8.1/integration-log.md。每完成一节向我汇报。
+读根 CODEBUDDY.md / backend/CODEBUDDY.md 的纪律部分 + changes/Sprint8.1/proposal.md 与 tasks.md，按 tasks.md 从 §0 开始做 Sprint 8 批次 A（审计最小闭环）：建 qa_logs + audit_log 两表（UUID 主键、org_id 打头索引、不写迁移脚本），加 GET /api/v1/audit 与 GET /api/v1/audit/trace/{trace_id} 两个只读端点（契约先行 + 同步 CONTRACT_COVERED_PATTERNS），前端 audit 页关 Mock。审计由中间件全量写（排除 health、action 走路由映射、失败只记日志不抛异常），qa_logs 在 agents.py 产出响应后落一条（成功/拒答都落、不记原文）。决策 A1–A16 已采纳，不要重裁。禁止：push、bump app_version、改既有 7 张表、改 patch_suspicion_status 签名、动接缝、写响应体原文进 detail。余额已确认（¥38.61）、slowapi 已装（0.1.10），开工无阻塞项。每项都要有真机/命令证据，写进 changes/Sprint8.1/integration-log.md。每完成一节向我汇报。
 ```
 
 ---
@@ -76,7 +76,7 @@ tasks.md §0 事前核实（含跑一次 check_seams.py 记基线）→ §1 契�
 3. **中间件顺序**：审计中间件必须挂在 TraceIdMiddleware 之后才拿得到 trace_id；main.py:58-59 注明「后加者在外层」。
 4. **Neo4j 假死**：容器常 Exited，`docker ps` 看一眼，异常就 `docker start neo4j` 再等 ~25s，否则会误判成「图写不进去」。
 5. **别手改 counts/finish**：integration-log 里的数字必须是命令输出。
-6. **批次 B 的预警**（本批次不做，但别埋雷）：429 必须在 errors.py:122-132 的 HTTP_STATUS_TO_ERROR_CODE 加 `429: RATE_LIMITED`，否则兜底成 HTTP_ERROR（映射 500），直接违反矩阵 :133 判据。
+6. **批次 B 的预警**（本批次不做，但别埋雷，**已实测**）：slowapi 默认 `_rate_limit_exceeded_handler` 返回 `{"error":"Rate limit exceeded: ..."}`，**不合 H3 的 `{code,message,detail,trace_id}`**，且无 `Retry-After` 头 ⇒ 批次 B 必须**自定义 handler** 走 `AppError(ErrorCode.RATE_LIMITED).to_body(trace_id)`，并在 `errors.py:122-132` 加 `429: RATE_LIMITED`（不加则兜底成 `HTTP_ERROR`→500），否则直接违反矩阵 `:133` 判据「429 `RATE_LIMITED`」。
 7. **别烧钱**：真机走查复用现有图谱，不许全量重抽语料。
 ```
 
