@@ -222,12 +222,25 @@ def recover_orphan_tasks() -> RecoveryReport:
 
 
 def list_in_flight_task_ids() -> tuple[UUID, ...]:
-    """取当前所有 ``pending`` / ``processing`` 的 task_id。仅供测试与对账使用。"""
+    """取当前所有 ``pending`` / ``processing`` 的 task_id。仅供测试与对账使用。
+
+    **S7.2-2 偿还（Sprint 8.1 批次 B）**：扫描覆盖 ``documents`` **与**
+    ``affiliation_tasks`` 两张表——与 :func:`recover_orphan_tasks` 同口径
+    （ADR-0001 第 73 行）：``affiliation_tasks`` 也会卡在 ``processing``，
+    对账函数看不到它就是盲区。返回顺序：documents 在前、affiliation 在后。
+    """
     with SessionLocal() as session:
-        rows = session.execute(
+        document_rows = session.execute(
             select(Document.id).where(Document.status.in_(("pending", "processing")))
         ).all()
-    return tuple(row[0] for row in rows)
+        affiliation_rows = session.execute(
+            select(AffiliationTask.id).where(
+                AffiliationTask.status.in_(("pending", "processing"))
+            )
+        ).all()
+    return tuple(row[0] for row in document_rows) + tuple(
+        row[0] for row in affiliation_rows
+    )
 
 
 def new_trace_id() -> str:

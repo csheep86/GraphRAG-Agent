@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.exception_handlers import register_exception_handlers
+from app.core.limiter import RateLimitMiddleware, get_limiter
 from app.core.logging import logger, setup_logging
 from app.core.middleware import TRACE_ID_HEADER, AuditMiddleware, TraceIdMiddleware
 from app.core.openapi import build_openapi
@@ -59,6 +60,9 @@ def create_app() -> FastAPI:
     # 才能保证 CORS 预检等所有响应都带上 X-Trace-Id。
     # 审计必须挂在 TraceId **之内**（先 add）：它要靠 contextvar 拿 trace_id，
     # 挂在外层的话取到的是 None（M5 §3 验收 6）。
+    # 限流（SlowAPIMiddleware）挂在审计**之内**（后于审计 add 前插）：429 响应
+    # 要流经审计（记一条 failure）与 TraceId（回显头）才出栈。
+    app.state.limiter = get_limiter()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allow_origins,
@@ -67,6 +71,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=[TRACE_ID_HEADER],
     )
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(AuditMiddleware)
     app.add_middleware(TraceIdMiddleware)
 

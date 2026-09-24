@@ -150,6 +150,10 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:3000"]
     )
 
+    # -- 限流（M5 §3 验收 5 / 决策 A11：slowapi，"默认 N=60，可配置"）--
+    #: 同一 IP 每分钟对同一接口的请求上限。唯一消费点：core/limiter.py::get_limiter
+    rate_limit_per_minute: int = Field(default=60, ge=1)
+
     @field_validator("allowed_mime_types")
     @classmethod
     def _normalize_mime_types(cls, value: list[str]) -> list[str]:

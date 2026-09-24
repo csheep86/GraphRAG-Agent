@@ -139,6 +139,54 @@ def test_tenant_leak_warn_only_when_fail_closed_off(
     assert not isinstance(exc_info.value, AgentTenantLeakError)
 
 
+def test_tenant_leak_warn_writes_audit_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A12（Sprint 8.1 批次 B）：逃生阀放行时**同步写一条** `tenant_leak.warn` 审计。
+
+    口径：写失败只记日志不上抛；断言跑在真实 test DB 上（trace_id 用合法 UUID，
+    ``record_audit_entry`` 会拒绝非 UUID 的 trace）。
+    """
+    monkeypatch.setattr(get_settings(), "agent_fail_closed", False)
+    _patch_graph(monkeypatch, tenant_clean=False)
+
+    from uuid import uuid4
+
+    from app.db.models import AuditLog
+    from app.db.session import SessionLocal
+
+    trace_id = str(uuid4())
+    try:
+        with pytest.raises(AgentUnavailableError):
+            asyncio.run(
+                AgentService.instance().query(
+                    request=AgentQueryRequest(question="A 公司与 B 公司是什么关系？"),
+                    org_id=get_settings().default_org_id,
+                    trace_id=trace_id,
+                )
+            )
+
+        with SessionLocal() as session:
+            rows = (
+                session.query(AuditLog)
+                .filter(AuditLog.trace_id == UUID(trace_id))
+                .filter(AuditLog.action == "tenant_leak.warn")
+                .all()
+            )
+            assert len(rows) == 1, "逃生阀放行必须留一条 tenant_leak.warn"
+            row = rows[0]
+            assert row.org_id == get_settings().default_org_id
+            assert row.status == "failure"
+            assert row.detail["kg_version"] == "v-test"
+            assert row.detail["fail_closed"] is False
+            assert row.resource == f"POST {get_settings().api_prefix}/agent/query"
+    finally:
+        # 清理共享 test DB，避免污染其它用例对 audit_log 的计数
+        with SessionLocal() as session:
+            session.query(AuditLog).filter(AuditLog.trace_id == UUID(trace_id)).delete()
+            session.commit()
+
+
 def test_tenant_clean_proceeds_past_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -30,6 +30,7 @@ class ErrorCode(StrEnum):
     KG_TENANT_LEAK = "KG_TENANT_LEAK"
     TASK_INTERRUPTED = "TASK_INTERRUPTED"
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+    RATE_LIMITED = "RATE_LIMITED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
     HTTP_ERROR = "HTTP_ERROR"
 
@@ -48,6 +49,7 @@ ERROR_HTTP_STATUS: Mapping[ErrorCode, int] = {
     ErrorCode.KG_TENANT_LEAK: 403,
     ErrorCode.TASK_INTERRUPTED: 409,
     ErrorCode.NOT_IMPLEMENTED: 501,
+    ErrorCode.RATE_LIMITED: 429,
     ErrorCode.INTERNAL_ERROR: 500,
     ErrorCode.HTTP_ERROR: 500,
 }
@@ -66,6 +68,7 @@ DEFAULT_MESSAGES: Mapping[ErrorCode, str] = {
     ErrorCode.KG_TENANT_LEAK: "Cross-tenant subgraph detected",
     ErrorCode.TASK_INTERRUPTED: "Task interrupted by process restart",
     ErrorCode.NOT_IMPLEMENTED: "Infrastructure unavailable",
+    ErrorCode.RATE_LIMITED: "Too many requests",
     ErrorCode.INTERNAL_ERROR: "Internal server error",
     ErrorCode.HTTP_ERROR: "Unmapped HTTP error",
 }
@@ -96,6 +99,11 @@ ERROR_CODE_DESCRIPTIONS: Mapping[ErrorCode, str] = {
         "基础设施不可用（Neo4j 图谱存储不可用（连不上 / 查询失败）"
         "/ LLM 未配置或装配失败）时返回 501，**不**表示「接口未实现」。"
     ),
+    ErrorCode.RATE_LIMITED: (
+        "请求触发限流（M5 §3 验收 5，slowapi）：同一 IP 在时间窗口内对同一接口的"
+        "调用超过 `rate_limit_per_minute`（默认 60）次。响应带 `Retry-After` 头"
+        "（秒），限流同时写 `audit_log(action=rate_limit.triggered)`。"
+    ),
     ErrorCode.INTERNAL_ERROR: "未预期的服务端异常，已记录日志（含 trace_id）。",
     ErrorCode.HTTP_ERROR: "未在错误码表中登记的 HTTP 状态兜底，保留原始 HTTP 状态语义。",
 }
@@ -114,6 +122,7 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.KG_TENANT_LEAK: "ADR-0003 §4 / Sprint 5 批次 B",
     ErrorCode.TASK_INTERRUPTED: "ADR-0001 §3.2",
     ErrorCode.NOT_IMPLEMENTED: "backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2",
+    ErrorCode.RATE_LIMITED: "M5 §3 验收 5 / 决策 A14（Sprint 8.1 批次 B）",
     ErrorCode.INTERNAL_ERROR: "CODEBUDDY.md 错误响应规范",
     ErrorCode.HTTP_ERROR: "CODEBUDDY.md 错误响应规范",
 }
@@ -128,6 +137,7 @@ HTTP_STATUS_TO_ERROR_CODE: Mapping[int, ErrorCode] = {
     413: ErrorCode.FILE_TOO_LARGE,
     415: ErrorCode.UNSUPPORTED_MEDIA_TYPE,
     422: ErrorCode.VALIDATION_ERROR,
+    429: ErrorCode.RATE_LIMITED,
     501: ErrorCode.NOT_IMPLEMENTED,
 }
 

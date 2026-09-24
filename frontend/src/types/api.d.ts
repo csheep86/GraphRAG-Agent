@@ -414,6 +414,8 @@ export interface paths {
          * @description 不要求认证、不返回任何业务数据。
          *
          *     依赖异常时仍返回 **200**，仅把 `status` 降级为 `degraded`，避免负载均衡因单实例依赖抖动直接摘除全部流量。
+         *
+         *     同时**豁免限流**（名单见 `core/limiter.py::EXEMPT_ROUTE_NAMES`）：探针可达 1 次/秒，贴着默认限（60/min）跑，被 429 会直接把实例摘除（M5 §3 验收 5 的限流口径面向业务接口）。
          */
         get: operations["getHealth"];
         put?: never;
@@ -1619,7 +1621,7 @@ export interface components {
          * @description 统一业务错误码。HTTP 状态码与业务错误码分离（CODEBUDDY.md 错误响应规范）。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "INTERNAL_ERROR" | "HTTP_ERROR";
+        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | "HTTP_ERROR";
         /**
          * ErrorResponse
          * @description 统一错误响应体（**所有** 4xx / 5xx 均使用本结构）。

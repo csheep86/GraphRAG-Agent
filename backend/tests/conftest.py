@@ -23,6 +23,11 @@ os.environ["STORAGE_ROOT"] = str(_TMP_DIR / "storage")
 # 等待降至最小值（字段校验 gt=0）避免用例真实 sleep 1s + 2s。
 os.environ["TASK_RETRY_INITIAL_SECONDS"] = "0.001"
 
+# 限流（M5 §3 验收 5）：共享 client 的限流实际关闭（上限调到不可触达），
+# 否则全量跑测时同一接口的累计请求数可能撞 60/min 限——限流行为本身由
+# test_rate_limit.py 用独立 app（RATE_LIMIT_PER_MINUTE=1）专测。
+os.environ["RATE_LIMIT_PER_MINUTE"] = "100000"
+
 # 图谱相关端点（/graph、/agent/query）在测试中必须**确定性**降级：
 # 指向本机不可达端口，保证 GraphService 一定抛 GraphUnavailableError。
 # 环境变量优先级高于 `.env`，因此能稳定覆盖开发者本地 .env 里的真实 Neo4j 配置——

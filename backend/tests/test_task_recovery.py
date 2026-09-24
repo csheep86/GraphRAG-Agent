@@ -28,7 +28,7 @@ from sqlalchemy import delete
 
 from app.core.config import get_settings
 from app.core.errors import ErrorCode
-from app.db.models import Document
+from app.db.models import AffiliationTask, Document
 from app.db.session import SessionLocal, init_db
 from app.tasks.manager import list_in_flight_task_ids, recover_orphan_tasks
 
@@ -242,3 +242,33 @@ def test_list_in_flight_task_ids_is_empty_after_recover(
     recover_orphan_tasks()
 
     assert list_in_flight_task_ids() == ()
+
+
+def test_list_in_flight_task_ids_covers_affiliation_tasks() -> None:
+    """S7.2-2（Sprint 8.1 批次 B 偿还）：在途 ``affiliation_tasks`` 也在对账结果里。
+
+    ``recover_orphan_tasks`` 早已扫两表，本函数若仍只查 ``documents``，对账
+    ``affiliation_tasks`` 就是盲区（backend/CODEBUDDY.md §4 S7.2-2）。
+    """
+    affiliation_id = uuid4()
+    with SessionLocal() as session:
+        session.add(
+            AffiliationTask(
+                id=affiliation_id,
+                org_id=get_settings().default_org_id,
+                doc_ids=[str(uuid4())],
+                status="processing",
+                trace_id=uuid4(),
+            )
+        )
+        session.commit()
+    try:
+        result = list_in_flight_task_ids()
+        assert isinstance(result, tuple)
+        assert affiliation_id in result
+    finally:
+        with SessionLocal() as session:
+            session.execute(
+                delete(AffiliationTask).where(AffiliationTask.id == affiliation_id)
+            )
+            session.commit()

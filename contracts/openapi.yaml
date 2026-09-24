@@ -1360,6 +1360,7 @@ components:
       - KG_TENANT_LEAK
       - TASK_INTERRUPTED
       - NOT_IMPLEMENTED
+      - RATE_LIMITED
       - INTERNAL_ERROR
       - HTTP_ERROR
       title: ErrorCode
@@ -1375,6 +1376,7 @@ components:
         KG_VERSION_NOT_ACTIVE: 请求显式指定了非 active 的 kg_version（writing / failed / superseded），按 ADR-0002 §3.2 一律拒绝，严禁静默降级到最新版。
         NOT_FOUND: 通用资源不存在（含未注册路由）。
         NOT_IMPLEMENTED: 基础设施不可用（Neo4j 图谱存储不可用（连不上 / 查询失败）/ LLM 未配置或装配失败）时返回 501，**不**表示「接口未实现」。
+        RATE_LIMITED: 请求触发限流（M5 §3 验收 5，slowapi）：同一 IP 在时间窗口内对同一接口的调用超过 `rate_limit_per_minute`（默认 60）次。响应带 `Retry-After` 头（秒），限流同时写 `audit_log(action=rate_limit.triggered)`。
         TASK_INTERRUPTED: 进程重启导致在途任务被 TaskManager.recover() 回收置 failed（ADR-0001 §3.2）。
         UNAUTHORIZED: 缺少或无法解析认证态（Bearertoken / 开发态请求头）。
         UNSUPPORTED_MEDIA_TYPE: 上传文件 MIME 不在白名单（M1 验收 3）。
@@ -1390,6 +1392,7 @@ components:
         KG_VERSION_NOT_ACTIVE: ADR-0002 §3.2 / M3 §4.1
         NOT_FOUND: CODEBUDDY.md 错误响应规范
         NOT_IMPLEMENTED: backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2
+        RATE_LIMITED: M5 §3 验收 5 / 决策 A14（Sprint 8.1 批次 B）
         TASK_INTERRUPTED: ADR-0001 §3.2
         UNAUTHORIZED: M5 §3 验收 1
         UNSUPPORTED_MEDIA_TYPE: M1 §3 验收 3
@@ -3114,7 +3117,10 @@ paths:
       description: '不要求认证、不返回任何业务数据。
 
 
-        依赖异常时仍返回 **200**，仅把 `status` 降级为 `degraded`，避免负载均衡因单实例依赖抖动直接摘除全部流量。'
+        依赖异常时仍返回 **200**，仅把 `status` 降级为 `degraded`，避免负载均衡因单实例依赖抖动直接摘除全部流量。
+
+
+        同时**豁免限流**（名单见 `core/limiter.py::EXEMPT_ROUTE_NAMES`）：探针可达 1 次/秒，贴着默认限（60/min）跑，被 429 会直接把实例摘除（M5 §3 验收 5 的限流口径面向业务接口）。'
       operationId: getHealth
       responses:
         '200':

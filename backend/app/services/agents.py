@@ -44,6 +44,7 @@ from tenacity import (
 
 from app.core.config import get_settings
 from app.db.models import QaLog
+from app.db.session import SessionLocal
 from app.prompts.prompt_loader import PromptRenderError, load_prompt
 from app.schemas.agent import (
     AgentQueryRequest,
@@ -54,6 +55,7 @@ from app.schemas.agent import (
     TokenUsage,
 )
 from app.schemas.document import GraphEdge, GraphNode
+from app.services.audit import record_audit_entry
 from app.services.graphs import (
     EvidenceChunk,
     GraphService,
@@ -302,6 +304,22 @@ class AgentService:
                 org_id=str(org_id),
                 kg_version=version,
             ).warning("agent_query_tenant_leak_warn_only")
+            # A12（Sprint 8.1 批次 B）：逃生阀触发必须留痕——比纯日志可核，
+            # 审计页能直接看到「谁在哪个版本上被放行了越权数据」。写失败只记日志。
+            with SessionLocal() as session:
+                record_audit_entry(
+                    session,
+                    org_id=org_id,
+                    action="tenant_leak.warn",
+                    resource=f"POST {settings.api_prefix}/agent/query",
+                    status="failure",
+                    trace_id=trace_id,
+                    detail={
+                        "kg_version": version,
+                        "fail_closed": settings.agent_fail_closed,
+                    },
+                )
+                session.commit()
 
         # 2.6) 证据片段（Sprint 6 批次 B）：把 chunk 原文注入 Prompt，
         #      并建立 `chunk_id -> EvidenceChunk` 索引供第 6 步回查引用。
