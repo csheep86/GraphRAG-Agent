@@ -47,9 +47,9 @@
 - 不许 push（推送由用户执行）；不许为了凑结果改阈值 / 伪造数据 / 静默降级。
 - 环境：后端用 uv（uv run pytest -q / uv run ruff check .）；本机 Neo4j 容器常 Exited，跑真机前先 docker ps，不在就 docker start neo4j 并等约 25 秒。
 
-【开工前必须先做的两件（阻塞项，别硬扛）】
-1. **试装 slowapi**（批次 B 前置）：pyproject.toml 与 uv.lock 现均无 slowapi / limits。装不上就**停下来告诉我**，不要自造中间件。
-2. **向我确认 DeepSeek 余额**：真机走查里「提问」要调 LLM。策略已定为复用现有图谱、不重建，但**余额数字不许推测**；单次预计超过 ¥1 就停下来问我。
+【开工前必须先做的一件（阻塞项，别硬扛）+ 一件已确认】
+1. **试装 slowapi**（批次 B 前置）：`pyproject.toml:10-23` 与 `uv.lock` 现均无 `slowapi` / `limits`。装不上就**停下来告诉我**，不要自造中间件绕过 spec 点名。
+2. ~~向我确认 DeepSeek 余额~~ **已确认（2026-09-24 用户截图）：充值余额 ¥38.61、累计消费 ¥31.38**，足够本次真机走查。护栏不变：**单次调用预计超 ¥1 就停下来问我**；策略是**复用现有图谱、不重建**（不许全量重抽语料）。
 
 【执行顺序】
 tasks.md §0 事前核实（含跑一次 check_seams.py 记基线）→ §1 契约 → §2 两张表 → §3 审计中间件 → §4 qa_logs 写入 → §5 两个端点 → §6 前端 → §7 测试 → §8 真机 → §9 门禁 → §10 收尾。
@@ -64,7 +64,7 @@ tasks.md §0 事前核实（含跑一次 check_seams.py 记基线）→ §1 契�
 ## 备用：精简版（上下文紧张时）
 
 ```text
-读根 CODEBUDDY.md / backend/CODEBUDDY.md 的纪律部分 + changes/Sprint8.1/proposal.md 与 tasks.md，按 tasks.md 从 §0 开始做 Sprint 8 批次 A（审计最小闭环）：建 qa_logs + audit_log 两表（UUID 主键、org_id 打头索引、不写迁移脚本），加 GET /api/v1/audit 与 GET /api/v1/audit/trace/{trace_id} 两个只读端点（契约先行 + 同步 CONTRACT_COVERED_PATTERNS），前端 audit 页关 Mock。审计由中间件全量写（排除 health、action 走路由映射、失败只记日志不抛异常），qa_logs 在 agents.py 产出响应后落一条（成功/拒答都落、不记原文）。决策 A1–A16 已采纳，不要重裁。禁止：push、bump app_version、改既有 7 张表、改 patch_suspicion_status 签名、动接缝、写响应体原文进 detail。开工前两件阻塞项：试装 slowapi、向我确认 DeepSeek 余额。每项都要有真机/命令证据，写进 changes/Sprint8.1/integration-log.md。每完成一节向我汇报。
+读根 CODEBUDDY.md / backend/CODEBUDDY.md 的纪律部分 + changes/Sprint8.1/proposal.md 与 tasks.md，按 tasks.md 从 §0 开始做 Sprint 8 批次 A（审计最小闭环）：建 qa_logs + audit_log 两表（UUID 主键、org_id 打头索引、不写迁移脚本），加 GET /api/v1/audit 与 GET /api/v1/audit/trace/{trace_id} 两个只读端点（契约先行 + 同步 CONTRACT_COVERED_PATTERNS），前端 audit 页关 Mock。审计由中间件全量写（排除 health、action 走路由映射、失败只记日志不抛异常），qa_logs 在 agents.py 产出响应后落一条（成功/拒答都落、不记原文）。决策 A1–A16 已采纳，不要重裁。禁止：push、bump app_version、改既有 7 张表、改 patch_suspicion_status 签名、动接缝、写响应体原文进 detail。余额已确认（¥38.61），开工前唯一阻塞项是试装 slowapi。每项都要有真机/命令证据，写进 changes/Sprint8.1/integration-log.md。每完成一节向我汇报。
 ```
 
 ---
