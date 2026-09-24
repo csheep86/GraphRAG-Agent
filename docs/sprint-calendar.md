@@ -65,7 +65,7 @@ tag v1.0.0（现状基线，Sprint 4 已收尾，黄金路径 2/7）
 |---|---|---|---|
 | S5 | ✅ 已收尾 | 2026-09-22 | 提前 19 天（计划 09-21→10-11，实际 09-22 tag）；批次 A / A2 / B / C 全完成，**提前完成但验收不跳过**（§1 纪律）；E1/E2 登记 unresolved |
 | S6 | ✅ 功能收尾（tag `v1.2.0` **待打**） | 2026-09-23（达标日） | 提前 **27 天**（计划 10-12→10-20，实际 09-23 达标）；批次 A / B / C + 6.3 真机修复全完成；**第 3 天 go/no-go 通过**（chunk 级引用跑通，未降级为文档级）；受控问题集引用覆盖率 100%；实体消解推 S9（见 release notes v1.2.0 §6.1） |
-| S7 | ⏳ 未开始 | — | — |
+| S7 | ✅ 功能收尾（tag `v1.3.0` **待打**） | 2026-09-24（达标日） | 提前 **28 天**（计划 10-21→11-03，实际 09-24 达标）；前置还债批次 7.0（抽取接真实 LLM）+ 批次 A / B / C / D 全完成：M4 两类规则算法 → 三表落库 → 四端点 → 前端疑点页 → `domain_events` 事件出口；接缝 5 / 7 / 8 由 WARN 转 OK（`ERROR 0 / WARN 2 / OK 8`），余 2 条为未到期接缝 6；pytest 297 → 368。**未完（不伪装）**：三类算法与四源 0.95 对齐率（S9）、准入指标（S13）、证据粒度 chunk 级与 `char_offset` 恒 0（S10）；缺口 `S7.2-1`（`unaligned_subjects` 只建表不写）、`S7.2-2`（`list_in_flight` 只扫 `documents`，承 S8）已显式登记 |
 | S8 | ⏳ 未开始 | — | — |
 | S9 | ⏳ 未开始 | — | — |
 | S10 | ⏳ 未开始 | — | — |
@@ -79,4 +79,5 @@ tag v1.0.0（现状基线，Sprint 4 已收尾，黄金路径 2/7）
 |---|---|---|---|
 | 2026-09-21 | v1.0 | 建立：日历化 plan v3.0 §13 的 9 个 Sprint（S5~S13），交付日 2027-02-12；用户拍板"AI 执行、不加缓冲" | plan §13；倒推文档 §3/§7.1；用户 2026-09-21 确认 |
 | 2026-09-22 | v1.1 | S5 收尾登记：① §3 收尾门禁的 `check_seams.py --strict` 更正为**默认档（要求 ERROR = 0）**；② §5 状态列 S5 → ✅ 已收尾（tag 2026-09-22，提前 19 天） | `check_seams.py` docstring 第 5–6 行 + `--strict` 分支报错文案（明示「只适用于 v1.4.0 Demo-MVP 完成点」）；实测 v1.1.0 跑 `--strict` 必红——WARN 6 全部为 **未到期** 接缝（5 事件出口 / 6 导出 / 7 外部映射 / 8 外部导入），按 `required_from` 属 v1.3.0~v1.4.0，非越界 |
+| 2026-09-24 | v1.3 | S7 收尾登记：① §5 状态列 S7 → ✅ 功能收尾（达标日 2026-09-24，提前 28 天，**tag `v1.3.0` 待打**）；② 新增 **[`docs/release-notes/v1.3.0.md`](./release-notes/v1.3.0.md)**（13 commit ／ 94 files ／ 契约路径 10→14 ／ pytest 368 passed ／ `check_seams` ERROR 0 WARN 2 OK 8）；③ `settings.app_version` **1.2.0 → 1.3.0**（与 bump 同步重导 `contracts/openapi.yaml` 的 `info.version`——该值取自 `app_version`，不同步则契约门禁必红）；④ 缺口 **S7.1-7**（M4「两层并存」）随 notes 落 §6.9 后关闭 | `changes/Sprint7.{0,1,2,3,4}/integration-log.md` 真机证据链（10 条疑点 / 42 条证据 / 引用覆盖率 100% / `domain_events` 10 行 `dispatched_at` 全 NULL / 浏览器点验 `confirmed=4 / dismissed=1`）；`docs/acceptance-traceability-matrix.md` M4 行与黄金路径步骤 4 同步 |
 | 2026-09-23 | v1.2 | S6 收尾登记：① §5 状态列 S6 → ✅ 功能收尾（达标日 2026-09-23，提前 27 天，**tag `v1.2.0` 待打**）；② 新增 **[`docs/release-notes/v1.2.0.md`](./release-notes/v1.2.0.md)**（5 个 commit ／ 56 files ／ 契约路径 8→10 ／ pytest 297 passed ／ 受控问题集覆盖率 100%） | `docs/v1.1.0-demo-mvp-plan.md` §5.3 验收清单（7 条中 6 条达标，差 release notes 已补齐）；`changes/Sprint6.{1,2,3,4}/integration-log.md` 真机证据链；`scripts/eval_controlled_qset.py` 14 问真机 PASS |
