@@ -52,7 +52,7 @@
 - [x] `builder.py` 增写**三种**节点，属性逐字按 spec §4.2（`:Subject` 第 64 行 / `:Address` 第 65 行 / `:LegalPerson` 第 66 行；`id_hash` 本批次为 `None`——**没有信用代码就 null，严禁兜底造哈希**）→ `integration-log.md` §5
 - [x] 增写两条关系（spec §4.3 第 76–77 行端点）；**修**：边 id 由「抽取侧 relation id」改为**按端点生成**（真机发现 F：并行边 → 疑点重复出条）→ `integration-log.md` §7.4
 - [x] **不与 `:Entity` 桥接**（无 `(:Entity)-[...]->(:Subject)` 边；`:Entity` ↔ `:Subject` 的联系只以 `source_entity_ids` **字符串列表**形式留在主体层节点上，用于证据回原文，**不建图边**）→ 两层统一仍交 S9 批次 D
-- [ ] **release notes v1.3.0 已知限制**（两层并存）：⏳ v1.3.0 notes 属 S7 四批次全完后的收尾动作（§5 第 5 条明令此处不 bump）→ 已登记为缺口 **S7.1-7**（`backend/CODEBUDDY.md` §4），收尾写 notes 时必含
+- [x] **release notes v1.3.0 已知限制**（两层并存）：✅ 2026-09-24 收尾已落入 `docs/release-notes/v1.3.0.md` §6.9（M4「两层并存」行，含决策 D1 理由与 `:Entity` ↔ `:Subject` 不建桥接边、仅 `source_entity_ids` 维系联系），缺口 **S7.1-7** 关闭，`backend/CODEBUDDY.md` §4 对应行同步转为已偿还
 - [x] 新节点带 `kg_version`（与 M2 共用 active 版本）+ 继承 `acl_scope`（**只落属性、查询不过滤**）→ 单测 `test_kg_builder_affiliation.py::test_rows_carry_kg_version_and_acl_scope`
 - [x] 数值 / 位置属性写侧归一化：M4 节点数值属性本批次**全为 None**（无 `tax_id` / `region_code` / `id_hash` 可写），位置属性不适用；新增列表属性 `source_entity_ids` 已用 `valueType()` **现场抽检通过**（`LIST<STRING NOT NULL>`，见 §7.2）
 - [x] 单测 + **真机 Neo4j 计数核验** → `integration-log.md` §7.2；跨 kg_version 隔离另证于 §7.5（旧版本 `v-3e381d36` 无 `:Subject`，`detect` 返回 0 条、不串数据）

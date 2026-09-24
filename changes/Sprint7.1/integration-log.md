@@ -494,7 +494,7 @@ tasks §2.4 第 3 条担心「登记后上传链路自动跑 M4 → 老文档误
 |---|---|---|
 | **S7.1-5** | **管线无跨阶段投递**：上传只提交首个阶段，`risk.detect` 无法自动被触发（§6.3） | Sprint 8 |
 | **S7.1-6** | **疑点无持久化**：无 `affiliation_suspicions` / `affiliation_tasks` 表，产物只有日志 + `kg/suspicions.json` | Sprint 8 批次 B（与对外端点同批） |
-| **S7.1-7** | **「两层并存」未落 release notes**：v1.3.0 notes 属 S7 四批次全完后的收尾动作 | S7 收尾（与 bump + tag 同动作） |
+| **S7.1-7** | ✅ **2026-09-24 收尾已落**：`docs/release-notes/v1.3.0.md` §6.9 已登记「两层并存」（`:Entity` + `:Subject`）为已知限制 | 已关闭；统一工作归 **S9 批次 D 实体消解** |
 
 另有一条**未裁决**（非缺口、属用户侧口径决策）：`char_offset` 以偏移为准还是以
 `mention` 回查为准（tasks §2.1 末条）。本批次未改它；§2.3 的证据链路不依赖实体级偏移
