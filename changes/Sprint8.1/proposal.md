@@ -97,7 +97,8 @@
 1. **「≥ 7 条」是真机判据**：依赖演示路径（上传 → 解析 → 建图 → 提问 → 检测 → 复核）**每一步都落一条**，A1 的中间件必须真的覆盖到，且要在真机上数一遍，不能靠估算。
 2. **中间件写库失败不能拖垮主流程**：审计写失败应**只记日志**不抛异常（否则一个审计缺陷变成全站 500）——与批次 D「事件失败不影响主流程」同一纪律。
 3. **噪声风险**：`health` 已排除，但 `gen:api` 后若新增被前端轮询的端点（如 `affiliation` 的 2s 轮询），审计表会快速增长 ⇒ 真机走查时**实测一次条数**，必要时收 allowlist。
-4. **批次 B 的 slowapi 需装依赖**（`pyproject.toml:10-23` 无 `slowapi` / `limits`，`uv.lock` 也 0 命中）——**开工前先试装并记录结论**（A11），装不上立即升级用户，不要硬扛。
+4. ~~**批次 B 的 slowapi 需装依赖**~~ **已实测通过（2026-09-24，开工前完成）**：`uv add slowapi` → `slowapi 0.1.10` + `limits 5.8.0`（+`deprecated` / `wrapt` 共 5 包）；`uv.lock` **纯新增 126 行、零删改**（未牵动 fastapi 0.141.1 / starlette 1.6.0 / httpx）；`368 passed` 不变；冒烟 `2/minute` 下第 3 次请求真出 **429**。⇒ **A11 的"装不上要换方案"风险已消除**。
+   ⚠️ **但实测暴露一个必做项**：slowapi 的默认 `_rate_limit_exceeded_handler` 返回 `{"error":"Rate limit exceeded: 2 per 1 minute"}`，**不符合 H3 统一格式 `{code, message, detail, trace_id}`**，且无 `Retry-After` 头 ⇒ 批次 B **必须自定义 handler** 走 `AppError(ErrorCode.RATE_LIMITED).to_body(trace_id)`，并同步在 `errors.py:122-132` 加 `429: RATE_LIMITED`（否则兜底成 `HTTP_ERROR`→500）。A14 由"提醒"升级为**必做**。
 5. **真机要花钱（A13 的前置）**：走查里「提问」要调 LLM。**开工前须向用户确认 DeepSeek 余额**；策略已定为**复用现有图谱、不重建**，但余额数字**不得推测**——没有数字就没有真机判据。
 6. **只有 `agents.py` 需要引入 session**（写 `qa_logs`）；复核环节**不改** `patch_suspicion_status()` 签名（理由见"现状"表）。若实施中发现"不改签名就落不了审计"，**先停下来升级**——那是范围蔓延，不是顺手。
 7. **「≥ 7 条」的口径要在真机前定死**：plan §7.2 原文是「全程 `trace_id` 在 audit 页可见 **≥ 7 条**记录」。实测链路里有**多个** trace_id（HTTP 请求一个，后端任务由 `tasks/manager.py:233-241` 另生成一个），所以**不能**理解为"同一个 trace_id 下有 7 条"。本批次按「**审计页可见全程 ≥7 条记录，且每条都带 trace_id，且可按 trace_id 过滤回看任一步**」执行，并在 integration-log 里**显式登记这个口径解读**，不静默选一种。
