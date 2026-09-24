@@ -103,4 +103,6 @@
 - [x] `docs/dev-doc-status.md` 补批次 A 登记（追加 leading §0 追加段）
 - [x] 登记缺口：脱敏器 / RBAC / RLS（S11）、`alert` 表（P2）、`list_in_flight_task_ids()`（批次 B）、受控问题集换版（批次 B / C）、`graph.overview` 的 `entity_count=0`（真机观察）
 - [x] **不** bump `app_version`（仍 **1.3.0**；Sprint 8 收尾统一 bump 到 1.4.0 + tag）
-- [ ] 归档 `changes/Sprint8.1/` → `changes/archive/<日期>-Sprint8.1/`；push（由用户执行）
+- [x] 归档 `changes/Sprint8.1/` → `changes/archive/<日期>-Sprint8.1/`；push（由用户执行）
+  - **2026-09-24 已执行**：先提交批次 A（`cb919ab`，26 files ／ +3389 ／ −72），再 `git mv` 归档 + push。
+  - **浏览器点验（用户 2026-09-24 已看）**：`NEXT_PUBLIC_USE_MOCK=false` 下审计页展示 **30 条记录**、11 类 action、每行带 trace_id 与「回看」按钮 ⇒ 关 Mock 路径点验通过（`dev-doc-status.md` 该行原写"浏览器点验待用户"已了结）。
