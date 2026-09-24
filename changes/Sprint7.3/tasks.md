@@ -57,5 +57,5 @@
 
 - [x] 补 `integration-log.md`（基线 / 事前核实 / 决策 / API / store / 页面 / 关 Mock / 门禁 / 未擅自处置声明）
 - [x] 缺口登记：证据粒度为 chunk 级（`ev_len == chunk_len`），片段级定位归 S10，未伪造高亮
-- [ ] `docs/dev-doc-status.md` + `docs/acceptance-traceability-matrix.md` 同步（建议与批次 D 收尾一并做）
+- [x] `docs/dev-doc-status.md` + `docs/acceptance-traceability-matrix.md` 同步（2026-09-24 随批次 D 收尾一并完成：M4 前端侧登记 + 黄金路径步骤 4 刷新 + 两处缺口同步进矩阵）
 - [x] 未 bump `app_version`（Sprint 7 的 v1.3.0 tag 在批次 D 收尾统一处理）

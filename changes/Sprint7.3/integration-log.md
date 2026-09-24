@@ -146,6 +146,6 @@ $ npm.cmd run build      → Compiled successfully，路由含 /affiliation
 ## 9. 收尾（§6）
 
 - ✅ 本日志已写；
-- ⚠️ `docs/dev-doc-status.md` / `docs/acceptance-traceability-matrix.md` 的 M4 前端侧同步**未做**（建议与批次 D 收尾一并处理）；
+- ✅ `docs/dev-doc-status.md` / `docs/acceptance-traceability-matrix.md` 的 M4 前端侧同步已完成（2026-09-24 随批次 D 收尾一并处理）；
 - ⚠️ 未 bump `app_version`（Sprint 7 的 v1.3.0 tag 在批次 D 收尾统一处理）；
 - **未擅自处置声明**：本批次只动 `frontend/`（角色隔离）。改动 `src/components/qa/chunk-viewer.tsx` 仅为把 `splitHighlight` 移到 `lib/`（C6），未改其行为。发现证据粒度为 chunk 级后**未**自行改后端，按 §7.2 登记缺口。
