@@ -11,16 +11,16 @@
 - `POST /affiliation/detect`、`GET /affiliation/tasks/{id}`、`GET /affiliation/suspicions`、
   `PATCH /affiliation/suspicions/{id}`（**Sprint 7.2 批次 B**，spec §5.5；
   路径口径以 spec 为准，plan §6.2 摘要原写 `/affiliation/suspects` 已统一为 `suspicions`）
+- `GET /audit`、`GET /audit/trace/{trace_id}`（**Sprint 8.1 批次 A**，M5 §3 验收 7 / 6）
 
-specs 中其余端点草案（`/auth/login`、`/audit*`、`/internal/*` 等）留在草案态，
-Sprint 3 逐步纳入，禁止提前注册。
+specs 中其余端点草案（`/auth/login`、`/internal/*` 等）留在草案态，后续 Sprint 逐步纳入。
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1.routes import affiliation, agent, documents, graph, health
+from app.api.v1.routes import affiliation, agent, audit, documents, graph, health
 from app.core.config import get_settings
 
 api_router = APIRouter(prefix=get_settings().api_prefix)
@@ -30,3 +30,4 @@ api_router.include_router(documents.router)
 api_router.include_router(graph.router)
 api_router.include_router(agent.router)
 api_router.include_router(affiliation.router)
+api_router.include_router(audit.router)

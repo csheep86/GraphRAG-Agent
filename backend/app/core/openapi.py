@@ -59,6 +59,13 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "agent",
         "description": "M3 图谱问答与可溯源引用。**全部要求租户上下文**。",
     },
+    {
+        "name": "audit",
+        "description": (
+            "M5 审计留痕（只读查询）。写入由审计中间件统一完成，本 tag 下只有两个查询端点；"
+            "**全部要求租户上下文**，返回项已按 `org_id` 过滤。"
+        ),
+    },
 ]
 
 

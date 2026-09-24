@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -42,6 +43,7 @@ from tenacity import (
 )
 
 from app.core.config import get_settings
+from app.db.models import QaLog
 from app.prompts.prompt_loader import PromptRenderError, load_prompt
 from app.schemas.agent import (
     AgentQueryRequest,
@@ -192,6 +194,31 @@ class AgentService:
     # ------------------------------------------------------------------ query
 
     async def query(
+        self,
+        *,
+        request: AgentQueryRequest,
+        org_id: UUID,
+        trace_id: str,
+        db: Any = None,
+    ) -> AgentQueryResponse:
+        """执行一次图谱问答，**并**在产出响应后落一条 `qa_logs`（M3 §4.3 / 决策 **A4**）。
+
+        问答此前是全函数**零 DB 写入**的唯一缺口（`specs/m3-graphqa-citation.md` §6 S6.4-3
+        登记），本处即它的偿还点，因此打点放在这里而不是路由层：只有这里既握有响应体、
+        又握有原始提问。
+
+        **成功与拒答都落**（M3 §5.3：拒答事件正是发现本体缺口的输入）。
+        基础设施故障（`AgentUnavailableError` → 501）**不落**本表——那次调用没有
+        `AgentQueryResponse`，且同一 HTTP 请求已由审计中间件写了一条 `failure`
+        （`audit_log` 覆盖失败留痕，不重复造一份残缺记录）。
+        """
+        response = await self._execute_query(
+            request=request, org_id=org_id, trace_id=trace_id, db=db
+        )
+        _record_qa_log(response=response, request=request, org_id=org_id, db=db)
+        return response
+
+    async def _execute_query(
         self,
         *,
         request: AgentQueryRequest,
@@ -518,6 +545,52 @@ class AgentService:
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
+
+
+def _record_qa_log(
+    *,
+    response: AgentQueryResponse,
+    request: AgentQueryRequest,
+    org_id: UUID,
+    db: Any,
+) -> None:
+    """把一次问答写入 `qa_logs`（M3 §4.3 字段表，逐字段对应；决策 **A4**）。
+
+    - `question_hash` / `answer_hash` **只存 SHA-256**，不存原文（M3 §5.3：提问本身
+      可能就是敏感信息；这不是脱敏，是压根不保存）；
+    - 其余字段**取自响应体不重算**（`citation_count` / `refused` / `refusal_reason` /
+      `kg_version` / `trace_id`）——重算会在两条链路上产生分叉的口径；
+    - **写失败只记日志**：打点缺陷不得把已经算好的答案变成 500（同 proposal 风险 2）；
+    - 这里**显式 commit**：问答链路除本表外没有任何写库动作，没有可依附的业务事务
+      （请求 session 在响应体返回后即 close，不 commit 等于静默丢弃）。
+    """
+    if db is None:
+        logger.bind(trace_id=response.trace_id).warning("qa_log_skipped_no_session")
+        return
+
+    try:
+        db.add(
+            QaLog(
+                org_id=org_id,
+                question_hash=_sha256_text(request.question),
+                answer_hash=_sha256_text(response.answer),
+                citation_count=len(response.citations),
+                refused=response.refused,
+                refusal_reason=response.refusal_reason,
+                kg_version=response.kg_version,
+                trace_id=UUID(str(response.trace_id)),
+            )
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 - 打点失败不上抛（不影响答案本体）
+        logger.bind(trace_id=response.trace_id, reason=str(exc)).warning(
+            "qa_log_write_failed"
+        )
+
+
+def _sha256_text(value: str) -> str:
+    """原文 → SHA-256 hex（`qa_logs` 的两个哈希列共用，永不以明文落库）。"""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _build_llm_wait_policy() -> Any:

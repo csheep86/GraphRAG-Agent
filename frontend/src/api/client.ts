@@ -46,6 +46,10 @@ const CONTRACT_COVERED_PATTERNS: RegExp[] = [
   /^\/api\/v1\/affiliation\/tasks\/[^/]+$/,
   /^\/api\/v1\/affiliation\/suspicions$/,
   /^\/api\/v1\/affiliation\/suspicions\/[^/]+$/,
+  // Sprint 8.1 批次 A：M5 审计两个只读端点。漏登记会让它们走 mock，
+  // 与 plan §7.2「审计页关 Mock 硬门槛」直接冲突 —— 契约新增端点必须同步此处。
+  /^\/api\/v1\/audit$/,
+  /^\/api\/v1\/audit\/trace\/[^/]+$/,
 ];
 
 /**
