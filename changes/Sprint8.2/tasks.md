@@ -67,4 +67,7 @@
 - [x] 补 `changes/Sprint8.2/integration-log.md`（实测三坑 / 门禁输出 / 真机证据 / 未擅自处置声明）
 - [x] `docs/dev-doc-status.md` 补批次 B 登记
 - [x] **不** bump `app_version`（仍 1.3.0）
-- [ ] 提交 + push（用户过目后执行）；CI 随 PR #3 自动重跑
+- [x] 提交 + push（用户过目后执行）；CI 随 PR #3 自动重跑
+  - **2026-09-24 已执行**：提交 **`36d4c26`**（`feat(ratelimit)`，20 files ／ +805 ／ −13），push `7420eb3e..36d4c26c` → `origin/feature/sprint-8`。
+  - **push 曾 3 次失败**：`Recv failure: Connection was reset` / `Failed to connect to github.com:443`（本机 GitHub 网络时好时坏，非 DNS 问题——`api.github.com` 同时刻正常）；第 4 次重试即成功。**结论：遇到 push 失败直接重试即可，无需改 hosts / 换 IP。**
+  - **CI（PR #3，run `36001623993`，sha `36d4c26`）全绿**：后端 23s ✅ ／ 契约校验 25s ✅ ／ 前端 24s ✅ ／ 流水线汇总 3s ✅（远端 Python 3.11 / Node 22 与本地门禁结论一致）。
