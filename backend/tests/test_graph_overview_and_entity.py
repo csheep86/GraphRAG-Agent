@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from uuid import uuid4
 
 import pytest
@@ -23,10 +24,13 @@ from app.schemas.graph import (
     GraphOverviewResponse,
 )
 from app.services.graphs import (
+    _QUERY_ENTITY_DETAIL,
     EntityNotFoundError,
     GraphService,
     KgVersion,
     NoActiveKgVersionError,
+    _category_from_entity_type,
+    _entity_type_from_properties,
 )
 
 #: `contracts/openapi.yaml::GraphOverviewResponse` 字段集
@@ -222,6 +226,43 @@ def test_overview_tenant_protection_declares_403(
     responses = schema["paths"]["/api/v1/graph/overview"]["get"]["responses"]
     assert "403" in responses
     assert "401" in responses
+
+
+def test_entity_detail_cypher_has_no_nested_aggregate() -> None:
+    """Cypher **不得嵌套聚合函数**——`count(collect(...))` 会直接 SyntaxError → 501。
+
+    这是**只有真机能暴露**的一类 bug（2026-09-26 端到端点验发现：演示第 3 步「点实体」
+    `GET /entities/{id}` 直接 501，且被包装成「图谱不可用」——把**语法错**伪装成
+    **基础设施故障**）。测试库没有 Neo4j，编译期无法拦截 ⇒ 用静态断言守住回归。
+    """
+    assert not re.search(
+        r"(?:count|collect|sum|min|max|avg)\s*\(\s*"
+        r"(?:count|collect|sum|min|max|avg)\s*\(",
+        _QUERY_ENTITY_DETAIL,
+    )
+
+
+def test_entity_type_reads_property_written_by_kg_builder() -> None:
+    """属性名以**建图侧**为准：`entity_type`（真库实测）；`type` 仅作旧数据兜底。
+
+    2026-09-26 真机点验发现：`kg/builder.py` 写 `n.entity_type`，读侧却读 `type`
+    （真库**没有**这个属性）⇒ 类型恒空、分类恒兜底。
+    """
+    assert _entity_type_from_properties({"entity_type": "ORG"}) == "ORG"
+    assert _entity_type_from_properties({"entity_type": "ORG", "type": "X"}) == "ORG"
+    assert _entity_type_from_properties({"type": "ORG"}) == "ORG"  # 旧数据兜底
+    assert _entity_type_from_properties({}) is None
+    # 契约是 str | None：非字符串**原样透传**由 schema 报错，不静默 str() 转换
+    assert _entity_type_from_properties({"entity_type": 123}) == 123
+
+
+def test_category_maps_real_english_entity_types() -> None:
+    """真实抽取链路落的是**英文枚举**，分类表必须认（否则演示图例全一个颜色）。"""
+    assert _category_from_entity_type("ORG") == "org"
+    assert _category_from_entity_type("LEGAL_PERSON") == "org"
+    assert _category_from_entity_type("REGULATION") == "norm"
+    assert _category_from_entity_type("MONEY") == "topic"  # 未登记 → 兜底
+    assert _category_from_entity_type("") == "topic"
 
 
 # --------------------------------------------------------------------------- #

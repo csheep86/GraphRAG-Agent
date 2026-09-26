@@ -387,8 +387,10 @@ WHERE n <> e
        OR properties(n)['org_id'] IS NULL
        OR properties(n)['org_id'] = $org_id)
 WITH e,
-     collect({rel: r, neighbor: n})[0..$neighbor_limit] AS first_page,
-     count(collect({rel: r, neighbor: n})) > $neighbor_limit AS has_more
+     collect({rel: r, neighbor: n}) AS all_neighbors
+WITH e,
+     all_neighbors[0..$neighbor_limit] AS first_page,
+     size(all_neighbors) > $neighbor_limit AS has_more
 RETURN
   e,
   first_page,
@@ -1087,7 +1089,9 @@ class GraphService:
         canonical_name = str(
             properties.get("canonical_name") or properties.get("name") or entity_id
         )
-        entity_type_raw = str(properties.get("type") or "")
+        # ``EntityDetail.entity_type`` / ``GraphOverviewNode.type`` 契约是 ``str``
+        # （非 ``str | None``）⇒ 缺失回落 ""，与改前行为一致。
+        entity_type_raw = str(_entity_type_from_properties(properties) or "")
         category = _category_from_entity_type(entity_type_raw)
 
         relations: list[EntityRelation] = []
@@ -1154,7 +1158,9 @@ def _to_node(record: Any, *, kg_version: str, label: str) -> GraphNode:
     return GraphNode(
         id=node_id,
         label=label,  # type: ignore[arg-type]
-        entity_type=record.get("type") if label == "Entity" else None,
+        entity_type=(
+            _entity_type_from_properties(dict(record)) if label == "Entity" else None
+        ),
         canonical_name=record.get("canonical_name"),
         confidence=_safe_float(record.get("confidence")),
         kg_version=kg_version,
@@ -1354,10 +1360,12 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
-#: 批次 C：基于 ``:Entity.type`` 字符串推断前端图例分类（4 类）。
-#: 演示数据由 ``langextract_mvp`` 控制写入；真实分类可来自分类本体。
-#: 未知类型兜底 ``topic``（最常见的演示类）。
+#: 批次 C：基于实体类型字符串推断前端图例分类（4 类）。
+#: 两套接词都要认：中文（M4 mock 数据）与**英文枚举**（真实抽取
+#: ``app.services.extraction.langextract.ENTITY_TYPES``）。未知类型兜底
+#: ``topic``（最常见的演示类）。
 _ENTITY_TYPE_TO_CATEGORY: dict[str, GraphCategory] = {
+    # -- 中文（M4 mock / 演示数据）--
     "核心主题": "topic",
     "次主题": "topic",
     "主题": "topic",
@@ -1371,11 +1379,31 @@ _ENTITY_TYPE_TO_CATEGORY: dict[str, GraphCategory] = {
     "系统": "system",
     "平台": "system",
     "工具": "system",
+    # -- 英文枚举（真实抽取链路落库值；2026-09-26 真机点验补齐）--
+    "ORG": "org",
+    "LEGAL_PERSON": "org",
+    "REGULATION": "norm",
+    "CONTRACT_CLAUSE": "norm",
+    # PERSON / MONEY / DATE / PRODUCT / VENUE / ADDRESS 走兜底 ``topic``
 }
 
 
+def _entity_type_from_properties(properties: dict[str, Any]) -> Any:
+    """从 Neo4j 节点属性里取实体类型（**属性名以建图侧为准**）。
+
+    2026-09-26 真机点验修的错配：``kg/builder.py`` 写的是 ``n.entity_type``
+    （``n.type`` 在真实图谱里**根本不存在**），而读侧三处全读 ``properties["type"]``
+    ⇒ ``entity_type`` 恒为空、``category`` 恒兜底 ``topic``（演示第 2 / 3 步：
+    类型列空白、节点全一个颜色）。这里 ``entity_type`` 优先、``type`` 仅作旧数据兜底。
+
+    **不做** ``str()`` 强制转换：契约是 ``str | None``，属性里真塞了 int 属**契约不符**，
+    由 schema 校验显式报错——静默转字符串正是本项目要拦的"假做"。
+    """
+    return properties.get("entity_type") or properties.get("type")
+
+
 def _category_from_entity_type(entity_type: str) -> GraphCategory:
-    """按 ``:Entity.type`` 推断前端图例分类。"""
+    """按实体类型字符串推断前端图例分类。"""
     if not entity_type:
         return "topic"
     return _ENTITY_TYPE_TO_CATEGORY.get(entity_type, "topic")
@@ -1419,7 +1447,7 @@ def _project_overview_nodes(records: Any, *, context: str) -> list[GraphOverview
             canonical_name = str(
                 properties.get("canonical_name") or properties.get("name") or node_id
             )
-            entity_type = str(properties.get("type") or "")
+            entity_type = str(_entity_type_from_properties(properties) or "")
             category = _category_from_entity_type(entity_type)
             confidence = _safe_float(properties.get("confidence")) or 0.5
             # weight: 用 confidence 当权重（[0, 1]）放大到 [0.3, 1.65] 区间，避免 0 节点
