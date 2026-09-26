@@ -921,7 +921,7 @@ class GraphService:
         :raises NoActiveKgVersionError: 无 active 版本（路由层 409）
         """
         version = self.fetch_active_kg_version(org_id=org_id, db=db).version
-        stats = self._fetch_graph_overview_stats(version=version, org_id=org_id)
+        stats = self._fetch_graph_overview_stats(version=version, org_id=org_id, db=db)
 
         try:
             with self._session() as session:
@@ -978,22 +978,62 @@ class GraphService:
         )
 
     def _fetch_graph_overview_stats(
-        self, *, version: str, org_id: UUID | None
+        self, *, version: str, org_id: UUID | None, db: Any = None
     ) -> dict[str, int]:
         """读取 overview 所需的统计值（doc_count / entity_count / relation_count）。
 
-        **真源策略**：当前实现里直接复用 PG ``kg_versions.entity_count`` /
-        ``relation_count``（Sprint 5 批次 B 起 PG 为真源）。**不**通过 Cypher
+        **真源策略**：复用 PG ``kg_versions.entity_count`` / ``relation_count``
+        （Sprint 5 批次 B 起 PG 为真源，``mark_ready`` 时回填）。**不**通过 Cypher
         ``count(n)`` —— 避免对大图谱做一次额外的全表扫描。
-        ``doc_count`` 单独统计：取该 org 下 ``kg_version_id IS NOT NULL`` 的文档数。
+
+        ``doc_count`` 单独统计：**只数 ``kg_version_id`` 指向当前 active 版本
+        （``kg_versions.id``）的文档**——不把历史版本的文档混进 active 视图
+        （ADR-0002 §3.2：只读 active、严禁静默降级）。契约描述亦为「当前租户下有
+        active kg_version 的文档数」。
+
+        .. note::
+           2026-09-26 修复：此前本方法**直接返回三个 0**并注释「实际实现见
+           ``GraphOverviewRoute._load_stats_from_pg()``」——而路由层**根本没有**该方法，
+           导致 `GET /graph/overview` 的三个计数**恒为 0**（静默假数据：节点 / 边是真的，
+           只有计数是假的）。占位必须**显式报错**，绝不能返回 0 冒充统计值。
+
+        :raises ValueError: ``db`` / ``org_id`` 缺失（调用方漏传，属编程错误）
+        :raises NoActiveKgVersionError: PG 中查不到该版本的统计行（真源缺失）
         """
-        # 出于服务层职责单一原则，PG 访问由路由层负责；这里只读 Cypher / 字段投影。
-        # 真正对接 PG 由 GraphOverviewService（路由层包装）调用。此处仅做契约占位。
-        # —— 实际实现见 GraphOverviewRoute._load_stats_from_pg()。
+        if db is None or org_id is None:
+            raise ValueError(
+                "overview 统计值必须来自 PG 真源：db / org_id 缺失时禁止返回 0 冒充"
+                f"（db={db!r}, org_id={org_id!r}）"
+            )
+
+        # 延迟导入：避免 graphs（被 agents 依赖）在模块级牵上 db 会话依赖
+        from sqlalchemy import func, select
+
+        from app.db.models import Document
+        from app.services.kg.versioning import KgVersioningService
+
+        record = KgVersioningService(db).get_by_version(org_id=org_id, version=version)
+        if record is None:
+            raise NoActiveKgVersionError(
+                f"PG kg_versions 中无 version={version} 的统计行"
+                "（统计真源缺失，拒绝返回 0 冒充）"
+            )
+
+        doc_count = int(
+            db.execute(
+                select(func.count())
+                .select_from(Document)
+                .where(
+                    Document.org_id == org_id,
+                    Document.kg_version_id == record.id,
+                )
+            ).scalar_one()
+        )
+
         return {
-            "doc_count": 0,
-            "entity_count": 0,
-            "relation_count": 0,
+            "doc_count": doc_count,
+            "entity_count": int(record.entity_count),
+            "relation_count": int(record.relation_count),
         }
 
     def fetch_entity_detail(
