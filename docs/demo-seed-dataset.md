@@ -53,10 +53,10 @@ sha256sum *.pdf
 python -c "import hashlib,sys;print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" 招商公路_p1-190.pdf
 ```
 
-## 4. 一键重建步骤（规则 + 命令，**未脚本化**，见 §5 限制 3）
+## 4. 重建步骤（规则 + 命令；**上传及其后仍未脚本化**，见 §5 限制 3 / §7）
 
 1. **起基础设施**：`docker start neo4j`；`backend/.env` 配好 `MINERU_TOKEN` / `LLM_API_KEY`（**会产生费用**）；起后端 `uv run uvicorn app.main:app --port 8000`。
-2. **切片**：用 `qpdf` / `pdftk` 按 §3 的页范围把 3 份原件切成 6 段，文件名**严格照抄**上表（文件名进哈希，改名就对不上）。
+2. **切片**（**已脚本化**，见 §7）：`uv run python scripts/slice_demo_corpus.py` —— 按 §3 的页范围把 3 份原件切成 6 段，文件名由脚本按 `{前缀}_p{起}-{止}.pdf` 生成（**不再需要** `qpdf` / `pdftk`），并**校验原件哈希 / 页数 / `filename_hash` 与现库一致**。
 3. **上传**：`POST /api/v1/documents/upload`（`multipart/form-data`，字段名 **`file`**，带 `X-Org-Id` / `X-Actor-Id` 头）× 6 个切片；响应 `status` 恒为 `pending` + `task_id`。
 4. **等解析**：轮询 `GET /api/v1/documents/{id}/status` 直到 6 篇全部 `completed`。
 5. **激活版本**：建图完成后 PG 只置 `ready`，**Neo4j 镜像不会自动同步** ⇒ 必须显式 `POST /api/v1/graph/versions/{version}/activate`（契约原文：**没人同步镜像，读侧会长期命中旧导入版本**）。
@@ -68,8 +68,8 @@ python -c "import hashlib,sys;print(hashlib.sha256(sys.argv[1].encode()).hexdige
 ## 5. 已知限制（如实登记）
 
 1. **重建 ≠ 复刻 `v-s71a-fe1c4dc3`**：会生成**新的** `kg_version`；LLM 抽取**非确定性**，实体 / 关系数（现基线 2000 / 819）**不会逐字复现**——本清单保证的是「同源 + 同切片规则 + 可校验」，不是「逐字同结果」。
-2. **切片字节数 ≠ 原件之和**（如公路 3,041,114 + 4,878,413 = 7,919,527 ≠ 6,865,144）：切片经工具**重编码**，页范围与页数吻合，但字节与内容哈希**不可由原件推导** ⇒ 校验以上表的切片哈希为准。
-3. **没有一键重建脚本**：本机切片由一次性脚本产生（痕迹在 `backend/storage/demo-slice/logs/`，未归档为工具）。本版只交付**规则 + 校验清单**；脚本化与「演示彩排脚本」属同一件事，已按 §7.3 降级登记（未做）。
+2. **切片字节数 ≠ 原件之和**（如公路 3,041,114 + 4,878,413 = 7,919,527 ≠ 6,865,144）：切片经工具**重编码**，页范围与页数吻合，但字节与内容哈希**不可由原件推导** ⇒ 校验以上表的切片哈希为准。（**2026-09-26 补记**：脚本化后实测——`pypdf` 产出的 6 个切片与 §3 记录的**字节数与 SHA-256 逐字节一致**，即现库基线**可被脚本复现**；这不推翻本条，只说明「不可由原件推导」不等于「不可复现」。）
+3. **~~没有一键重建脚本~~**（**2026-09-26 部分闭合**）：**切片已脚本化**（`backend/scripts/slice_demo_corpus.py`，见 §7）。**仍未脚本化**的是**上传 → 等解析 → 激活版本**（§4 第 3~5 步）——那一段会**烧 MinerU + LLM 费用并写入演示库**，脚本化必须连带处理「用独立 org、失败回滚、费用护栏」，属**独立设计**，不裹在切片脚本里做 ⇒ 继续按 §7.3 登记为未做。
 4. **语料性质**：3 份均为公开披露文件（年报 / 募集说明书），仅用于本地演示；分发与商用需自行确认授权。
 5. **未实测重建**：本版只做清单（¥0），**没有真跑一遍重建**——跑一次要 MinerU + LLM 费用与数十分钟，且会**写入演示库**（新增 document / kg_version，改变 `doc_count`）。真跑前建议用**独立 org**，避免污染现演示态。
 
@@ -78,3 +78,18 @@ python -c "import hashlib,sys;print(hashlib.sha256(sys.argv[1].encode()).hexdige
 种子集固化完成后，「受控问题集与现语料不同源」（`scripts/eval_controlled_qset.py` 实测拒答口径不符 11/14）
 才具备**按同语料重出问题集**的前提。**本版不重造问题集**（决策 A15：如实登记，不重造去凑 100%），
 换版安排在演示语料固化之后（S11 / 演示前）。
+
+## 7. 切片脚本（2026-09-26 补做，¥0）
+
+```bash
+cd backend
+uv run python scripts/slice_demo_corpus.py                    # 输出到 storage/demo-slice/parts-scripted/
+uv run python scripts/slice_demo_corpus.py --json reports/slice.json
+```
+
+- **依赖**：`pypdf`（**dev 依赖组**，`uv add --group dev "pypdf>=5.0,<6.0"`，非运行时依赖）；缺失时退出码 **2** 并提示安装，**不静默降级**。
+- **前置校验**：原件**内容 SHA-256**（§2）与**页数**不符 ⇒ FAIL（页范围会错位，`filename_hash` 会对不上）。
+- **产出校验**：6 个切片的 `filename_hash = SHA-256(文件名)` 必须与 §3 表的**前缀 8 / 后缀 5** 一致 ⇒ 保证改名即红。
+- **真机实测（2026-09-26，¥0）**：3 份原件哈希 / 页数全部一致；6 个切片 **PASS 9 / FAIL 0**，且**字节数与内容 SHA-256 与 §3 表逐字节相同**（⇒ 现库基线可复现）。
+- **不做**：上传 / 建图 / 激活（费用 + 写库，见 §5 限制 3）。
+- **回归守卫**：`backend/tests/test_demo_rehearsal.py` 中 6 条参数化用例 + 1 条规则覆盖用例，守住「文件名 → `filename_hash` 与现库一致」与「每份原件都产出已登记的两个切片名」。
