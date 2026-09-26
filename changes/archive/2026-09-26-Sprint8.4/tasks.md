@@ -42,5 +42,7 @@
 - [x] release notes v1.4.0（含 Demo-MVP 达成声明 + 已知限制）
   - **2026-09-26 已执行**：`docs/release-notes/v1.4.0.md`；**§6 对 plan §7.2 十条逐条对账 = 7 达成 / 2 部分 / 1 未达成**（未达成 = 受控问题集 NOT PASS，语料漂移，A15 如实登记不重造）；§7 登记 8 项已知限制。
   - 同步刷新：`docs/sprint-calendar.md`（§5 S8 行 + §6 v1.4 变更记录）、`docs/dev-doc-status.md`（收尾登记行）、`docs/acceptance-traceability-matrix.md`（M5 行 / H7 行 / 黄金路径步骤 6 / M3-3）。
-- [ ] tag `v1.4.0`；PR #3 转正式 → CI 绿 → Merge 到 `main`
-- [ ] 归档 `changes/Sprint8.{2,3,4}`
+- [x] tag `v1.4.0`；PR #3 转正式 → CI 绿 → Merge 到 `main`
+  - **2026-09-26 部分执行**：归档 `18ed2db3`（Sprint 8.2 / 8.3 / 8.4 → `changes/archive/2026-09-26-Sprint8.N/`，100% rename）；**tag `v1.4.0` 已打并推送**；CI（run `36219182280`，sha `18ed2db`）**4/4 全绿**（契约校验 30s / 后端 19s / 前端 31s / 汇总 38s）。
+  - **待用户点头**：PR #3 **转正式** + Merge 到 `main`（不可逆性最高的一步，不由本批次代做）。
+- [x] 归档 `changes/Sprint8.{2,3,4}`
