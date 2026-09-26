@@ -134,6 +134,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查询当前租户的审计留痕（M5 §3 验收 7）
+         * @description 返回当前租户（`X-Org-Id` / Bearer token 解析出的 `org_id`）可见的审计记录，**跨租户记录永不出现在结果里**（ADR-0003；RLS 未启用前由应用层过滤兜底）。
+         *
+         *     **排序与分页**：默认 `ts DESC`（最新在前），`page` 1-based，`page_size` 默认 **50**、上限 100（M5 §3 验收 7 原文口径）。
+         *
+         *     **过滤**：`action`（精确匹配，取值见各记录的 `action` 列）/ `status`（`success` / `failure`；非法值 **400** `VALIDATION_ERROR`，**不**静默当全量返回）。
+         *
+         *     **写入语义**：每条 **HTTP 请求**一条（成功 = `< 400`，失败 = `>= 400`），由审计中间件统一写入 `audit_log`；`detail` 只含结构化字段（`status_code` / `method` / `path`），**不含响应体原文**（本批次无脱敏器）。
+         *
+         *     **自举说明**：本接口自身也在 `/api/v1/*` 内，因此每次查询都会写一条`action=audit.list` 的记录——该条**不会出现在本次响应里**（它在本请求之后才写入）。
+         */
+        get: operations["listAuditLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/trace/{trace_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 按 trace_id 回看一次调用链的审计记录（M5 §3 验收 6）
+         * @description 返回该 `trace_id` 下**当前租户**可见的全部审计记录，按 `ts ASC` 排列，用于把一个 HTTP 请求的来龙去脉串起来回看（plan §7.2 步骤 6）。
+         *
+         *     **不支持分页**：同一 trace 的记录条数天然有界（一次请求一条），不引入无消费者的分页参数。
+         *
+         *     **空集语义**：查不到 / 该 trace 属于别的租户 → `items = []` 且 `total = 0`，**不是错误**（既不泄露资源存在性，也不假装查到了数据）。
+         *
+         *     **口径提示（proposal 风险 7）**：后端异步任务另有自己的 `trace_id`（`app/tasks/manager.py` 在任务侧生成），因此**不要**指望「同一个 trace_id 下有全部 7 条」——本接口对应的是**单次 HTTP 请求**的留痕。
+         */
+        get: operations["listAuditLogsByTrace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents": {
         parameters: {
             query?: never;
@@ -360,6 +414,8 @@ export interface paths {
          * @description 不要求认证、不返回任何业务数据。
          *
          *     依赖异常时仍返回 **200**，仅把 `status` 降级为 `degraded`，避免负载均衡因单实例依赖抖动直接摘除全部流量。
+         *
+         *     同时**豁免限流**（名单见 `core/limiter.py::EXEMPT_ROUTE_NAMES`）：探针可达 1 次/秒，贴着默认限（60/min）跑，被 429 会直接把实例摘除（M5 §3 验收 5 的限流口径面向业务接口）。
          */
         get: operations["getHealth"];
         put?: never;
@@ -929,6 +985,182 @@ export interface components {
             /** Trace Id */
             trace_id: string;
         };
+        /**
+         * AuditLogItem
+         * @description 一条审计记录（`audit_log` 行的契约投影）。
+         *
+         *     `detail` 只含**结构化字段**（`status_code` / `method` / `path` / 路径参数），
+         *     **不含**响应体原文——本批次不引入脱敏器，故以「不写原文」守住不新增泄露面
+         *     （决策 **A5**）。
+         * @example {
+         *       "action": "document.upload",
+         *       "actor_id": "00000000-0000-4000-8000-000000000001",
+         *       "actor_ip": "127.0.0.1",
+         *       "detail": {
+         *         "method": "POST",
+         *         "status_code": 200
+         *       },
+         *       "doc_id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
+         *       "id": "6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d",
+         *       "resource": "POST /api/v1/documents/upload",
+         *       "status": "success",
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+         *       "ts": "2026-09-24T10:16:12Z"
+         *     }
+         */
+        AuditLogItem: {
+            /**
+             * Action
+             * @description 操作类型。已登记路由取业务名（`document.upload` / `agent.query` / `affiliation.review` …）；未登记路由回落 `http.<method>.<path>`（决策 A2：宁可 action 丑，不可无记录）
+             */
+            action: string;
+            /**
+             * Actor Id
+             * @description 操作者 id（系统触发时为 `null`，不编造）
+             */
+            actor_id?: string | null;
+            /**
+             * Actor Ip
+             * @description 客户端 IP
+             */
+            actor_ip?: string | null;
+            /**
+             * Detail
+             * @description 结构化明细；**不含**响应体原文
+             */
+            detail?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Doc Id
+             * @description 关联文档 id；与文档无关的请求为 `null`
+             */
+            doc_id?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             * @description 审计记录 id（`audit_log.id`）
+             */
+            id: string;
+            /**
+             * Resource
+             * @description 资源标识（`<METHOD> <实际请求路径>`，不含 query string）
+             */
+            resource: string;
+            /**
+             * Status
+             * @description `success` / `failure`
+             * @enum {string}
+             */
+            status: "success" | "failure";
+            /**
+             * Trace Id
+             * @description 与响应头 X-Trace-Id 一致的全链路 trace_id
+             */
+            trace_id: string;
+            /**
+             * Ts
+             * Format: date-time
+             * @description 落库时间（UTC）
+             */
+            ts: string;
+        };
+        /**
+         * AuditLogListResponse
+         * @description `GET /api/v1/audit` 响应（M5 §3 验收 7：按租户隔离 + `ts DESC` + 页大小 50）。
+         * @example {
+         *       "items": [
+         *         {
+         *           "action": "document.upload",
+         *           "actor_id": "00000000-0000-4000-8000-000000000001",
+         *           "actor_ip": "127.0.0.1",
+         *           "detail": {
+         *             "status_code": 200
+         *           },
+         *           "id": "6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d",
+         *           "resource": "POST /api/v1/documents/upload",
+         *           "status": "success",
+         *           "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+         *           "ts": "2026-09-24T10:16:12Z"
+         *         }
+         *       ],
+         *       "page": 1,
+         *       "page_size": 50,
+         *       "total": 1,
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
+         *     }
+         */
+        AuditLogListResponse: {
+            /**
+             * Items
+             * @description 当前页结果（按 `ts DESC`）
+             */
+            items: components["schemas"]["AuditLogItem"][];
+            /**
+             * Page
+             * @description 当前页码（1-based）
+             */
+            page: number;
+            /**
+             * Page Size
+             * @description 每页条目数（请求参数回显）
+             */
+            page_size: number;
+            /**
+             * Total
+             * @description 当前租户下满足过滤条件的记录总数
+             */
+            total: number;
+            /**
+             * Trace Id
+             * @description 本次查询请求的 trace_id
+             */
+            trace_id: string;
+        };
+        /**
+         * AuditTraceResponse
+         * @description `GET /api/v1/audit/trace/{trace_id}` 响应。
+         *
+         *     **不支持分页**：同一 trace 的记录条数天然有界（一次 HTTP 请求一条），
+         *     引入无消费者的 `page` / `page_size` 属范围蔓延。
+         *     查不到时返回 `items = []`（**空态不是错误**），跨租户亦为空集。
+         * @example {
+         *       "items": [
+         *         {
+         *           "action": "agent.query",
+         *           "actor_id": "00000000-0000-4000-8000-000000000001",
+         *           "actor_ip": "127.0.0.1",
+         *           "detail": {
+         *             "status_code": 200
+         *           },
+         *           "id": "6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d",
+         *           "resource": "POST /api/v1/agent/query",
+         *           "status": "success",
+         *           "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+         *           "ts": "2026-09-24T10:16:12Z"
+         *         }
+         *       ],
+         *       "total": 1,
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
+         *     }
+         */
+        AuditTraceResponse: {
+            /**
+             * Items
+             * @description 按 `ts ASC` 排列的记录列表
+             */
+            items: components["schemas"]["AuditLogItem"][];
+            /**
+             * Total
+             * @description 该 trace 下、当前租户可见的记录条数
+             */
+            total: number;
+            /**
+             * Trace Id
+             * @description 被查询的 trace_id（请求参数回显）
+             */
+            trace_id: string;
+        };
         /** Body_uploadDocument */
         Body_uploadDocument: {
             /**
@@ -1389,7 +1621,7 @@ export interface components {
          * @description 统一业务错误码。HTTP 状态码与业务错误码分离（CODEBUDDY.md 错误响应规范）。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "INTERNAL_ERROR" | "HTTP_ERROR";
+        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | "HTTP_ERROR";
         /**
          * ErrorResponse
          * @description 统一错误响应体（**所有** 4xx / 5xx 均使用本结构）。
@@ -2082,6 +2314,121 @@ export interface operations {
             };
             /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listAuditLogs: {
+        parameters: {
+            query?: {
+                /** @description 按操作类型精确过滤（如 `document.upload` / `agent.query`） */
+                action?: string | null;
+                /** @description 按结果过滤：`success` / `failure` */
+                status?: string | null;
+                /** @description 1-based 页码 */
+                page?: number;
+                /** @description 每页条目数（默认 50，上限 100） */
+                page_size?: number;
+            };
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogListResponse"];
+                };
+            };
+            /** @description 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listAuditLogsByTrace: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                trace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditTraceResponse"];
+                };
+            };
+            /** @description 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

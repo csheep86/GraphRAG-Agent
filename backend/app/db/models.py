@@ -10,6 +10,10 @@ Sprint 5 批次 B 新增 `kg_versions` 表（ADR-0002 §3.2：状态机迁 PG）
 Sprint 7.2 批次 B 新增 M4 三张表（`affiliation_tasks` / `affiliation_suspicions` /
 `unaligned_subjects`）：表名与字段逐字照 `specs/m4-affiliation-detection.md` §4.3–4.5，
 三表**均带 `org_id` 且复合索引以 `org_id` 打头**（ADR-0003 第 54–56 行）。
+
+Sprint 8.1 批次 A 新增审计 / 问答两张表（`audit_log` / `qa_logs`）：字段逐字照
+`specs/m5-permission-audit.md` §4.4 与 `specs/m3-graphqa-citation.md` §4.3，
+主键统一用 UUID（**不用** spec 写的 BIGSERIAL，差异登记 ADR-0003 §A9）。
 **无 Alembic**：建表靠启动时的 ``create_all``（见 :mod:`app.db.session`）。
 """
 
@@ -21,6 +25,7 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Index,
@@ -417,4 +422,96 @@ class DomainEvent(Base):
     #: 派发时间；**本阶段恒为 NULL**（只落不派），未来由新增 sink 回写
     dispatched_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+AUDIT_LOG_STATUS_VALUES = ("success", "failure")
+"""`audit_log.status` 合法值（`specs/m5-permission-audit.md` §4.4）。
+
+`failure` 既覆盖 4xx 也覆盖 5xx：**审计语义是「这次调用有没有成功」**，与 HTTP
+状态码族无关；真正的错误码在响应体里，不在本列。
+"""
+
+
+class AuditLog(Base):
+    """`audit_log` 表（M5 §4.4：任一 API 调用成功 / 失败都落一条）。
+
+    写入点**唯一** = 审计中间件（Sprint 8.1 批次 A 决策 **A1**：全量写 + allowlist），
+    不是各服务显式埋点——埋点必然漏，且「漏埋」比「多写」更难被发现。
+
+    三条硬纪律：
+
+    1. **不复用 `domain_events`**：后者 ``payload`` 是无结构 dict（无法按
+       ``action`` / ``status`` / ``actor_id`` 建索引），语义是「对外出口」而非
+       「对内留痕」（决策 **A10**）；
+    2. **`detail` 只写结构化字段**，**绝不写响应体原文**——本批次不引入脱敏器
+       （属 H5 / S11），以「不写原文」规避新增泄露面（决策 **A5**）；
+    3. **写失败只记日志、不抛异常**：审计缺陷不得变成全站 500（proposal 风险 2）。
+
+    ``actor_id`` 可空：系统触发（如回收任务）没有操作者时不编造 UUID。
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('success', 'failure')",
+            name="ck_audit_log_status",
+        ),
+        # ADR-0003 §3.1：复合索引必须 org_id 打头
+        # （`GET /audit` 的主查询路径：按 org 过滤 + ts DESC 分页）
+        Index("ix_audit_log_org_id_ts", "org_id", "ts"),
+        Index("ix_audit_log_org_id_action", "org_id", "action"),
+        Index("ix_audit_log_org_id_status", "org_id", "status"),
+        Index("ix_audit_log_org_id_trace_id", "org_id", "trace_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    #: 操作类型。已登记路由取业务名（`document.upload` / `agent.query` …）；
+    #: 未登记路由回落 ``http.<method>.<path>``（决策 **A2**：宁可 action 丑，不可无记录）
+    action: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    actor_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    doc_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    #: 资源标识（如 ``document:<uuid>``；无明确主体时取 ``<METHOD> <path>``）
+    resource: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 明细（**只放结构化字段**：status_code / path / 路径参数；严禁原文）
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class QaLog(Base):
+    """`qa_logs` 表（M3 §4.3：每次问答留痕，成功与拒答**都落**）。
+
+    本表正是 S6.4 对账时登记的缺口偿还点（`specs/m3-graphqa-citation.md` §6 S6.4-3）：
+    ``AgentService.query`` 此前全函数零 DB 写入。
+
+    ``question_hash`` / ``answer_hash`` **只存 SHA-256**，不存原文（M3 §5.3 纪律：
+    提问本身可能含敏感信息）。注意这是**不可逆哈希而非脱敏**——本批次不引入脱敏器，
+    也不在库里保留原文（决策 **A5**）。
+    """
+
+    __tablename__ = "qa_logs"
+    __table_args__ = (
+        Index("ix_qa_logs_org_id_created_at", "org_id", "created_at"),
+        Index("ix_qa_logs_org_id_trace_id", "org_id", "trace_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 问题的 SHA-256 hex（**不记原文**，M3 §4.3）
+    question_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: 答案的 SHA-256 hex（**不记原文**）
+    answer_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    citation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    refused: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    refusal_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    kg_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
     )

@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m4
 > **版本**：v1.0
-> **状态**：MVP 规格（v1.0.0 已交付，实现态见 backend/CODEBUDDY.md §4）
+> **状态**：MVP 规格（v1.0.0 已交付；**2026-09-24 S7 收尾刷新实现态**——**部分实现**：两类规则算法 + 三张 PG 表 + 四个对外端点 + 前端疑点页 + `domain_events` 事件出口已落地（`v1.3.0`）；**四源对齐、三类图算法、金额不一致、场景准入指标均未做** → S9 / S13。逐条对账见 `docs/acceptance-traceability-matrix.md` §3.3；完整实现态与缺口见 `backend/CODEBUDDY.md` §4 与 `docs/release-notes/v1.3.0.md` §6）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M4
 > **关联 Prompts**：`prompts/entity_relation_extract_v1.md`（场景适配模式）、`prompts/kg_qa_v1.md`
 > **关联研究结论**：`01-research.md` §1.4 P3 详解、§1.5 图谱化必要性、§3.3 C1–C2
@@ -192,3 +192,19 @@ RETURN c, i, v, c.amount, i.amount, v.amount
 > **契约草案**，实现阶段由后端开发 B 写入 `contracts/openapi.yaml`。
 
 > **关键结论**：**M4 是"图谱刚需"的唯一 MVP 承载**——若 M4 未通过准入线（召回 ≥ 0.80 / 误报 ≤ 0.15 / 引用覆盖 = 100%），**整个 MVP 退回 RAG-first 产品形态**（对应反证条件 F1）。**M4 的成败决定了项目 MVP 是否成立**。
+
+---
+
+## 6. 已登记的实现缺口（S7 收尾登记，2026-09-24）
+
+> 本节按 `docs/dev-doc-status.md` §9.2 第 6 项维护：**实现态与规格的差距必须落在规格侧**，避免只活在 `backend/CODEBUDDY.md` 里。逐条对账见 `docs/acceptance-traceability-matrix.md` §3.3。
+
+| # | 缺口 | 现状 | 承接 |
+|---|---|---|---|
+| **S7.2-1** | `unaligned_subjects`（§4.5）**只建表不写** | 表已建，无人写入——四源主体对齐属 S9 批次 D，现在写只能靠凑。**刻意留空**而非塞假数据 | **S9 批次 D**（与 `entity_merge_candidates` 一并做） |
+| **S7.2-2** | `TaskManager.list_in_flight_task_ids()` **只扫 `documents`** | `recover_orphan_tasks()` 已扩到扫 `affiliation_tasks`（ADR-0001 硬要求，**不受影响**），但该函数仍只查 `documents`，对账 `affiliation_tasks` 时查不到在途任务 | **S8**（与跨阶段投递 S7.1-5 一并收） |
+| **S7.1-7**（已关闭） | M4「两层并存」（`:Entity` + `:Subject`） | ✅ **已偿还**：作为**已知限制**写入 `docs/release-notes/v1.3.0.md` §6.9（决策 D1：不建桥接边，仅以 `source_entity_ids` 维系联系）；统一工作仍归 **S9 批次 D 实体消解**（plan 第 582 行） | S9（统一） |
+| **证据粒度** | `evidence.text` 为**整段 chunk**，非实体提及片段 | 真机 10/10 条 `ev_len == chunk_len`；前端改**淡底 + 标注**，**未伪造**片段级高亮；提及级定位（`char_offset` 恒 0）见 release notes §6.1 / §6.2 | **S10** |
+| **数据质量** | chunk 原文含未清洗的 `<table>` / `<tr>` / `<td>` 标记 | 属解析层（批次 A / S6 链路），前端按原文原样展示、未做「美化」 | **S10** |
+| **口径变更（已登记）** | `affiliation_suspicions` 增 `task_id` 列 | 决策 B2，已在 **§4.3** 登记变更（回答「GET 返回哪一批疑点」靠列、不靠 `created_at` 猜） | — |
+| **口径消歧（已登记）** | 端点路径为 `suspicions` 而非 `suspects` | plan §6.2 原写 `suspects`，**以本 spec §5.5 为准**；plan 已同步（`plan.md:275` / `plan.md:289`） | — |

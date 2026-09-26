@@ -31,7 +31,7 @@
 | 3 | 模型接缝 `Provider` | 客户内网 LLM、信创模型、自备 API、统一 OCR 中台 | `parser_provider` / `llm_provider`（OpenAI 兼容），配置去 `deepseek_` 硬编码 | S5 批次 A2 |
 | 4 | 流水线接缝 `EXECUTOR_REGISTRY`（**已存在**） | 客户自定义后处理、额外抽取规则 | 阶段命名规范化（`document.parse` → `document.extract` → `kg.build` → `risk.detect`，每段独立 task_type）+ `settings.pipeline_stages` 配置启停与顺序 | S5 批次 A2 |
 | 5 | 事件出口接缝 `EventSink` | OA 审批流、BPM、工单/ITSM、企微钉钉通知 | `domain_events` 表 + `EventSink` 接口（仅 `db` / `log` 实现）；事件：`document.parsed` / `kg.updated` / `risk.suspect_created` / `qa.answered` | S7 批次 D |
-| 6 | 数据输出接缝 `ExportSink` | 审计底稿系统、报表/BI、数据仓库、Office 插件 | 收口到 `backend/app/services/export/` + 一个 JSON/CSV 实现 | S8 批次 E |
+| 6 | 数据输出接缝 `ExportSink` | 审计底稿系统、报表/BI、数据仓库、Office 插件 | 收口到 `backend/app/services/export/` + 一个 JSON/CSV 实现（`JsonCsvExportSink`，**同一个类**同时提供 json / csv，不是两个实现类）；**无 HTTP 端点**（走端点即集成，须进契约 + 鉴权 + 审计） | S8 批次 E（**2026-09-24 已落**） |
 | 7 | 实体映射接缝 `external_refs` | 内部主数据 MDM、HR 组织、工商/股权离线数据、供应商主数据 | `external_refs` 表——外来实体 ID ↔ 图谱实体 ID 的唯一映射表 | S7 批次 B |
 | 8 | 外部数据导入接缝 `external_data` | 工商登记、股权结构、涉诉失信、法规/财税库**离线包** | 收口到 `backend/app/services/external_data/`；只定义导入文件 schema（JSON/CSV）+ 手工导入 CLI，**不建表** | S7 批次 B |
 
@@ -122,7 +122,7 @@
 | 3 模型 | 改配置即可切内网 LLM（OpenAI 兼容） | 协议非兼容时才需新增适配器 |
 | 4 流水线 | 在 `EXECUTOR_REGISTRY` 登记新阶段函数 | 阶段实现函数 + `pipeline_stages` 配置项 |
 | 5 事件出口 | 新增 `WebhookEventSink` / `OaTicketEventSink` 实现 | 订阅方配置、重投递策略 |
-| 6 数据输出 | 新增 `BiExportSink` / `WordReportSink` 实现 | 模板配置 |
+| 6 数据输出 | 当前实现 `JsonCsvExportSink`（json / csv 同属一个类）；新增 `BiExportSink` / `WordReportSink` 实现时**先扩写 §2.1 第 6 行登记**（门禁 `max_impls = 1`，多做即越界） | 模板配置 |
 | 7 实体映射 | 导入外部主数据 → 写 `external_refs` | 导入工具、消解策略（与 E1/E2 数据债联动） |
 | 8 外部数据导入 | 扩展导入 schema 支持新数据包（新增工商/涉诉/法规类型） | 数据包格式约定、版本校验 |
 

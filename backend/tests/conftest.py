@@ -23,6 +23,11 @@ os.environ["STORAGE_ROOT"] = str(_TMP_DIR / "storage")
 # 等待降至最小值（字段校验 gt=0）避免用例真实 sleep 1s + 2s。
 os.environ["TASK_RETRY_INITIAL_SECONDS"] = "0.001"
 
+# 限流（M5 §3 验收 5）：共享 client 的限流实际关闭（上限调到不可触达），
+# 否则全量跑测时同一接口的累计请求数可能撞 60/min 限——限流行为本身由
+# test_rate_limit.py 用独立 app（RATE_LIMIT_PER_MINUTE=1）专测。
+os.environ["RATE_LIMIT_PER_MINUTE"] = "100000"
+
 # 图谱相关端点（/graph、/agent/query）在测试中必须**确定性**降级：
 # 指向本机不可达端口，保证 GraphService 一定抛 GraphUnavailableError。
 # 环境变量优先级高于 `.env`，因此能稳定覆盖开发者本地 .env 里的真实 Neo4j 配置——
@@ -56,6 +61,11 @@ OTHER_ORG_ID = "00000000-0000-4000-8000-000000000002"
 #: 会把它桩掉，:func:`real_pg_get_active` 用它恢复（顺序：autouse 先、显式后）。
 _REAL_GET_ACTIVE = KgVersioningService.get_active
 
+#: 同上的 ``get_by_version`` 原始实现（2026-09-26：`GET /graph/overview` 的统计值
+#: 改走 ``get_by_version`` 读 PG 真源后，桩必须成对覆盖，否则「Neo4j 不可达」用例
+#: 会因统计真源缺失被误判成 409 —— 与 501 语义冲突）。
+_REAL_GET_BY_VERSION = KgVersioningService.get_by_version
+
 
 @pytest.fixture(autouse=True)
 def pg_active_kg_version(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,7 +98,13 @@ def pg_active_kg_version(monkeypatch: pytest.MonkeyPatch) -> None:
             trace_id=uuid4(),
         )
 
+    def _get_by_version(
+        self: KgVersioningService, *, org_id: object, version: str
+    ) -> KgVersionRecord | None:
+        return _get_active(self, org_id=org_id) if version == "v-test" else None
+
     monkeypatch.setattr(KgVersioningService, "get_active", _get_active)
+    monkeypatch.setattr(KgVersioningService, "get_by_version", _get_by_version)
 
 
 @pytest.fixture
@@ -97,8 +113,11 @@ def real_pg_get_active(monkeypatch: pytest.MonkeyPatch) -> None:
 
     供 :mod:`tests.test_kg_versioning` 里「断言真源状态机本身」的用例使用——
     它们要验的正是「PG 无 ready → None」，不能被上面的默认桩遮蔽。
+
+    ``get_by_version`` 一并恢复（与上面的桩成对，见 :data:`_REAL_GET_BY_VERSION`）。
     """
     monkeypatch.setattr(KgVersioningService, "get_active", _REAL_GET_ACTIVE)
+    monkeypatch.setattr(KgVersioningService, "get_by_version", _REAL_GET_BY_VERSION)
 
 
 @pytest.fixture(scope="session")

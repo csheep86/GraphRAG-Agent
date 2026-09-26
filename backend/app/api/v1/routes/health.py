@@ -22,7 +22,10 @@ router = APIRouter(tags=["health"])
     description=(
         "不要求认证、不返回任何业务数据。\n\n"
         "依赖异常时仍返回 **200**，仅把 `status` 降级为 `degraded`，"
-        "避免负载均衡因单实例依赖抖动直接摘除全部流量。"
+        "避免负载均衡因单实例依赖抖动直接摘除全部流量。\n\n"
+        "同时**豁免限流**（名单见 `core/limiter.py::EXEMPT_ROUTE_NAMES`）："
+        "探针可达 1 次/秒，贴着默认限（60/min）跑，被 429 会直接把实例摘除"
+        "（M5 §3 验收 5 的限流口径面向业务接口）。"
     ),
 )
 async def get_health(trace_id: TraceId) -> HealthResponse:

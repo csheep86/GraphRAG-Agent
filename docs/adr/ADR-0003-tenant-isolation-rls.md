@@ -61,6 +61,21 @@ M5 要求「角色 / 文档 / 场景三粒度权限」与「操作审计」，�
 - 所有 `org_id` 必须建索引，且**复合索引以 `org_id` 打头**（RLS 策略的性能前提）。
 - **禁止 `org_id IS NULL` 的兜底语义**（会把「未设上下文」变成「全租户可见」）。
 
+#### 3.1.1 落地记述（Sprint 8.1 批次 A，2026-09-24）
+
+`audit_log` / `qa_logs` 两张表**已按本节就位**（`backend/app/db/models.py`）：
+
+| 差异项 | 本 ADR / spec 原文 | 落地实现 | 登记理由 |
+|---|---|---|---|
+| `audit_log` 主键 | `specs/m5-permission-audit.md` §4.4 写 **`BIGSERIAL`** | **`Uuid` 主键**（`default=uuid.uuid4`） | 全仓既有无 `BIGSERIAL` 表，且 `BIGSERIAL` 需 DB 序列才能生成 id，与「SQLite 开发态替身」（§3.6）和将来的 IdM 对齐都不兼容；牺牲「紧凑整型」换 schema 一致性，已按「差异必登记」写在这里（批次决策 **A9**） |
+| `qa_logs` 主键 | `specs/m3-graphqa-citation.md` §4.3 同上 | **`Uuid` 主键** | 同上 |
+| 索引 | §3.1「复合索引 `org_id` 打头」 | `ix_audit_log_org_id_{ts,action,status,trace_id}`、`ix_qa_logs_org_id_{created_at,trace_id}` | 守本节第 1 条 |
+| `trace_id` 列类型 | spec 未明写 | **`Uuid`** | `trace_id` 由请求中间件生成 UUIDv4（M1 验收 7），存 UUID 而非字符串：索引更窄，也避免将来出现「装得进字符串的非法值」 |
+
+- `audit_log.status` 增加 `CheckConstraint('success','failure')`（取值即 M5 §4.4 的两档，无第三态）；
+- 写入点**唯一** = 审计中间件（Sprint 8.1 决策 **A1**：全量写 + allowlist 排除 `health`），非各服务显式埋点；
+- `user_roles` / `roles` / `users` / `entity_merge_candidates` **本批次未建**（`roles` 系 S11，`users` / `user_roles` 同）——本表第 8 / 9 / 10 行的动作仍挂着。
+
 ### 3.2 RLS 策略
 
 ```sql

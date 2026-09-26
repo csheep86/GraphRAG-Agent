@@ -387,8 +387,10 @@ WHERE n <> e
        OR properties(n)['org_id'] IS NULL
        OR properties(n)['org_id'] = $org_id)
 WITH e,
-     collect({rel: r, neighbor: n})[0..$neighbor_limit] AS first_page,
-     count(collect({rel: r, neighbor: n})) > $neighbor_limit AS has_more
+     collect({rel: r, neighbor: n}) AS all_neighbors
+WITH e,
+     all_neighbors[0..$neighbor_limit] AS first_page,
+     size(all_neighbors) > $neighbor_limit AS has_more
 RETURN
   e,
   first_page,
@@ -921,7 +923,7 @@ class GraphService:
         :raises NoActiveKgVersionError: 无 active 版本（路由层 409）
         """
         version = self.fetch_active_kg_version(org_id=org_id, db=db).version
-        stats = self._fetch_graph_overview_stats(version=version, org_id=org_id)
+        stats = self._fetch_graph_overview_stats(version=version, org_id=org_id, db=db)
 
         try:
             with self._session() as session:
@@ -978,22 +980,62 @@ class GraphService:
         )
 
     def _fetch_graph_overview_stats(
-        self, *, version: str, org_id: UUID | None
+        self, *, version: str, org_id: UUID | None, db: Any = None
     ) -> dict[str, int]:
         """读取 overview 所需的统计值（doc_count / entity_count / relation_count）。
 
-        **真源策略**：当前实现里直接复用 PG ``kg_versions.entity_count`` /
-        ``relation_count``（Sprint 5 批次 B 起 PG 为真源）。**不**通过 Cypher
+        **真源策略**：复用 PG ``kg_versions.entity_count`` / ``relation_count``
+        （Sprint 5 批次 B 起 PG 为真源，``mark_ready`` 时回填）。**不**通过 Cypher
         ``count(n)`` —— 避免对大图谱做一次额外的全表扫描。
-        ``doc_count`` 单独统计：取该 org 下 ``kg_version_id IS NOT NULL`` 的文档数。
+
+        ``doc_count`` 单独统计：**只数 ``kg_version_id`` 指向当前 active 版本
+        （``kg_versions.id``）的文档**——不把历史版本的文档混进 active 视图
+        （ADR-0002 §3.2：只读 active、严禁静默降级）。契约描述亦为「当前租户下有
+        active kg_version 的文档数」。
+
+        .. note::
+           2026-09-26 修复：此前本方法**直接返回三个 0**并注释「实际实现见
+           ``GraphOverviewRoute._load_stats_from_pg()``」——而路由层**根本没有**该方法，
+           导致 `GET /graph/overview` 的三个计数**恒为 0**（静默假数据：节点 / 边是真的，
+           只有计数是假的）。占位必须**显式报错**，绝不能返回 0 冒充统计值。
+
+        :raises ValueError: ``db`` / ``org_id`` 缺失（调用方漏传，属编程错误）
+        :raises NoActiveKgVersionError: PG 中查不到该版本的统计行（真源缺失）
         """
-        # 出于服务层职责单一原则，PG 访问由路由层负责；这里只读 Cypher / 字段投影。
-        # 真正对接 PG 由 GraphOverviewService（路由层包装）调用。此处仅做契约占位。
-        # —— 实际实现见 GraphOverviewRoute._load_stats_from_pg()。
+        if db is None or org_id is None:
+            raise ValueError(
+                "overview 统计值必须来自 PG 真源：db / org_id 缺失时禁止返回 0 冒充"
+                f"（db={db!r}, org_id={org_id!r}）"
+            )
+
+        # 延迟导入：避免 graphs（被 agents 依赖）在模块级牵上 db 会话依赖
+        from sqlalchemy import func, select
+
+        from app.db.models import Document
+        from app.services.kg.versioning import KgVersioningService
+
+        record = KgVersioningService(db).get_by_version(org_id=org_id, version=version)
+        if record is None:
+            raise NoActiveKgVersionError(
+                f"PG kg_versions 中无 version={version} 的统计行"
+                "（统计真源缺失，拒绝返回 0 冒充）"
+            )
+
+        doc_count = int(
+            db.execute(
+                select(func.count())
+                .select_from(Document)
+                .where(
+                    Document.org_id == org_id,
+                    Document.kg_version_id == record.id,
+                )
+            ).scalar_one()
+        )
+
         return {
-            "doc_count": 0,
-            "entity_count": 0,
-            "relation_count": 0,
+            "doc_count": doc_count,
+            "entity_count": int(record.entity_count),
+            "relation_count": int(record.relation_count),
         }
 
     def fetch_entity_detail(
@@ -1047,7 +1089,9 @@ class GraphService:
         canonical_name = str(
             properties.get("canonical_name") or properties.get("name") or entity_id
         )
-        entity_type_raw = str(properties.get("type") or "")
+        # ``EntityDetail.entity_type`` / ``GraphOverviewNode.type`` 契约是 ``str``
+        # （非 ``str | None``）⇒ 缺失回落 ""，与改前行为一致。
+        entity_type_raw = str(_entity_type_from_properties(properties) or "")
         category = _category_from_entity_type(entity_type_raw)
 
         relations: list[EntityRelation] = []
@@ -1114,7 +1158,9 @@ def _to_node(record: Any, *, kg_version: str, label: str) -> GraphNode:
     return GraphNode(
         id=node_id,
         label=label,  # type: ignore[arg-type]
-        entity_type=record.get("type") if label == "Entity" else None,
+        entity_type=(
+            _entity_type_from_properties(dict(record)) if label == "Entity" else None
+        ),
         canonical_name=record.get("canonical_name"),
         confidence=_safe_float(record.get("confidence")),
         kg_version=kg_version,
@@ -1314,10 +1360,12 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
-#: 批次 C：基于 ``:Entity.type`` 字符串推断前端图例分类（4 类）。
-#: 演示数据由 ``langextract_mvp`` 控制写入；真实分类可来自分类本体。
-#: 未知类型兜底 ``topic``（最常见的演示类）。
+#: 批次 C：基于实体类型字符串推断前端图例分类（4 类）。
+#: 两套接词都要认：中文（M4 mock 数据）与**英文枚举**（真实抽取
+#: ``app.services.extraction.langextract.ENTITY_TYPES``）。未知类型兜底
+#: ``topic``（最常见的演示类）。
 _ENTITY_TYPE_TO_CATEGORY: dict[str, GraphCategory] = {
+    # -- 中文（M4 mock / 演示数据）--
     "核心主题": "topic",
     "次主题": "topic",
     "主题": "topic",
@@ -1331,11 +1379,31 @@ _ENTITY_TYPE_TO_CATEGORY: dict[str, GraphCategory] = {
     "系统": "system",
     "平台": "system",
     "工具": "system",
+    # -- 英文枚举（真实抽取链路落库值；2026-09-26 真机点验补齐）--
+    "ORG": "org",
+    "LEGAL_PERSON": "org",
+    "REGULATION": "norm",
+    "CONTRACT_CLAUSE": "norm",
+    # PERSON / MONEY / DATE / PRODUCT / VENUE / ADDRESS 走兜底 ``topic``
 }
 
 
+def _entity_type_from_properties(properties: dict[str, Any]) -> Any:
+    """从 Neo4j 节点属性里取实体类型（**属性名以建图侧为准**）。
+
+    2026-09-26 真机点验修的错配：``kg/builder.py`` 写的是 ``n.entity_type``
+    （``n.type`` 在真实图谱里**根本不存在**），而读侧三处全读 ``properties["type"]``
+    ⇒ ``entity_type`` 恒为空、``category`` 恒兜底 ``topic``（演示第 2 / 3 步：
+    类型列空白、节点全一个颜色）。这里 ``entity_type`` 优先、``type`` 仅作旧数据兜底。
+
+    **不做** ``str()`` 强制转换：契约是 ``str | None``，属性里真塞了 int 属**契约不符**，
+    由 schema 校验显式报错——静默转字符串正是本项目要拦的"假做"。
+    """
+    return properties.get("entity_type") or properties.get("type")
+
+
 def _category_from_entity_type(entity_type: str) -> GraphCategory:
-    """按 ``:Entity.type`` 推断前端图例分类。"""
+    """按实体类型字符串推断前端图例分类。"""
     if not entity_type:
         return "topic"
     return _ENTITY_TYPE_TO_CATEGORY.get(entity_type, "topic")
@@ -1379,7 +1447,7 @@ def _project_overview_nodes(records: Any, *, context: str) -> list[GraphOverview
             canonical_name = str(
                 properties.get("canonical_name") or properties.get("name") or node_id
             )
-            entity_type = str(properties.get("type") or "")
+            entity_type = str(_entity_type_from_properties(properties) or "")
             category = _category_from_entity_type(entity_type)
             confidence = _safe_float(properties.get("confidence")) or 0.5
             # weight: 用 confidence 当权重（[0, 1]）放大到 [0.3, 1.65] 区间，避免 0 节点

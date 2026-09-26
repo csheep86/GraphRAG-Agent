@@ -8,9 +8,13 @@
 
 from __future__ import annotations
 
+import re
+from uuid import uuid4
+
 import pytest
 from fastapi.testclient import TestClient
 
+from app.db.session import SessionLocal
 from app.schemas.graph import (
     EntityAttribute,
     EntityDetail,
@@ -20,10 +24,13 @@ from app.schemas.graph import (
     GraphOverviewResponse,
 )
 from app.services.graphs import (
+    _QUERY_ENTITY_DETAIL,
     EntityNotFoundError,
     GraphService,
     KgVersion,
     NoActiveKgVersionError,
+    _category_from_entity_type,
+    _entity_type_from_properties,
 )
 
 #: `contracts/openapi.yaml::GraphOverviewResponse` 字段集
@@ -219,6 +226,144 @@ def test_overview_tenant_protection_declares_403(
     responses = schema["paths"]["/api/v1/graph/overview"]["get"]["responses"]
     assert "403" in responses
     assert "401" in responses
+
+
+def test_entity_detail_cypher_has_no_nested_aggregate() -> None:
+    """Cypher **不得嵌套聚合函数**——`count(collect(...))` 会直接 SyntaxError → 501。
+
+    这是**只有真机能暴露**的一类 bug（2026-09-26 端到端点验发现：演示第 3 步「点实体」
+    `GET /entities/{id}` 直接 501，且被包装成「图谱不可用」——把**语法错**伪装成
+    **基础设施故障**）。测试库没有 Neo4j，编译期无法拦截 ⇒ 用静态断言守住回归。
+    """
+    assert not re.search(
+        r"(?:count|collect|sum|min|max|avg)\s*\(\s*"
+        r"(?:count|collect|sum|min|max|avg)\s*\(",
+        _QUERY_ENTITY_DETAIL,
+    )
+
+
+def test_entity_type_reads_property_written_by_kg_builder() -> None:
+    """属性名以**建图侧**为准：`entity_type`（真库实测）；`type` 仅作旧数据兜底。
+
+    2026-09-26 真机点验发现：`kg/builder.py` 写 `n.entity_type`，读侧却读 `type`
+    （真库**没有**这个属性）⇒ 类型恒空、分类恒兜底。
+    """
+    assert _entity_type_from_properties({"entity_type": "ORG"}) == "ORG"
+    assert _entity_type_from_properties({"entity_type": "ORG", "type": "X"}) == "ORG"
+    assert _entity_type_from_properties({"type": "ORG"}) == "ORG"  # 旧数据兜底
+    assert _entity_type_from_properties({}) is None
+    # 契约是 str | None：非字符串**原样透传**由 schema 报错，不静默 str() 转换
+    assert _entity_type_from_properties({"entity_type": 123}) == 123
+
+
+def test_category_maps_real_english_entity_types() -> None:
+    """真实抽取链路落的是**英文枚举**，分类表必须认（否则演示图例全一个颜色）。"""
+    assert _category_from_entity_type("ORG") == "org"
+    assert _category_from_entity_type("LEGAL_PERSON") == "org"
+    assert _category_from_entity_type("REGULATION") == "norm"
+    assert _category_from_entity_type("MONEY") == "topic"  # 未登记 → 兜底
+    assert _category_from_entity_type("") == "topic"
+
+
+# --------------------------------------------------------------------------- #
+# 统计值真源（2026-09-26 修复：此前 `_fetch_graph_overview_stats` 硬编码返回 0）
+#
+# 为什么必须在这里补：原有用例把整个 `fetch_graph_overview` 打桩了，
+# 硬编码 0 因此**测不出来**（392 passed 也照样红不了）——真机才暴露。
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def _stats_fixture() -> object:
+    """造一个 ready 版本 + 3 篇文档（2 篇属该版本 / 1 篇属历史版本）。"""
+    from sqlalchemy import delete
+
+    from app.db.models import Document, KgVersion
+    from app.db.session import SessionLocal, init_db
+
+    init_db()
+
+    org_id = uuid4()
+    version = f"v-stats-{uuid4().hex[:8]}"
+    old_version_id = uuid4()
+
+    with SessionLocal() as session:
+        row = KgVersion(
+            org_id=org_id,
+            version=version,
+            status="ready",
+            source_doc_ids=[str(uuid4())],
+            entity_count=42,
+            relation_count=7,
+            trace_id=uuid4(),
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+
+        def _doc(kg_version_id: object) -> Document:
+            return Document(
+                filename_hash=f"h-{uuid4().hex[:16]}",
+                mime_type="application/pdf",
+                size_bytes=1024,
+                status="completed",
+                uploaded_by=uuid4(),
+                org_id=org_id,
+                trace_id=uuid4(),
+                kg_version_id=kg_version_id,  # type: ignore[arg-type]
+            )
+
+        session.add_all([_doc(row.id), _doc(row.id), _doc(old_version_id), _doc(None)])
+        session.commit()
+        version_id = row.id
+
+    yield org_id, version, version_id
+
+    with SessionLocal() as session:
+        session.execute(delete(Document).where(Document.org_id == org_id))
+        session.execute(delete(KgVersion).where(KgVersion.id == version_id))
+        session.commit()
+
+
+def test_overview_stats_read_from_pg_source(
+    _stats_fixture: object, real_pg_get_active: None
+) -> None:
+    """统计值来自 PG 真源：entity/relation 取 `kg_versions`，doc 只数 active 版本。"""
+    org_id, version, _version_id = _stats_fixture  # type: ignore[misc]
+
+    stats = GraphService.instance()._fetch_graph_overview_stats(
+        version=version,
+        org_id=org_id,
+        db=SessionLocal(),
+    )
+
+    assert stats == {
+        "doc_count": 2,  # 3 篇中有 1 篇属历史版本、1 篇未建图 ⇒ 不计入 active 视图
+        "entity_count": 42,
+        "relation_count": 7,
+    }
+
+
+def test_overview_stats_rejects_missing_db(_stats_fixture: object) -> None:
+    """`db` 缺失 → 显式报错，**不**返回 0 冒充统计值（原硬编码 0 正是静默假数据）。"""
+    org_id, version, _version_id = _stats_fixture  # type: ignore[misc]
+
+    with pytest.raises(ValueError, match="禁止返回 0 冒充"):
+        GraphService.instance()._fetch_graph_overview_stats(
+            version=version, org_id=org_id
+        )
+
+
+def test_overview_stats_rejects_unknown_version(
+    _stats_fixture: object, real_pg_get_active: None
+) -> None:
+    """PG 中无该版本 → `NoActiveKgVersionError`（路由层转 409），不静默 0。"""
+    org_id, _version, _version_id = _stats_fixture  # type: ignore[misc]
+
+    with pytest.raises(NoActiveKgVersionError):
+        GraphService.instance()._fetch_graph_overview_stats(
+            version="v-not-exist", org_id=org_id, db=SessionLocal()
+        )
 
 
 # --------------------------------------------------------------------------- #
