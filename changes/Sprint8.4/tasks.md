@@ -36,7 +36,11 @@
 
 ## 4. 收尾（下一步，不属本批次）
 
-- [ ] bump `app_version` 1.3.0 → 1.4.0（`config.py` + `.env.example`）→ **重导契约**（`info.version`）
-- [ ] release notes v1.4.0（含 Demo-MVP 达成声明 + 已知限制）
+- [x] bump `app_version` 1.3.0 → 1.4.0（`config.py:92` + `.env.example:9` + **本地 `.env`**）→ **重导契约**（`info.version`）
+  - **2026-09-26 已执行**：`config.py` / `.env.example` / `.env` 三处同改（`.env` 会**覆盖**默认值，不改则本地导出仍是 1.3.0）；重导后 `git diff contracts/openapi.yaml` **仅 `version: 1.3.0 → 1.4.0` 一行**，`--check` 通过。
+  - **门禁复核（bump 后）**：`pytest -q` **392 passed**；`check_seams.py` **ERROR 0 / WARN 0 / OK 9**，**`--strict` exit 0（全周期首次全绿）**——接缝 6 两项由 WARN 转 ERROR，因本批次已提前落地故不红；`ruff check` 全过 / `format --check` 125 files；`export_openapi.py --check` 零漂移；`gen:api` 无 diff。
+- [x] release notes v1.4.0（含 Demo-MVP 达成声明 + 已知限制）
+  - **2026-09-26 已执行**：`docs/release-notes/v1.4.0.md`；**§6 对 plan §7.2 十条逐条对账 = 7 达成 / 2 部分 / 1 未达成**（未达成 = 受控问题集 NOT PASS，语料漂移，A15 如实登记不重造）；§7 登记 8 项已知限制。
+  - 同步刷新：`docs/sprint-calendar.md`（§5 S8 行 + §6 v1.4 变更记录）、`docs/dev-doc-status.md`（收尾登记行）、`docs/acceptance-traceability-matrix.md`（M5 行 / H7 行 / 黄金路径步骤 6 / M3-3）。
 - [ ] tag `v1.4.0`；PR #3 转正式 → CI 绿 → Merge 到 `main`
 - [ ] 归档 `changes/Sprint8.{2,3,4}`

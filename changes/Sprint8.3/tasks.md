@@ -43,7 +43,8 @@
 
 ## 5. 收尾（待执行）
 
-- [ ] 提交（用户过目后）→ push → 盯 PR #3 的 CI（push 失败直接重试：本机 GitHub 网络时好时坏，非 DNS）
+- [x] 提交（用户过目后）→ push → 盯 PR #3 的 CI（push 失败直接重试：本机 GitHub 网络时好时坏，非 DNS）
+  - **已执行**：提交 **`0e0b7033`**（`feat(ui)`，6 files ／ +206 ／ −3），push `94113f02..0e0b7033` → `origin/feature/sprint-8`。
 - [ ] **不** bump `app_version`（仍 1.3.0，Sprint 8 收尾统一 bump 1.4.0 + tag）
 
 ## 6. 待用户裁决（本轮未做）

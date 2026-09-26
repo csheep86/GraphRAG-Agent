@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # -- 基础 --
     app_env: Literal["development", "test", "production"] = "development"
     app_name: str = "GraphRAG-Agent Backend API"
-    app_version: str = "1.3.0"
+    app_version: str = "1.4.0"
     api_prefix: str = "/api/v1"
 
     # -- 数据库：Sprint 1 临时兜底为 SQLite（见 backend/CODEBUDDY.md §1）--
