@@ -147,7 +147,10 @@ class Settings(BaseSettings):
 
     # -- CORS（阶段 3.2 前端联调）--
     cors_allow_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
     )
 
     # -- 限流（M5 §3 验收 5 / 决策 A11：slowapi，"默认 N=60，可配置"）--
