@@ -34,9 +34,20 @@
 
 ## 批次 B · 数据入图（后端 A）
 
-- [ ] **B1** 实现**结构化数据入图器**（接缝 8 扩展）：
+- [x] **B1** 实现**结构化数据入图器**（接缝 8 扩展）—— **已完成**
+  `backend/scripts/ingest_attendance_csv.py`
   - 读 `mapping.yaml`，CSV 行 → Neo4j 节点/关系，**确定性映射，不用 LLM**
-  - 沿用 ADR-0002 `kg_version` 幂等键；**不新建表**（延续接缝 8 范围纪律）
+  - **沿用真机图谱模型**（关键修正）：节点统一 `:Entity` + `entity_type` 属性、
+    关系统一 `:RELATION` + `relation_type` 属性，与 `kg/builder.py` 逐字一致。
+    *初稿按"每类一个标签"设计是错的*——`graphs.py` 全部查询只读 `:Entity`，
+    多标签会导致数据**进得了库、查不出来、前端渲染不出**（2026-09-26 刚因同款
+    错配出过"类型列空白、节点全一个颜色"的演示事故）。`mapping.yaml` 已升 v2
+  - ADR-0002 三段式写入 + **写入自检**（回读计数不符即回滚）+ **演示用例可用性验证**
+  - 实测：实体 2954 / 关系 3952 / `KgVersion=active` / 重跑幂等一致（870ms）
+  - **不新建表**（延续接缝 8 范围纪律）
+- [ ] **B1-follow** 考勤实体类型**尚未进** `graphs.py::_ENTITY_TYPE_TO_CATEGORY`
+  ⇒ 前端 13 类节点会全部兜底成 `topic`（同色、类型列无区分）。
+  需在批次 E 前补：**域化**映射（优先从 `ontology_schemas` 读，而非再硬编码一坨）
 - [ ] **B2** 制度文档走既有 M1 解析 + M2 抽取链路，`entity_types` / `relation_types` **从 `ontology_schemas` 读**（M6 §5.2 参数化注入，**不新增 Prompt 版本**）
 - [ ] **B3** 校验两链路汇合：员工节点能沿 `APPLIES_WORK_TIME` → `GOVERNED_BY` 连到 `POLICY_CLAUSE`
 
