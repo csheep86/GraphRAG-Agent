@@ -101,9 +101,24 @@ def _coerce(value: str) -> Any:
         return text
 
 
-def _canonical_name(entity_type: str, row: dict[str, str], node_id: str) -> str:
-    """给节点一个可视化用的名字（前端按 canonical_name 渲染）。"""
-    if "name" in row and row.get("name"):
+def _canonical_name(
+    entity_type: str,
+    row: dict[str, str],
+    node_id: str,
+    *,
+    key_value: str | None = None,
+) -> str:
+    """给节点一个可视化用的名字（前端按 ``canonical_name`` 渲染）。
+
+    **派生节点的名字必须来自自己的键列**（2026-09-27 修正）：``DEPARTMENT`` /
+    ``POSITION`` / ``WORK_TIME_SYSTEM`` 由 ``employees.csv`` 去重派生，而该表本身就
+    有 ``name`` 列（员工姓名）⇒ 原先会拿**第一个员工的名字**当部门 / 岗位 / 工时制
+    的名字（图上会出现「张伟」既是员工、又是部门）。优先级因此改为：
+    ``key_value``（派生节点的键列） > ``name`` 列 > 类型模板 > ``node_id``。
+    """
+    if key_value:
+        return key_value
+    if row.get("name"):
         return str(row["name"])
     templates = {
         "SHIFT": lambda r: f"{r.get('date', '')} {r.get('shift_type', '')}",
@@ -155,11 +170,17 @@ def build_nodes(mapping: dict[str, Any]) -> tuple[list[dict[str, Any]], set[str]
             attributes = {p: _coerce(raw.get(p, "")) for p in props if p in raw}
             attributes = {k: v for k, v in attributes.items() if v is not None}
 
+            # derive: distinct ⇒ 名字取自己的键列值（否则会被表的 name 列污染）
             rows.append(
                 {
                     "id": node_id,
                     "entity_type": etype,
-                    "canonical_name": _canonical_name(etype, raw, node_id),
+                    "canonical_name": _canonical_name(
+                        etype,
+                        raw,
+                        node_id,
+                        key_value=value if spec.get("derive") == "distinct" else None,
+                    ),
                     "props": attributes,
                 }
             )

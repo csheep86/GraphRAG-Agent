@@ -1124,7 +1124,7 @@ class GraphService:
             )
             relations.append(
                 EntityRelation(
-                    relation=str(rel.type if hasattr(rel, "type") else ""),
+                    relation=_relation_name(rel),
                     target_id=neighbor_id,
                     target_name=neighbor_name,
                 )
@@ -1316,6 +1316,25 @@ def _describe_projection_error(exc: Exception) -> str:
                 details.append(f"{location or '<root>'}: {item.get('msg')}")
             return "; ".join(details)
     return f"{type(exc).__name__}: {exc}"
+
+
+def _relation_name(rel: Any) -> str:
+    """实体详情里的关系名：**语义优先**，退化到 Neo4j 的 ``type(r)``。
+
+    2026-09-27 真机发现（与 §7.5.1 同族的「写读口径错配」）：建图侧统一写
+    ``:RELATION`` 令牌、真实语义放在 ``properties.relation_type``
+    （``kg/builder.py`` stage-3），而详情只读 ``rel.type`` ⇒ 关系名一律显示成
+    ``RELATION``（考勤真机实测：员工 50 条出边**全叫 RELATION**，
+    ``HAS_SHIFT`` / ``HAS_POSITION`` / ``GOVERNED_BY`` 的真实语义一个都没露出来）。
+    这里按 :func:`_edge_from_record` 的同款口径取语义值；**不用** :func:`_relation_type`
+    的契约投影——详情是自由 ``str`` 字段，原样透传才能留住域关系名（``HAS_SHIFT`` /
+    ``GOVERNED_BY``）；投影会把它们一律兜底成 ``MENTIONS``，属另一种信息失真。
+    """
+    properties = dict(rel) if hasattr(rel, "items") else {}
+    semantic = properties.get("relation_type")
+    if semantic:
+        return str(semantic)
+    return str(getattr(rel, "type", None) or "")
 
 
 def _relation_type(raw: Any, *, semantic: Any = None) -> RelationType:

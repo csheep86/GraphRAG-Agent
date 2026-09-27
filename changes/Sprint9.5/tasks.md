@@ -71,8 +71,42 @@
     `export_openapi.py --check` 零漂移；`check_seams.py` ERROR 0 / WARN 0
   - **已知边界（方案 C 固有）**：`category` 仍是契约 4 值 ⇒ 8 类事实记录共享 `topic`
     一色。要逐类型分色须走方案 B（扩枚举，动契约 + 前端色板 + `gen:api`），**本 Sprint 不做**
-- [ ] **B2** 制度文档走既有 M1 解析 + M2 抽取链路，`entity_types` / `relation_types` **从 `ontology_schemas` 读**（M6 §5.2 参数化注入，**不新增 Prompt 版本**）
-- [ ] **B3** 校验两链路汇合：员工节点能沿 `APPLIES_WORK_TIME` → `GOVERNED_BY` 连到 `POLICY_CLAUSE`
+- [x] **B2** 制度文档走既有 M1 解析 + M2 抽取链路，`entity_types` / `relation_types` **从 `ontology_schemas` 读**（M6 §5.2 参数化注入，**不新增 Prompt 版本**）—— **已完成**
+  - 新增 `backend/scripts/ingest_attendance_policies.py`：注册 `Document` 行 → `document.parse`
+    → `document.extract` → 汇合边（规则）→ `kg.build`，**完全复用既有执行体**；
+    末段 `kg.build` 是 **MERGE 追加语义**（**不**先清版本）⇒ 与 B1 的 CSV 数据
+    落在**同一个** `kg_version` 里天然汇合（若两边各建版本 ⇒ B3 那条跨源路径永远连不上）
+  - **M1 支持 docx（本批次顺带打通，与 PDF 走同一条链路）**：`MineruClient.parse_pdf` → **`parse_document`**；
+    后缀由 mime 映射（`registry._PARSE_MIME_TO_SUFFIX`），**实测确认 MinerU 云按文件名后缀选解析器**
+    （".pdf / .docx 走完全相同四步流程"）⇒ **客户端不内置格式分支**，分支只留给调用方一份
+  - **M6 §5.2 参数化注入**：新增 `services/ontology.py::extraction_type_vocabulary()` 读本体
+    类型名；`LangextractClient` 新增 `TypeVocabulary`（Prompt 渲染与类型校验**同源**，
+    避免"模型按新域抽、校验按旧枚举降级"的串味）+ `from_settings(entity_types=, relation_types=)`；
+    **`prompts/kg_extraction_v2.md` 一行未改**（本来就有这两个占位符）⇒ 换域换数据、不改 Prompt 版本。
+    本体读不到 ⇒ 空元组 → 回落内置枚举，两侧**独立**回落
+  - **切片粒度随文档类型走**：`LangextractClient.from_settings(max_chars_per_chunk=)` +
+    `document.extract` 的 payload 覆盖。**实测（真机，同一份 1478 字制度文档）**：
+    4000 字切片 ⇒ 只抽到 **1** 条 `POLICY_CLAUSE`（把整份文档当成一个条款）；
+    600 字切片 ⇒ **16** 条。故制度类按"条"切（脚本常量 `CLAUSE_CHARS_PER_CHUNK=600`）
+  - 实测（4 份 docx，**真机 MinerU + 真机 LLM**）：full.md 799 / 1090 / 1570 / 1478 字符；
+    抽取实体 49 / 43 / 54 / 64（其中 `POLICY_CLAUSE` 20 / 25 / 20 / 19 = **84**）
+  - **清零关心的坑**：执行体吞错后只改状态列、不回抛 ⇒ 脚本每步后**回读 DB 状态列**判定；
+    Cypher 对"端点不存在的边"是**静默跳过** ⇒ 校验按**关系 id 逐个核对**（114/114）
+- [x] **B3** 校验两链路汇合：员工节点能沿 `APPLIES_WORK_TIME` → `GOVERNED_BY` 连到 `POLICY_CLAUSE` —— **已完成**
+  - 汇合边**不由 LLM 生成**：`WORK_TIME_SYSTEM -[GOVERNED_BY]-> POLICY_CLAUSE` 按
+    "条款所在自然段点名了某个工时制"匹配（确定性规则，可复核；id 用 `uuid5` ⇒ 重跑幂等）
+  - 实测：`GOVERNED_BY` 共 69 条（规则桥接 21 + 模型自抽 48，按 id 前缀区分来源）；
+    **B3 路径 288 条 / 员工 40 人 / 工时制 3 个 / 条款 15 条**
+  - **入图 ≠ 可查**：每段文档的 `kg.build` 只登记**它自己**的计数 ⇒ 全部跑完后按 Neo4j
+    **真实计数**重新 `mark_ready`（实体 **3164** / 关系 **4066**，= CSV 2954/3952 + 制度 210/114）
+  - **真机 HTTP 复核（`uvicorn` + 真请求，非脚本打印）**：
+    `GET /graph/overview` ⇒ `kg_version=attendance-demo-v1` / `doc_count=4` /
+    `entity_count=3164` / `relation_count=4066` / `nodes 500` / `edges 527`、
+    分类 `norm=17`（POLICY_CLAUSE）+ `org=58` + `system=6` + `topic=419`；
+    `GET /entities/EMPLOYEE:E001` ⇒ `canonical_name=张伟`、`rel_count=97`、
+    关系名 `SWIPED_AT` / `LOCATED_AT`（不再是裸 `RELATION` 令牌）
+  - 顺手修的两处真机缺陷（见下方 L6 / L7）：① CSV 派生节点名字被表的 `name` 列污染；
+    ② 实体详情关系名只读 `rel.type`（`:RELATION` 令牌），忽略 `properties.relation_type`
 
 ## 批次 C · 规则与归因（后端 B）
 
@@ -149,15 +183,48 @@
   `types/api.d.ts` ⇒ 契约改了枚举，前端**不会报错**，属静默失配隐患。
   ⇒ 收口到生成类型、删掉手写重复定义；与 L1 一起处理最经济。
 
-- [ ] **L4 · MinerU 文件出网的合规留痕（待办动作，B0-2 的落地项）**
-  B0-2 已完成**定性**（DEMO 接受外网），但**动作未做**：M1 调 MinerU 云是**文件本体
-  出网**（上传 OSS），比 LLM 文本出网更敏感 ⇒ **交付说明 / release notes 必须写明，
-  不得静默**。
-  ⇒ **触发时点**：B2 真的调用 MinerU 之后立即留痕。
+- [x] **L4 · MinerU 文件出网的合规留痕（待办动作，B0-2 的落地项）** —— **已完成（触发条件已到：B2 真调用了 MinerU）**
+  留痕落点 **`docs/deployment-spec.md` §8.1「第三方出网事实登记」**（交付说明的直接引用源，
+  下一步就该由它进 release notes）：三行表把 M1 **文件本体出网（最高敏）** / M2 / M3
+  文本出网分开写，标明**切换位**（`parser_provider` / ADR-0004 接缝 3）与当前状态
+  （DEMO 阶段用外网）+ 给客户的三句话（含"替换完成前不得宣称数据不出内网"）。
 
 - [ ] **L5 · 网络抖动应对（纪律，非代码改动）**
   外网间歇不可达（DNS 抖动）：`git push` / 外部 API 调用失败时**先重试再判定失败**，
   不得一次失败就改方案（已实测重试第二次即成功）。
+
+> 以下 2 条是 **B2 / B3 真机过程中暴露并当场修复**的，登记为**已修复**而非待办，
+> 免得下沉同一坑的人误以为它们还没处理。
+
+- [x] **L6 · CSV 派生节点的名字被表的 ``name`` 列污染（已修）**
+  `DEPARTMENT` / `POSITION` / `WORK_TIME_SYSTEM` 由 `employees.csv` 去重派生，
+  而该表自带 `name` 列（员工姓名）⇒ 原 `_canonical_name` 会把**第一个员工的名字**
+  当部门 / 岗位 / 工时制的名字（图上出现「张伟」既是员工又是部门）。
+  改：取值优先级 `派生节点的键列值 > row["name"] > 类型模板 > node_id`。
+  真机复验：员工详情由 `EMPLOYEE:E001` 变回 `张伟`。
+- [x] **L7 · 实体详情关系名只读 Neo4j 令牌（已修，§7.5.1 同族错配）**
+  建图侧统一写 `:RELATION` 令牌、真实语义在 `properties.relation_type`
+  （`kg/builder.py` stage-3），而 `fetch_entity_detail` 只取 `rel.type`
+  ⇒ **所有关系名都显示成 `RELATION`**（考勤真机：员工 50 条出边全叫 `RELATION`，
+  `HAS_SHIFT` / `GOVERNED_BY` 一个都没露出来）。改：新增 `graphs.py::_relation_name()`
+  **语义优先、退化令牌**（详情是自由 `str` 字段，**不走** `_relation_type` 的契约投影，
+  否则域关系名会被一律兜底成 `MENTIONS`，是另一种信息失真）。
+  补回归守卫 3 例（`tests/test_graph_overview_and_entity.py`）。
+
+- [ ] **L8 · ``POLICY_CLAUSE`` 是 span 级实体，不是「条款单元」**
+  M2 是**跨度抽取**，模型给的 `POLICY_CLAUSE` 常常是条号（「第十一条」）/ 被引用的法规名
+  （「《国务院关于职工工作时间的规定》」）/ 值（「月标准工时 174 小时」）——
+  都是语料里真实存在的文本、可复核，**不是假数据**，但**粒度不是「一条可执行的条款」**
+  （不像 AIOps 那种「第五条 综合计算工时制以月为计算周期…」整条）。
+  影响面主要在 **C1 规则引擎**：要从条款里读数值（如 174 小时 / 36 小时 / 40 小时）
+  得容忍这种粒度；现有 84 个条款节点里确实**含**这些数值节点。
+  ⇒ **触发时点：C1 立项时**先决定两件事之一——① 接受 span 粒度、按值 / 关键词去找；
+  ② 若必须「条款单元」级，就得做**结构化条款切分**（沿「第 N 条」切，属新增能力，
+  且不许动 Prompt 版本）。**不要在 C1 开始前凭观感改数据**。
+- [ ] **L9 · 抽取结果非确定性（LLM 固有，非缺陷）**
+  同一份文档前后两次抽取结果不同（实测 `POLICY_CLAUSE` 63 → **84** 条、关系数亦变）。
+  ⇒ 演示语料一旦固化就**尽量不再重跑**；若重跑必须先 CSV `--purge` 再跑制度脚本、
+  最后重算 `mark_ready`（脚本已按此顺序设计）。**不要**为了对齐旧数字去改阈值兜底。
 
 ## 门禁
 
@@ -167,6 +234,11 @@
 | **CP-A2** | 两链路数据入图成功且汇合可查（批次 B 收尾） |
 | **CP-A3** | 规则引擎数值**可手工核算验证**（批次 C 收尾）——**不可核查即判定失败** |
 | **CP-A4** | `demo_rehearsal.py --domain attendance` **全绿**（交付前） |
+
+> **CP-A2 实测结论（2026-09-27）：达成** —— 判据两侧都有证据：**入图成功**
+> （Entity 3164 / Relation 4066，关系按 id 逐个核对 114/114 无静默丢失）+ **汇合可查**
+> （B3 路径 288 条 / 40 名员工 / 3 个工时制 / 15 条条款，且经真机 HTTP 复核）。
+> 逐条依据见上方批次 B 的 B2 / B3 两项。**两处保留短板已登记为 L8 / L9**，不影响该闸门。
 
 ## 不做（再次划界）
 

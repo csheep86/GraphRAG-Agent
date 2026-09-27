@@ -44,8 +44,12 @@ def _make_client(transport: httpx.MockTransport) -> MineruClient:
     )
 
 
-def test_parse_pdf_happy_path() -> None:
-    """四步全流程：md 与 content_list 原文返回，请求头带 Bearer。"""
+def test_parse_document_happy_path() -> None:
+    """四步全流程：md 与 content_list 原文返回，请求头带 Bearer。
+
+    显示名带什么后缀由调用方决定（PDF / docx 走同一条流程），本用例用 ``.pdf``
+    代表这一族。
+    """
     seen: list[tuple[str, str | None]] = []
     polls = {"n": 0}
 
@@ -91,7 +95,7 @@ def test_parse_pdf_happy_path() -> None:
         return httpx.Response(200, content=_result_zip())
 
     result = asyncio.run(
-        _make_client(httpx.MockTransport(handler)).parse_pdf(
+        _make_client(httpx.MockTransport(handler)).parse_document(
             content=b"%PDF-1.4", display_name="doc.pdf"
         )
     )
@@ -114,7 +118,7 @@ def test_empty_token_raises_immediately() -> None:
         poll_timeout_seconds=1,
     )
     with pytest.raises(MineruApiError, match="MINERU_TOKEN"):
-        asyncio.run(client.parse_pdf(content=b"x", display_name="d.pdf"))
+        asyncio.run(client.parse_document(content=b"x", display_name="d.pdf"))
 
 
 def test_api_code_error_raises() -> None:
@@ -123,7 +127,7 @@ def test_api_code_error_raises() -> None:
 
     with pytest.raises(MineruApiError, match="401"):
         asyncio.run(
-            _make_client(httpx.MockTransport(handler)).parse_pdf(
+            _make_client(httpx.MockTransport(handler)).parse_document(
                 content=b"x", display_name="d.pdf"
             )
         )
@@ -153,7 +157,7 @@ def test_state_failed_raises() -> None:
 
     with pytest.raises(MineruApiError, match="page limit"):
         asyncio.run(
-            _make_client(httpx.MockTransport(handler)).parse_pdf(
+            _make_client(httpx.MockTransport(handler)).parse_document(
                 content=b"x", display_name="d.pdf"
             )
         )
@@ -181,7 +185,7 @@ def test_poll_timeout_raises() -> None:
 
     with pytest.raises(MineruApiError, match="轮询超时"):
         asyncio.run(
-            _make_client(httpx.MockTransport(handler)).parse_pdf(
+            _make_client(httpx.MockTransport(handler)).parse_document(
                 content=b"x", display_name="d.pdf"
             )
         )
@@ -222,7 +226,7 @@ def test_zip_missing_artifacts_raises() -> None:
 
     with pytest.raises(MineruApiError, match="缺产物"):
         asyncio.run(
-            _make_client(httpx.MockTransport(handler)).parse_pdf(
+            _make_client(httpx.MockTransport(handler)).parse_document(
                 content=b"x", display_name="d.pdf"
             )
         )

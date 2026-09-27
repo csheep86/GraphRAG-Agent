@@ -4,18 +4,43 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
+import app.tasks.registry as registry
 from app.core.config import get_settings
+from app.services.parsing import MineruParseResult
 
-#: 默认用 docx：解析跳过（S10 承接）→ BackgroundTasks 快速推进 completed，
-#: 避免 PDF 路径触发无 token 的 MinerU 重试。
+#: 上传样例。**docx 自 Sprint 9.5 批次 B2 起也会真正走 MinerU**（后缀决定解析器），
+#: 因此本模块用模块级 fixture 把 MinerU 换成假实现，避免无 token 的测试环境
+#: 把文档推到 failed（这正是「云原生 / 外部依赖不得影响用例」的老教训）。
 DOCX = (
     "合同.docx",
     b"PK\x03\x04 docx bytes",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 )
 PDF = ("合同.pdf", b"%PDF-1.4 minimal", "application/pdf")
+
+
+class _FakeMineruClient:
+    """不需要网络 / token 的假解析器（PDF 与 docx 走同一分支）。"""
+
+    def __init__(self, **_kwargs: object) -> None:
+        pass
+
+    async def parse_document(
+        self, *, content: bytes, display_name: str
+    ) -> MineruParseResult:
+        return MineruParseResult(markdown="# 假解析", content_list_json="[]")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _stub_parser() -> object:
+    """模块级打桩：让上传的 PDF / docx 都能确定性地推进到 completed。"""
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(registry, "MineruClient", _FakeMineruClient)
+    yield
+    patcher.undo()
 
 
 def _upload(client: TestClient, headers: dict[str, str]) -> dict:
@@ -60,8 +85,8 @@ def test_background_task_drives_status_to_completed(
 ) -> None:
     """阶段九验收：上传 → BackgroundTasks 在请求内执行 → status=completed。
 
-    docx 跳过结构化解析（S10 承接），状态机从 pending 一路推进到 completed。
-    PDF 的真实 MinerU 路径由 ``test_document_parse_executor.py`` 覆盖。
+    PDF / docx 的真实 MinerU 路径由 ``test_document_parse_executor.py`` 覆盖；
+    这里只关心状态机从 pending 一路推进到 completed。
     """
     task_id = _upload(client, dev_headers)["task_id"]
 
@@ -73,15 +98,22 @@ def test_background_task_drives_status_to_completed(
 def test_upload_persists_file_to_storage(
     client: TestClient, dev_headers: dict[str, str]
 ) -> None:
-    """Sprint 5 批次 A：上传文件真实落盘到存储抽象层（M1 §4.3 验收 6 前半）。"""
+    """Sprint 5 批次 A：上传文件真实落盘到存储抽象层（M1 §4.3 验收 6 前半）。
+
+    docx 自 Sprint 9.5 批次 B2 起也会产出 ``parse/`` 产物（与 PDF 同链路），
+    故按 PDF 用例的口径把产物排除后再断言"源文件恰好一份"。
+    """
     task_id = _upload(client, dev_headers)["task_id"]
 
     storage_root = get_settings().storage_root
     matches = list(storage_root.glob(f"*/{task_id}/*"))
-    assert len(matches) == 1, (
-        f"应恰好落一个对象 {{org}}/{task_id}/{{hash}}，实际 {matches}"
+    stored = [p for p in matches if p.name != "parse"]
+    assert len(stored) == 1, (
+        f"应恰好落一个对象 {{org}}/{task_id}/{{hash}}，实际 {stored}"
     )
-    assert matches[0].read_bytes() == DOCX[1]
+    assert stored[0].read_bytes() == DOCX[1]
+    # docx 现在与 PDF 同链路 ⇒ **必须**有解析产物（没有就说明又被跳过了）
+    assert [p for p in matches if p.name == "parse"]
 
 
 def test_upload_pdf_persists_original_bytes(

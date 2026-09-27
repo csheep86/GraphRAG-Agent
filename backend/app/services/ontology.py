@@ -31,7 +31,11 @@ from sqlalchemy import select
 from app.db.models import OntologySchema
 from app.schemas import GraphCategory
 
-__all__ = ["entity_type_categories", "load_active_ontology"]
+__all__ = [
+    "entity_type_categories",
+    "extraction_type_vocabulary",
+    "load_active_ontology",
+]
 
 #: 合法 ``category`` 取值，**由契约枚举反推**（不二次硬编码）。
 #: 契约 ``GraphCategory`` 一旦增减取值，这里自动跟随，不会静默失配。
@@ -56,6 +60,52 @@ def load_active_ontology(*, db: Any, org_id: Any) -> OntologySchema | None:
             OntologySchema.status == "active",
         )
     )
+
+
+def extraction_type_vocabulary(
+    *, db: Any, org_id: Any
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """从本体读出 M2 抽取用的类型词表：``(entity_types, relation_types)``。
+
+    M6 §5.2 参数化注入（Sprint 9.5 批次 B2）：``entity_types`` / ``relation_types``
+    由该 org 的 active 本体给出，使得「换业务域」只改数据、不改 Prompt 版本。
+    **不新增 Prompt 版本**——``kg_extraction_v2`` 早已把这两个枚举声明为占位符。
+
+    降级口径与 :func:`entity_type_categories` 一致：**读不到就返回空元组**，
+    由调用方（``LangextractClient``）回落内置枚举，不阻断抽取。
+    这里**不**假设「没有本体 = 金融域」——内置默认值归抽取侧管，本体模块只管本体。
+    """
+    row = load_active_ontology(db=db, org_id=org_id)
+    if row is None:
+        return (), ()
+
+    entity_types = _type_names(row.entity_types)
+    relation_types = _type_names(row.relation_types)
+    logger.bind(
+        org_id=str(org_id),
+        entity_type_count=len(entity_types),
+        relation_type_count=len(relation_types),
+    ).info("ontology_extraction_vocabulary_loaded")
+    return entity_types, relation_types
+
+
+def _type_names(items: Any) -> tuple[str, ...]:
+    """取本体里各类 Type 的 ``name`` 元组（保序去重）。
+
+    脏条目（非 dict / 缺 ``name``）跳过且不留痕：这里的上下文是"抽词表"，
+    少一个类型名会被调用方的空词表回落整体兜住，不像 ``category`` 那样需要
+    警示"配了却没生效"。
+    """
+    if not isinstance(items, list):
+        return ()
+    names: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if isinstance(name, str) and name.strip() and name not in names:
+            names.append(name)
+    return tuple(names)
 
 
 def entity_type_categories(*, db: Any, org_id: Any) -> dict[str, GraphCategory]:

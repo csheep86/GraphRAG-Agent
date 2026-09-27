@@ -86,9 +86,46 @@ ENGINE_LLM: Final[str] = "llm"
 ENGINE_MOCK: Final[str] = "mock"
 ENGINES: Final[tuple[str, ...]] = (ENGINE_LLM, ENGINE_MOCK)
 
+
+@dataclass(frozen=True, slots=True)
+class TypeVocabulary:
+    """一次抽取所用的类型词表（``entity_types`` / ``relation_types``）。
+
+    **默认是模块级内置枚举**（金融域 v2 那套）；有业务本体时由调用方注入、
+    覆盖 —— M6 §5.2 参数化注入（Sprint 9.5 批次 B2）。两个目的是：
+
+    1. **换域不改 Prompt 版本**：``{{entity_types}}`` / ``{{relation_types}}``
+       本来就是占位符，词表随参数走即可；
+    2. **类型校验与 Prompt 同源**：喂给模型的枚举和拿来校验的枚举必须是同一份，
+       否则会出现"模型按新域抽、校验按旧枚举降级"的串味。
+
+    ``__post_init__`` 对**降级目标不在词表内**的场景 warn：此时未知类型会被降级成
+    本体之外的取值，属"本体没兜住"，须显式留痕而不是静默写脏数据。
+    """
+
+    entity_types: tuple[str, ...] = ENTITY_TYPES
+    relation_types: tuple[str, ...] = RELATION_TYPES
+
+    def __post_init__(self) -> None:
+        if self.entity_types and _FALLBACK_TYPE not in self.entity_types:
+            logger.warning(
+                "抽取类型词表不含降级目标，未知 entity_type 会写成本体外取值: "
+                f"fallback={_FALLBACK_TYPE!r} entity_types={list(self.entity_types)}"
+            )
+        if self.relation_types and _FALLBACK_TYPE not in self.relation_types:
+            logger.warning(
+                "抽取类型词表不含降级目标，未知 relation_type 会写成本体外取值: "
+                f"fallback={_FALLBACK_TYPE!r} relation_types={list(self.relation_types)}"
+            )
+
+
 #: 未知 ``entity_type`` / ``relation_type`` 的统一降级目标
 #: （``prompts/kg_extraction_v1.md`` 第 47–48 行；原始名由日志留痕）
 _FALLBACK_TYPE: Final[str] = "RELATED"
+
+#: 未注入本体时的默认词表（内置枚举，与 Prompt v2 自带语义一致）。
+#: 位置必须在 ``_FALLBACK_TYPE`` **之后**——``TypeVocabulary.__post_init__`` 要用它。
+DEFAULT_VOCABULARY: Final[TypeVocabulary] = TypeVocabulary()
 #: ``confidence`` 低于此值即丢弃（``prompts/kg_extraction_v1.md`` 第 50 行）
 _MIN_CONFIDENCE: Final[float] = 0.5
 #: 失败原因进日志 / 产物的截断长度（防把模型原文整段写进日志）
@@ -358,25 +395,36 @@ def _extract_token_usage(response: object) -> dict[str, int | None]:
     }
 
 
-def _render_extraction_prompt(template: PromptTemplate, *, text: str) -> str:
+def _render_extraction_prompt(
+    template: PromptTemplate,
+    *,
+    text: str,
+    vocabulary: TypeVocabulary = DEFAULT_VOCABULARY,
+) -> str:
     """渲染 ``kg_extraction`` 模板；**按模板实际声明的占位符**给值。
 
     v1 只声明 ``{{text}}`` / ``{{language}}``；v2（Sprint 7.1）把类型枚举参数化为
     ``{{entity_types}}`` / ``{{relation_types}}``。这里不按版本号硬分支，而是看模板
     声明——**加版本不必改代码**，也避免把 v2 的变量喂给 v1（prompt_loader 会报
     "未声明的变量"，等于把模板升级变成运行期地雷）。
+
+    Sprint 9.5 批次 B2：两个枚举取自 :class:`TypeVocabulary`（默认内置，有本体时
+    注入本体读数）。**换域只换词表，Prompt 文件不动**。
     """
     values: dict[str, str] = {"text": text, "language": _PROMPT_LANGUAGE}
     declared = set(template.placeholders)
     if "entity_types" in declared:
-        values["entity_types"] = "|".join(ENTITY_TYPES)
+        values["entity_types"] = "|".join(vocabulary.entity_types)
     if "relation_types" in declared:
-        values["relation_types"] = "|".join(RELATION_TYPES)
+        values["relation_types"] = "|".join(vocabulary.relation_types)
     return template.render(**values)
 
 
 def _build_llm_chunk_extractor(
-    *, prompt_version: str, invoker: LlmInvokerFn
+    *,
+    prompt_version: str,
+    invoker: LlmInvokerFn,
+    vocabulary: TypeVocabulary = DEFAULT_VOCABULARY,
 ) -> ChunkExtractorFn:
     """构造 llm 档的 chunk 抽取器：单 chunk → 一次 LLM 调用 → 严格解析。
 
@@ -395,6 +443,7 @@ def _build_llm_chunk_extractor(
                 "kg_extraction", version=_prompt_version_number(prompt_version)
             ),
             text=text,
+            vocabulary=vocabulary,
         )
 
         try:
@@ -409,9 +458,12 @@ def _build_llm_chunk_extractor(
 
         payload = _parse_llm_payload(raw)
         entities, id_map = _entities_from_payload(
-            payload, chunk_text=text, char_offset=char_offset
+            payload,
+            chunk_text=text,
+            char_offset=char_offset,
+            vocabulary=vocabulary,
         )
-        relations = _relations_from_payload(payload, id_map)
+        relations = _relations_from_payload(payload, id_map, vocabulary=vocabulary)
 
         logger.bind(
             chunk_offset=char_offset,
@@ -459,12 +511,17 @@ def _parse_llm_payload(raw: str) -> dict[str, Any]:
 
 
 def _entities_from_payload(
-    payload: Mapping[str, Any], *, chunk_text: str, char_offset: int
+    payload: Mapping[str, Any],
+    *,
+    chunk_text: str,
+    char_offset: int,
+    vocabulary: TypeVocabulary = DEFAULT_VOCABULARY,
 ) -> tuple[list[ExtractedEntity], dict[str, str]]:
     """按 Schema 解析实体；返回 ``(entities, 原id → 新id 映射)``。
 
     处置口径：
     - 未知 ``entity_type`` → 降级 ``RELATED``（原始名 log 留痕，v1 第 47 行）；
+      校验基准是 :class:`TypeVocabulary`，**与喂给 Prompt 的枚举同源**；
     - ``confidence`` < 0.5 或缺失 → 丢弃（v1 第 50 行，**不猜值**）；
     - ``char_start`` / ``char_end`` 合法 → 原样透传（仅加回块起点，与 mock 档同坐标系）；
       缺失 / 越界 → 用 ``mention`` 在 chunk 内回查；回查不到 → 丢弃（**不伪造偏移**）；
@@ -504,7 +561,9 @@ def _entities_from_payload(
             continue
 
         raw_type = str(raw.get("entity_type") or "").strip()
-        entity_type = raw_type if raw_type in ENTITY_TYPES else _FALLBACK_TYPE
+        entity_type = (
+            raw_type if raw_type in vocabulary.entity_types else _FALLBACK_TYPE
+        )
         if raw_type and raw_type != entity_type:
             logger.bind(unknown_entity_type=raw_type).warning(
                 "langextract_entity_type_downgraded"
@@ -535,7 +594,10 @@ def _entities_from_payload(
 
 
 def _relations_from_payload(
-    payload: Mapping[str, Any], id_map: Mapping[str, str]
+    payload: Mapping[str, Any],
+    id_map: Mapping[str, str],
+    *,
+    vocabulary: TypeVocabulary = DEFAULT_VOCABULARY,
 ) -> list[ExtractedRelation]:
     """按 Schema 解析关系；端点不在实体集合内 → 丢弃（与 ``_clamp_relations`` 同口径）。"""
     raw_relations = payload.get("relations", [])
@@ -565,7 +627,9 @@ def _relations_from_payload(
             continue
 
         raw_type = str(raw.get("relation_type") or "").strip()
-        relation_type = raw_type if raw_type in RELATION_TYPES else _FALLBACK_TYPE
+        relation_type = (
+            raw_type if raw_type in vocabulary.relation_types else _FALLBACK_TYPE
+        )
         if raw_type and raw_type != relation_type:
             logger.bind(unknown_relation_type=raw_type).warning(
                 "langextract_relation_type_downgraded"
@@ -603,6 +667,7 @@ class LangextractClient:
         engine: str = ENGINE_LLM,
         chunk_extractor: ChunkExtractorFn | None = None,
         llm_invoker: LlmInvokerFn | None = None,
+        type_vocabulary: TypeVocabulary | None = None,
     ) -> None:
         if provider != "langextract":
             # 未知档位显式报错（与 llm_provider / parser_provider 同策略，
@@ -629,6 +694,8 @@ class LangextractClient:
         self._max_relations_per_doc = max_relations_per_doc
         self._prompt_version = prompt_version
         self._engine = engine
+        # Sprint 9.5 批次 B2：None ⇒ 内置默认词表（金融域 v2 枚举）
+        self._vocabulary = type_vocabulary or DEFAULT_VOCABULARY
         # 优先级：显式注入 > 引擎档位。注入永远是第一位的（单测零外部依赖靠它）
         if chunk_extractor is not None:
             self._chunk_extractor: ChunkExtractorFn = chunk_extractor
@@ -638,25 +705,50 @@ class LangextractClient:
             self._chunk_extractor = _build_llm_chunk_extractor(
                 prompt_version=prompt_version,
                 invoker=llm_invoker or _default_llm_invoke,
+                vocabulary=self._vocabulary,
             )
 
     # -------------------------------------------------------------- 工厂
 
     @classmethod
-    def from_settings(cls) -> LangextractClient:
+    def from_settings(
+        cls,
+        *,
+        entity_types: tuple[str, ...] = (),
+        relation_types: tuple[str, ...] = (),
+        max_chars_per_chunk: int | None = None,
+    ) -> LangextractClient:
         """从 settings 构造默认客户端（``document.extract`` 执行体使用）。
 
         ``settings.extraction_engine`` 的**唯一消费点**（check_seams 判据 2）：
         ``llm`` 档在这里把真实 LLM 通道接进链路。
+
+        :param entity_types: 该 org 本体的实体类型名；**空 ⇒ 回落内置枚举**。
+        :param relation_types: 同上。两者独立回落——本体只登记了一半时不至于
+            让另一半也失去类型约束。
+        :param max_chars_per_chunk: 覆盖 settings 的切片粒度；``None`` 用默认值。
+            **为什么留这个口子**：Sprint 9.5 B2 实测——同一份 1478 字制度文档，
+            4000 字切片只抽出 **1** 条 ``POLICY_CLAUSE``（把整份文档当成一个条款），
+            600 字切片抽出 **16** 条。切片粒度是抽取召回率的真实杠杆，
+            而它**随文档类型而异**（年报适合大切片、法规条款适合沿条文切），
+            故不宜拍死成全局常量。
         """
         settings = get_settings()
         return cls(
             provider=settings.extraction_provider,
-            max_chars_per_chunk=settings.extraction_max_chars_per_chunk,
+            max_chars_per_chunk=(
+                settings.extraction_max_chars_per_chunk
+                if max_chars_per_chunk is None
+                else max_chars_per_chunk
+            ),
             max_entities_per_doc=settings.extraction_max_entities_per_doc,
             max_relations_per_doc=settings.extraction_max_relations_per_doc,
             prompt_version=settings.extraction_prompt_version,
             engine=settings.extraction_engine,
+            type_vocabulary=TypeVocabulary(
+                entity_types=entity_types or ENTITY_TYPES,
+                relation_types=relation_types or RELATION_TYPES,
+            ),
         )
 
     # -------------------------------------------------------------- 主入口

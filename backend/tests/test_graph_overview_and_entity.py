@@ -31,6 +31,7 @@ from app.services.graphs import (
     NoActiveKgVersionError,
     _category_from_entity_type,
     _entity_type_from_properties,
+    _relation_name,
 )
 
 #: `contracts/openapi.yaml::GraphOverviewResponse` 字段集
@@ -447,3 +448,49 @@ def test_entity_detail_requires_auth(client: TestClient) -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHORIZED"
+
+
+# --------------------------------------------------------------------------- #
+# 关系名取数口径（2026-09-27 真机修复的回归守卫）
+# --------------------------------------------------------------------------- #
+
+
+class _FakeRelation:
+    """只实现被测用到的面：属性 map + Neo4j 的 ``type``。"""
+
+    def __init__(self, type_: str = "RELATION", **attrs: object) -> None:
+        self.type = type_
+        self._attrs = attrs
+
+    def keys(self) -> list[str]:
+        return list(self._attrs)
+
+    def __getitem__(self, key: str) -> object:
+        return self._attrs[key]
+
+    def items(self) -> list[tuple[str, object]]:
+        return list(self._attrs.items())
+
+
+def test_relation_name_prefers_semantic_property() -> None:
+    """``:RELATION`` + ``relation_type`` 属性 ⇒ 关系名必须取语义值。
+
+    真机原症状：详情只读 ``rel.type`` ⇒ 50 条出边**全叫 RELATION**
+    （`HAS_SHIFT` / `GOVERNED_BY` 一个都不露）。
+    """
+    rel = _FakeRelation(relation_type="HAS_SHIFT")
+    assert _relation_name(rel) == "HAS_SHIFT"
+
+
+def test_relation_name_falls_back_to_neo4j_type() -> None:
+    """旧式「关系类型当令牌」的图里没有 ``relation_type`` ⇒ 退化为 ``type(r)``。"""
+    assert _relation_name(_FakeRelation(type_="PARTY_TO")) == "PARTY_TO"
+
+
+def test_relation_name_empty_when_nothing_available() -> None:
+    """两者都缺 ⇒ 空串（契约是 ``str``，不得写占位假值）。"""
+
+    class _Bare:
+        type = ""
+
+    assert _relation_name(_Bare()) == ""

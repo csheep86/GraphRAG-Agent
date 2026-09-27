@@ -18,7 +18,7 @@ import uuid
 from app.db.models import OntologySchema
 from app.db.session import SessionLocal, init_db
 from app.services.graphs import _resolve_category
-from app.services.ontology import entity_type_categories
+from app.services.ontology import entity_type_categories, extraction_type_vocabulary
 
 #: 每个用例用独立 org，避免相互污染（ontology_schemas 是每 org 一套）
 _ORG_A = uuid.uuid4()
@@ -27,7 +27,11 @@ _ORG_EMPTY = uuid.uuid4()
 
 
 def _seed_ontology(
-    org_id: uuid.UUID, entity_types: list[dict], *, status: str = "active"
+    org_id: uuid.UUID,
+    entity_types: list[dict],
+    *,
+    status: str = "active",
+    relation_types: list[dict] | None = None,
 ) -> None:
     init_db()
     with SessionLocal() as db:
@@ -36,7 +40,7 @@ def _seed_ontology(
                 org_id=org_id,
                 version=1,
                 entity_types=entity_types,
-                relation_types=[],
+                relation_types=relation_types or [],
                 domain_description="test",
                 suggested_by_llm=False,
                 confirmed_by_user=uuid.uuid4(),
@@ -112,3 +116,47 @@ def test_resolve_keeps_builtin_when_ontology_silent() -> None:
     assert _resolve_category("ORG", categories={"EMPLOYEE": "org"}) == "org"
     assert _resolve_category("", categories={"EMPLOYEE": "org"}) == "topic"
     assert _resolve_category("MONEY", categories={"EMPLOYEE": "org"}) == "topic"
+
+
+# --------------------------------------------------------------------------- #
+# B2：M6 §5.2 参数化注入（抽取侧类型词表）
+# --------------------------------------------------------------------------- #
+
+
+def _vocabulary(org_id: uuid.UUID) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    with SessionLocal() as session:
+        return extraction_type_vocabulary(db=session, org_id=org_id)
+
+
+def test_extraction_vocabulary_reads_type_names() -> None:
+    """实体 / 关系两组名字都应来自本体（供 Prompt 占位符注入）。"""
+    org = uuid.uuid4()
+    _seed_ontology(
+        org,
+        [
+            {"name": "POLICY_CLAUSE", "category": "norm"},
+            {"name": "WORK_TIME_SYSTEM", "category": "system"},
+            {"category": "topic"},  # 脏条目：缺 name，跳过
+        ],
+        relation_types=[
+            {"name": "GOVERNED_BY"},
+            {"name": "APPLIES_WORK_TIME"},
+        ],
+    )
+    entities, relations = _vocabulary(org)
+    assert entities == ("POLICY_CLAUSE", "WORK_TIME_SYSTEM")
+    assert relations == ("GOVERNED_BY", "APPLIES_WORK_TIME")
+
+
+def test_extraction_vocabulary_falls_back_to_empty() -> None:
+    """无本体 / 无 db ⇒ 空元组（**由调用方**回落内置枚举，本体模块不替它决策）。"""
+    assert extraction_type_vocabulary(db=None, org_id=_ORG_A) == ((), ())
+    assert extraction_type_vocabulary(db=SessionLocal(), org_id=None) == ((), ())
+    assert _vocabulary(_ORG_EMPTY) == ((), ())
+
+
+def test_extraction_vocabulary_accepts_half_filled_ontology() -> None:
+    """本体只登记了实体 ⇒ 关系词表为空，交给调用方单独回落（互不牵连）。"""
+    org = uuid.uuid4()
+    _seed_ontology(org, [{"name": "POLICY_CLAUSE", "category": "norm"}])
+    assert _vocabulary(org) == (("POLICY_CLAUSE",), ())

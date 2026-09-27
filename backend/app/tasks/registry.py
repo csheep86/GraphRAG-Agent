@@ -5,9 +5,9 @@
 代码无需改动。
 
 已登记（v1.1.0 批次 A 起；批次 B 扩展）：
-- ``document.parse``：PDF 经 MinerU 云解析 → 产物落存储层（M1 → M2 衔接）；
-  docx / csv 的结构化解析分别由 Sprint 10 / Sprint 9 承接（plan §15.3），
-  本阶段跳过解析但照常推进状态机。
+- ``document.parse``：PDF / docx 经 MinerU 云解析 → 产物落存储层（M1 → M2 衔接）；
+  docx 自 Sprint 9.5 批次 B2 起支持（后缀传 ``.docx``，其余流程与 PDF 同）；
+  csv 等未登记格式跳过解析但照常推进状态机。
 - ``document.extract``（批次 B）：从 ``full.md`` 抽取实体 + 关系（LangExtract）；
   产物落存储层 ``{org_id}/{doc_id}/extract/{entities,relations}.json``。
 - ``kg.build``（批次 B）：三段式写入 Neo4j（ADR-0002 §3.1），
@@ -56,6 +56,7 @@ from app.services.graphs import GraphUnavailableError
 from app.services.kg import ThreeStageKgBuilder
 from app.services.kg.builder import KgDocumentRef
 from app.services.kg.versioning import KgVersioningService
+from app.services.ontology import extraction_type_vocabulary
 from app.services.parsing import MineruApiError, MineruClient
 from app.services.parsing.page_index import build_page_index
 from app.storage import (
@@ -69,6 +70,16 @@ from app.tasks.types import TaskExecutorFn, TaskSpec
 
 #: 可重试的异常类型：第三方 IO 错误（HTTP / MinerU 业务失败 / 网络与文件系统）。
 #: 业务校验失败（ValueError 等）**不**重试。
+#: M1 **当前**可真实解析的格式（MIME → 传给 MinerU 的文件后缀）。
+#:
+#: 后缀不是装饰：MinerU 云按文件名选解析器（Sprint 9.5 B2 实测口径），写错后缀
+#: 会把文件当成另一种格式解析。``text/csv`` **不在**此表——它走 B1 的确定性
+#: CSV 入图器（``scripts/ingest_attendance_csv.py``），不经 MinerU。
+_PARSE_MIME_TO_SUFFIX: dict[str, str] = {
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+}
+
 _RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     asyncio.TimeoutError,
     ConnectionError,
@@ -187,8 +198,11 @@ async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None
     - 产物键：``{org_id}/{doc_id}/parse/{full.md, content_list.json}``
       （与原文件同前缀族，继承 ADR-0003 租户隔离；Sprint 6 批次 B 的
       Chunk 证据节点与批次 B 的 LangExtract 以此为输入）；
-    - docx / csv：**跳过结构化解析**（S10 / S9 承接，plan §15.3），
-      照常推进 completed——与 v1.0.0 行为一致，仅由日志显式登记。
+    - docx（Sprint 9.5 批次 B2 起支持）：与 PDF 走**同一条** MinerU 链路，
+      区别仅是上传文件名后缀为 ``.docx``；
+    - csv / 其它不在 :data:`_PARSE_MIME_TO_SUFFIX` 内的格式：**跳过解析**，
+      照常推进 completed——由日志显式登记（``text/csv`` 走
+      ``scripts/ingest_attendance_csv.py`` 的确定性入图，不经 MinerU）。
 
     v1.1.0 后续批次（原「Sprint 3 后段」计划顺延）：
     1. ``entity_relation_extract_v1`` 提示词驱动的实体抽取（批次 B）；
@@ -201,7 +215,8 @@ async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None
         if document is None:
             return
 
-        if document.mime_type != "application/pdf":
+        suffix = _PARSE_MIME_TO_SUFFIX.get(document.mime_type)
+        if suffix is None:
             logger.bind(
                 trace_id=str(payload.get("trace_id", "")),
                 document_id=str(document_id),
@@ -226,7 +241,8 @@ async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None
                 "（当前仅支持 'mineru_cloud'）"
             )
 
-        # 文件名不使用原始上传名（M5 §4.5：文件名不得明文外发）
+        # 文件名不使用原始上传名（M5 §4.5：文件名不得明文外发）；
+        # 后缀是解析器的选择依据，见 _PARSE_MIME_TO_SUFFIX 注释
         client = MineruClient(
             base_url=settings.mineru_api_base,
             token=settings.mineru_token,
@@ -236,8 +252,8 @@ async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None
             poll_interval_seconds=settings.mineru_poll_interval_seconds,
             poll_timeout_seconds=settings.mineru_poll_timeout_seconds,
         )
-        result = await client.parse_pdf(
-            content=content, display_name=f"{document_id}.pdf"
+        result = await client.parse_document(
+            content=content, display_name=f"{document_id}.{suffix}"
         )
 
         storage.put(
@@ -472,7 +488,18 @@ async def _do_extract(
             ) from exc
         markdown = markdown_bytes.decode("utf-8")
 
-        client = LangextractClient.from_settings()
+        # Sprint 9.5 批次 B2（M6 §5.2）：``entity_types`` / ``relation_types``
+        # 从该 org 的 active 本体读出并注入 Prompt——**不新增 Prompt 版本**。
+        # 无本体时 ``extraction_type_vocabulary`` 返回空元组，客户端回落内置枚举。
+        entity_types, relation_types = extraction_type_vocabulary(
+            db=db, org_id=document.org_id
+        )
+        client = LangextractClient.from_settings(
+            entity_types=entity_types,
+            relation_types=relation_types,
+            # 调用方可按文档类型指定切片粒度（制度文档要沿条款切，见 Sprint 9.5 B2）
+            max_chars_per_chunk=payload.get("max_chars_per_chunk"),  # type: ignore[arg-type]
+        )
         # Sprint 7.0：``extraction_engine='llm'`` 时本函数是**同步阻塞**的（逐 chunk
         # 串行调 LLM，一份年报可跑数分钟）。放进工作线程，避免占住事件循环——
         # 否则一次抽取会把整个 uvicorn 的请求处理全卡住。异常语义不变。

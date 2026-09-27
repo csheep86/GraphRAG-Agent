@@ -10,7 +10,9 @@
   ``mock`` 正则占位器仅供 CI 注入，未知档同样显式报错）；
 - :class:`LangextractError`：业务错误（与 :class:`MineruApiError` 对位）；
 - :class:`ExtractionResult`：抽取产物（entities / relations 严格 JSON Schema，
-  见 ``prompts/kg_extraction_v2.md``；``failed_chunks`` 记录被跳过的 chunk）。
+  见 ``prompts/kg_extraction_v2.md``；``failed_chunks`` 记录被跳过的 chunk）；
+- :class:`TypeVocabulary`：一次抽取所用的类型词表（Sprint 9.5 批次 B2，M6 §5.2
+  参数化注入——换业务域时把它换成本体读数，Prompt 文件不动）。
 """
 
 from app.services.extraction.langextract import (
@@ -18,6 +20,7 @@ from app.services.extraction.langextract import (
     FailedChunk,
     LangextractClient,
     LangextractError,
+    TypeVocabulary,
 )
 
 __all__ = [
@@ -25,4 +28,5 @@ __all__ = [
     "FailedChunk",
     "LangextractClient",
     "LangextractError",
+    "TypeVocabulary",
 ]

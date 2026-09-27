@@ -11,7 +11,8 @@
 7. （批次 A）completed 回填 ``storage_key``（M1 §4.1）；
 8. （批次 A / B1 修复）重试计数回写 ``retry_count``；
 9. （批次 A）PDF 真实路径：MinerU 客户端（mock）→ 产物落存储层；
-10. （批次 A）docx 跳过结构化解析（S10 承接）。
+9b. （Sprint 9.5 批次 B2）docx 走同一条链路，后缀传 ``.docx``；
+10. 未登记格式（csv）跳过解析但照常推进状态机。
 
 **隔离策略**：
 
@@ -156,12 +157,11 @@ def test_executor_pushes_pending_to_completed(
 ) -> None:
     """``pending → processing → completed`` 完整推进；无异常时 ``error_*`` 清空。
 
-    用 docx（跳过 MinerU 的快路径）隔离状态机本身；PDF 真实路径见第 9 节。
+    用 csv（**未登记解析格式** ⇒ 跳过 MinerU 的快路径）隔离状态机本身；
+    PDF / docx 真实路径见第 9 / 9b 节。docx 自 Sprint 9.5 B2 起已走 MinerU，
+    不再适合当"跳过"样本。
     """
-    document_id = seed_document(
-        "pending",
-        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
+    document_id = seed_document("pending", mime_type="text/csv")
 
     asyncio.run(document_parse_executor(_make_spec(document_id)))
 
@@ -434,7 +434,7 @@ def test_do_parse_pdf_stores_artifacts(
         def __init__(self, **kwargs: Any) -> None:
             seen["kwargs"] = kwargs
 
-        async def parse_pdf(
+        async def parse_document(
             self, *, content: bytes, display_name: str
         ) -> MineruParseResult:
             seen["content"] = content
@@ -485,7 +485,7 @@ def test_executor_pdf_path_completes_with_artifacts(
         def __init__(self, **kwargs: Any) -> None:
             pass
 
-        async def parse_pdf(
+        async def parse_document(
             self, *, content: bytes, display_name: str
         ) -> MineruParseResult:
             return MineruParseResult(markdown="md", content_list_json="[]")
@@ -506,21 +506,83 @@ def test_executor_pdf_path_completes_with_artifacts(
 
 
 # --------------------------------------------------------------------------- #
-# 10. （批次 A）docx 跳过结构化解析（S10 承接）
+# 9b. （Sprint 9.5 批次 B2）docx 走同一条 MinerU 链路
 # --------------------------------------------------------------------------- #
 
 
-def test_executor_skips_non_pdf_parse(
+def test_do_parse_docx_stores_artifacts_with_docx_suffix(
     seed_document: Callable[..., UUID],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """docx：跳过 MinerU，照常 completed，不产生 parse/ 产物。"""
-    from app.storage import build_parse_artifact_key, get_storage
+    """docx：与 PDF 同流程，唯一差别是传给 MinerU 的文件后缀为 ``.docx``。
+
+    后缀不是装饰——MinerU 云按文件名选解析器，写成 ``.pdf`` 会把 docx 当 PDF 解。
+    """
+    from app.services.parsing import MineruParseResult
+    from app.storage import build_parse_artifact_key, build_storage_key, get_storage
+    from app.tasks.registry import _do_parse
 
     settings = get_settings()
     document_id = seed_document(
         "pending",
         mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+    # 键必须与 ``_insert_document`` 里落库行的 ``filename_hash`` 一致，
+    # 否则 ``_do_parse`` 取不到源文件
+    source_key = build_storage_key(
+        org_id=settings.default_org_id,
+        doc_id=document_id,
+        filename_hash=hashlib.sha256(b"contract.pdf").hexdigest(),
+    )
+    get_storage().put(source_key, b"PK\x03\x04-fake-docx")
+
+    seen: dict[str, Any] = {}
+
+    class _FakeMineruClient:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def parse_document(
+            self, *, content: bytes, display_name: str
+        ) -> MineruParseResult:
+            seen["content"] = content
+            seen["display_name"] = display_name
+            return MineruParseResult(
+                markdown="# 考勤制度", content_list_json='[{"type":"text"}]'
+            )
+
+    monkeypatch.setattr("app.tasks.registry.MineruClient", _FakeMineruClient)
+
+    asyncio.run(
+        _do_parse(document_id=document_id, payload={"document_id": str(document_id)})
+    )
+
+    assert seen["content"] == b"PK\x03\x04-fake-docx"
+    assert seen["display_name"] == f"{document_id}.docx"
+
+    storage = get_storage()
+    md_key = build_parse_artifact_key(
+        org_id=settings.default_org_id, doc_id=document_id, filename="full.md"
+    )
+    assert (
+        storage.get(md_key, org_id=settings.default_org_id).decode("utf-8")
+        == "# 考勤制度"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 10. 未在 _PARSE_MIME_TO_SUFFIX 登记的格式：跳过解析但照常 completed
+# --------------------------------------------------------------------------- #
+
+
+def test_executor_skips_unregistered_mime_parse(
+    seed_document: Callable[..., UUID],
+) -> None:
+    """csv：跳过 MinerU，照常 completed，不产生 parse/ 产物。"""
+    from app.storage import build_parse_artifact_key, get_storage
+
+    settings = get_settings()
+    document_id = seed_document("pending", mime_type="text/csv")
 
     asyncio.run(document_parse_executor(_make_spec(document_id)))
 

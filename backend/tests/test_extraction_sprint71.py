@@ -221,6 +221,117 @@ def test_v2_legacy_types_do_not_regress() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 1b. Sprint 9.5 批次 B2：类型词表由本体参数化注入（**不新增 Prompt 版本**）
+# --------------------------------------------------------------------------- #
+
+_ATTENDANCE_VOCAB = lx.TypeVocabulary(
+    entity_types=("EMPLOYEE", "WORK_TIME_SYSTEM", "POLICY_CLAUSE"),
+    relation_types=("APPLIES_WORK_TIME", "GOVERNED_BY"),
+)
+
+_ATTENDANCE_PAYLOAD: dict[str, object] = {
+    "entities": [
+        {
+            "id": "ent_001",
+            "canonical_name": "员工加班须提前审批",
+            "entity_type": "POLICY_CLAUSE",
+            "mention": "员工加班须提前审批",
+            "confidence": 0.9,
+        },
+        {
+            "id": "ent_002",
+            "canonical_name": "综合计算工时制",
+            "entity_type": "WORK_TIME_SYSTEM",
+            "mention": "综合计算工时制",
+            "confidence": 0.88,
+        },
+    ],
+    "relations": [
+        {
+            "id": "rel_001",
+            "source_entity_id": "ent_001",
+            "target_entity_id": "ent_002",
+            "relation_type": "GOVERNED_BY",
+            "evidence": "本条款适用于综合计算工时制",
+            "confidence": 0.85,
+        }
+    ],
+}
+
+
+def test_vocabulary_replaces_builtin_types_in_prompt() -> None:
+    """注入本体词表后，Prompt 里应**只有**本体类型，不得与内置枚举混杂。"""
+    seen: list[str] = []
+
+    def _invoke(prompt: str) -> str:
+        seen.append(prompt)
+        return json.dumps(_ATTENDANCE_PAYLOAD, ensure_ascii=False)
+
+    _client(
+        llm_invoker=_invoke, type_vocabulary=_ATTENDANCE_VOCAB
+    ).extract_entities_relations(
+        document_id=uuid4(),
+        full_md_text="员工加班须提前审批。适用于综合计算工时制。",
+        trace_id=uuid4(),
+    )
+
+    rendered = seen[0]
+    # 占位符处必须是**本体自己的**枚举串（模板正文里残留类型名属正常，
+    # 那是 v2 文档的举例；关键看注入点不能被内置枚举占位）
+    assert "|".join(_ATTENDANCE_VOCAB.entity_types) in rendered
+    assert "|".join(_ATTENDANCE_VOCAB.relation_types) in rendered
+    assert "|".join(lx.ENTITY_TYPES) not in rendered, "内置实体枚举串不应出现在注入点"
+    assert "|".join(lx.RELATION_TYPES) not in rendered, "内置关系枚举串不应出现在注入点"
+
+
+def test_vocabulary_validates_types_from_same_source() -> None:
+    """喂给 Prompt 的枚举**必须就是**校验用的枚举（同源，否则会串味）。"""
+    result = _client(
+        llm_invoker=_invoker_returning(_ATTENDANCE_PAYLOAD),
+        type_vocabulary=_ATTENDANCE_VOCAB,
+    ).extract_entities_relations(
+        document_id=uuid4(),
+        full_md_text="员工加班须提前审批。适用于综合计算工时制。",
+        trace_id=uuid4(),
+    )
+
+    assert [e.entity_type for e in result.entities] == [
+        "POLICY_CLAUSE",
+        "WORK_TIME_SYSTEM",
+    ]
+    assert result.relations[0].relation_type == "GOVERNED_BY"
+
+
+def test_vocabulary_downgrades_out_of_vocabulary_types() -> None:
+    """本体外的类型仍按既有口径降级 RELATED（原始名只进日志，不得臆造类型）。"""
+    payload = {
+        "entities": [
+            {
+                "id": "ent_001",
+                "canonical_name": "北京青云科技有限公司",
+                "entity_type": "ORG",  # 内置类型，但不在考勤本体里
+                "mention": "北京青云科技有限公司",
+                "confidence": 0.9,
+            }
+        ],
+        "relations": [],
+    }
+    result = _client(
+        llm_invoker=_invoker_returning(payload),
+        type_vocabulary=_ATTENDANCE_VOCAB,
+    ).extract_entities_relations(
+        document_id=uuid4(), full_md_text="北京青云科技有限公司", trace_id=uuid4()
+    )
+    assert result.entities[0].entity_type == "RELATED"
+
+
+def test_default_vocabulary_is_builtin() -> None:
+    """未注入本体 ⇒ 内置 v2 枚举（既有行为零回归；既有用例依赖此默认）。"""
+    assert lx.DEFAULT_VOCABULARY.entity_types == lx.ENTITY_TYPES
+    assert lx.DEFAULT_VOCABULARY.relation_types == lx.RELATION_TYPES
+
+
+# --------------------------------------------------------------------------- #
 # 2. 单 chunk 容错
 # --------------------------------------------------------------------------- #
 

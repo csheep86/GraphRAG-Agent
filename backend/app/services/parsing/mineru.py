@@ -13,7 +13,12 @@
   （M1 §3 验收 4），双层重试会放大等待；本类只抛可重试异常
   （:class:`MineruApiError` / httpx 错误），重试策略统一交给调用方。
 - 文件名不使用原始上传名（M5 §4.5 敏感纪律）：对外仅暴露调用方给的
-  ``display_name``（约定为 `{doc_id}.pdf`）。
+  ``display_name``（约定为 ``{doc_id}.<扩展名>``）。
+
+**格式由 ``display_name`` 的扩展名决定**（Sprint 9.5 批次 B2 实测反哺）：
+MinerU 云按文件名后缀选解析器，``.pdf`` / ``.docx`` 走的是**完全相同**的
+四步流程 —— 本客户端因此**不做格式分支**，mime → 扩展名的判断由调用方
+``app.tasks.registry._do_parse`` 承担，避免两侧各维护一份格式清单。
 """
 
 from __future__ import annotations
@@ -65,10 +70,15 @@ class MineruClient:
         # transport 仅测试注入（httpx.MockTransport）；生产恒为 None
         self._transport = transport
 
-    async def parse_pdf(
+    async def parse_document(
         self, *, content: bytes, display_name: str
     ) -> MineruParseResult:
-        """上传并解析一个 PDF，返回 markdown + content_list 原文。"""
+        """上传并解析一个文件，返回 markdown + content_list 原文。
+
+        ``display_name`` **必须带正确的扩展名**（``{doc_id}.pdf`` /
+        ``{doc_id}.docx``）：MinerU 云据此选择解析器，后缀错误会被当成别的格式
+        解析。支持哪些后缀以云侧为准——本类不内置清单，脏活交给调用方。
+        """
         if not self._token:
             raise MineruApiError("未配置 MINERU_TOKEN（.env），无法执行云解析")
 

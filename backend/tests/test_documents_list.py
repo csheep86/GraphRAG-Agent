@@ -9,7 +9,11 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
+
+import app.tasks.registry as registry
+from app.services.parsing import MineruParseResult
 
 PDF = ("合同.pdf", b"%PDF-1.4 minimal", "application/pdf")
 DOCX = (
@@ -17,6 +21,29 @@ DOCX = (
     b"PK\x03\x04 docx bytes",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 )
+
+
+class _FakeMineruClient:
+    """假解析器：**docx 自 Sprint 9.5 批次 B2 起也走 MinerU**，不打桩则无 token
+    的测试环境会把上传推到 failed，`status=completed` 过滤用例也就随之失色。"""
+
+    def __init__(self, **_kwargs: object) -> None:
+        pass
+
+    async def parse_document(
+        self, *, content: bytes, display_name: str
+    ) -> MineruParseResult:
+        return MineruParseResult(markdown="# 假解析", content_list_json="[]")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _stub_parser() -> object:
+    """模块级打桩：让上传的 PDF / docx 都能确定性地推进到 completed。"""
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(registry, "MineruClient", _FakeMineruClient)
+    yield
+    patcher.undo()
+
 
 #: 契约字段集（与 `contracts/openapi.yaml` 对齐），用于「不多不少」回归断言
 DOCUMENT_LIST_ITEM_KEYS = {
@@ -96,7 +123,7 @@ def test_list_pagination_meta_always_present(
 
 
 def test_list_filter_by_status(client: TestClient, dev_headers: dict[str, str]) -> None:
-    """按 `status` 过滤：上传 docx（解析跳过 → completed）。"""
+    """按 `status` 过滤：上传 docx（解析器已打桩 → completed）。"""
     task_id = _upload(client, dev_headers, DOCX)
 
     # 默认不过滤 → 看到它
