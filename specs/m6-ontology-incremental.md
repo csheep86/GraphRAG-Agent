@@ -71,6 +71,9 @@
 
 10. **WHEN** 任意 M6 接口被调用，**THEN** 日志携带 `trace_id`（经 M5 注入），**AND** 严禁 LLM 自动修改 `ontology_schemas`（必须经 GUI 用户确认，对应 GAP-F2）。
 11. **WHEN** 任意 M6 接口被调用，**THEN** 校验用户对该 `org_id` 的校正权限（按 `user_roles.scene_scope = "ontology"`，**新增** scene，与 M5 §4.3 对齐），**AND** 跨 org 访问由 **ADR-0003 RLS** 拦截（**FORCE ROW LEVEL SECURITY + 受限 DB 角色 + `SET LOCAL app.current_org`**，详见 §18.1 C 承接）。
+12. **WHEN** 新建租户（`org`）后**首次抽取**且该 org **无 `active` schema**，**THEN** 系统使用**内置默认 schema**（= 抽取 Prompt 的内置枚举）执行抽取，**AND** **不阻断**抽取、**不让 LLM 自行决定实体 / 关系类型**，**AND** 内置默认 schema **不写入** `ontology_schemas`（守验收 1「未确认不写入」语义），**AND** 创建 org 受 License `limits.max_orgs` 约束（[**ADR-0006**](../docs/adr/ADR-0006-license-control.md) §2.4 维度 1），**AND** 跨 org 的 schema **互不可见且互不影响**（ADR-0003 RLS）。
+
+> **验收 12 于 2026-09-27 追加**（编号只追加不重排，守 `dev-doc-status.md` R5）。它回答"**不同客户定义不同业务域**"这一产品需求的初始化口径——绑定与链路见 **§4.6**。
 
 ---
 
@@ -154,6 +157,31 @@
 - `:Entity.aliases` 复用 M2 §4.3（验收 5 重命名动作写入）
 - `:Entity` 的 `id, kg_version` 仍为 MERGE 幂等键（沿用 ADR-0002 §3.1）
 
+### 4.6 租户 ↔ 业务域的绑定与初始化链路（**2026-09-27 补**）
+
+> **回答的产品需求**：「**可根据不同客户定义不同的业务域**」。
+
+**绑定关系（一行说清）**：`ontology_schemas.org_id` = 租户 ⇒ **每个客户（org）一套独立本体**，与 §1「**不做**跨租户本体共享」一致（ADR-0003：每 org 独立 schema）。A 客户是财务域、B 客户是法务域，**互不影响**。
+
+**新客户（新 org）初始化链路**：
+
+```text
+1. 建 org                      ← ADR-0003；受 License max_orgs 约束（ADR-0006 §2.4）
+2. POST /ontology/cold-start   ← 入参 domain_description = 该客户的业务域描述
+                                  → 仅"建议"（验收 1），未确认不写入
+3. GUI 人工确认                ← 写 ontology_schemas(status=active, version=1)
+4. M2 抽取                     ← 从该 org 的 active schema 读 entity_types / relation_types
+```
+
+**两个必须钉死的口径**：
+
+| 情形 | 口径 |
+|---|---|
+| **未确认前怎么抽** | 用**内置默认 schema**（抽取 Prompt 内置枚举），**不阻断**、**不让 LLM 自定类型**；默认 schema **不写入** `ontology_schemas`（否则"未确认即生效"，违反 GAP-F2） |
+| **换域（重新冷启动）** | 新版本落 `version + 1`、旧版本置 `superseded`；**已抽取的历史图谱不回溯重算**（增量重算只针对后续校正动作，§3.3 验收 6）——换域属重大变更，需走人工确认 + 全量重建决策 |
+
+**与 License 的关系**：`connectors` 等模块级能力（ADR-0006 §3.3）在模块未授权时由 License 中间件拦截，**不属于本体域配置**。
+
 ---
 
 ## 5. 模块间依赖关系
@@ -210,23 +238,16 @@
 
 ---
 
-## 7. 与 PRD §2 口径冲突的说明（**v0.1 草案专属**）
+## 7. 与 PRD §2 的口径（**已闭环，2026-09-27 复核**）
 
-> **本节为 v0.1 草案专属说明**，定稿时（v1.0）删除。
+**结论：无冲突，M6 = P0，Sprint 12 承接，不降级。**
 
-PRD §2（`docs/03-prd.md:55`）当前写"**M6 | 本体管理与增量更新 | P1（不在本期 MVP） | —**"——M6 不在 MVP 1.0 范围。
+| 时间 | 状态 |
+|---|---|
+| 2026-09-21 | PRD §2 M6 行由「P1（不在本期 MVP）」修订为「**P0（口径修订）**」，依据 `v1.1.0-demo-mvp-plan.md` §15.1 第 5 行 v3.0 裁决；同步记录见 `dev-doc-status.md` **F9**（R1 根因已闭环） |
+| 2026-09-27 | 用户明确口径：**"不用理会 MVP 演示，按方案来"** ⇒ **M6 属交付范围，S12 不做降级、不因演示需要而裁剪** |
 
-但 `docs/v1.1.0-demo-mvp-plan.md` §15.1 第 5 行（v3.0 变更）已把"**完整 M6**"吸收进 MVP 1.0，由 Sprint 12 承接：
-
-> 旧口径：M6 不在 MVP
-> v3.0 裁决：**完整 M6 进入 MVP**（C3 的验证载体）
-> 承接：S12
-
-**本 spec 落地即兑现 v3.0 承诺**。
-
-**建议同步动作**（不在本草案范围内）：
-- Sprint 12 启动前同步更新 PRD §2 状态行 / 表格（"P1 → P0，Sprint 12 承接"）；
-- 附录 C 落清单加 `specs/m6-ontology-incremental.md`（与 5 份 spec 同列）。
+本 spec 原本节（v0.1 草案专属）称「PRD §2 写 P1」已**过期**——该表述在 F9 闭环后即失效，本次按事实更正，**不保留旧口径**（避免后人照旧口径又改回去，与矩阵 §3.4「`confidence` 未落库」同款教训）。
 
 ---
 

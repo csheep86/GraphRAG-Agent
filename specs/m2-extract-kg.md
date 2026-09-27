@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m2
 > **版本**：v1.0
-> **状态**：MVP 规格（v1.0.0 已交付；**v1.2.0 / Sprint 6 落地 `:Chunk` 证据节点**（原文片段 + `page` / `char_start` / `char_end` + `acl_scope`；`acl_scope` **只落属性、查询不做穿透过滤** → S11）；**2026-09-24 补做 S6 侧验收对账**——逐条见 `docs/acceptance-traceability-matrix.md` §3.4，**并更正「`confidence` 不落库」这一过期口径（实测已落库）**；实现态与缺口见 `backend/CODEBUDDY.md` §4 与本文件 §6）
+> **状态**：MVP 规格（**2026-09-27 追加**：§3 **验收 8 / 9 / 10**（知识时效，双时态四字段 + 确定性仲裁）与 §4.6 时态字段，依据 **[ADR-0005](../docs/adr/ADR-0005-temporal-knowledge-model.md)**，承接 **S9（L0 批次 A / L1 schema 冻结首日）**；编号按矩阵 §7 第 1 条**只追加不重排**；v1.0.0 已交付；**v1.2.0 / Sprint 6 落地 `:Chunk` 证据节点**（原文片段 + `page` / `char_start` / `char_end` + `acl_scope`；`acl_scope` **只落属性、查询不做穿透过滤** → S11）；**2026-09-24 补做 S6 侧验收对账**——逐条见 `docs/acceptance-traceability-matrix.md` §3.4，**并更正「`confidence` 不落库」这一过期口径（实测已落库）**；实现态与缺口见 `backend/CODEBUDDY.md` §4 与本文件 §6）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M2
 > **关联 Prompts**：`prompts/chunk_summary_v1.md`、`prompts/entity_relation_extract_v1.md`
 > **关联研究结论**：`01-research.md` §1.4 P3（应用能力）、§3.1.2 能力 2–3；假设 A3 / A4
@@ -50,8 +50,16 @@
 5. **WHEN** 抽取过程中 LangExtract 抛错或超时，**THEN** tenacity 指数退避重试 ≤ 3 次（初始 1s、倍数 2），**AND** 最终失败触发 M5 审计 `extract.fail` 事件，**AND** `documents.status` 置为 `failed` 且 `error_code` 落库。
 6. **WHEN** 抽取完成且 `kg_version` 落库，**THEN** M2 投递索引更新事件（`kg_version` 标识），**AND** M3 / M4 可立即消费该版本。
 7. **WHEN** 任意接口被调用，**THEN** 日志携带 `trace_id`，**AND** token 用量与耗时字段打点（用于成本仪表盘，对应准入线 C3）。
+8. **WHEN** 文档进入抽取，**THEN** `Document.document_date`（披露文件签署日 / 报告期日）被解析并落库（**取不到则留 `NULL`，禁止猜测**），**AND** 该日期作为本批次抽取的**默认事实日期**传入抽取链路（**ADR-0005 §4**）。
+9. **WHEN** 抽取产出一条关系，**THEN** 该关系携带 `valid_from` / `valid_to` / `created_at` / `expired_at` / `source_document_id` 五属性（**ADR-0005 §4**），**AND** `valid_from` 在文本无显式日期时**取 `document_date`**、文本显式写了期间时取文本值，**AND** `valid_to` 仅在文本显式写了失效 / 期间终点时才有值（**否则 `NULL`，禁止推断区间**，规则 R4），**AND** `valid_from` 覆盖率 ≥ **0.90**（`temporal_poc` 实测基线 = **1.00**）。
+10. **WHEN** 写入 Neo4j 时同一 `(head, relation_type)` 出现 `valid_from` **更晚**的新事实，**THEN** 旧边的 `valid_to` 被置为新事实的 `valid_from`、`expired_at` 置为写入时刻（规则 R1），**AND** 旧边**不被物理删除**（as-of 查询仍可查到），**AND** 「当前有效」查询（`valid_to IS NULL`）**返回且仅返回一条**该 `(head, relation_type)` 的边，**AND** 同一批次（同一文档）内写入的边**互不失效**（规则 R3），**AND** 同一 `valid_from` 的多条边按规则 R2 保留原文中最晚出现的 `tail`。
 
 > **关联 MVP 准入线**：A3（解析质量实测）/ A4（抽取 precision ≥ 0.85）；C1（增益 ≥ 10%）/ C2（召回 ≥ 0.80）/ C3（成本可控）。
+>
+> **验收 8–10 的时效判据与重跑方式**（可复现）：`temporal_poc/corpus.py` 两期语料 →
+> `temporal_poc/run_track_s.py`（n ≥ 3，**要求 3/3**：当前值正确 + as-of 回溯正确 + 历史保留）。
+> 该脚本是**验收 9 / 10 的机械判据原型**，落地时迁入 `backend/tests/`。
+> 判分口径注意**去空格归一**（模型对「陆家嘴环路 500 号」是否带空格不稳定，不去空格会把"答对"误判为"答错"）。
 
 ---
 
@@ -128,6 +136,48 @@
 > M6 落地前须**先升版本表**并走**契约同步 5 步**：① Pydantic 枚举加 `applied` → ② `uv run python scripts/export_openapi.py` 重导契约 → ③ 提交生成物 → ④ `npm run gen:api` 重导前端类型 → ⑤ CI 零漂移校验。详见 `specs/m6-ontology-incremental.md` §4.4。
 >
 > **本注脚只声明预留位，不改变 M2 自身的实现范围与验收口径。**
+
+### 4.6 时态字段（**ADR-0005**，S9 承接）
+
+> 依据 **[ADR-0005 知识图谱时效模型](../docs/adr/ADR-0005-temporal-knowledge-model.md)**。
+> 路线 = **自研双时态 + 确定性仲裁**（双轨 PoC 实测：自研过期治理 **3/3** vs Graphiti **0/3**，见 ADR §3）。
+> 本小节只定义**字段与规则**，实现的分期见 `docs/optimization-plan-2026-09.md` §3 P3。
+
+#### 4.6.1 四字段双时态（落在**关系**上）
+
+| 字段 | 维度 | 类型 | 空值语义 |
+|---|---|---|---|
+| `valid_from` | 事实维 | DATE | 不可空；无显式日期取 `document_date`（R4） |
+| `valid_to` | 事实维 | DATE | **`NULL` = 仍有效** |
+| `created_at` | 摄入维 | TIMESTAMP | 不可空（本条边写入时刻） |
+| `expired_at` | 摄入维 | TIMESTAMP | `NULL` = 仍是当前边 |
+| `source_document_id` | 血缘 | UUID | 不可空（事实来源文档） |
+
+**两套维度必须分开**：事实维 = 现实中成立区间（来自文档）；摄入维 = 系统何时知道 / 被推翻。
+**与 `kg_version` 正交**：`kg_version` 是图谱**快照**批次，四字段是**单条事实**成立区间，**不得互相替代**。
+
+#### 4.6.2 仲裁规则（确定性，不依赖 LLM / Embedding）
+
+| # | 规则 | 动作 |
+|---|---|---|
+| **R1** | 跨文档：新事实 `valid_from` **严格晚于**旧边 | 旧边 `valid_to := 新边.valid_from`；`expired_at := 写入时刻` |
+| **R2** | 同文档变更句：同 `(head, relation_type)` 且 `valid_from` 相同 | 保留 `tail` 在原文中**最晚出现**者；其余 `valid_to := valid_from` |
+| **R3** | 禁止同批次互封 | 失效动作不作用于同批次（同一文档）内刚写入的边 |
+| **R4** | 不猜值 | 无显式日期 ⇒ `valid_from := document_date`、`valid_to := NULL` |
+
+> ⚠️ **R3 是实测踩出来的**（`temporal_poc/README.md` §4 坑 5）：首版用 `<=` 且不排除同批次，
+> 「由张三变更为李四」先写出的新值边会被后写出的旧值边**反过来封掉**，当前值全线阵亡。
+> **照抄时不要"顺手优化"掉 R3。**
+
+#### 4.6.3 有效期策略表（`relation_type → 策略`，L1 交付）
+
+| 策略 | 含义 | 适用（初稿，随 M6 本体收敛） |
+|---|---|---|
+| `volatile` | 易变，新事实到达即封旧边 | `LEGAL_REP`、`REGISTERED_AT`、`AFFILIATED_WITH`、`OPERATES_SEGMENT` |
+| `stable` | 稳定，同值重复出现不另建边 | `PARTY_TO`、`HAS_FINANCIAL_INDICATOR`（带报告期，按 `valid_from` 区分年度） |
+
+> **配置纪律**：该表落 `backend/app/core/config.py`（可经 `.env` 覆盖），
+> **必须有消费点**——无消费者的配置不得提交（CODEBUDDY「功能预留原则」第 6 条）。
 
 ---
 

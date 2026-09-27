@@ -11,7 +11,7 @@
 
 > **⚠️ 文档适用边界（2026-09-21 标注，先读这一段）**
 >
-> 1. **覆盖范围**：本指南当前覆盖 **阶段一 ～ 阶段十七 = Sprint 1 ～ 8**（至 tag `v1.4.0`）。**阶段十八 ～ 二十二（Sprint 9 ～ 13，至 `v2.0.0`）尚未编写**（缺口登记：`docs/v2.0.0-ship-backward-plan.md` §5.2 **D-4**）。
+> 1. **覆盖范围**：本指南当前覆盖 **阶段一 ～ 阶段十八 = Sprint 1 ～ 9**（至 tag `v1.5.0`；**阶段十八于 2026-09-27 补写**，含**知识时效改造**，依据 `docs/adr/ADR-0005-temporal-knowledge-model.md`）。**阶段十九 ～ 二十二（Sprint 10 ～ 13，至 `v2.0.0`）尚未编写**（缺口登记：`docs/v2.0.0-ship-backward-plan.md` §5.2 **D-4**）。
 > 2. **口径优先级**：Sprint 9 ～ 13 的**排期、闸门与验收口径**，以 `docs/v1.1.0-demo-mvp-plan.md`（**v3.0**）与 `docs/v2.0.0-ship-backward-plan.md` 为**唯一真源**；本指南若与二者冲突，**以二者为准**。
 > 3. **交付口径修订**：**`v1.4.0` 是中途演示点（Demo），不是交付版**；**最终交付 = `v2.0.0`（Sprint 13）**。本指南中凡出现"Demo-MVP 完成点 / 完成"的表述，均按此修订理解。
 > 4. **验收对账**：逐条判据（谁验、怎么验、到哪一步）见 `docs/acceptance-traceability-matrix.md`。
@@ -39,7 +39,7 @@
 
 **以下为 PRD MVP 1.0 追加段（plan v3.0 新增，阶段十八～二十二，本指南尚未展开，口径见 `docs/v1.1.0-demo-mvp-plan.md` §16～§20）**：
 
-- Sprint 9 分支：`feature/sprint-9`（M4 完整化：四源对齐 + PRD 三类算法 + 实体消解，tag v1.5.0）
+- Sprint 9 分支：`feature/sprint-9`（M4 完整化：四源对齐 + PRD 三类算法 + 实体消解 **+ 知识时效改造 L0/L1（ADR-0005，首日 schema 冻结为硬闸门）**，tag v1.5.0）
 - Sprint 10 分支：`feature/sprint-10`（证据链与多跳：≥3 跳 + Chunk 真实引用 + docx，tag v1.6.0）
 - Sprint 11 分支：`feature/sprint-11`（M5 完整化 + RLS 全量 + 内网双轨，tag v1.7.0）
 - Sprint 12 分支：`feature/sprint-12`（M6 完整版：本体冷启动 + 校正 GUI + 增量重算 + 成本仪表盘，tag v1.8.0）
@@ -5191,6 +5191,110 @@ npm.cmd run lint && npm.cmd run typecheck && npm.cmd run gen:api && npm.cmd run 
 
 ---
 
+## 阶段十八：四源对齐 + 时态知识图谱（Sprint 9，tag v1.5.0）
+
+> **本阶段是本指南首个"PRD MVP 1.0 追加段"章节**，对应 plan v3.0 §16。
+> 口径真源仍是 `docs/v1.1.0-demo-mvp-plan.md`；本阶段新增的**时态改造**依据
+> **[`docs/adr/ADR-0005-temporal-knowledge-model.md`](./adr/ADR-0005-temporal-knowledge-model.md)**（**必读**）。
+
+### 18.0 阶段定位与原则
+
+目标：M4 完整化（四源对齐 + 三类算法 + 金额不一致 + 实体消解）**并**把图谱从"静态"改造成"带时效"。
+约 3 周，分支 `feature/sprint-9`。
+
+**本次与以往最大不同：首日即硬闸门。**
+
+```
+S9 首日 = schema 冻结日
+  ├─ 四源节点 / 边 schema 冻结
+  ├─ 时态四字段冻结（valid_from / valid_to / created_at / expired_at + source_document_id）
+  ├─ Document.document_date 冻结
+  └─ relation_type → 有效期策略 配置表冻结
+  错过 ⇒ 四源对齐做完再补时间字段 = 全链路返工
+```
+
+**时态路线（已由实测拍板，不要再讨论选型）**：**自研双时态 + 确定性仲裁，不引入 Graphiti**。
+双轨 PoC 实测（同一语料 / 同一判分 / 重复 3 轮）：
+
+| 指标 | 自研 | Graphiti |
+|---|---|---|
+| 过期治理（旧事实自动失效） | **3/3** | **1/3** → 换真实中文语义向量后 **0/3** |
+| LLM 调用 / 新增依赖 | 2 次 / **0** | 多次 / graphiti-core + Embedding + cross-encoder |
+
+根因与完整证据见 `ADR-0005 §3` 与 `temporal_poc/README.md`。
+
+### 18.1 批次划分
+
+| 批次 | 内容 | 闸门 |
+|---|---|---|
+| **A（首日）schema 冻结** | 四源节点 / 边 schema + **时态四字段 + `document_date` + 有效期策略表** 一次定稿 | **硬闸门**，定稿即写进 `specs/m2` §4.6 / §4.1 |
+| **B 时态 L0** | `Document.document_date` 落库；新增 `prompts/kg_extraction_v3.md`（**不覆盖 v2**，守 H9）产出 `valid_from` / `valid_to`；答案模板加「依据截至 X 日的披露文件」 | `kg_extraction_v2.md` 文件**未被修改**（单测守着） |
+| **C 时态 L1** | 四字段落 Neo4j 关系属性；实现仲裁 **R1–R4**；三条查询链（概览 / 子图 / 问答）默认过滤 `valid_to IS NULL`；补 as-of 查询 | 判据 = `temporal_poc/run_track_s.py` 迁入测试，**n ≥ 3 要求 3/3** |
+| **D M4 三类算法 + 金额不一致** | 连通分量 / 共享邻居 / 环路；三方金额不一致 → `amount_mismatch` | M4 §3 验收 3 / 5 |
+| **E 实体消解 + 四源对齐** | `entity_merge_candidates` 落地；`unaligned_subjects` 写入（缺口 S7.2-1） | M2 §3 验收 3；M4 §3 验收 1 |
+
+### 18.2 完整提示词（Plan 模式盘点）
+
+```Plain Text
+进入 Sprint 9 阶段十八的现状盘点（只读分析，不改代码，不落盘）。
+
+【当前背景】
+- 基线：tag v1.4.0（Demo-MVP 完成点）
+- 目标：M4 完整化 + 图谱时效改造（ADR-0005）
+- 详细计划：docs/v1.1.0-demo-mvp-plan.md §16
+- 时态决策：docs/adr/ADR-0005-temporal-knowledge-model.md（先读，不要重新选型）
+- 实验基线：temporal_poc/README.md（PoC 已跑通：自研 3/3）
+
+【本步目标（全部贴证据）】
+1. schema 冻结清单：四源节点/边 + 时态四字段 + document_date，逐项给字段名与类型
+2. document_date 的取值来源：MinerU 解析能否拿到签署日？拿不到时如何置 NULL（禁止猜测）
+3. kg_extraction_v3.md 相对 v2 的最小 diff（只加 valid_from / valid_to，枚举不动）
+4. 仲裁 R1–R4 的落点：写在 services/kg/ 的哪个函数，如何保证同批次不互封（R3）
+5. 查询侧改造点：概览 / 子图 / 问答三条链各自的 Cypher 过滤位置
+6. relation_type → 有效期策略表的消费点在哪（无消费点不得提交配置）
+7. 与 kg_version 的关系确认：二者正交，不得互相替代
+
+【约束】
+- 只读；中文回答
+- 不得重新讨论"自研 vs Graphiti"（已由 ADR-0005 拍板）
+
+【完成后输出】
+1. schema 冻结表（字段名 + 类型 + 空值语义）
+2. v3 prompt diff 预览
+3. 仲裁落点函数清单
+4. 三条查询链的 Cypher 改动点
+5. 需要用户裁决的问题清单
+```
+
+### 18.3 Sprint 9 收尾验收
+
+```PowerShell
+cd d:/AIProject/GraphRAG-Agent/backend
+uv run pytest -q               # 全绿（含时态仲裁迁入用例，n≥3 要求 3/3）
+uv run ruff check .
+uv run python scripts/check_seams.py      # 默认档 ERROR = 0
+uv run python scripts/export_openapi.py --check
+cd ../frontend
+npm.cmd run lint && npm.cmd run typecheck && npm.cmd run gen:api && npm.cmd run build
+
+# 时态专项（判据原型见 temporal_poc/）
+# 1. 两期语料：旧事实 valid_to 被封且【仍可查】，"当前有效"查询返回唯一一条
+# 2. as-of 查询：2024-06-01 → 旧值；当前 → 新值
+# 3. kg_extraction_v2.md 未被修改（git diff 应为空）
+# 4. 有效期策略表有消费点（不是死配置）
+```
+
+收尾三件套：tag `v1.5.0`，message 用 `Sprint 9 done: four-source alignment + temporal KG (L0/L1)`。
+
+### 18.4 本阶段新增铁律（写进执行纪律）
+
+1. **时态字段不是"可选优化"**：schema 冻结日不冻结 ⇒ 全链路返工，宁可推迟其它批次。
+2. **不猜值**：文本无显式日期 ⇒ `valid_from` 取 `document_date`、`valid_to` 留 `NULL`。
+3. **失效 ≠ 删除**：旧事实必须保留可查（否则 as-of 查询不成立）。
+4. **判分去空格归一**：模型对「陆家嘴环路 500 号」是否带空格不稳定，判分前先归一，否则把"答对"判成"答错"。
+
+---
+
 ## 附：Sprint 5~8 每步教什么
 
 - Sprint 5 教"预研转正"：MVP 目录的验证代码如何变成主链路服务（映射表驱动，不重写）
@@ -5211,4 +5315,7 @@ npm.cmd run lint && npm.cmd run typecheck && npm.cmd run gen:api && npm.cmd run 
 | 降级不登记 | release notes 如实写，严禁伪装成完整实现 |
 | 预留字段误入契约 | nullable 且不进契约（根 `CODEBUDDY.md` §功能预留原则）；`export_openapi.py --check` + `npm run gen:api` 无 diff 兜底 |
 | 接缝预留做成过度设计 | 只做三件便宜事；Sprint 5 批次 A2 净增硬顶 2.5 天；不做插件加载 / 连接器框架 / stub |
+| **时态字段拖到四源对齐之后做** | S9 **首日** schema 冻结即定稿（硬闸门），之后补 = 全链路返工（阶段十八 §18.0） |
+| **仲裁规则"顺手优化"掉 R3** | R3（禁止同批次互封）是实测踩出来的：去掉它，变更句会让新值边被旧值边反封，当前值全线阵亡 |
+| 失效做成物理删除 | 失效 ≠ 删除：`valid_to` / `expired_at` 标记即保留历史，删了 as-of 查询不成立 |
 

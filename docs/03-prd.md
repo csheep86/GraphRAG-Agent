@@ -5,8 +5,8 @@
 > **状态**：MVP 汇总 PRD（**v1.0.0 仅交付工程外壳，MVP 1.0 未完成**——承接 Sprint 与交付口径见 `docs/v1.1.0-demo-mvp-plan.md` §3.2 B / §15；实现态见 `backend/CODEBUDDY.md` §4；**逐条验收对账见 [`acceptance-traceability-matrix.md`](./acceptance-traceability-matrix.md)**）
 > **上游依据**：`docs/01-research.md`（v1.0）、`docs/02-product-outline.md`（v1.0）
 > **关联规格**：[specs/m1-async-ingest.md](../specs/m1-async-ingest.md)、[m2-extract-kg.md](../specs/m2-extract-kg.md)、[m3-graphqa-citation.md](../specs/m3-graphqa-citation.md)、[m4-affiliation-detection.md](../specs/m4-affiliation-detection.md)、[m5-permission-audit.md](../specs/m5-permission-audit.md)、[**m6-ontology-incremental.md**](../specs/m6-ontology-incremental.md)（v0.1 草案 → v1.0 定稿闸门见倒推文档 §7.1）、[specs/_template/](../specs/_template/)
-> **关联 ADR**：[ADR-0001 异步任务后端选型](./adr/ADR-0001-async-task-backend.md)、[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](./adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](./adr/ADR-0003-tenant-isolation-rls.md)、[ADR-0004 企业集成接缝](./adr/0004-integration-seams.md)
-> **关联计划**：`docs/v1.1.0-demo-mvp-plan.md`（交付计划 v3.0）、`docs/v2.0.0-ship-backward-plan.md`（倒推计划）、`docs/dev-doc-status.md`（文档状态跟踪）
+> **关联 ADR**：[ADR-0001 异步任务后端选型](./adr/ADR-0001-async-task-backend.md)、[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](./adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](./adr/ADR-0003-tenant-isolation-rls.md)、[ADR-0004 企业集成接缝](./adr/0004-integration-seams.md)、[ADR-0005 知识时效模型](./adr/ADR-0005-temporal-knowledge-model.md)、[**ADR-0006 License 控制与离线激活**](./adr/ADR-0006-license-control.md)
+> **关联计划**：`docs/v1.1.0-demo-mvp-plan.md`（交付计划 v3.0）、`docs/v2.0.0-ship-backward-plan.md`（倒推计划）、`docs/dev-doc-status.md`（文档状态跟踪）、[**`docs/deployment-spec.md`**（私有化部署规格）](./deployment-spec.md)
 > **技术栈**：React（**Next.js 16.3.5 + React 19 + TS + Tailwind**）+ Python 3.11 + FastAPI + Pydantic + loguru + slowapi + tenacity + MinerU + LangExtract + LangChain + Neo4j + PostgreSQL
 
 ---
@@ -30,7 +30,7 @@
 
 - **首期主用户**：中大型企业内部审计 / 外审驻场 / 财务共享中心；次级触达合规风控 / 法务合同管理。
 - **P2 横向扩展**：投研 / 行研（P1）、法务（P2）、合规（P4）、SRE / 运维（P5）（**均不进 MVP**）。
-- **交付形态**：**大型企业私域部署优先**，数据不出内网为硬约束。
+- **交付形态**：**大型企业私域部署优先**，数据不出内网为硬约束；**离线可交付 + License 控制**是商业化的两条硬前提（部署形态见 [`docs/deployment-spec.md`](./deployment-spec.md)，License 见 [`ADR-0006`](./adr/ADR-0006-license-control.md)）。
 
 ### 1.3 不做（与 `01-research.md` §2.5.2 GAP-F1–F6 对齐）
 
@@ -120,8 +120,12 @@ flowchart TD
 | **H10** | 契约先行（`contracts/openapi.yaml` 由后端 B 在实现阶段写入） | CODEBUDDY.md | 实现阶段 | 各 §"API 端点草案" |
 | **H11** | MVP 准入线 C1–C3：图谱相对 RAG 增益 ≥ 10% / 召回 ≥ 0.80 / 误报 ≤ 0.15 / 引用覆盖 = 100% / 单位成本可接受 | 01-research §3.3 + 02-product-outline §6 | M4（核心） + M3 | M4 §3 验收 6 / M3 §3 验收 2 |
 | **H12** | 反证条件 F3（引用覆盖率 < 100% → 直接 NO-GO） | 01-research §3.3 | M3 / M4 | M3 §3 验收 2 / M4 §3 验收 4 |
+| **H13** | **License 每请求校验**：四维度（租户数 / 席位数 / 功能模块 / 有效期）组合校验，超限按分级拒绝，拒绝必落审计 | 产品 / 商业化（用户 2026-09-27 拍板） | **全局中间件**（横向） | [`ADR-0006`](./adr/ADR-0006-license-control.md) §2.4 / §2.5 / §2.6 |
+| **H14** | **离线可交付**：可离线安装、可备份恢复、可版本升级（含数据库迁移） | 交付形态（PRD §1.2） | 部署 DevOps | [`docs/deployment-spec.md`](./deployment-spec.md) §4 / §6 / §7 |
 
-> **关键结论**：**H1–H10 来自项目规则**（`CODEBUDDY.md`），**H11–H12 来自产品准入线**（`01-research.md` / `02-product-outline.md`）。**任一约束被绕过都应被代码评审驳回**。
+> **关键结论**：**H1–H10 来自项目规则**（`CODEBUDDY.md`），**H11–H12 来自产品准入线**（`01-research.md` / `02-product-outline.md`），**H13–H14 来自商业化与交付形态**。**任一约束被绕过都应被代码评审驳回**。
+>
+> **H13 / H14 为 2026-09-27 追加**（编号只追加不重排，守 `dev-doc-status.md` R5）。二者**当前均未实现**（零代码），落地 Sprint = **S11（v1.7.0）**，与 M5「内网双轨」同批。
 >
 > **⚠️ 本表只有"要求"，没有"判据"**——**每条 H 的验收锚点、判据类型、可复现命令与签字人见 [`acceptance-traceability-matrix.md`](./acceptance-traceability-matrix.md) §4**。修改本表必须同步改该矩阵（三处同步纪律见矩阵 §7）。
 
@@ -213,7 +217,7 @@ flowchart TD
 | **TBD-6** | M5 慢查询 / 大查询的 trace 采样策略 | 影响可观测性成本 | **Sprint 13（批次 D）** | ⏳ 待定 | 收敛时点已定：同上 | M5 | — |
 | **TBD-7** | 反证条件 F4（单位成本）的具体阈值 | 影响 MVP 准入线 C3 | **Sprint 13（批次 D）** | ⏳ 待定 | 收敛时点已定：同上；**阈值落 `backend/app/core/config.py`，可经 `.env` 覆盖**（M6 §3 验收 9） | M2 / M4 / **M6** | — |
 
-> **关键结论**：**3 个设计阶段架构决策已收敛**（TBD-1 / TBD-2 / TBD-5 → **ADR-0001 / ADR-0002 / ADR-0003，状态均为 Accepted**），详见 [`docs/adr/`](./adr/)。其中 **TBD-5 的决策窗口由"部署阶段"提前至"设计阶段"**——隔离粒度是数据模型的**根属性**，一旦实现便散落于全部查询，无法在部署阶段追加。
+> **关键结论**：**3 个设计阶段架构决策已收敛**（TBD-1 / TBD-2 / TBD-5 → **ADR-0001 / ADR-0002 / ADR-0003，状态均为 Accepted**），详见 [`docs/adr/`](./adr/)。**另有 2 份后期 ADR**：`0004-integration-seams.md`（集成接缝，门禁数据源）与 **`ADR-0005-temporal-knowledge-model.md`**（知识时效，2026-09-27 Accepted，由双轨 PoC 实测拍板）—后者**不是** TBD 的收敛结果，而是"知识过期"这一建模层缺陷的补救决策。其中 **TBD-5 的决策窗口由"部署阶段"提前至"设计阶段"**——隔离粒度是数据模型的**根属性**，一旦实现便散落于全部查询，无法在部署阶段追加。
 >
 > **TBD-3 / 4 / 6 / 7 的收敛窗口已由"模糊的 M1.0 末期 / 验证期 / 实现期"收敛为可执行的 `Sprint 13 §20.1 批次 D`**（决议 **O-4**，见 `docs/v2.0.0-ship-backward-plan.md` §7）。**理由**：原窗口无锚点、无法在倒推计划里设闸门；批次 D 本身就要做准入线判定（C3 依赖 TBD-7 阈值），**同批次收敛可避免"判定时才发现阈值没定"**。**任一 TBD 不可拖延至实现完成之后**——届时架构已固化，调整成本指数级上升。
 
@@ -225,11 +229,11 @@ flowchart TD
 
 | 角色 | 已产出 / 本期产出 | 后续产出 |
 |---|---|---|
-| **架构师** | `specs/m1..m6-*.md` + `specs/_template/` + `docs/03-prd.md` + `docs/adr/ADR-0001..0003` + `docs/adr/0004-integration-seams.md` + `docs/v1.1.0-demo-mvp-plan.md` + `docs/v2.0.0-ship-backward-plan.md` + `docs/acceptance-traceability-matrix.md` + `docs/dev-doc-status.md` | D-1（m6 spec v1.0 定稿，S11 收尾前）、D-4（开发指南阶段十八～二十二）、上线 gate 的准入线裁决 |
+| **架构师** | `specs/m1..m6-*.md` + `specs/_template/` + `docs/03-prd.md` + `docs/adr/ADR-0001..0003` + `docs/adr/0004-integration-seams.md` + **`docs/adr/ADR-0005-temporal-knowledge-model.md`** + `docs/v1.1.0-demo-mvp-plan.md` + `docs/v2.0.0-ship-backward-plan.md` + `docs/acceptance-traceability-matrix.md` + `docs/dev-doc-status.md` | D-1（m6 spec v1.0 定稿，S11 收尾前）、D-4（开发指南阶段十八～二十二）、上线 gate 的准入线裁决 |
 | **后端开发 B** | `backend/app/`（v1.0.0 工程外壳） | `contracts/openapi.yaml` 增量 + `backend/app/`；**契约同步 5 步**（见 `backend/CODEBUDDY.md` §3）由后端 B 执行 |
 | **前端 FE** | `frontend/src/`（v1.0.0 工程外壳） | `npm run gen:api` 后的类型与页面 |
 | **测试 QA** | `backend/tests/`（含 `test_check_seams.py`） | `tests/unit` / `tests/integration` / `tests/e2e`；**按 [`acceptance-traceability-matrix.md`](./acceptance-traceability-matrix.md) 逐行取证** |
-| **部署 DevOps** | CI（`.github/workflows/ci.yml` 四 job 门禁） | `docker-compose.yml` / `deploy/` |
+| **部署 DevOps** | CI（`.github/workflows/ci.yml` 四 job 门禁） | `docker-compose.yml` / `deploy/`——**规格见 [`docs/deployment-spec.md`](./deployment-spec.md)**，含两处硬缺口登记：**D-1 无容器化产物**（全仓无 Dockerfile / compose）、**D-2 无数据库迁移**（无 Alembic，靠 `create_all`），均排 **S11** |
 
 > **PRD 由架构师角色产出**，**只动 `specs/` 与 `docs/`**。**未触碰** `frontend/`、`backend/`、`contracts/`、`prompts/`。
 >
@@ -286,7 +290,7 @@ flowchart TD
 | 2 | `docs/02-product-outline.md` | 架构师 | 上游依据（v1.0，含附录 C 指标定义） |
 | 3 | `docs/03-prd.md` | 架构师 | **本文件**（汇总 PRD v1.0 + 2026-09-21 口径修订） |
 | 4 | `specs/m1-async-ingest.md` ～ `specs/m5-permission-audit.md` | 架构师 | 5 份 P0 规格（验收 8/7/7/7/8 条） |
-| 5 | `specs/m6-ontology-incremental.md` | 架构师 | **第 6 份 P0 规格**（v0.1 草案，验收 11 条） |
+| 5 | `specs/m6-ontology-incremental.md` | 架构师 | **第 6 份 P0 规格**（v0.1 草案，验收 **12** 条；2026-09-27 追加验收 12「租户 ↔ 业务域初始化」） |
 | 6 | `specs/_template/{proposal,tasks,design}.md` | 架构师 | SDD 三件套模板 |
 | 7 | `docs/adr/ADR-0001-async-task-backend.md` | 架构师 | 设计阶段 ADR（Accepted） |
 | 8 | `docs/adr/ADR-0002-neo4j-postgres-consistency.md` | 架构师 | 设计阶段 ADR（Accepted） |
@@ -300,6 +304,10 @@ flowchart TD
 | 15 | `docs/release-notes/v1.0.0.md` | 架构师 | 版本说明 |
 | 16 | `docs/GraphRAG-Agent + Harness + SDD 多模态知识库全栈开发指南.md` | 架构师 | 全栈 / Harness / SDD 指南（**头部已标注：Sprint 9–13 尚未覆盖**） |
 | 17 | `docs/multimodal_rag_backend_api_spec-v1.0.md`、`docs/bridge-pipeline-specification-v1.0.md`、`docs/langextract_spec.md`、`docs/mineru_cloud_api_spec.md` | 架构师 | 技术选型实测规格（**第三方对接以实测为准**，见 `CODEBUDDY.md` 实测反哺规则） |
+| 18 | **`docs/adr/ADR-0005-temporal-knowledge-model.md`** | 架构师 | **知识时效 ADR**（Accepted 2026-09-27）：自研双时态四字段 + 确定性仲裁，**不引入 Graphiti**；依据双轨 PoC 实测（自研 3/3 vs Graphiti 0/3） |
+| 19 | **`temporal_poc/`**（`README.md` + `corpus.py` / `run_track_s.py` / `repeat_g.py` / `semantic_embedder.py` / `diag_*.py`） | 架构师 | **时效选型实验证据与可复现脚本**（ADR-0005 §3 的证据源；验收 9 / 10 判据原型） |
+| 20 | **`docs/adr/ADR-0006-license-control.md`** | 架构师 | **License 控制 ADR**（Accepted 2026-09-27）：机器指纹 → 离线签发 license 文件；四维度组合绑定；超限分级拒绝；**每请求校验**；接缝 9 `LicenseProvider` 登记；对应 PRD **H13**，落地 **S11** |
+| 21 | **`docs/deployment-spec.md`** | 架构师 | **私有化部署规格**（v1.0，2026-09-27）：离线安装 / 资源规格 / 备份恢复 / 升级迁移 / 安装验收清单；对应 PRD **H14**，落地 **S11**；**含两处硬缺口 D-1 / D-2 登记** |
 
 > **非文档产物**（不在本表但同等权威）：`contracts/openapi.yaml`（契约真源，禁止手改）、`prompts/`（5 个 v1）、`changes/Sprint<N>.<M>/`（SDD 三件套 + `integration-log.md`）、`changes/archive/`（归档）。
 
