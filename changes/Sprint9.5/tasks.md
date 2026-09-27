@@ -45,9 +45,32 @@
   - ADR-0002 三段式写入 + **写入自检**（回读计数不符即回滚）+ **演示用例可用性验证**
   - 实测：实体 2954 / 关系 3952 / `KgVersion=active` / 重跑幂等一致（870ms）
   - **不新建表**（延续接缝 8 范围纪律）
-- [ ] **B1-follow** 考勤实体类型**尚未进** `graphs.py::_ENTITY_TYPE_TO_CATEGORY`
-  ⇒ 前端 13 类节点会全部兜底成 `topic`（同色、类型列无区分）。
-  需在批次 E 前补：**域化**映射（优先从 `ontology_schemas` 读，而非再硬编码一坨）
+  - **B1-fix（2026-09-27 补，重要）**：脚本原先**只写 Neo4j `:KgVersion`、未登记 PG**
+    ⇒ 按「PG 才是 kg_version 真源」（S6.3 收口，`graphs.py:496-500`）读侧拿到的是
+    **旧的** active 版本 `v-s71a-fe1c4dc3`，考勤图**实测 `nodes = 0`**
+    （数据写进去了却查不出来 —— 与 9-26 那次演示事故**同族错配**）。
+    已补 `register_pg_kg_version()`：``pending → building → ready``，同版本幂等复用。
+    复测：`kg_version=attendance-demo-v1` / 实体 2954 / 关系 3952 /
+    **nodes 500 / edges 529**，分类分布 EMPLOYEE·DEPARTMENT·POSITION=`org`、
+    WORK_TIME_SYSTEM=`system`（本体分类同时生效）。
+    ⇒ 教训已写入脚本 docstring：**入图 ≠ 可查，两边都要登记**
+- [x] **B1-follow** 图例分类**域化** —— **已完成**（选型 C：`category` 进本体，**契约零改动**）
+  - `demo/attendance/ontology_schema.json` 每个 `entity_type` 补 `category` 字段
+  - 新增 `backend/app/services/ontology.py`：`entity_type_categories()` 读该 org 的
+    active 本体；**合法值由契约枚举反推**（`get_args(GraphCategory)`，不二次硬编码）
+  - `graphs.py` 新增 `_resolve_category()`：**本体优先 → 内置表 → `topic` 兜底**；
+    `_load_entity_type_categories()` **每请求解析一次**（不逐节点查库），
+    失败则 warn 后回落，**不阻断查询**——图例是展示增强，不是数据正确性
+  - 调用点注入：`fetch_entity_detail`、`fetch_graph_overview` → `_project_overview_nodes`
+  - `seed_attendance_ontology.py` 增加**真源同步**：已存在但内容不一致时按 JSON 更新
+    （`version` 不变、不擅自升版）——否则幂等 SKIP 会让新字段**静默不生效**
+  - 实测：13 类 = `org` 3（EMPLOYEE/DEPARTMENT/POSITION）+ `norm` 1（POLICY_CLAUSE）
+    + `system` 1（WORK_TIME_SYSTEM）+ `topic` 8（各类事实记录）；
+    `EMPLOYEE` 有本体= `org` / 无本体= `topic`（覆盖生效），`ORG` 仍走内置表
+  - 测试：`tests/test_ontology.py` 新增 6 项全绿，既有 16 项无回归；
+    `export_openapi.py --check` 零漂移；`check_seams.py` ERROR 0 / WARN 0
+  - **已知边界（方案 C 固有）**：`category` 仍是契约 4 值 ⇒ 8 类事实记录共享 `topic`
+    一色。要逐类型分色须走方案 B（扩枚举，动契约 + 前端色板 + `gen:api`），**本 Sprint 不做**
 - [ ] **B2** 制度文档走既有 M1 解析 + M2 抽取链路，`entity_types` / `relation_types` **从 `ontology_schemas` 读**（M6 §5.2 参数化注入，**不新增 Prompt 版本**）
 - [ ] **B3** 校验两链路汇合：员工节点能沿 `APPLIES_WORK_TIME` → `GOVERNED_BY` 连到 `POLICY_CLAUSE`
 
@@ -84,16 +107,24 @@
 
 ---
 
-## 阻塞（2026-09-27 实测，需先解除才能进入批次 B）
+## 环境备注（2026-09-27 实测）
 
 - [x] **B0-1 · 外网间歇不可达** —— **已解除**：`git push` 首次报 `Failed to connect to github.com:443`
   （DNS 抖动），**重试第二次成功**：`95eea160..85a92b32 main -> main`。
   ⇒ 后续网络操作**先重试再判定失败**。
-- [ ] **B0-2 · M1 解析依赖外网，与私有化部署冲突**：`parser_provider` 当前唯一实现为 `mineru_cloud`
-  （`backend/app/core/config.py:59`，注释明写"内网本地解析通路未落地"）。
-  ⇒ 而 `docs/deployment-spec.md` 刚定为**离线私有化交付**。**两者直接矛盾**，
-  需在 S11 前决策：① 落本地解析通路（plan §18.4）；② 或改为"客户侧预解析后导入"。
-  **本 DEMO 的制度文档链路（B2）同样受阻于此**。
+- [x] **B0-2 · M1 解析走外网 MinerU** —— **定性为已接受的部署约束，不阻塞 B2**：
+  文档解析（版面 / 表格 / OCR）与 LLM 抽取**无法本地自足**，依赖第三方是行业现实，
+  **非本项目选型缺陷**。与 `docs/deployment-spec.md` 亦**不矛盾** —— 该文档要的是
+  「数据不出内网」+「模型可内网、改配置即可」（§3 `PRIVATE_DEPLOY_ENABLED=true`、
+  §8「模型可内网」走 ADR-0004 接缝 3，组件表更直接列了「内网 LLM / OCR：客户自备」），
+  **从未要求第三方服务封装进镜像**。
+  ⇒ **分阶段口径**：DEMO 阶段（本 Sprint）接受外网 MinerU / LLM，对齐 plan §3.4；
+    交付阶段（v1.7.0 / S11）由客户内网等价物替换，切换位 = `parser_provider` 抽象
+    —— **当前唯一实现 `mineru_cloud` 即正确的当下状态**（登记集合就该是 1，加实现须先
+    扩 ADR-0004 §2.1 登记行再改门禁）。
+  ⇒ **唯一需向客户明示的点**：MinerU 云是**文件本体出网**（上传至 OSS），比 LLM 文本
+    出网更敏感，属**数据合规事项** —— 交付说明 / release notes 必须写明，**不得静默**。
+    （`config.py:59`「内网本地解析通路未落地」的注释保留，它描述的是事实，只是不阻塞 DEMO。）
 
 ## 门禁
 

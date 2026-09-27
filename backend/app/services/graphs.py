@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -967,6 +967,7 @@ class GraphService:
         nodes = _project_overview_nodes(
             (result["nodes"] or [])[:node_limit],
             context=projection_context,
+            categories=_load_entity_type_categories(org_id=org_id, db=db),
         )
         edges = _project_overview_edges(
             result["edges"] or [],
@@ -1097,7 +1098,10 @@ class GraphService:
         # ``EntityDetail.entity_type`` / ``GraphOverviewNode.type`` 契约是 ``str``
         # （非 ``str | None``）⇒ 缺失回落 ""，与改前行为一致。
         entity_type_raw = str(_entity_type_from_properties(properties) or "")
-        category = _category_from_entity_type(entity_type_raw)
+        category = _resolve_category(
+            entity_type_raw,
+            categories=_load_entity_type_categories(org_id=org_id, db=db),
+        )
 
         relations: list[EntityRelation] = []
         for entry in result.get("first_page") or []:
@@ -1408,9 +1412,56 @@ def _entity_type_from_properties(properties: dict[str, Any]) -> Any:
 
 
 def _category_from_entity_type(entity_type: str) -> GraphCategory:
-    """按实体类型字符串推断前端图例分类。"""
+    """按实体类型字符串推断前端图例分类（**仅内置表**，不看本体）。
+
+    保留原语义，供无本体上下文的场景（脚本 / 单测 / 内置默认域）使用；
+    走服务方法的链路一律用 :func:`_resolve_category`（**本体优先**）。
+    """
     if not entity_type:
         return "topic"
+    return _ENTITY_TYPE_TO_CATEGORY.get(entity_type, "topic")
+
+
+def _load_entity_type_categories(
+    *, org_id: UUID | None, db: Any
+) -> dict[str, GraphCategory]:
+    """取该 org 本体的图例分类表；**任何失败都返回空 dict**。
+
+    图例分类属**展示增强**而非数据正确性 ⇒ 本体缺失、无 ``db`` 会话、查询异常，
+    一律降级为「无覆盖」，由 :func:`_resolve_category` 回落内置表，
+    **不**阻断图谱查询。但异常必须 warn 留痕——静默吞掉是本项目要拦的"假做"。
+
+    每请求只调一次（解析结果在本次投影内全量复用），**不**逐节点查库。
+    """
+    if db is None or org_id is None:
+        return {}
+    try:
+        # 延迟导入：避免 graphs（被 agents 依赖）在模块级牵上 db / models 依赖
+        from app.services.ontology import entity_type_categories
+
+        return entity_type_categories(db=db, org_id=org_id)
+    except Exception as exc:  # noqa: BLE001 - 展示增强，不阻断主链路
+        logger.warning(f"读取本体图例分类失败，回落内置表: org_id={org_id}: {exc}")
+        return {}
+
+
+def _resolve_category(
+    entity_type: str,
+    *,
+    categories: Mapping[str, GraphCategory] | None = None,
+) -> GraphCategory:
+    """推断图例分类：**本体优先 → 内置表 → ``topic`` 兜底**。
+
+    ``categories`` 由 :func:`_load_entity_type_categories` 提供（每请求解析一次）。
+    这样换业务域只需换本体数据，**不必改代码、也不动 API 契约**——``category``
+    恒为契约那 4 个取值之一（非法值已被 ``ontology.py`` 过滤）。
+    """
+    if not entity_type:
+        return "topic"
+    if categories:
+        override = categories.get(entity_type)
+        if override is not None:
+            return override
     return _ENTITY_TYPE_TO_CATEGORY.get(entity_type, "topic")
 
 
@@ -1439,8 +1490,16 @@ def _build_entity_attributes(properties: dict[str, Any]) -> list[EntityAttribute
     return attributes
 
 
-def _project_overview_nodes(records: Any, *, context: str) -> list[GraphOverviewNode]:
+def _project_overview_nodes(
+    records: Any,
+    *,
+    context: str,
+    categories: Mapping[str, GraphCategory] | None = None,
+) -> list[GraphOverviewNode]:
     """批次 C：把 Neo4j Entity 投影为 ``GraphOverviewNode``（轻量投影）。
+
+    ``categories`` 为本体的图例分类覆盖表（B1-follow），由调用方每请求解析一次
+    后传入；``None`` 时按 :func:`_resolve_category` 回落内置表。
 
     失败处理同 :func:`_project_nodes`：异常即抛 :class:`GraphUnavailableError`。
     """
@@ -1453,7 +1512,7 @@ def _project_overview_nodes(records: Any, *, context: str) -> list[GraphOverview
                 properties.get("canonical_name") or properties.get("name") or node_id
             )
             entity_type = str(_entity_type_from_properties(properties) or "")
-            category = _category_from_entity_type(entity_type)
+            category = _resolve_category(entity_type, categories=categories)
             confidence = _safe_float(properties.get("confidence")) or 0.5
             # weight: 用 confidence 当权重（[0, 1]）放大到 [0.3, 1.65] 区间，避免 0 节点
             weight = round(0.3 + min(confidence, 1.0) * 1.35, 2)

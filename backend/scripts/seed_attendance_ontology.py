@@ -10,7 +10,15 @@
 2. 读取 ``demo/attendance/ontology_schema.json``；
 3. 以 ``settings.default_org_id`` 写入 ``version = 1``、``status = active`` 的一行。
 
-**幂等**：该 org 已存在 ``version = 1`` 时跳过，不重复写、不擅自升版。
+**幂等 + 真源同步**：``ontology_schema.json`` 是本体的**唯一真源**。
+该 org 已存在 ``version = 1`` 时：
+
+- 内容一致 ⇒ 跳过，不重复写、不擅自升版（``version`` 恒为 1）；
+- 内容不一致 ⇒ **以 JSON 为准更新该行**，``version`` 仍不变。
+
+第二条是 Sprint 9.5 B1-follow 加的：给每个实体类型补 ``category`` 字段时，
+若只按"已存在即跳过"处理，DB 会**静默停留在旧内容**，图例分类永远读不到
+新字段——这属于典型的"改了配置但没生效"的静默泄漏，故改为显式同步并打印。
 
 **纪律（M6 §3.5 验收 12）**：``status = active`` 意味着"已经过确认"。
 本脚本是**人工直接编辑**的种子，故 ``suggested_by_llm = false``，
@@ -58,10 +66,28 @@ def main() -> int:
             )
         )
         if existing is not None:
+            unchanged = (
+                existing.entity_types == payload["entity_types"]
+                and existing.relation_types == payload["relation_types"]
+                and existing.domain_description == payload["domain_description"]
+            )
+            if unchanged:
+                print(
+                    f"[SKIP] org {settings.default_org_id} 已有 version=1 "
+                    f"（status={existing.status}，实体 {len(existing.entity_types)} 类 / "
+                    f"关系 {len(existing.relation_types)} 类），内容一致，不重复写入"
+                )
+                return 0
+
+            # 内容有差异 ⇒ 以 JSON 为真源同步（version 不变，不擅自升版）
+            existing.entity_types = payload["entity_types"]
+            existing.relation_types = payload["relation_types"]
+            existing.domain_description = payload["domain_description"]
+            session.commit()
             print(
-                f"[SKIP] org {settings.default_org_id} 已有 version=1 "
-                f"（status={existing.status}，实体 {len(existing.entity_types)} 类 / "
-                f"关系 {len(existing.relation_types)} 类），不重复写入"
+                f"[UPDATE] org {settings.default_org_id} version=1 已按 JSON 同步 "
+                f"（实体 {len(existing.entity_types)} 类 / "
+                f"关系 {len(existing.relation_types)} 类；version 未变）"
             )
             return 0
 

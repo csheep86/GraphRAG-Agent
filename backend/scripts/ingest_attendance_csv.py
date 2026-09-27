@@ -41,6 +41,8 @@ if str(BACKEND_DIR) not in sys.path:
 import yaml  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
+from app.db.session import SessionLocal, init_db  # noqa: E402
+from app.services.kg.versioning import KgVersioningService  # noqa: E402
 
 REPO_ROOT = BACKEND_DIR.parent
 CORPUS_DIR = REPO_ROOT / "demo" / "attendance" / "corpus"
@@ -569,6 +571,49 @@ def _count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     return dict(sorted(out.items(), key=lambda kv: -kv[1]))
 
 
+def register_pg_kg_version(
+    *, org_id: Any, version: str, entity_count: int, relation_count: int
+) -> None:
+    """把版本登记进 PG ``kg_versions`` —— **PG 才是 kg_version 的真源**。
+
+    **为什么必须补这一步**：本脚本原先只写 Neo4j 的 ``:KgVersion`` 节点。
+    但 Sprint 6.3 已收口「PG 真源 / Neo4j 只是镜像」（``graphs.py`` 的
+    ``fetch_active_kg_version`` 传入 ``db`` 时**只认 PG 的 ready 行**）
+    ⇒ 只落 Neo4j 的版本在 PG 里**根本不存在**，读侧按 PG 给出的 active 版本
+    查 Neo4j 就会**什么都查不到**（2026-09-27 实测：``nodes = 0``，
+    而 Neo4j 里明明躺着 2954 个考勤实体）。
+
+    "写进去了却查不出来"是本项目的老伤（2026-09-26 同族错配已致一次演示事故），
+    故在此收口：**入图 ≠ 可查，必须两边都登记**。
+
+    幂等：同 ``version`` 已存在则复用，不重复 insert；重跑会刷新 ``ready_at``
+    ⇒ ``get_active``（取 ``ready_at`` 最新）稳定选中本版本。
+    """
+    init_db()
+    with SessionLocal() as db:
+        svc = KgVersioningService(db)
+        existing = svc.get_by_version(org_id=org_id, version=version)
+        if existing is None:
+            existing = svc.create_pending(
+                org_id=org_id,
+                version=version,
+                source_doc_ids=[],  # 结构化 CSV 入图，无源文档
+                trace_id=uuid.uuid4(),
+            )
+            print(f"  [PG] 新建版本行 {version}（pending）")
+        else:
+            print(f"  [PG] 复用已存在版本行 {version}（status={existing.status}）")
+
+        version_id = uuid.UUID(str(existing.id))
+        svc.mark_building(version_id)
+        svc.mark_ready(
+            version_id,
+            entity_count=entity_count,
+            relation_count=relation_count,
+        )
+    print(f"  [PG] {version} -> ready（实体 {entity_count} / 关系 {relation_count}）")
+
+
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
@@ -642,6 +687,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         with driver.session(database=settings.neo4j_database) as session:
             verify_cases(session, kg_version=kg_version)
+        # 入图 ≠ 可查：Neo4j 侧就绪后，还必须登记 PG 真源，否则读侧查不到
+        register_pg_kg_version(
+            org_id=settings.default_org_id,
+            version=kg_version,
+            entity_count=stats.entity_count,
+            relation_count=stats.relation_count,
+        )
     except Exception as exc:  # noqa: BLE001 - CLI 统一兜底
         print(f"[FAIL] 入图失败: {exc}", file=sys.stderr)
         return 1
