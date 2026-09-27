@@ -354,11 +354,16 @@ LIMIT $limit
 #: 批次 C：全局图谱概览的 Cypher（节点轻量投影 + 全部边）。
 #: 与 ``_QUERY_ALL_ENTITY_SUBGRAPH`` 不同：去掉了 ``total_nodes`` 字段（由服务层算），
 #: 投影阶段只取 ``id`` / ``canonical_name`` / ``type`` / ``category`` 4 个字段。
+#: 节点选取按**度数降序**（连接数多的枢纽优先，平局按 `id` 保证确定性）：
+#: 此前是 `all_nodes[0..$node_limit]` 无序截断——任意前 500 个节点之间几乎没有边
+#: （真机实测 500 节点仅 36 边，画出来全是孤点噪云），违背「保护前端渲染」的初衷。
 _QUERY_GRAPH_OVERVIEW = """
 MATCH (n:Entity {kg_version: $kg_version})
 WHERE $org_id IS NULL
    OR properties(n)['org_id'] IS NULL
    OR properties(n)['org_id'] = $org_id
+WITH n, size([(n)--() | 1]) AS degree
+ORDER BY degree DESC, n.id
 WITH collect(n) AS all_nodes
 WITH all_nodes[0..$node_limit] AS nodes, size(all_nodes) AS total_nodes
 RETURN

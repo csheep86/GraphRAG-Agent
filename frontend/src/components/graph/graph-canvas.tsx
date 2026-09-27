@@ -51,12 +51,35 @@ export function GraphCanvas() {
     return () => observer.disconnect();
   }, []);
 
+  // 只渲染「有连边」的节点：投影 500 个里约 390 个是度数 0 的孤点，
+  // 在力导向图里是纯噪点，会把枢纽网络挤成一团。孤点仍计入统计值，
+  // 此处只影响画布渲染。
+  const connected = useMemo(() => {
+    if (!overview) return { nodes: [], edges: [] };
+    const linked = new Set<string>();
+    for (const edge of overview.edges) {
+      linked.add(edge.source);
+      linked.add(edge.target);
+    }
+    return {
+      nodes: overview.nodes.filter((node) => linked.has(node.id)),
+      edges: overview.edges,
+    };
+  }, [overview]);
+
   const layout = useMemo(() => {
-    if (!overview || size.width === 0 || size.height === 0) return [];
-    return computeForceLayout(overview.nodes, overview.edges, size.width, size.height, {
-      padding: 92,
-    });
-  }, [overview, size.width, size.height]);
+    if (connected.nodes.length === 0 || size.width === 0 || size.height === 0)
+      return [];
+    return computeForceLayout(
+      connected.nodes,
+      connected.edges,
+      size.width,
+      size.height,
+      {
+        padding: 92,
+      },
+    );
+  }, [connected, size.width, size.height]);
 
   const positions = useMemo(
     () => new Map(layout.map((node) => [node.id, node])),
@@ -146,7 +169,7 @@ export function GraphCanvas() {
           >
             {/* 边 */}
             <g>
-              {overview.edges.map((edge) => {
+              {connected.edges.map((edge) => {
                 const source = positions.get(edge.source);
                 const target = positions.get(edge.target);
                 if (!source || !target) return null;
@@ -170,7 +193,7 @@ export function GraphCanvas() {
 
             {/* 节点 + 标签 */}
             <g>
-              {overview.nodes.map((node) => {
+              {connected.nodes.map((node) => {
                 const position = positions.get(node.id);
                 if (!position) return null;
 

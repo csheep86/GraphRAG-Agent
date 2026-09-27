@@ -1,0 +1,1594 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>恩仕卫浴 · 企业知识图谱平台</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #eef2f7; color: #1c2b3a; overflow: hidden; font-size: 13px;
+}
+.app { display: flex; height: 100vh; }
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  width: 230px; flex-shrink: 0;
+  background: linear-gradient(180deg, #0d2137 0%, #132d4a 100%);
+  color: #fff; display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+.brand { padding: 20px 20px 16px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.brand h1 { font-size: 15px; font-weight: 600; letter-spacing: .5px; }
+.brand p { font-size: 11px; color: #7f9bb8; margin-top: 4px; }
+.nav-group {
+  padding: 16px 20px 8px; font-size: 10.5px; color: #5c7896;
+  letter-spacing: 1px; font-weight: 600;
+}
+.nav { flex: 1; padding-bottom: 16px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 20px; cursor: pointer;
+  font-size: 13px; color: #b8cade;
+  transition: all .15s; position: relative;
+}
+.nav-item:hover { background: rgba(255,255,255,.05); color: #fff; }
+.nav-item.active {
+  background: rgba(26,115,232,.18); color: #fff;
+}
+.nav-item.active::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px;
+  width: 3px; background: #1a73e8; border-radius: 0 3px 3px 0;
+}
+.nav-item .ico { width: 16px; text-align: center; font-size: 14px; opacity: .9; }
+.nav-item .badge {
+  margin-left: auto; font-size: 10px; background: #1a73e8; color: #fff;
+  padding: 1px 6px; border-radius: 10px;
+}
+.nav-item .badge.gray { background: #3a5372; }
+.side-foot {
+  padding: 14px 20px; font-size: 10.5px; color: #6b87a3;
+  border-top: 1px solid rgba(255,255,255,.08); line-height: 1.7;
+}
+.dot-live { display:inline-block; width:6px; height:6px; border-radius:50%; background:#22c55e; margin-right:5px; }
+
+/* ---------- Main ---------- */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+/* Topbar */
+.topbar {
+  height: 60px; background: #fff; border-bottom: 1px solid #e2e8f0;
+  display: flex; align-items: center; gap: 20px;
+  padding: 0 24px; flex-shrink: 0;
+}
+.search-box {
+  flex: 1; max-width: 520px; position: relative;
+}
+.search-box input {
+  width: 100%; border: 1px solid #dfe8f2; background: #f7fafd;
+  border-radius: 8px; padding: 9px 14px 9px 36px;
+  font-size: 13px; outline: none; font-family: inherit;
+}
+.search-box input:focus { border-color: #1a73e8; background: #fff; box-shadow: 0 0 0 3px rgba(26,115,232,.1); }
+.search-box .s-ico {
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  color: #94a8bb; font-size: 13px;
+}
+.search-drop {
+  position: absolute; top: 42px; left: 0; right: 0;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16,40,70,.12);
+  max-height: 340px; overflow-y: auto; display: none; z-index: 50;
+}
+.search-drop.show { display: block; }
+.sr-item { padding: 10px 16px; cursor: pointer; border-bottom: 1px solid #f0f4f8; }
+.sr-item:hover { background: #f7fafd; }
+.sr-item:last-child { border-bottom: none; }
+.sr-item .sr-ttl { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+.sr-item .sr-meta { font-size: 11px; color: #8296a8; display:flex; gap:10px; }
+.sr-tag {
+  font-size: 10px; padding: 1px 7px; border-radius: 4px;
+  background: #e7f0fd; color: #12539e;
+}
+
+.ds-status { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: #5a6b7d; }
+.ds-status .ds { display: flex; align-items: center; gap: 5px; }
+.ds-status .dot { width: 7px; height: 7px; border-radius: 50%; }
+.dot.ok { background: #22a06b; box-shadow: 0 0 0 3px rgba(34,160,107,.15); }
+.dot.warn { background: #e08a00; box-shadow: 0 0 0 3px rgba(224,138,0,.15); }
+.dot.off { background: #c2d0dd; }
+
+.user { display:flex; align-items:center; gap:9px; font-size:12.5px; color:#5a6b7d; margin-left: auto; }
+.avatar {
+  width:30px; height:30px; border-radius:50%;
+  background: linear-gradient(135deg,#1a73e8,#00a6a6);
+  color:#fff; display:flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:600;
+}
+
+/* Content */
+.content { flex:1; overflow-y: auto; padding: 22px 24px 32px; }
+.view { display: none; animation: fade .25s ease; }
+.view.active { display: block; }
+@keyframes fade { from { opacity:0; transform: translateY(6px);} to {opacity:1; transform:none;} }
+
+.page-head { margin-bottom: 18px; }
+.page-head h2 { font-size: 18px; font-weight: 600; }
+.page-head .sub { font-size: 12px; color: #8296a8; margin-top: 4px; }
+
+/* KPI */
+.kpi-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 20px; }
+.kpi {
+  background:#fff; border-radius:12px; padding:16px 18px;
+  border:1px solid #e8eef5; box-shadow: 0 1px 3px rgba(16,40,70,.04);
+}
+.kpi .label { font-size:11.5px; color:#8296a8; margin-bottom:8px; }
+.kpi .value { font-size:22px; font-weight:700; letter-spacing:-.5px; }
+.kpi .delta { font-size:11px; margin-top:6px; color:#8296a8; }
+.up { color:#22a06b; } .down { color:#e5484d; }
+.kpi.blue .value { color:#1a73e8; }
+.kpi.teal .value { color:#00a6a6; }
+.kpi.green .value { color:#22a06b; }
+.kpi.amber .value { color:#e08a00; }
+.kpi.purple .value { color:#7c5cd6; }
+
+/* Domain cards */
+.section-ttl {
+  font-size: 13px; font-weight: 600; margin: 22px 0 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.section-ttl .line { flex:1; height:1px; background:#e2e8f0; }
+.domain-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.domain-card {
+  background:#fff; border-radius:12px; padding:18px;
+  border:1px solid #e8eef5; cursor:pointer;
+  transition: all .18s; position: relative; overflow: hidden;
+}
+.domain-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(16,40,70,.10);
+  border-color: #c5dbf3;
+}
+.domain-card .dc-ico {
+  width: 38px; height: 38px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; margin-bottom: 12px;
+}
+.domain-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+.domain-card p { font-size: 11.5px; color: #8296a8; line-height: 1.6; }
+.domain-card .dc-foot {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f4f8;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.tag {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 500;
+}
+.tag.green { background:#e9f7ef; color:#1e8e4a; }
+.tag.amber { background:#fff4e0; color:#b26a00; }
+.tag.gray { background:#eef2f7; color:#6b7d8f; }
+.tag.blue { background:#e7f0fd; color:#12539e; }
+.dc-num { font-size: 16px; font-weight: 700; color: #1a73e8; }
+
+/* Cards */
+.card {
+  background:#fff; border-radius:12px; border:1px solid #e8eef5;
+  box-shadow: 0 1px 3px rgba(16,40,70,.04); overflow:hidden;
+}
+.card-head {
+  padding:13px 16px; font-size:13px; font-weight:600;
+  border-bottom:1px solid #eef2f7; background:#fafcfe;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.card-head .badge {
+  font-size:10px; font-weight:500; background:#e6f4ea; color:#1e8e4a;
+  padding:2px 8px; border-radius:20px;
+}
+
+/* Sub tabs */
+.subtabs { display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid #e2e8f0; }
+.subtab {
+  padding: 9px 16px; font-size: 12.5px; color: #6b7d8f; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500;
+  transition: all .15s;
+}
+.subtab:hover { color: #1a73e8; }
+.subtab.active { color: #1a73e8; border-bottom-color: #1a73e8; font-weight: 600; }
+.subview { display: none; }
+.subview.active { display: block; animation: fade .2s ease; }
+
+/* Chat */
+.chat-wrap { max-width: 880px; margin: 0 auto; }
+.chat-box { background:#fff; border-radius:14px; border:1px solid #e8eef5; box-shadow: 0 2px 10px rgba(16,40,70,.05); overflow:hidden; }
+.chat-head {
+  padding:13px 20px; border-bottom:1px solid #eef2f7;
+  font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px; background:#fafcfe;
+}
+.chat-body { padding: 20px; min-height: 300px; max-height: 420px; overflow-y:auto; }
+.msg { display:flex; gap:10px; margin-bottom:16px; }
+.msg.user { flex-direction: row-reverse; }
+.msg .bubble { max-width: 78%; padding: 11px 15px; border-radius: 12px; font-size: 13px; line-height: 1.7; }
+.msg.bot .bubble { background:#f4f7fb; border-top-left-radius:3px; color:#1c2b3a; }
+.msg.user .bubble { background:#1a73e8; color:#fff; border-top-right-radius:3px; }
+.msg .ava {
+  width:28px; height:28px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; font-weight:600; color:#fff;
+}
+.msg.bot .ava { background: linear-gradient(135deg,#00a6a6,#1a73e8); }
+.msg.user .ava { background:#94a8bb; }
+.path-box {
+  margin-top:10px; background:#fff; border:1px solid #dbe7f3;
+  border-left:3px solid #1a73e8; border-radius:8px; padding:11px 13px;
+}
+.path-box .ttl { font-size:10.5px; color:#1a73e8; font-weight:600; letter-spacing:.5px; margin-bottom:8px; }
+.path-chain { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:11.5px; }
+.chip {
+  background:#eef5fd; color:#12539e; padding:3px 9px; border-radius:6px;
+  border:1px solid #d5e6f9; font-weight:500;
+}
+.arrow { color:#9fb3c8; font-size:11px; }
+.concl {
+  margin-top:9px; font-size:12px; color:#1e8e4a; font-weight:600;
+  background:#e9f7ef; padding:7px 11px; border-radius:6px;
+}
+.sugg { display:flex; flex-wrap:wrap; gap:8px; padding: 0 20px 16px; }
+.sugg button {
+  background:#f4f7fb; border:1px solid #dfe8f2; color:#33506d;
+  font-size:12px; padding:7px 13px; border-radius:20px; cursor:pointer;
+  transition: all .15s; font-family:inherit;
+}
+.sugg button:hover { background:#1a73e8; color:#fff; border-color:#1a73e8; }
+.input-row { display:flex; gap:10px; padding:14px 20px; border-top:1px solid #eef2f7; background:#fafcfe; }
+.input-row input {
+  flex:1; border:1px solid #dfe8f2; border-radius:8px; padding:10px 14px;
+  font-size:13px; outline:none; font-family:inherit; background:#fff;
+}
+.input-row input:focus { border-color:#1a73e8; box-shadow:0 0 0 3px rgba(26,115,232,.1); }
+.input-row button {
+  background:#1a73e8; color:#fff; border:none; border-radius:8px;
+  padding:0 22px; font-size:13px; cursor:pointer; font-family:inherit; font-weight:500;
+}
+.input-row button:hover { background:#0f5bcc; }
+
+/* Anomaly */
+.anom-grid { display:grid; grid-template-columns: 300px 1fr; gap:16px; }
+.case { padding:13px 16px; border-bottom:1px solid #f0f4f8; cursor:pointer; transition: background .15s; }
+.case:hover { background:#f7fafd; }
+.case.active { background:#eef5fd; border-left:3px solid #1a73e8; padding-left:13px; }
+.case .t1 { font-size:12.5px; font-weight:600; margin-bottom:5px; }
+.case .t2 { font-size:11px; color:#8296a8; display:flex; gap:8px; flex-wrap:wrap; }
+.pill { font-size:10px; padding:2px 7px; border-radius:4px; font-weight:500; }
+.pill.red { background:#fdecec; color:#c92a2f; }
+.pill.amber { background:#fff4e0; color:#b26a00; }
+.pill.blue { background:#e7f0fd; color:#12539e; }
+.pill.green { background:#e9f7ef; color:#1e8e4a; }
+
+.detail-body { padding:18px 20px; }
+.sec-ttl { font-size:11px; font-weight:600; color:#8296a8; letter-spacing:.6px; margin: 0 0 11px; }
+.reason { margin-bottom:15px; }
+.reason .row1 { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:6px; }
+.reason .row1 b { font-weight:600; }
+.reason .conf { font-size:11.5px; color:#5a6b7d; font-weight:600; }
+.bar { height:7px; background:#eef2f7; border-radius:4px; overflow:hidden; }
+.bar span { display:block; height:100%; border-radius:4px; }
+.b-red { background: linear-gradient(90deg,#e5484d,#ff7875); }
+.b-blue { background: linear-gradient(90deg,#1a73e8,#5b9bf5); }
+.b-gray { background: linear-gradient(90deg,#94a8bb,#c2d0dd); }
+
+.evidence { margin-top:18px; background:#f7fafd; border:1px solid #e2ecf7; border-radius:10px; padding:14px 16px; }
+.ev-item { display:flex; gap:9px; font-size:12px; padding:7px 0; border-bottom:1px dashed #e2ecf7; align-items:flex-start; }
+.ev-item:last-child { border-bottom:none; }
+.ev-dot {
+  width:16px; height:16px; border-radius:50%; flex-shrink:0; margin-top:1px;
+  display:flex; align-items:center; justify-content:center; font-size:9px; color:#fff;
+}
+.ev-dot.ok { background:#22a06b; }
+.ev-dot.warn { background:#e08a00; }
+.ev-dot.info { background:#1a73e8; }
+.ev-item .k { color:#5a6b7d; min-width:82px; }
+.ev-item .v { color:#1c2b3a; font-weight:500; }
+
+/* Table */
+.risk-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+.risk-table th {
+  text-align:left; padding:11px 16px; font-size:11px; color:#8296a8;
+  font-weight:600; background:#fafcfe; border-bottom:1px solid #eef2f7; letter-spacing:.4px;
+}
+.risk-table td { padding:13px 16px; border-bottom:1px solid #f0f4f8; }
+.risk-table tr:hover td { background:#f7fafd; }
+.risk-table .name { font-weight:600; }
+.risk-table .dept { color:#8296a8; font-size:11.5px; }
+.lvl { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; padding:3px 9px; border-radius:20px; }
+.lvl.high { background:#fdecec; color:#c92a2f; }
+.lvl.mid { background:#fff4e0; color:#b26a00; }
+.lvl.low { background:#e9f7ef; color:#1e8e4a; }
+.lvl i { width:5px; height:5px; border-radius:50%; background:currentColor; display:block; }
+
+/* Graph */
+.graph-card { background:#fff; border-radius:12px; border:1px solid #e8eef5; padding: 8px 0 0; }
+.graph-svg { width:100%; height:auto; display:block; }
+.legend { display:flex; gap:20px; padding: 14px 26px; font-size:11.5px; color:#5a6b7d; flex-wrap:wrap; border-top:1px solid #f0f4f8; margin-top:6px; }
+.legend span { display:flex; align-items:center; gap:6px; }
+.legend i { width:10px; height:10px; border-radius:50%; display:block; }
+.concl-bar {
+  margin-top:14px; background: linear-gradient(90deg,#e9f7ef,#f2fbf6);
+  border:1px solid #c6ecd6; border-radius:10px; padding:14px 18px;
+  display:flex; align-items:center; gap:12px;
+}
+.concl-bar .ico {
+  width:30px; height:30px; border-radius:50%; background:#22a06b; color:#fff;
+  display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0;
+}
+.concl-bar .txt { font-size:12.5px; line-height:1.6; }
+.concl-bar .txt b { color:#1e8e4a; }
+
+/* Domain top banner */
+.domain-banner {
+  border-radius: 12px; padding: 20px 24px; margin-bottom: 18px;
+  display: flex; align-items: center; justify-content: space-between;
+  color: #fff; position: relative; overflow: hidden;
+}
+.domain-banner .db-ico {
+  width: 48px; height: 48px; border-radius: 12px;
+  background: rgba(255,255,255,.2); display: flex; align-items: center;
+  justify-content: center; font-size: 22px; margin-right: 16px;
+}
+.domain-banner .db-left { display: flex; align-items: center; }
+.domain-banner h2 { font-size: 17px; font-weight: 600; }
+.domain-banner p { font-size: 12px; opacity: .85; margin-top: 4px; }
+.domain-banner .db-right { display: flex; gap: 24px; }
+.domain-banner .db-stat { text-align: right; }
+.domain-banner .db-stat .n { font-size: 20px; font-weight: 700; }
+.domain-banner .db-stat .l { font-size: 11px; opacity: .8; margin-top: 2px; }
+.banner-blue { background: linear-gradient(120deg, #1a73e8, #3d8bfd); }
+.banner-teal { background: linear-gradient(120deg, #00897b, #00a6a6); }
+.banner-purple { background: linear-gradient(120deg, #5e35b1, #7c5cd6); }
+.banner-orange { background: linear-gradient(120deg, #d97706, #f59e0b); }
+.banner-green { background: linear-gradient(120deg, #1e8e4a, #22a06b); }
+.banner-red { background: linear-gradient(120deg, #c92a2f, #e5484d); }
+.banner-gray { background: linear-gradient(120deg, #4a5c6e, #6b7d8f); }
+
+/* Datasource cards */
+.ds-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.ds-card {
+  background:#fff; border-radius:12px; border:1px solid #e8eef5;
+  padding: 16px 18px; display: flex; align-items: center; gap: 14px;
+  transition: all .15s;
+}
+.ds-card:hover { border-color: #c5dbf3; box-shadow: 0 4px 12px rgba(16,40,70,.06); }
+.ds-card .dsi {
+  width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; color: #fff;
+}
+.ds-card .dsc-body { flex: 1; }
+.ds-card .dsc-body h4 { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+.ds-card .dsc-body p { font-size: 11.5px; color: #8296a8; }
+.ds-card .dsc-status { font-size: 11px; display: flex; align-items: center; gap: 6px; }
+.ds-card .dsc-status .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+/* Permission */
+.role-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.role-card {
+  background: #fff; border-radius: 12px; border: 1px solid #e8eef5;
+  padding: 18px; transition: all .15s;
+}
+.role-card:hover { border-color: #c5dbf3; box-shadow: 0 4px 12px rgba(16,40,70,.06); }
+.role-card h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.role-card .rc-sub { font-size: 11.5px; color: #8296a8; margin-bottom: 14px; }
+.perm-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.perm { font-size: 11px; padding: 3px 10px; border-radius: 6px; background: #eef5fd; color: #12539e; }
+.perm.gray { background: #eef2f7; color: #6b7d8f; }
+
+/* Progress */
+.progress-item { margin-bottom: 16px; }
+.progress-item .pi-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+.progress-item .pi-head b { font-weight: 600; }
+.progress { height: 8px; background: #eef2f7; border-radius: 4px; overflow: hidden; }
+.progress span { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #1a73e8, #5b9bf5); }
+
+/* Empty */
+.empty-hint { text-align: center; padding: 40px; color: #94a8bb; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>恩仕卫浴</h1>
+      <p>企业知识图谱平台</p>
+    </div>
+    <div class="nav">
+      <div class="nav-group">平台</div>
+      <div class="nav-item active" data-view="home"><span class="ico">🏠</span> 首页总览</div>
+      <div class="nav-item" data-view="graph"><span class="ico">🕸️</span> 图谱总览</div>
+
+      <div class="nav-group">业务域</div>
+      <div class="nav-item" data-view="attendance"><span class="ico">📅</span> 考勤 <span class="badge">12</span></div>
+      <div class="nav-item" data-view="service"><span class="ico">🔧</span> 售后 <span class="badge">28</span></div>
+      <div class="nav-item" data-view="rd"><span class="ico">🔬</span> 研发 <span class="badge gray">PoC</span></div>
+      <div class="nav-item" data-view="supply"><span class="ico">📦</span> 供应链</div>
+      <div class="nav-item" data-view="hr"><span class="ico">👥</span> HR能力</div>
+      <div class="nav-item" data-view="quality"><span class="ico">✅</span> 质量</div>
+      <div class="nav-item" data-view="patent"><span class="ico">📜</span> 专利</div>
+
+      <div class="nav-group">平台管理</div>
+      <div class="nav-item" data-view="datasource"><span class="ico">🔌</span> 数据源接入</div>
+      <div class="nav-item" data-view="permission"><span class="ico">🔐</span> 权限与角色</div>
+    </div>
+    <div class="side-foot">
+      <div><span class="dot-live"></span>本地部署 · 运行中</div>
+      <div style="margin-top:4px">数据不出内网 · 只读对接</div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+    <header class="topbar">
+      <div class="search-box">
+        <span class="s-ico">🔍</span>
+        <input type="text" id="global-search" placeholder="全局搜索：员工、产品、工单、专利、故障、物料…">
+        <div class="search-drop" id="search-drop"></div>
+      </div>
+      <div class="ds-status">
+        <div class="ds"><span class="dot ok"></span>HR</div>
+        <div class="ds"><span class="dot ok"></span>工单</div>
+        <div class="ds"><span class="dot ok"></span>PLM</div>
+        <div class="ds"><span class="dot ok"></span>专利库</div>
+        <div class="ds"><span class="dot warn"></span>ERP</div>
+      </div>
+      <div class="user">
+        <span>管理员</span>
+        <div class="avatar">管</div>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- ==================== 首页 ==================== -->
+      <section class="view active" id="view-home">
+        <div class="page-head">
+          <h2>企业知识图谱总览</h2>
+          <div class="sub">多业务域知识融合 · 统一本体 · 本地部署 · 2026-09-26</div>
+        </div>
+
+        <div class="kpi-row">
+          <div class="kpi blue">
+            <div class="label">图谱实体总量</div>
+            <div class="value">48,620</div>
+            <div class="delta">覆盖 7 个业务域 · 较上月 +3,240</div>
+          </div>
+          <div class="kpi teal">
+            <div class="label">关系边</div>
+            <div class="value">216,340</div>
+            <div class="delta">支持 6 跳以内推理</div>
+          </div>
+          <div class="kpi green">
+            <div class="label">今日查询</div>
+            <div class="value">1,284</div>
+            <div class="delta up">↑ 自动解答率 91.2%</div>
+          </div>
+          <div class="kpi amber">
+            <div class="label">待处理预警</div>
+            <div class="value">23</div>
+            <div class="delta down">考勤 12 · 售后 8 · 质量 3</div>
+          </div>
+        </div>
+
+        <div class="section-ttl">业务域 <span class="line"></span> <span style="font-size:11px;color:#8296a8;font-weight:400">点击进入</span></div>
+        <div class="domain-grid">
+          <div class="domain-card" onclick="go('attendance')">
+            <div class="dc-ico" style="background:#e7f0fd;color:#1a73e8">📅</div>
+            <h3>考勤</h3>
+            <p>政策问答 · 异常归因 · 合规预警</p>
+            <div class="dc-foot">
+              <span class="tag green">已上线</span>
+              <span class="dc-num">127</span>
+            </div>
+          </div>
+          <div class="domain-card" onclick="go('service')">
+            <div class="dc-ico" style="background:#e0f5f5;color:#00a6a6">🔧</div>
+            <h3>售后</h3>
+            <p>故障诊断 · 工单归因 · 配件关联</p>
+            <div class="dc-foot">
+              <span class="tag green">已上线</span>
+              <span class="dc-num">342</span>
+            </div>
+          </div>
+          <div class="domain-card" onclick="go('rd')">
+            <div class="dc-ico" style="background:#efeafc;color:#7c5cd6">🔬</div>
+            <h3>研发</h3>
+            <p>专利关联 · BOM图谱 · 设计复用</p>
+            <div class="dc-foot">
+              <span class="tag amber">PoC中</span>
+              <span class="dc-num">86</span>
+            </div>
+          </div>
+          <div class="domain-card" onclick="go('supply')">
+            <div class="dc-ico" style="background:#fff4e0;color:#e08a00">📦</div>
+            <h3>供应链</h3>
+            <p>物料关联 · 供应商 · 替代方案</p>
+            <div class="dc-foot">
+              <span class="tag gray">规划中</span>
+              <span class="dc-num" style="color:#94a8bb">—</span>
+            </div>
+          </div>
+          <div class="domain-card" onclick="go('hr')">
+            <div class="dc-ico" style="background:#e9f7ef;color:#22a06b">👥</div>
+            <h3>HR能力</h3>
+            <p>技能图谱 · 人岗匹配 · 知识传承</p>
+            <div class="dc-foot">
+              <span class="tag blue">内测</span>
+              <span class="dc-num">54</span>
+            </div>
+          </div>
+          <div class="domain-card" onclick="go('quality')">
+            <div class="dc-ico" style="background:#fdecec;color:#e5484d">✅</div>
+            <h3>质量</h3>
+            <p>缺陷归因 · 测试案例 · 改进追踪</p>
+            <div class="dc-foot">
+              <span class="tag gray">规划中</span>
+              <span class="dc-num" style="color:#94a8bb">—</span>
+            </div>
+          </div>
+          <div class="domain-card" onclick="go('patent')">
+            <div class="dc-ico" style="background:#e7f0fd;color:#12539e">📜</div>
+            <h3>专利</h3>
+            <p>专利-产品关联 · 发明人 · 引证</p>
+            <div class="dc-foot">
+              <span class="tag blue">内测</span>
+              <span class="dc-num">73</span>
+            </div>
+          </div>
+          <div class="domain-card" onclick="go('graph')">
+            <div class="dc-ico" style="background:#eef2f7;color:#5a6b7d">🕸️</div>
+            <h3>图谱总览</h3>
+            <p>全局实体网络 · 跨域关联</p>
+            <div class="dc-foot">
+              <span class="tag gray">管理视图</span>
+              <span class="dc-num" style="color:#94a8bb">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-ttl">平台运行指标 <span class="line"></span></div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="card">
+            <div class="card-head"><span>各域知识覆盖率</span></div>
+            <div style="padding: 18px 20px;">
+              <div class="progress-item">
+                <div class="pi-head"><b>考勤</b><span>96%</span></div>
+                <div class="progress"><span style="width:96%"></span></div>
+              </div>
+              <div class="progress-item">
+                <div class="pi-head"><b>售后</b><span>88%</span></div>
+                <div class="progress"><span style="width:88%"></span></div>
+              </div>
+              <div class="progress-item">
+                <div class="pi-head"><b>研发</b><span>62%</span></div>
+                <div class="progress"><span style="width:62%"></span></div>
+              </div>
+              <div class="progress-item">
+                <div class="pi-head"><b>专利</b><span>75%</span></div>
+                <div class="progress"><span style="width:75%"></span></div>
+              </div>
+              <div class="progress-item" style="margin-bottom:0">
+                <div class="pi-head"><b>HR能力</b><span>48%</span></div>
+                <div class="progress"><span style="width:48%"></span></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span>最近动态</span><span class="badge">实时</span></div>
+            <div style="padding: 10px 0;">
+              <div class="ev-item" style="padding: 10px 20px; border-bottom: 1px solid #f0f4f8;">
+                <div class="ev-dot ok">✓</div>
+                <div class="k">10:42</div>
+                <div class="v">售后域自动归因 8 条缺卡异常</div>
+              </div>
+              <div class="ev-item" style="padding: 10px 20px; border-bottom: 1px solid #f0f4f8;">
+                <div class="ev-dot info">i</div>
+                <div class="k">10:28</div>
+                <div class="v">研发域新增专利-产品关联 23 条</div>
+              </div>
+              <div class="ev-item" style="padding: 10px 20px; border-bottom: 1px solid #f0f4f8;">
+                <div class="ev-dot warn">!</div>
+                <div class="k">09:55</div>
+                <div class="v">考勤域触发工时超限预警 2 条</div>
+              </div>
+              <div class="ev-item" style="padding: 10px 20px;">
+                <div class="ev-dot info">i</div>
+                <div class="k">09:30</div>
+                <div class="v">专利库同步完成，新增 12 项专利</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 考勤域 ==================== -->
+      <section class="view" id="view-attendance">
+        <div class="domain-banner banner-blue">
+          <div class="db-left">
+            <div class="db-ico">📅</div>
+            <div>
+              <h2>考勤知识图谱</h2>
+              <p>政策问答 · 异常归因 · 合规预警 · 本地部署</p>
+            </div>
+          </div>
+          <div class="db-right">
+            <div class="db-stat"><div class="n">127</div><div class="l">今日查询</div></div>
+            <div class="db-stat"><div class="n">92.9%</div><div class="l">自动解答率</div></div>
+            <div class="db-stat"><div class="n">12</div><div class="l">待处理异常</div></div>
+          </div>
+        </div>
+
+        <div class="subtabs">
+          <div class="subtab active" data-sub="att-qa">政策问答</div>
+          <div class="subtab" data-sub="att-anomaly">异常归因</div>
+          <div class="subtab" data-sub="att-compliance">合规预警</div>
+        </div>
+
+        <!-- 考勤-问答 -->
+        <div class="subview active" id="sub-att-qa">
+          <div class="chat-wrap">
+            <div class="chat-box">
+              <div class="chat-head">
+                <span>🕸️</span> 考勤知识图谱问答
+                <span class="badge">已接入制度库 · 2026版</span>
+              </div>
+              <div class="chat-body" id="chat-body-att">
+                <div class="msg user">
+                  <div class="ava">张</div>
+                  <div class="bubble">我是售后工程师，上周六在武汉出差处理工单，这算加班吗？</div>
+                </div>
+                <div class="msg bot">
+                  <div class="ava">AI</div>
+                  <div class="bubble">
+                    算加班，按 <b>休息日加班</b> 认定，可优先安排调休，未调休的按 200% 支付加班费。
+                    <div class="path-box">
+                      <div class="ttl">推理路径</div>
+                      <div class="path-chain">
+                        <span class="chip">张伟</span><span class="arrow">→</span>
+                        <span class="chip">岗位：售后工程师</span><span class="arrow">→</span>
+                        <span class="chip">适用：综合工时制</span><span class="arrow">→</span>
+                        <span class="chip">出差审批（武汉）</span><span class="arrow">→</span>
+                        <span class="chip">工单 SO-2026-0912</span><span class="arrow">→</span>
+                        <span class="chip">休息日出勤</span>
+                      </div>
+                      <div class="concl">✓ 判定：休息日出勤 · 可调休或支付 200% 加班费</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="sugg" id="sugg-att">
+                <button data-q="综合工时制加班上限是多少？">综合工时制加班上限是多少？</button>
+                <button data-q="外勤打卡没有门禁记录，算缺勤吗？">外勤打卡没有门禁记录，算缺勤吗？</button>
+                <button data-q="研发弹性上班最晚几点到？">研发弹性上班最晚几点到？</button>
+              </div>
+              <div class="input-row">
+                <input type="text" id="q-input-att" placeholder="输入你的考勤问题…">
+                <button onclick="askAtt()">发送</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 考勤-异常 -->
+        <div class="subview" id="sub-att-anomaly">
+          <div class="anom-grid">
+            <div class="card">
+              <div class="card-head"><span>待归因异常</span><span class="pill red">12 条</span></div>
+              <div id="case-list">
+                <div class="case active" data-case="c1">
+                  <div class="t1">张伟 · 售后工程师</div>
+                  <div class="t2"><span class="pill red">缺卡</span><span>10-14 周六</span></div>
+                </div>
+                <div class="case" data-case="c2">
+                  <div class="t1">李静 · 产线操作工</div>
+                  <div class="t2"><span class="pill amber">工时超限</span><span>本周 62h</span></div>
+                </div>
+                <div class="case" data-case="c3">
+                  <div class="t1">王强 · 研发工程师</div>
+                  <div class="t2"><span class="pill blue">迟到</span><span>10-13 09:47</span></div>
+                </div>
+                <div class="case" data-case="c4">
+                  <div class="t1">陈敏 · 客服专员</div>
+                  <div class="t2"><span class="pill amber">加班调休不匹配</span><span>10月</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <span id="detail-title">异常详情 · 张伟 10-14 缺卡</span>
+                <span class="pill green">已自动归因</span>
+              </div>
+              <div class="detail-body" id="detail-body">
+                <!-- JS 填充 -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 考勤-合规 -->
+        <div class="subview" id="sub-att-compliance">
+          <div class="kpi-row">
+            <div class="kpi blue"><div class="label">本月合规扫描</div><div class="value">4,182</div><div class="delta">人次 · 覆盖全公司</div></div>
+            <div class="kpi amber"><div class="label">风险预警</div><div class="value">23</div><div class="delta down">↑ 较上月 +5</div></div>
+            <div class="kpi green"><div class="label">提前发现率</div><div class="value">100%</div><div class="delta up">均在发薪前 7 天预警</div></div>
+            <div class="kpi teal"><div class="label">避免争议</div><div class="value">6 起</div><div class="delta up">预估减少损失 18 万元</div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><span>工时合规风险清单</span><span class="pill amber">需 HR 处理</span></div>
+            <table class="risk-table">
+              <thead>
+                <tr><th>员工</th><th>部门 / 岗位</th><th>风险类型</th><th>图谱推理依据</th><th>等级</th><th>建议动作</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="name">李静</td>
+                  <td class="dept">产线 / 操作工<br><span style="font-size:11px">综合工时制</span></td>
+                  <td>周工时超限</td>
+                  <td style="font-size:11.5px;color:#5a6b7d">本周 62h ＞ 法定 60h，含 2 次连班</td>
+                  <td><span class="lvl high"><i></i>高</span></td>
+                  <td style="font-size:11.5px">立即调整排班</td>
+                </tr>
+                <tr>
+                  <td class="name">陈敏</td>
+                  <td class="dept">客服 / 排班制<br><span style="font-size:11px">标准工时制</span></td>
+                  <td>加班调休不匹配</td>
+                  <td style="font-size:11.5px;color:#5a6b7d">累计 36h 加班未调休，超季度上限</td>
+                  <td><span class="lvl high"><i></i>高</span></td>
+                  <td style="font-size:11.5px">安排 10 月底前调休</td>
+                </tr>
+                <tr>
+                  <td class="name">王强</td>
+                  <td class="dept">研发 / 工程师<br><span style="font-size:11px">弹性工时制</span></td>
+                  <td>弹性时段越界</td>
+                  <td style="font-size:11.5px;color:#5a6b7d">本月 7 次晚于 10:00 到岗，超制度上限</td>
+                  <td><span class="lvl mid"><i></i>中</span></td>
+                  <td style="font-size:11.5px">部门主管提醒</td>
+                </tr>
+                <tr>
+                  <td class="name">赵磊</td>
+                  <td class="dept">售后 / 工程师<br><span style="font-size:11px">综合工时制</span></td>
+                  <td>连续出勤无休</td>
+                  <td style="font-size:11.5px;color:#5a6b7d">连续 12 天有工单，含 2 个休息日</td>
+                  <td><span class="lvl mid"><i></i>中</span></td>
+                  <td style="font-size:11.5px">强制安排调休</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 售后域 ==================== -->
+      <section class="view" id="view-service">
+        <div class="domain-banner banner-teal">
+          <div class="db-left">
+            <div class="db-ico">🔧</div>
+            <div>
+              <h2>售后知识图谱</h2>
+              <p>故障诊断 · 工单归因 · 配件关联 · 多语言支持</p>
+            </div>
+          </div>
+          <div class="db-right">
+            <div class="db-stat"><div class="n">342</div><div class="l">今日诊断</div></div>
+            <div class="db-stat"><div class="n">85%</div><div class="l">Top3 命中率</div></div>
+            <div class="db-stat"><div class="n">8</div><div class="l">待处理工单</div></div>
+          </div>
+        </div>
+
+        <div class="kpi-row">
+          <div class="kpi teal"><div class="label">接入产品型号</div><div class="value">186</div><div class="delta">覆盖智能坐便器全系</div></div>
+          <div class="kpi blue"><div class="label">故障知识条目</div><div class="value">3,240</div><div class="delta">含现象 / 原因 / 方案</div></div>
+          <div class="kpi green"><div class="label">平均诊断时长</div><div class="value">1.8s</div><div class="delta up">↓ 原人工 15 分钟</div></div>
+          <div class="kpi amber"><div class="label">一次解决率</div><div class="value">82%</div><div class="delta up">↑ 较上月 +6%</div></div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+          <div class="card">
+            <div class="card-head"><span>故障智能诊断</span><span class="badge">实时</span></div>
+            <div style="padding: 18px 20px;">
+              <div style="background:#f7fafd; border:1px solid #e2ecf7; border-radius:10px; padding:14px 16px; margin-bottom:16px;">
+                <div style="font-size:11px; color:#8296a8; margin-bottom:8px;">客户描述</div>
+                <div style="font-size:13px; line-height:1.6;">"智能坐便器冲水无力，有时候完全不出水，显示屏显示 E3 故障码。"</div>
+              </div>
+              <div class="sec-ttl">知识图谱推理结果</div>
+              <div class="reason">
+                <div class="row1"><b>进水阀堵塞 / 水压不足</b><span class="conf">72%</span></div>
+                <div class="bar"><span class="b-red" style="width:72%"></span></div>
+              </div>
+              <div class="reason">
+                <div class="row1"><b>水压传感器故障（E3 关联）</b><span class="conf">18%</span></div>
+                <div class="bar"><span class="b-blue" style="width:18%"></span></div>
+              </div>
+              <div class="reason">
+                <div class="row1"><b>主板程序异常</b><span class="conf">10%</span></div>
+                <div class="bar"><span class="b-gray" style="width:10%"></span></div>
+              </div>
+              <div class="concl" style="margin-top:14px">
+                ✓ 建议：先检查进水阀滤网，再测水压传感器阻值；E3 码对应主板第 12 号诊断项
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><span>售后知识关联网络</span></div>
+            <div style="padding: 8px 0 0;">
+              <svg class="graph-svg" viewBox="0 0 480 300" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <marker id="arw2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L8,3 z" fill="#b8cade"/>
+                  </marker>
+                </defs>
+                <line x1="240" y1="60" x2="240" y2="110" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw2)"/>
+                <line x1="210" y1="140" x2="110" y2="180" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw2)"/>
+                <line x1="270" y1="140" x2="370" y2="180" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw2)"/>
+                <line x1="110" y1="210" x2="180" y2="250" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw2)"/>
+                <line x1="370" y1="210" x2="300" y2="250" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw2)"/>
+
+                <circle cx="240" cy="40" r="26" fill="#00a6a6"/>
+                <text x="240" y="40" class="node-label" font-size="10">E3故障</text>
+
+                <circle cx="240" cy="130" r="30" fill="#1a73e8"/>
+                <text x="240" y="126" class="node-label" font-size="10">冲水</text>
+                <text x="240" y="138" class="node-label" font-size="9">无力</text>
+
+                <circle cx="100" cy="200" r="26" fill="#e5484d"/>
+                <text x="100" y="196" class="node-label" font-size="9">进水阀</text>
+                <text x="100" y="208" class="node-label" font-size="9">堵塞</text>
+
+                <circle cx="380" cy="200" r="26" fill="#7c5cd6"/>
+                <text x="380" y="196" class="node-label" font-size="9">水压</text>
+                <text x="380" y="208" class="node-label" font-size="9">传感器</text>
+
+                <circle cx="180" cy="262" r="22" fill="#e08a00"/>
+                <text x="180" y="262" class="node-label" font-size="9">滤网</text>
+
+                <circle cx="300" cy="262" r="22" fill="#22a06b"/>
+                <text x="300" y="262" class="node-label" font-size="9">主板</text>
+
+                <text x="240" y="290" class="node-sub" font-size="10">故障—部件—原因—方案 四层关联</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 研发域 ==================== -->
+      <section class="view" id="view-rd">
+        <div class="domain-banner banner-purple">
+          <div class="db-left">
+            <div class="db-ico">🔬</div>
+            <div>
+              <h2>研发知识图谱</h2>
+              <p>专利关联 · BOM图谱 · 设计经验复用 · PoC 验证中</p>
+            </div>
+          </div>
+          <div class="db-right">
+            <div class="db-stat"><div class="n">86</div><div class="l">专利关联</div></div>
+            <div class="db-stat"><div class="n">62%</div><div class="l">覆盖率</div></div>
+            <div class="db-stat"><div class="n">3</div><div class="l">活跃项目</div></div>
+          </div>
+        </div>
+
+        <div class="kpi-row">
+          <div class="kpi purple"><div class="label">产品-专利关联</div><div class="value">386</div><div class="delta">覆盖 42 款主力产品</div></div>
+          <div class="kpi blue"><div class="label">BOM 节点</div><div class="value">2,180</div><div class="delta">含零部件 / 物料 / 供应商</div></div>
+          <div class="kpi teal"><div class="label">设计经验条目</div><div class="value">146</div><div class="delta">资深工程师隐性经验</div></div>
+          <div class="kpi green"><div class="label">工程师覆盖</div><div class="value">218</div><div class="delta">占研发团队 72%</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span>产品知识图谱 · 以智能坐便器 i9 为例</span><span class="badge">可下钻</span></div>
+          <div style="padding: 8px 0 0;">
+            <svg class="graph-svg" viewBox="0 0 900 360" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <marker id="arw3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#b8cade"/>
+                </marker>
+              </defs>
+              <line x1="450" y1="70" x2="450" y2="120" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw3)"/>
+              <line x1="410" y1="160" x2="220" y2="160" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw3)"/>
+              <line x1="490" y1="160" x2="680" y2="160" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw3)"/>
+              <line x1="410" y1="180" x2="220" y2="230" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw3)"/>
+              <line x1="490" y1="180" x2="680" y2="230" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw3)"/>
+              <line x1="220" y1="260" x2="350" y2="300" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw3)"/>
+              <line x1="680" y1="260" x2="550" y2="300" stroke="#b8cade" stroke-width="1.6" marker-end="url(#arw3)"/>
+
+              <circle cx="450" cy="45" r="30" fill="#7c5cd6"/>
+              <text x="450" y="45" class="node-label" font-size="11">i9 坐便器</text>
+              <text x="450" y="90" class="node-sub" font-size="10" font-weight="600" fill="#5e35b1">核心产品</text>
+
+              <circle cx="450" cy="160" r="34" fill="#1a73e8"/>
+              <text x="450" y="156" class="node-label" font-size="10">冲刷系统</text>
+              <text x="450" y="170" class="node-label" font-size="9">模块</text>
+
+              <circle cx="200" cy="160" r="28" fill="#00a6a6"/>
+              <text x="200" y="156" class="node-label" font-size="9">专利</text>
+              <text x="200" y="168" class="node-label" font-size="9">CN2024...</text>
+
+              <circle cx="700" cy="160" r="28" fill="#00a6a6"/>
+              <text x="700" y="156" class="node-label" font-size="9">专利</text>
+              <text x="700" y="168" class="node-label" font-size="9">US2023...</text>
+
+              <circle cx="200" cy="240" r="24" fill="#e08a00"/>
+              <text x="200" y="240" class="node-label" font-size="9">工程师</text>
+
+              <circle cx="700" cy="240" r="24" fill="#e08a00"/>
+              <text x="700" y="240" class="node-label" font-size="9">测试报告</text>
+
+              <circle cx="380" cy="310" r="22" fill="#22a06b"/>
+              <text x="380" y="310" class="node-label" font-size="9">材料</text>
+
+              <circle cx="520" cy="310" r="22" fill="#e5484d"/>
+              <text x="520" y="310" class="node-label" font-size="9">失效</text>
+            </svg>
+          </div>
+          <div class="legend">
+            <span><i style="background:#7c5cd6"></i>产品</span>
+            <span><i style="background:#1a73e8"></i>模块</span>
+            <span><i style="background:#00a6a6"></i>专利</span>
+            <span><i style="background:#e08a00"></i>人员 / 报告</span>
+            <span><i style="background:#22a06b"></i>物料</span>
+            <span><i style="background:#e5484d"></i>失效案例</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 供应链域 ==================== -->
+      <section class="view" id="view-supply">
+        <div class="domain-banner banner-orange">
+          <div class="db-left">
+            <div class="db-ico">📦</div>
+            <div>
+              <h2>供应链知识图谱</h2>
+              <p>物料关联 · 供应商 · 替代方案 · 规划中</p>
+            </div>
+          </div>
+          <div class="db-right">
+            <div class="db-stat"><div class="n">—</div><div class="l">规划中</div></div>
+          </div>
+        </div>
+        <div class="empty-hint">
+          🚧 该业务域正在规划中<br>
+          <span style="font-size:11px; margin-top:8px; display:inline-block;">预计接入：ERP、SRM、质检系统，构建“物料—供应商—质量标准—替代方案”关联网络</span>
+        </div>
+      </section>
+
+      <!-- ==================== HR能力域 ==================== -->
+      <section class="view" id="view-hr">
+        <div class="domain-banner banner-green">
+          <div class="db-left">
+            <div class="db-ico">👥</div>
+            <div>
+              <h2>HR 能力图谱</h2>
+              <p>技能图谱 · 人岗匹配 · 知识传承 · 内测中</p>
+            </div>
+          </div>
+          <div class="db-right">
+            <div class="db-stat"><div class="n">218</div><div class="l">已覆盖员工</div></div>
+            <div class="db-stat"><div class="n">48%</div><div class="l">覆盖率</div></div>
+          </div>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi green"><div class="label">技能标签</div><div class="value">326</div><div class="delta">含研发 / 售后 / 产线</div></div>
+          <div class="kpi blue"><div class="label">岗位关联</div><div class="value">86</div><div class="delta">岗位—技能映射</div></div>
+          <div class="kpi amber"><div class="label">知识孤点</div><div class="value">14</div><div class="delta down">仅 1 人掌握的关键技能</div></div>
+          <div class="kpi teal"><div class="label">人岗匹配度</div><div class="value">78%</div><div class="delta up">↑ 较上月 +5%</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><span>关键技能传承风险</span><span class="pill red">需关注</span></div>
+          <table class="risk-table">
+            <thead>
+              <tr><th>技能</th><th>掌握人数</th><th>涉及产品</th><th>风险</th><th>建议</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="name">智能坐便器冲刷系统设计</td>
+                <td>1</td>
+                <td>i9 / i7 系列</td>
+                <td><span class="lvl high"><i></i>高</span></td>
+                <td style="font-size:11.5px">安排知识萃取 + 后备培养</td>
+              </tr>
+              <tr>
+                <td class="name">主板 E3 故障诊断</td>
+                <td>2</td>
+                <td>全系智能坐便器</td>
+                <td><span class="lvl mid"><i></i>中</span></td>
+                <td style="font-size:11.5px">文档化 + 售后培训</td>
+              </tr>
+              <tr>
+                <td class="name">同层排水系统结构设计</td>
+                <td>1</td>
+                <td>隐藏式系列</td>
+                <td><span class="lvl high"><i></i>高</span></td>
+                <td style="font-size:11.5px">紧急培养后备</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ==================== 质量域 ==================== -->
+      <section class="view" id="view-quality">
+        <div class="domain-banner banner-red">
+          <div class="db-left">
+            <div class="db-ico">✅</div>
+            <div>
+              <h2>质量知识图谱</h2>
+              <p>缺陷归因 · 测试案例 · 改进追踪 · 规划中</p>
+            </div>
+          </div>
+          <div class="db-right">
+            <div class="db-stat"><div class="n">—</div><div class="l">规划中</div></div>
+          </div>
+        </div>
+        <div class="empty-hint">
+          🚧 该业务域正在规划中<br>
+          <span style="font-size:11px; margin-top:8px; display:inline-block;">预计接入：QMS、测试系统、售后工单，构建“缺陷—产品—工艺—供应商—改进”关联网络</span>
+        </div>
+      </section>
+
+      <!-- ==================== 专利域 ==================== -->
+      <section class="view" id="view-patent">
+        <div class="domain-banner banner-blue">
+          <div class="db-left">
+            <div class="db-ico">📜</div>
+            <div>
+              <h2>专利知识图谱</h2>
+              <p>专利-产品关联 · 发明人 · 引证网络 · 内测中</p>
+            </div>
+          </div>
+          <div class="db-right">
+            <div class="db-stat"><div class="n">386</div><div class="l">专利关联</div></div>
+            <div class="db-stat"><div class="n">75%</div><div class="l">覆盖率</div></div>
+          </div>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi blue"><div class="label">专利总量</div><div class="value">486</div><div class="delta">国内 + 国际</div></div>
+          <div class="kpi teal"><div class="label">关联产品</div><div class="value">42</div><div class="delta">主力产品线</div></div>
+          <div class="kpi purple"><div class="label">发明人</div><div class="value">126</div><div class="delta">研发工程师</div></div>
+          <div class="kpi green"><div class="label">引证关系</div><div class="value">1,240</div><div class="delta">内部 + 外部引证</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><span>专利-产品关联示例</span><span class="badge">可下钻</span></div>
+          <div style="padding: 16px 20px;">
+            <div style="font-size:13px; margin-bottom:12px;"><b>CN202410XXXXXX</b> · 一种智能坐便器自适应冲刷控制方法</div>
+            <div class="path-chain">
+              <span class="chip">专利 CN2024...</span><span class="arrow">→</span>
+              <span class="chip">冲刷系统</span><span class="arrow">→</span>
+              <span class="chip">i9 系列</span><span class="arrow">→</span>
+              <span class="chip">发明人：李工</span><span class="arrow">→</span>
+              <span class="chip">引证：US2023...</span>
+            </div>
+            <div class="concl" style="margin-top:14px">
+              ✓ 该专利已应用于 i9 / i7 / i5 三款产品，涉及 2 项国际专利引证，发明人李工为关键技能持有者
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 图谱总览 ==================== -->
+      <section class="view" id="view-graph">
+        <div class="page-head">
+          <h2>全局知识图谱总览</h2>
+          <div class="sub">跨业务域实体关联 · 支持按域筛选 · 点击节点可下钻</div>
+        </div>
+
+        <div class="kpi-row">
+          <div class="kpi blue"><div class="label">实体总量</div><div class="value">48,620</div><div class="delta">7 个业务域</div></div>
+          <div class="kpi teal"><div class="label">关系边</div><div class="value">216,340</div><div class="delta">支持 6 跳推理</div></div>
+          <div class="kpi green"><div class="label">跨域关联</div><div class="value">8,420</div><div class="delta">员工-产品-工单-专利</div></div>
+          <div class="kpi amber"><div class="label">图谱更新</div><div class="value">实时</div><div class="delta">5 个数据源</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span>全局实体网络</span><span class="badge">点击节点下钻</span></div>
+          <div style="padding: 8px 0 0;">
+            <svg class="graph-svg" viewBox="0 0 920 420" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <marker id="arw4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#c5d5e5"/>
+                </marker>
+              </defs>
+
+              <!-- 中心节点 -->
+              <line x1="460" y1="210" x2="240" y2="120" stroke="#c5d5e5" stroke-width="1.4" marker-end="url(#arw4)"/>
+              <line x1="460" y1="210" x2="680" y2="120" stroke="#c5d5e5" stroke-width="1.4" marker-end="url(#arw4)"/>
+              <line x1="460" y1="210" x2="240" y2="300" stroke="#c5d5e5" stroke-width="1.4" marker-end="url(#arw4)"/>
+              <line x1="460" y1="210" x2="680" y2="300" stroke="#c5d5e5" stroke-width="1.4" marker-end="url(#arw4)"/>
+              <line x1="460" y1="210" x2="460" y2="80" stroke="#c5d5e5" stroke-width="1.4" marker-end="url(#arw4)"/>
+              <line x1="460" y1="210" x2="460" y2="340" stroke="#c5d5e5" stroke-width="1.4" marker-end="url(#arw4)"/>
+
+              <!-- 中心：员工 -->
+              <circle cx="460" cy="210" r="42" fill="#1a73e8" filter="url(#sh)"/>
+              <text x="460" y="206" class="node-label" font-size="12">张伟</text>
+              <text x="460" y="222" class="node-label" font-size="10" opacity=".85">售后工程师</text>
+              <text x="460" y="270" class="node-sub" font-size="10" font-weight="600" fill="#12539e">核心节点</text>
+
+              <!-- 六个域节点 -->
+              <circle cx="240" cy="120" r="34" fill="#1a73e8" opacity=".85"/>
+              <text x="240" y="116" class="node-label" font-size="11">考勤</text>
+              <text x="240" y="130" class="node-label" font-size="9">异常</text>
+              <text x="240" y="170" class="node-sub" font-size="10">考勤域</text>
+
+              <circle cx="680" cy="120" r="34" fill="#00a6a6" opacity=".85"/>
+              <text x="680" y="116" class="node-label" font-size="11">工单</text>
+              <text x="680" y="130" class="node-label" font-size="9">SO-0912</text>
+              <text x="680" y="170" class="node-sub" font-size="10">售后域</text>
+
+              <circle cx="240" cy="300" r="34" fill="#7c5cd6" opacity=".85"/>
+              <text x="240" y="296" class="node-label" font-size="10">专利</text>
+              <text x="240" y="310" class="node-label" font-size="9">CN2024</text>
+              <text x="240" y="350" class="node-sub" font-size="10">专利域</text>
+
+              <circle cx="680" cy="300" r="34" fill="#e08a00" opacity=".85"/>
+              <text x="680" y="296" class="node-label" font-size="10">物料</text>
+              <text x="680" y="310" class="node-label" font-size="9">冲刷系统</text>
+              <text x="680" y="350" class="node-sub" font-size="10">供应链域</text>
+
+              <circle cx="460" cy="80" r="32" fill="#22a06b" opacity=".85"/>
+              <text x="460" y="76" class="node-label" font-size="10">技能</text>
+              <text x="460" y="90" class="node-label" font-size="9">故障诊断</text>
+              <text x="460" y="40" class="node-sub" font-size="10">HR能力域</text>
+
+              <circle cx="460" cy="340" r="32" fill="#e5484d" opacity=".85"/>
+              <text x="460" y="336" class="node-label" font-size="10">缺陷</text>
+              <text x="460" y="350" class="node-label" font-size="9">E3</text>
+              <text x="460" y="392" class="node-sub" font-size="10">质量域</text>
+            </svg>
+          </div>
+          <div class="legend">
+            <span><i style="background:#1a73e8"></i>考勤</span>
+            <span><i style="background:#00a6a6"></i>售后</span>
+            <span><i style="background:#7c5cd6"></i>研发 / 专利</span>
+            <span><i style="background:#e08a00"></i>供应链</span>
+            <span><i style="background:#22a06b"></i>HR能力</span>
+            <span><i style="background:#e5484d"></i>质量</span>
+          </div>
+        </div>
+
+        <div class="concl-bar">
+          <div class="ico">✓</div>
+          <div class="txt">
+            跨域推理示例：输入“张伟”，可沿图谱路径找到他的 <b>考勤异常 → 售后工单 → 涉及产品 → 关联专利 → 所需技能 → 质量缺陷</b>，
+            实现从人员到产品、从问题到知识的全链路追溯。
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 数据源 ==================== -->
+      <section class="view" id="view-datasource">
+        <div class="page-head">
+          <h2>数据源接入管理</h2>
+          <div class="sub">统一管理各业务域的数据接入 · 只读对接 · 本地部署</div>
+        </div>
+
+        <div class="kpi-row">
+          <div class="kpi green"><div class="label">已接入系统</div><div class="value">5</div><div class="delta">HR / 工单 / PLM / 专利 / 门禁</div></div>
+          <div class="kpi amber"><div class="label">待接入</div><div class="value">2</div><div class="delta">ERP / QMS</div></div>
+          <div class="kpi blue"><div class="label">今日同步</div><div class="value">28,420</div><div class="delta">条记录</div></div>
+          <div class="kpi teal"><div class="label">同步成功率</div><div class="value">99.8%</div><div class="delta up">↑ 稳定运行</div></div>
+        </div>
+
+        <div class="ds-grid">
+          <div class="ds-card">
+            <div class="dsi" style="background:linear-gradient(135deg,#1a73e8,#3d8bfd)">👥</div>
+            <div class="dsc-body">
+              <h4>HR 系统</h4>
+              <p>员工 / 岗位 / 班次 / 考勤 / 请假 / 加班</p>
+            </div>
+            <div class="dsc-status"><span class="dot ok"></span>已接入</div>
+          </div>
+          <div class="ds-card">
+            <div class="dsi" style="background:linear-gradient(135deg,#00897b,#00a6a6)">🔧</div>
+            <div class="dsc-body">
+              <h4>售后工单系统</h4>
+              <p>工单 / 故障描述 / 处理记录 / 配件更换</p>
+            </div>
+            <div class="dsc-status"><span class="dot ok"></span>已接入</div>
+          </div>
+          <div class="ds-card">
+            <div class="dsi" style="background:linear-gradient(135deg,#5e35b1,#7c5cd6)">🔬</div>
+            <div class="dsc-body">
+              <h4>PLM 系统</h4>
+              <p>产品结构 / BOM / 设计文档 / 测试报告</p>
+            </div>
+            <div class="dsc-status"><span class="dot ok"></span>已接入</div>
+          </div>
+          <div class="ds-card">
+            <div class="dsi" style="background:linear-gradient(135deg,#12539e,#1a73e8)">📜</div>
+            <div class="dsc-body">
+              <h4>专利库</h4>
+              <p>专利文本 / 发明人 / 引证 / 法律状态</p>
+            </div>
+            <div class="dsc-status"><span class="dot ok"></span>已接入</div>
+          </div>
+          <div class="ds-card">
+            <div class="dsi" style="background:linear-gradient(135deg,#94a8bb,#b8cade)">🚪</div>
+            <div class="dsc-body">
+              <h4>门禁 / 定位系统</h4>
+              <p>打卡记录 / 移动定位 / 服务区域</p>
+            </div>
+            <div class="dsc-status"><span class="dot ok"></span>已接入</div>
+          </div>
+          <div class="ds-card">
+            <div class="dsi" style="background:linear-gradient(135deg,#d97706,#f59e0b)">📦</div>
+            <div class="dsc-body">
+              <h4>ERP 系统</h4>
+              <p>物料 / 供应商 / 采购 / 库存</p>
+            </div>
+            <div class="dsc-status"><span class="dot warn"></span>待接入</div>
+          </div>
+          <div class="ds-card">
+            <div class="dsi" style="background:linear-gradient(135deg,#c92a2f,#e5484d)">✅</div>
+            <div class="dsc-body">
+              <h4>QMS 质量系统</h4>
+              <p>缺陷 / 测试 / 改进 / 供应商质量</p>
+            </div>
+            <div class="dsc-status"><span class="dot warn"></span>待接入</div>
+          </div>
+          <div class="ds-card">
+            <div class="dsi" style="background:linear-gradient(135deg,#4a5c6e,#6b7d8f)">📄</div>
+            <div class="dsc-body">
+              <h4>制度文档库</h4>
+              <p>考勤制度 / 假期政策 / 操作规范</p>
+            </div>
+            <div class="dsc-status"><span class="dot ok"></span>已接入</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 权限 ==================== -->
+      <section class="view" id="view-permission">
+        <div class="page-head">
+          <h2>权限与角色管理</h2>
+          <div class="sub">按业务域隔离 · 按角色授权 · 操作留痕</div>
+        </div>
+
+        <div class="role-grid">
+          <div class="role-card">
+            <h4>管理员</h4>
+            <div class="rc-sub">平台全权 · 可管理所有业务域</div>
+            <div class="perm-list">
+              <span class="perm">考勤</span><span class="perm">售后</span><span class="perm">研发</span>
+              <span class="perm">供应链</span><span class="perm">HR能力</span><span class="perm">质量</span>
+              <span class="perm">专利</span><span class="perm">数据源</span><span class="perm">权限</span>
+            </div>
+          </div>
+          <div class="role-card">
+            <h4>HR 专员</h4>
+            <div class="rc-sub">考勤与 HR 能力域</div>
+            <div class="perm-list">
+              <span class="perm">考勤</span><span class="perm">HR能力</span>
+              <span class="perm gray">售后</span><span class="perm gray">研发</span>
+              <span class="perm gray">供应链</span>
+            </div>
+          </div>
+          <div class="role-card">
+            <h4>售后主管</h4>
+            <div class="rc-sub">售后域 + 关联考勤</div>
+            <div class="perm-list">
+              <span class="perm">售后</span><span class="perm">考勤（本部门）</span>
+              <span class="perm gray">研发</span><span class="perm gray">供应链</span>
+            </div>
+          </div>
+          <div class="role-card">
+            <h4>研发工程师</h4>
+            <div class="rc-sub">研发域 + 专利域</div>
+            <div class="perm-list">
+              <span class="perm">研发</span><span class="perm">专利</span>
+              <span class="perm gray">考勤</span><span class="perm gray">售后</span>
+            </div>
+          </div>
+          <div class="role-card">
+            <h4>供应链专员</h4>
+            <div class="rc-sub">供应链域</div>
+            <div class="perm-list">
+              <span class="perm">供应链</span>
+              <span class="perm gray">考勤</span><span class="perm gray">售后</span><span class="perm gray">研发</span>
+            </div>
+          </div>
+          <div class="role-card">
+            <h4>合规 / 法务</h4>
+            <div class="rc-sub">考勤合规 + 质量风险</div>
+            <div class="perm-list">
+              <span class="perm">考勤（合规视图）</span><span class="perm">质量</span>
+              <span class="perm gray">HR能力</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:18px;">
+          <div class="card-head"><span>审计日志</span><span class="badge">实时</span></div>
+          <table class="risk-table">
+            <thead><tr><th>时间</th><th>角色</th><th>操作</th><th>业务域</th><th>结果</th></tr></thead>
+            <tbody>
+              <tr><td>10:42</td><td>HR专员</td><td>查询张伟考勤异常归因</td><td>考勤</td><td><span class="lvl low"><i></i>成功</span></td></tr>
+              <tr><td>10:38</td><td>售后主管</td><td>诊断工单 SO-2026-0912 故障</td><td>售后</td><td><span class="lvl low"><i></i>成功</span></td></tr>
+              <tr><td>10:25</td><td>研发工程师</td><td>查询 i9 冲刷系统关联专利</td><td>研发/专利</td><td><span class="lvl low"><i></i>成功</span></td></tr>
+              <tr><td>10:12</td><td>供应链专员</td><td>尝试访问考勤域</td><td>考勤</td><td><span class="lvl high"><i></i>拒绝</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+/* ============ 视图切换 ============ */
+const titles = {
+  home: '首页总览', graph: '图谱总览',
+  attendance: '考勤知识图谱', service: '售后知识图谱', rd: '研发知识图谱',
+  supply: '供应链知识图谱', hr: 'HR能力图谱', quality: '质量知识图谱',
+  patent: '专利知识图谱', datasource: '数据源接入', permission: '权限与角色'
+};
+
+function go(view) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const target = document.getElementById('view-' + view);
+  if (target) target.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const nav = document.querySelector(`.nav-item[data-view="${view}"]`);
+  if (nav) nav.classList.add('active');
+  document.querySelector('.content').scrollTop = 0;
+}
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => go(item.dataset.view));
+});
+
+/* ============ 考勤域子标签 ============ */
+document.querySelectorAll('.subtab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const parent = tab.closest('.view');
+    parent.querySelectorAll('.subtab').forEach(t => t.classList.remove('active'));
+    parent.querySelectorAll('.subview').forEach(v => v.classList.remove('active'));
+    tab.classList.add('active');
+    const sub = document.getElementById('sub-' + tab.dataset.sub);
+    if (sub) sub.classList.add('active');
+  });
+});
+
+/* ============ 考勤问答 ============ */
+const answers = {
+  '综合工时制加班上限是多少？': {
+    text: '综合工时制以周期计算，月平均加班不得超过 <b>36 小时</b>，且需经劳动行政部门审批。恩仕产线岗位按季度综合计算，季度上限 <b>108 小时</b>。',
+    path: ['产线操作工', '综合工时制', '季度计算周期', '法定月均上限36h', '季度上限108h'],
+    concl: '✓ 判定：本季度累计加班 96h，未超限，但需关注 2 名员工接近上限'
+  },
+  '外勤打卡没有门禁记录，算缺勤吗？': {
+    text: '不算。外勤场景以 <b>移动定位 + 工单记录 + 出差审批</b> 为出勤依据，门禁记录不作为唯一判定标准。',
+    path: ['售后工程师', '外勤场景', '移动定位匹配', '工单闭环记录', '出差审批有效'],
+    concl: '✓ 判定：应认定为外勤出勤，系统自动发起补卡'
+  },
+  '研发弹性上班最晚几点到？': {
+    text: '研发弹性工时制，核心工作时段为 <b>10:00–16:00</b>，最晚到岗时间 <b>10:00</b>，每月弹性越界不得超过 <b>5 次</b>。',
+    path: ['研发工程师', '弹性工时制', '核心时段10:00-16:00', '月越界上限5次'],
+    concl: '✓ 判定：王强本月越界 7 次，已触发主管提醒'
+  }
+};
+
+function askAtt(text) {
+  const input = document.getElementById('q-input-att');
+  const q = text || input.value.trim();
+  if (!q) return;
+  input.value = '';
+
+  const body = document.getElementById('chat-body-att');
+  body.insertAdjacentHTML('beforeend', `
+    <div class="msg user">
+      <div class="ava">我</div>
+      <div class="bubble">${q}</div>
+    </div>
+  `);
+
+  const typing = document.createElement('div');
+  typing.className = 'msg bot';
+  typing.innerHTML = `<div class="ava">AI</div><div class="bubble" style="color:#94a8bb">正在沿知识图谱推理…</div>`;
+  body.appendChild(typing);
+  body.scrollTop = body.scrollHeight;
+
+  setTimeout(() => {
+    typing.remove();
+    const a = answers[q];
+    let html = '';
+    if (a) {
+      html = `
+        <div class="msg bot">
+          <div class="ava">AI</div>
+          <div class="bubble">
+            ${a.text}
+            <div class="path-box">
+              <div class="ttl">推理路径</div>
+              <div class="path-chain">
+                ${a.path.map((p,i) => `<span class="chip">${p}</span>${i<a.path.length-1?'<span class="arrow">→</span>':''}`).join('')}
+              </div>
+              <div class="concl">${a.concl}</div>
+            </div>
+          </div>
+        </div>`;
+    } else {
+      html = `
+        <div class="msg bot">
+          <div class="ava">AI</div>
+          <div class="bubble">
+            已收到问题，正在检索制度库与图谱关联…
+            <div class="path-box">
+              <div class="ttl">推理路径</div>
+              <div class="path-chain">
+                <span class="chip">问题解析</span><span class="arrow">→</span>
+                <span class="chip">制度检索</span><span class="arrow">→</span>
+                <span class="chip">岗位匹配</span><span class="arrow">→</span>
+                <span class="chip">规则推理</span>
+              </div>
+              <div class="concl">✓ 演示环境：可点击推荐问题查看完整推理效果</div>
+            </div>
+          </div>
+        </div>`;
+    }
+    body.insertAdjacentHTML('beforeend', html);
+    body.scrollTop = body.scrollHeight;
+  }, 800);
+}
+
+document.getElementById('sugg-att').addEventListener('click', e => {
+  if (e.target.tagName === 'BUTTON') askAtt(e.target.dataset.q);
+});
+document.getElementById('q-input-att').addEventListener('keydown', e => {
+  if (e.key === 'Enter') askAtt();
+});
+
+/* ============ 考勤异常归因 ============ */
+const cases = {
+  c1: {
+    title: '异常详情 · 张伟 10-14 缺卡',
+    reasons: [
+      ['外勤打卡未同步至考勤系统', 87, 'b-red'],
+      ['出差审批未关联当日考勤', 9, 'b-blue'],
+      ['门禁设备故障', 4, 'b-gray']
+    ],
+    evidence: [
+      ['ok', '出差审批', '10-13 至 10-15 武汉出差，已批准'],
+      ['ok', '售后工单', 'SO-2026-0912 于 10-14 10:22 在光谷完成闭环'],
+      ['info', '移动定位', '10-14 09:58 定位在光谷片区，与服务区域匹配'],
+      ['warn', '门禁记录', '当日无门禁刷卡记录（外勤场景正常）'],
+      ['warn', '考勤系统', '外勤打卡记录未回传，标记为缺卡']
+    ],
+    concl: '认定为外勤出勤，自动发起补卡流程，无需员工提交材料。'
+  },
+  c2: {
+    title: '异常详情 · 李静 本周工时超限',
+    reasons: [
+      ['连续排班导致周工时超标', 78, 'b-red'],
+      ['加班单未及时审批', 14, 'b-blue'],
+      ['班次数据同步延迟', 8, 'b-gray']
+    ],
+    evidence: [
+      ['ok', '排班记录', '本周排班 6 天，含 2 次连班'],
+      ['ok', '工时统计', '本周累计 62h，超法定 60h 上限'],
+      ['info', '加班单', '2 笔加班单审批中，尚未计入'],
+      ['warn', '生产工单', '本周产线加急工单 3 笔']
+    ],
+    concl: '建议立即调整排班，将 1 个班次转移至下周，并加急审批加班单。'
+  },
+  c3: {
+    title: '异常详情 · 王强 10-13 迟到',
+    reasons: [
+      ['弹性工时越界次数超限', 82, 'b-red'],
+      ['未提交弹性上班申请', 12, 'b-blue'],
+      ['考勤设备时间偏差', 6, 'b-gray']
+    ],
+    evidence: [
+      ['ok', '考勤记录', '10-13 到岗 09:47，晚于核心时段 10:00 前打卡要求'],
+      ['ok', '制度规则', '研发弹性制每月越界上限 5 次'],
+      ['info', '历史记录', '本月已越界 7 次'],
+      ['warn', '申请记录', '无当日弹性上班申请']
+    ],
+    concl: '建议由部门主管提醒，并核实是否存在项目加班导致的弹性需求。'
+  },
+  c4: {
+    title: '异常详情 · 陈敏 加班调休不匹配',
+    reasons: [
+      ['加班调休未在季度内消化', 85, 'b-red'],
+      ['调休申请流程未闭环', 10, 'b-blue'],
+      ['跨部门排班协调延迟', 5, 'b-gray']
+    ],
+    evidence: [
+      ['ok', '加班记录', '本季度累计加班 36h'],
+      ['ok', '调休记录', '已调休 0h'],
+      ['info', '制度规则', '季度加班调休上限 36h，需当季消化'],
+      ['warn', '排班计划', '10 月排班已满，未预留调休窗口']
+    ],
+    concl: '建议在 10 月底前安排至少 36h 调休，或按规定支付加班费。'
+  }
+};
+
+function renderCase(key) {
+  const d = cases[key];
+  document.getElementById('detail-title').textContent = d.title;
+  const reasonHtml = d.reasons.map(r => `
+    <div class="reason">
+      <div class="row1"><b>${r[0]}</b><span class="conf">${r[1]}%</span></div>
+      <div class="bar"><span class="${r[2]}" style="width:${r[1]}%"></span></div>
+    </div>`).join('');
+  const evHtml = d.evidence.map(e => `
+    <div class="ev-item">
+      <div class="ev-dot ${e[0]}">${e[0]==='ok'?'✓':e[0]==='warn'?'!':'i'}</div>
+      <div class="k">${e[1]}</div>
+      <div class="v">${e[2]}</div>
+    </div>`).join('');
+  document.getElementById('detail-body').innerHTML = `
+    <div class="sec-ttl">可能原因排序（知识图谱推理）</div>
+    ${reasonHtml}
+    <div class="sec-ttl" style="margin-top:22px">证据链（跨系统自动关联）</div>
+    <div class="evidence">${evHtml}</div>
+    <div class="concl-bar" style="margin-top:16px">
+      <div class="ico">✓</div>
+      <div class="txt">
+        建议处理：<b>${d.concl}</b><br>
+        <span style="color:#8296a8;font-size:11.5px">HR 处理时长：原 18 分钟 → 现 1 次点击确认</span>
+      </div>
+    </div>
+  `;
+}
+
+document.getElementById('case-list').addEventListener('click', e => {
+  const card = e.target.closest('.case');
+  if (!card) return;
+  document.querySelectorAll('.case').forEach(c => c.classList.remove('active'));
+  card.classList.add('active');
+  renderCase(card.dataset.case);
+});
+
+/* ============ 全局搜索 ============ */
+const searchData = [
+  { t: '张伟', meta: '售后工程师 · 考勤异常 · 工单 SO-2026-0912', tag: '员工', view: 'attendance' },
+  { t: '李静', meta: '产线操作工 · 周工时超限 62h', tag: '员工', view: 'attendance' },
+  { t: '王强', meta: '研发工程师 · 弹性工时越界 7 次', tag: '员工', view: 'attendance' },
+  { t: 'i9 智能坐便器', meta: '主力产品 · 冲刷系统 · 关联专利 12 项', tag: '产品', view: 'rd' },
+  { t: '冲刷系统', meta: '核心模块 · 关联专利 CN2024 / US2023', tag: '模块', view: 'rd' },
+  { t: 'E3 故障', meta: '冲水无力 · 进水阀 / 水压传感器 / 主板', tag: '故障', view: 'service' },
+  { t: 'SO-2026-0912', meta: '售后工单 · 武汉光谷 · 已完成闭环', tag: '工单', view: 'service' },
+  { t: 'CN202410XXXXXX', meta: '自适应冲刷控制方法 · 发明人李工', tag: '专利', view: 'patent' },
+  { t: '综合工时制', meta: '产线岗位 · 季度上限 108h', tag: '制度', view: 'attendance' },
+  { t: '智能坐便器冲刷系统设计', meta: '关键技能 · 仅 1 人掌握 · 高传承风险', tag: '技能', view: 'hr' }
+];
+
+const searchInput = document.getElementById('global-search');
+const searchDrop = document.getElementById('search-drop');
+
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q) { searchDrop.classList.remove('show'); return; }
+  const results = searchData.filter(d => d.t.toLowerCase().includes(q) || d.meta.toLowerCase().includes(q));
+  if (!results.length) {
+    searchDrop.innerHTML = `<div class="sr-item"><div class="sr-ttl" style="color:#94a8bb">未找到相关结果</div></div>`;
+  } else {
+    searchDrop.innerHTML = results.map(r => `
+      <div class="sr-item" onclick="go('${r.view}'); document.getElementById('global-search').value=''; document.getElementById('search-drop').classList.remove('show')">
+        <div class="sr-ttl">${r.t} <span class="sr-tag">${r.tag}</span></div>
+        <div class="sr-meta">${r.meta}</div>
+      </div>
+    `).join('');
+  }
+  searchDrop.classList.add('show');
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-box')) searchDrop.classList.remove('show');
+});
+
+/* ============ 初始化 ============ */
+renderCase('c1');
+</script>
+</body>
+</html>

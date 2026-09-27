@@ -97,8 +97,11 @@ export function computeForceLayout(
         }
 
         const force = (k * k) / distance;
-        const fx = (dx / distance) * force;
-        const fy = (dy / distance) * force;
+        // 每步位移限幅 ±k：斥力 1/d 与弹簧力 d² 在 n 大（500 节点/110 边）时
+        // 会正反馈发散——真机实测第 50 步溢出为 Infinity → NaN 传染全图，
+        // 画布全灭（2026-09-26）。限幅后任意规模都保证有界收敛。
+        const fx = clamp((dx / distance) * force, -k, k);
+        const fy = clamp((dy / distance) * force, -k, k);
 
         a.x += fx;
         a.y += fy;
@@ -118,8 +121,9 @@ export function computeForceLayout(
       const distance = Math.hypot(dx, dy) || 0.01;
 
       const force = ((distance * distance) / k) * 0.02;
-      const fx = (dx / distance) * force;
-      const fy = (dy / distance) * force;
+      // 同上：位移限幅，阻断 d² 弹簧的正反馈发散
+      const fx = clamp((dx / distance) * force, -k, k);
+      const fy = clamp((dy / distance) * force, -k, k);
 
       a.x -= fx;
       a.y -= fy;
