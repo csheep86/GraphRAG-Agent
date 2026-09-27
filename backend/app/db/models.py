@@ -14,6 +14,12 @@ Sprint 7.2 批次 B 新增 M4 三张表（`affiliation_tasks` / `affiliation_sus
 Sprint 8.1 批次 A 新增审计 / 问答两张表（`audit_log` / `qa_logs`）：字段逐字照
 `specs/m5-permission-audit.md` §4.4 与 `specs/m3-graphqa-citation.md` §4.3，
 主键统一用 UUID（**不用** spec 写的 BIGSERIAL，差异登记 ADR-0003 §A9）。
+
+Sprint 9.5 批次 A2 新增 `ontology_schemas` 表（M6 §4.1 的**最小子集**：
+只建表 + 写考勤域种子，**不做**冷启动 GUI / 校正界面 / 增量重算，那些保持 S12）。
+字段逐字照 `specs/m6-ontology-incremental.md` §4.1；
+主键按 spec 取 **`(org_id, version)` 复合主键**（version 每 org 独立自增），
+与其余表的 UUID 单主键不同——**以 spec 为准，不套用本文件的 UUID 惯例**。
 **无 Alembic**：建表靠启动时的 ``create_all``（见 :mod:`app.db.session`）。
 """
 
@@ -514,4 +520,69 @@ class QaLog(Base):
     trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+ONTOLOGY_SCHEMA_STATUS_VALUES = ("active", "superseded")
+"""`ontology_schemas.status` 合法值（M6 §4.1）。
+
+**仅 `active` 对外可查**；``superseded`` 是换域（重新冷启动）时旧版本的终态
+（M6 §4.6：新版本落 ``version + 1``、旧版本置 ``superseded``）。
+"""
+
+
+class OntologySchema(Base):
+    """`ontology_schemas` 表（M6 §4.1：业务域本体，**每 org 一套**）。
+
+    Sprint 9.5 批次 A2 落地。两点纪律（M6 §3.5 验收 12 + GAP-F2）：
+
+    1. ``status = active`` **必须经用户确认后才写入**——未确认前用内置默认 schema
+       且不阻断抽取，内置默认 schema **不写入本表**；
+    2. 跨 org 的 schema **互不可见**（ADR-0003 RLS），换域走 ``version + 1``，
+       历史图谱**不回溯重算**。
+
+    本批次的种子数据（考勤域）由
+    ``backend/scripts/seed_attendance_ontology.py`` 写入，
+    ``suggested_by_llm = false``（人工直接编辑，非 LLM 建议）。
+    """
+
+    __tablename__ = "ontology_schemas"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'superseded')",
+            name="ck_ontology_schemas_status",
+        ),
+        # ADR-0003 §3.1：复合索引必须 org_id 打头
+        Index("ix_ontology_schemas_org_id_status", "org_id", "status"),
+        Index("ix_ontology_schemas_org_id_created_at", "org_id", "created_at"),
+    )
+
+    #: 复合主键第一列 = RLS 隔离键（前缀索引天然覆盖按 org 过滤的查询）
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    #: 版本号（每 org 独立自增）
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: 实体类型集合（数组，每项 ``{name, description?}``）
+    entity_types: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    #: 关系类型集合（每项 ``{name, head_types, tail_types, description?}``）
+    relation_types: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    #: 业务域描述（人工输入，非 LLM 生成）
+    domain_description: Mapped[str] = mapped_column(Text, nullable=False)
+    #: true = LLM 建议；false = 人工直接编辑
+    suggested_by_llm: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    #: 确认人（M5 users.id）——**确认**是本表 status=active 的前置条件
+    confirmed_by_user: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False, index=True
+    )
+    confirmed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )

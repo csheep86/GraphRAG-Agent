@@ -1,0 +1,136 @@
+# CSV → 图谱的确定性映射配置（Sprint 9.5 批次 A3）
+#
+# 消费方：批次 B1「结构化数据入图器」。
+# 纪律：
+#   1. **确定性映射，不经过 LLM**——结构化数据用 LLM 抽取是错配；
+#   2. **不新建表**，直接写 Neo4j，沿用 ADR-0002 的 `kg_version` 幂等键；
+#   3. 节点标签与关系类型必须与 `ontology_schemas` 中的考勤 schema 一致。
+
+version: 1
+domain: attendance
+kg_version: attendance-demo-v1
+
+nodes:
+  - label: EMPLOYEE
+    file: employees.csv
+    id_from: employee_id
+    properties: [name, department, position, work_time_system, hire_date, status]
+
+  # 以下三个节点由 employees.csv 的**列值去重派生**，不单独建 CSV
+  - label: DEPARTMENT
+    file: employees.csv
+    id_from: department
+    properties: [department]
+
+  - label: POSITION
+    file: employees.csv
+    id_from: position
+    properties: [position]
+
+  - label: WORK_TIME_SYSTEM
+    file: employees.csv
+    id_from: work_time_system
+    properties: [work_time_system]
+
+  - label: SHIFT
+    file: shifts.csv
+    id_from: shift_id
+    properties: [date, shift_type, start_time, end_time, planned_hours, is_rest_day]
+
+  - label: ATTENDANCE_RECORD
+    file: attendance_records.csv
+    id_from: record_id
+    properties: [date, check_in, check_out, actual_hours, core_hours_present, status, is_rest_day]
+
+  - label: BUSINESS_TRIP
+    file: business_trips.csv
+    id_from: trip_id
+    properties: [destination, site, start_date, end_date, purpose, status]
+
+  - label: WORK_ORDER
+    file: work_orders.csv
+    id_from: order_id
+    properties: [customer, site, dispatched_at, closed_at, status, fault_type]
+
+  - label: LOCATION_RECORD
+    file: location_records.csv
+    id_from: loc_id
+    properties: [date, time, site, latitude, longitude]
+
+  - label: ACCESS_RECORD
+    file: access_records.csv
+    id_from: access_id
+    properties: [date, in_time, out_time, gate]
+
+  - label: LEAVE
+    file: leave_requests.csv
+    id_from: leave_id
+    properties: [leave_type, start_date, end_date, days, status]
+
+  - label: OVERTIME
+    file: overtime_records.csv
+    id_from: overtime_id
+    properties: [date, hours, overtime_type, approved, comp_off_hours, comp_off_used_hours]
+
+relationships:
+  - type: BELONGS_TO
+    from: {label: EMPLOYEE, file: employees.csv, key: employee_id}
+    to: {label: DEPARTMENT, file: employees.csv, key: department}
+
+  - type: HAS_POSITION
+    from: {label: EMPLOYEE, file: employees.csv, key: employee_id}
+    to: {label: POSITION, file: employees.csv, key: position}
+
+  - type: APPLIES_WORK_TIME
+    from: {label: POSITION, file: employees.csv, key: position}
+    to: {label: WORK_TIME_SYSTEM, file: employees.csv, key: work_time_system}
+
+  - type: HAS_SHIFT
+    from: {label: EMPLOYEE, file: shifts.csv, key: employee_id}
+    to: {label: SHIFT, file: shifts.csv, key: shift_id}
+
+  - type: HAS_ATTENDANCE
+    from: {label: EMPLOYEE, file: attendance_records.csv, key: employee_id}
+    to: {label: ATTENDANCE_RECORD, file: attendance_records.csv, key: record_id}
+
+  - type: ON_BUSINESS_TRIP
+    from: {label: EMPLOYEE, file: business_trips.csv, key: employee_id}
+    to: {label: BUSINESS_TRIP, file: business_trips.csv, key: trip_id}
+
+  - type: HANDLED_ORDER
+    from: {label: EMPLOYEE, file: work_orders.csv, key: employee_id}
+    to: {label: WORK_ORDER, file: work_orders.csv, key: order_id}
+
+  - type: LOCATED_AT
+    from: {label: EMPLOYEE, file: location_records.csv, key: employee_id}
+    to: {label: LOCATION_RECORD, file: location_records.csv, key: loc_id}
+
+  - type: SWIPED_AT
+    from: {label: EMPLOYEE, file: access_records.csv, key: employee_id}
+    to: {label: ACCESS_RECORD, file: access_records.csv, key: access_id}
+
+  - type: SUBMITTED_LEAVE
+    from: {label: EMPLOYEE, file: leave_requests.csv, key: employee_id}
+    to: {label: LEAVE, file: leave_requests.csv, key: leave_id}
+
+  - type: ACCUMULATED_OVERTIME
+    from: {label: EMPLOYEE, file: overtime_records.csv, key: employee_id}
+    to: {label: OVERTIME, file: overtime_records.csv, key: overtime_id}
+
+  # 跨域：出差 ↔ 售后工单（按 员工 + 日期窗口 匹配，非外键）
+  - type: TRIP_FOR_ORDER
+    from: {label: BUSINESS_TRIP, file: business_trips.csv, key: trip_id}
+    to: {label: WORK_ORDER, file: work_orders.csv, key: order_id}
+    match: {by: [employee_id], where: "order.closed_at 落在 trip.start_date ~ trip.end_date 内"}
+
+# -- 不由 CSV 建立、需与 M2 抽取结果汇合的部分（批次 B3）----------------------
+#
+# POLICY_CLAUSE（制度条款）来自 4 份制度文档经 M1 解析 + M2 抽取，
+# 不由本映射产生。汇合关系：
+#
+#   WORK_TIME_SYSTEM -GOVERNED_BY-> POLICY_CLAUSE
+#     匹配方式：条款正文中出现该工时制名称（标准工时制 / 综合计算工时制 / 不定时工作制）
+#
+# 汇合后应可沿下列路径查询（B3 验收）：
+#   EMPLOYEE → HAS_POSITION → POSITION → APPLIES_WORK_TIME
+#            → WORK_TIME_SYSTEM → GOVERNED_BY → POLICY_CLAUSE

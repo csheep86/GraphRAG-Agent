@@ -1,0 +1,35 @@
+{
+  "domain": "attendance",
+  "domain_description": "制造业企业考勤与工时合规域。覆盖三类对象：① 组织与人员（员工 / 部门 / 岗位 / 工时制）；② 出勤事实（排班 / 打卡 / 请假 / 加班 / 出差 / 工单 / 定位 / 门禁）；③ 制度条款（考勤制度、工时制细则、加班与调休办法、外勤出差规定）。核心诉求是：一条考勤异常能跨 HR、门禁、工单、定位四个系统自动取证并归因，且工时 / 加班 / 调休的合规判定可由制度条款驱动。",
+  "entity_types": [
+    { "name": "EMPLOYEE", "description": "员工。属性：工号、姓名、部门、岗位、适用工时制、入职日期" },
+    { "name": "DEPARTMENT", "description": "部门。如生产部、售后部、研发部、客服部、行政部、销售部" },
+    { "name": "POSITION", "description": "岗位。如产线操作工、售后工程师、研发工程师、客服专员、行政专员、销售经理" },
+    { "name": "WORK_TIME_SYSTEM", "description": "工时制。取值：标准工时制 / 综合计算工时制 / 不定时工作制" },
+    { "name": "POLICY_CLAUSE", "description": "制度条款。来自考勤制度类文档，是可被引用的合规判定依据" },
+    { "name": "ATTENDANCE_RECORD", "description": "考勤记录。含打卡时间、实际工时、核心时段在岗时长、状态（正常 / 迟到 / 缺卡 / 请假）" },
+    { "name": "SHIFT", "description": "排班班次。含日期、班次类型（正常班 / 连班 / 周末班）、计划工时、是否休息日" },
+    { "name": "LEAVE", "description": "请假申请。含假期类型、起止日期、天数、审批状态" },
+    { "name": "OVERTIME", "description": "加班记录。含加班日期、时长、类型（工作日 / 休息日 / 法定节假日）、已调休时长" },
+    { "name": "BUSINESS_TRIP", "description": "出差审批单。含目的地、现场、起止日期、事由、审批状态" },
+    { "name": "WORK_ORDER", "description": "售后工单。含客户、现场、派单时间、闭环时间、故障类型——外勤出勤的关键取证" },
+    { "name": "LOCATION_RECORD", "description": "移动定位轨迹。含日期时间、地点、经纬度——外勤出勤的取证之一" },
+    { "name": "ACCESS_RECORD", "description": "门禁刷卡记录。仅覆盖公司自有场所，外勤地点无门禁设备，故不得作为否定出勤的唯一依据" }
+  ],
+  "relation_types": [
+    { "name": "BELONGS_TO", "head_types": ["EMPLOYEE"], "tail_types": ["DEPARTMENT"], "description": "员工所属部门" },
+    { "name": "HAS_POSITION", "head_types": ["EMPLOYEE"], "tail_types": ["POSITION"], "description": "员工担任岗位" },
+    { "name": "APPLIES_WORK_TIME", "head_types": ["POSITION"], "tail_types": ["WORK_TIME_SYSTEM"], "description": "岗位适用的工时制——决定加班认定口径" },
+    { "name": "HAS_SHIFT", "head_types": ["EMPLOYEE"], "tail_types": ["SHIFT"], "description": "员工的排班" },
+    { "name": "HAS_ATTENDANCE", "head_types": ["EMPLOYEE"], "tail_types": ["ATTENDANCE_RECORD"], "description": "员工的考勤记录" },
+    { "name": "ON_BUSINESS_TRIP", "head_types": ["EMPLOYEE"], "tail_types": ["BUSINESS_TRIP"], "description": "员工的出差审批" },
+    { "name": "HANDLED_ORDER", "head_types": ["EMPLOYEE"], "tail_types": ["WORK_ORDER"], "description": "员工处理的工单" },
+    { "name": "LOCATED_AT", "head_types": ["EMPLOYEE"], "tail_types": ["LOCATION_RECORD"], "description": "员工的定位轨迹" },
+    { "name": "SWIPED_AT", "head_types": ["EMPLOYEE"], "tail_types": ["ACCESS_RECORD"], "description": "员工的门禁刷卡" },
+    { "name": "SUBMITTED_LEAVE", "head_types": ["EMPLOYEE"], "tail_types": ["LEAVE"], "description": "员工提交的请假" },
+    { "name": "ACCUMULATED_OVERTIME", "head_types": ["EMPLOYEE"], "tail_types": ["OVERTIME"], "description": "员工累计的加班" },
+    { "name": "TRIP_FOR_ORDER", "head_types": ["BUSINESS_TRIP"], "tail_types": ["WORK_ORDER"], "description": "出差与工单的关联（按 员工 + 日期窗口 匹配，非外键）——跨域归因的关键边" },
+    { "name": "GOVERNED_BY", "head_types": ["WORK_TIME_SYSTEM"], "tail_types": ["POLICY_CLAUSE"], "description": "工时制受哪些制度条款约束。由 M2 从制度文档抽取的 POLICY_CLAUSE 与本表的 WORK_TIME_SYSTEM 汇合而成" },
+    { "name": "OCCURRED_ON", "head_types": ["ATTENDANCE_RECORD"], "tail_types": ["SHIFT"], "description": "考勤记录对应的排班" }
+  ]
+}
