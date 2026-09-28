@@ -51,6 +51,10 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # 接缝门禁的 Prompt 判据要与"上一次推送的样子"做 diff，浅克隆（默认 depth=1）
+          # 拿不到基准提交。这里取全历史，下面再把 base 显式传进去。
+          fetch-depth: 0
 
       - name: 安装 uv
         uses: astral-sh/setup-uv@v5
@@ -74,8 +78,23 @@ jobs:
       # 始终判 ERROR。Sprint 收尾验收用**默认档**（要求 ERROR = 0）即可；`--strict` 是 v1.4.0 完成点
       # 的口径，不适用于常规 Sprint（依据计划文档 §4.3 / §7.2 R9）。
       # 注：v2.3 此处曾误写作「收尾验收请手工执行 --strict」，与其所引的 §4.3 / §7.2 矛盾，已校正。
+      # Prompt 判据必须显式给基准：默认 HEAD 在 CI 上恒绿（工作区恒干净），
+      # 等于这条判据从未在流水线上生效过（CI 日志实测打印 `Prompt 判据基准：HEAD`）。
+      # 现在反过来：脚本会自动把"自行退化成 HEAD"判为 ERROR，不传 --base 就会红。
       - name: 接缝纪律门禁（check_seams.py）
-        run: uv run python scripts/check_seams.py
+        env:
+          # push：比"推送前的 HEAD"；PR：比 PR 的 base 分支
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="${BASE:-}"
+          # 首次推送时 github.event.before 是全 0 SHA（无上一个提交可比），退回 HEAD~1
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git rev-parse --verify --quiet HEAD~1 || true)"
+            [ -z "$base" ] && echo "::notice::无可用 diff 基准（首个提交），Prompt 判据按 HEAD 口径执行"
+          fi
+          echo "Prompt 判据基准 = ${base:-HEAD}"
+          uv run python scripts/check_seams.py --base "${base:-HEAD}"
 
       - name: Pytest
         run: uv run pytest -q

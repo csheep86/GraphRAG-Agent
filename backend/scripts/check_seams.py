@@ -33,6 +33,13 @@
    记忆不可靠，人工记录也可能缺记；只有 git 的事实算数，所以这条判据读的是
    git，而不是任何人的陈述（包括本注释的前一稿，它就写错过一次）。
 
+   **CI 假绿自曝**：它上线后第一件事是去 CI 抓日志求证，日志打印的正是
+   `Prompt 判据基准：HEAD`——`checkout@v4` 默认浅克隆（`fetch-depth: 1`），
+   CI 工作区又恒干净，于是 diff 恒空、判据恒 OK，**在流水线上一次也没验过**。
+   故现在：CI 下基准若**自行**退化成 HEAD ⇒ ERROR（悄悄通过的门禁比没有门禁更
+   危险），须由 workflow 显式传 `--base` 才解除；配套改动是 backend job 的
+   `fetch-depth: 0`（浅克隆连基准提交都取不到），两侧联锁由本文件的测试守着。
+
 **为何这一条要用 git**：「你可以在 Sheet 上写纪律，也可以在 Sheet 上写事实」——
 文件内容由人改，而"是否被改过"是 git 的事实。判据只认后一个。
 
@@ -705,9 +712,29 @@ def _git_prompt_name_status(base: str) -> tuple[int, str]:
     return proc.returncode, (proc.stdout or "").strip()
 
 
-def _check_prompt_versions(findings: list[Finding], *, base: str) -> None:
-    """判据 5：历史 Prompt 版本不得被改写 / 删除（`CODEBUDDY.md` 第 2 条）。"""
+def _check_prompt_versions(
+    findings: list[Finding], *, base: str, explicit: bool = False
+) -> None:
+    """判据 5：历史 Prompt 版本不得被改写 / 删除（`CODEBUDDY.md` 第 2 条）。
+
+    ``explicit`` 表示基准是**调用方显式给定**的（`--base` / `GITHUB_BASE_REF`）。
+    CI 下若基准是自行退化来的 HEAD，与干净工作区比恒为空 ⇒ 判据形同虚设，
+    这种情况必须报错而不是给 OK。
+    """
     check = "Prompt 版本不可覆盖"
+    if base == "HEAD" and not explicit and _in_ci():
+        findings.append(
+            Finding(
+                "ERROR",
+                check,
+                "CI 下基准退化为 HEAD——checkout 后工作区恒干净，与 HEAD 比永远是"
+                "“无改动”，本判据会恒 OK（实测：CI 日志曾打印 `Prompt 判据基准：HEAD`）。"
+                "请在 workflow 里显式传 --base：push 取 github.event.before、"
+                "PR 取 origin/<base>，并把该 job 的 checkout 设为 fetch-depth: 0"
+                "（浅克隆连基准提交都取不到）；确需跳过时显式传 --base HEAD 表明是故意的",
+            )
+        )
+        return
     code, output = _git_prompt_name_status(base)
     if code != 0:
         # 判不出来就**不放行**：一个悄悄通过的门禁等于没有门禁。
@@ -802,17 +829,33 @@ def _resolve_base(argv: list[str]) -> str:
         if arg == "--base":
             index = argv.index(arg)
             if index + 1 < len(argv):
-                return argv[index + 1]
+                return argv[index + 1] or "HEAD"
     ref = os.environ.get("GITHUB_BASE_REF")
     if ref:
         return f"origin/{ref}"
     return "HEAD"
 
 
+def _in_ci() -> bool:
+    return os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true"
+
+
+def _base_explicit(argv: list[str]) -> bool:
+    """基准是否由调用方显式给定（而非自行退化成 HEAD）。
+
+    这一位决定 CI 里该判 ERROR 还是 OK：**只有默认值才需要被怀疑**——
+    显式传 `--base HEAD` 是调用方明说"我知道这次没法比"，不该被误当成疏忽。
+    """
+    if os.environ.get("GITHUB_BASE_REF"):
+        return True
+    return any(arg == "--base" or arg.startswith("--base=") for arg in argv[1:])
+
+
 def main(argv: list[str]) -> int:
     strict = "--strict" in argv[1:]
     as_json = "--json" in argv[1:]
     base = _resolve_base(argv)
+    explicit = _base_explicit(argv)
 
     version = _current_version()
     index = _collect_classes()
@@ -830,7 +873,7 @@ def main(argv: list[str]) -> int:
     _check_presence(_collect_tables(), version, consumed, findings)
     _check_settings_consumers(fields, properties, consumers, version, findings)
     _check_reserved_fields(columns, contract_text, version, findings)
-    _check_prompt_versions(findings, base=base)
+    _check_prompt_versions(findings, base=base, explicit=explicit)
 
     errors = [f for f in findings if f.level == "ERROR"]
     warnings = [f for f in findings if f.level == "WARN"]

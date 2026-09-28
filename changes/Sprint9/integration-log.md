@@ -306,13 +306,55 @@ CP-T2 达成只证明**逻辑对**，不证明**接上了**。于是做了一次
 ⇒ **改文件做验证的成本比预想高**：以后这类反向验证建议用临时新文件（A 状态），
 而不是动历史文件。
 
-### 10.4 未接 CI（新的「存在但没人跑」）
+### 10.4 更正：CI 一直都在，但这条判据在 CI 上是**假绿**
 
-仓库**没有** `.github/workflows`——`check_seams.py` / `export_openapi.py --check`
-/ `pytest` 目前都只在**本机手工跑**。也就是说今天补的这条判据仍未自动执行，
-与 §7 的"表响了没人写"是同一类病：
+上一稿这里写着"仓库**没有** `.github/workflows`，门禁只在本机手工跑"。**这句话是错的**：
 
-> 东西写出来了 ≠ 它在你们的流水线上跑。
+```
+$ git log -1 --format='%h %ad %s' --date=iso -- .github/workflows/ci.yml
+ef254f70 2026-09-22 15:54:47 +0800 fix: 契约版本与测试断言对齐 app_version 真源…
+```
 
-是否建最小 CI（对 push/PR 跑 `check_seams` + 契约零漂移 + `pytest` + 前端
-`typecheck/lint`）属仓库级配置变更，未擅自动手，待定。
+CI 早在 6 天前就在跑（四个 job：ruff + **check_seams** + pytest / 前端 lint+typecheck+gen:api /
+契约零漂移），本次推送也确实触发了 run `36422892365` 且 success。写错的原因很朴素：
+IDE 目录树默认不显示点目录（`.github`），而我没有先问 git 就下了结论——
+**恰好是 §10.1 刚更正过的那类错**：又在"人的陈述 vs git 的事实"上栽了一次。
+
+真正的病（比"没接 CI"更隐蔽）也在 CI 日志里，抓证据时抓到了：
+
+```
+2026-09-28T12:36:28.0290683Z Prompt 判据基准：HEAD（可由 --base 覆盖；CI 下自动取 GITHUB_BASE_REF）
+```
+
+`checkout@v4` 默认浅克隆 + CI 工作区恒干净 ⇒ `git diff HEAD -- prompts/` 恒为空 ⇒
+判据**恒 OK，在流水线上一行都没验过**。即上一稿 §10.2 第 3 点担心的情形真实发生了。
+
+**已修（三处联动，缺一不可）**：
+
+1. `check_seams.py`：CI 下基准若**自行**退化成 HEAD ⇒ **ERROR**（不再悄悄给 OK）；
+   显式传 `--base` 才解除——以此区分真正"我知道这次没法比"的情形；
+   新增 `_in_ci()` / `_base_explicit()`，判据多一个 `explicit` 入参。
+2. `.github/workflows/ci.yml`：backend job 的 checkout 加 `fetch-depth: 0`，
+   并把基准显式传进去（push 用 `github.event.before`，PR 用 `origin/<base>`，
+   首推全 0 SHA 兜底到 `HEAD~1`）。
+3. `tests/test_check_seams.py`：新增 5 用例，其中一条是**脚本 ↔ workflow 的联锁校验**
+   （CI 必须同时具备 `fetch-depth: 0` + `github.event.before` + `github.base_ref` + `--base`），
+   防止将来有人改 workflow 时把这个接线悄悄拆掉。另加 `autouse` 夹具清 CI 环境变量：
+   否则同一份测试会在本地和 CI 上结论不同，而它守的正是 CI 行为。
+
+**实测（不只是单测绿）**：
+
+| 场景 | 结果 |
+| --- | --- |
+| 模拟 CI（`GITHUB_ACTIONS=true`）不传 base | 转红，EXIT=1，消息指明"CI 下基准退化为 HEAD" |
+| 模拟 CI push 传 `--base HEAD~1` | EXIT=0（OK 9 / ERROR 0） |
+| 真机改写 `prompts/kg_qa_v1.md` + CI 口径 base | 转红，EXIT=1，提示该新增 `kg_qa_v4.md` |
+| 浅克隆（`--depth 1`）比历史提交 `339006de` | `fatal: bad revision`，EXIT=128 ⇒ **`fetch-depth: 0` 必需** |
+| 浅克隆比 `origin/main` | EXIT=0，**能解析**（指向同一提交 ⇒ diff 空） |
+
+最后一行是另一处自我更正：动工时推测"PR 事件会因浅克隆取不到 `origin/<base>` 而假红"，
+实测在浅克隆里 `origin/main` **能解析**（对比 refs 指向的同一个提交），所以这个推测
+**未证实**——PR 场景大概率是"比了个不完整的浅历史"而不是红。结论只写实证过的部分。
+
+⇒ 一句话：既然这条判据的原则是"读 git，不读人的陈述"，那么 CI 是否真跑、
+基准是否真比到，**同样只能靠流水线的输出证明**——这次是靠抓 CI 日志才发现的。

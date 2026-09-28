@@ -17,6 +17,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "check_seams.py"
 _spec = importlib.util.spec_from_file_location("check_seams", SCRIPT_PATH)
 assert _spec is not None and _spec.loader is not None  # noqa: S101 - 测试自身的加载前置条件
@@ -30,6 +32,17 @@ _spec.loader.exec_module(gate)
 DUE = "1.1.0"
 #: 未到期版本
 NOT_DUE = "1.0.0"
+
+
+@pytest.fixture(autouse=True)
+def _clean_ci_env(monkeypatch) -> None:
+    """CI 环境变量会改变判据 5 的语义（CI 下不允许基准自行退化成 HEAD）。
+
+    所以每个测试都得自己声明身处哪种环境：否则同一份断言会在本地过、在 CI 上红
+    （或反过来），而它恰恰是用来守 CI 行为的测试。
+    """
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
 
 
 def _levels(findings: list) -> list[str]:
@@ -362,3 +375,67 @@ def test_base_from_pr_base_ref(monkeypatch) -> None:
     """CI 上必须比 PR base：比 HEAD 恒为空 ⇒ 假绿。"""
     monkeypatch.setenv("GITHUB_BASE_REF", "main")
     assert gate._resolve_base([]) == "origin/main"
+
+
+def test_ci_implicit_head_base_is_error_never_silent_green(monkeypatch) -> None:
+    """CI 下基准自行退化成 HEAD ⇒ 必须红。
+
+    这不是理论风险：该判据上线后抓 CI 日志，打印的就是 `Prompt 判据基准：HEAD`
+    ——`checkout@v4` 浅克隆 + 工作区恒干净 ⇒ diff 恒空 ⇒ 恒 OK，一次也没验过。
+    """
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _stub_git(monkeypatch, "")
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="HEAD")
+
+    assert _levels(findings) == ["ERROR"]
+    assert "退化为 HEAD" in _messages(findings)
+    assert "fetch-depth: 0" in _messages(findings)
+
+
+def test_explicit_head_base_in_ci_is_allowed(monkeypatch) -> None:
+    """显式的 `--base HEAD` 是调用方知情的选择——不该被当成疏忽报红。"""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _stub_git(monkeypatch, "")
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="HEAD", explicit=True)
+
+    assert _levels(findings) == ["OK"]
+
+
+def test_local_implicit_head_base_is_ok(monkeypatch) -> None:
+    """本地默认比 HEAD 是**有意**的：本地 diff 常含未提交改动，HEAD 才是想要的基准。"""
+    _stub_git(monkeypatch, "A\tprompts/kg_qa_v4.md")
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="HEAD")
+
+    assert _levels(findings) == ["OK"]
+
+
+def test_base_explicit_detection(monkeypatch) -> None:
+    monkeypatch.setattr(gate, "_git_prompt_name_status", lambda base: (0, ""))
+    assert gate._base_explicit(["check_seams.py"]) is False
+    assert gate._base_explicit(["check_seams.py", "--base=main"]) is True
+    assert gate._base_explicit(["check_seams.py", "--base", "deadbeef"]) is True
+    monkeypatch.setenv("GITHUB_BASE_REF", "main")
+    assert gate._base_explicit(["check_seams.py"]) is True
+
+
+def test_ci_workflow_passes_base_and_full_history() -> None:
+    """联锁校验：脚本这侧的假绿防护，只有在 workflow 真的喂基准时才有意义。
+
+    少了 `fetch-depth: 0` ⇒ push 场景取不到 before 提交（diff 报 `无法判定` ⇒ 红）；
+    少了显式 `--base` ⇒ push 场景（无 GITHUB_BASE_REF）直接触发上面那条 ERROR。
+    """
+    workflow = SCRIPT_PATH.parents[2] / ".github" / "workflows" / "ci.yml"
+    assert workflow.is_file(), f"CI 工作流不存在：{workflow}"
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "scripts/check_seams.py" in text, "CI 不再跑接缝门禁"
+    assert "fetch-depth: 0" in text, "浅克隆拿不到基准提交，Prompt 判据无从比对"
+    assert "github.event.before" in text, "push 事件需要显式基准"
+    assert "github.base_ref" in text, "PR 事件需要显式基准"
+    assert "--base" in text, "门禁必须在 CI 上被显式喂基准，否则按假绿判 ERROR"
