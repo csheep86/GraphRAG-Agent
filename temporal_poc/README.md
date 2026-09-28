@@ -1,5 +1,12 @@
 # 知识过期治理选型 PoC：自研 vs 开源
 
+> **【Sprint 9 批次 B2 已收口，先读这一句再往下看】**
+> Track S 的**判分口径已迁入正式测试集** `backend/tests/test_temporal_track_s.py`：
+> 同一份语料、同一组判据，默认零外部依赖（CI 可跑），设 `TEMPORAL_TRACK_REAL_URI`
+> 即可连真机重跑同一组断言（`pytest tests/test_temporal_track_s.py`）。
+> 本目录的两轨脚本保留为**实验原迹**——它是 ADR-0005 决策的证据源，
+> 不要再在这里改判据；判据改动一律走正式测试集。
+>
 > 目的：用**同一份语料、同一组判分口径**把「继续自研」和「引入开源（Graphiti）」
 > 放在一起实测，用数据而不是感觉决定路线。
 > 日期：2026-09-27　结论：**采用路线 S′（自研 + 抄 Graphiti 双时态模型）**，Graphiti 转备选。
