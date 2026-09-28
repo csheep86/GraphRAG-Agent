@@ -11,6 +11,15 @@
 **共同纪律**：全程无 LLM（数值不出 LLM）；结果可复现（同输入同解）。
 """
 
+from app.services.rules.attribution import (
+    ATTENDANCE_SUSPICION_TYPES,
+    FINANCE_SUSPICION_TYPES,
+    AttributionResult,
+    Cause,
+    attribute_absence,
+    find_anomaly_days,
+    suspicion_types_for_domain,
+)
 from app.services.rules.engine import (
     LEVEL_HIGH,
     LEVEL_MEDIUM,
@@ -28,6 +37,7 @@ from app.services.rules.engine import (
     scan_compliance,
 )
 from app.services.rules.policy_values import (
+    PolicySentence,
     RuleValue,
     RuleValueBook,
     RuleValueUnresolvedError,
@@ -35,9 +45,14 @@ from app.services.rules.policy_values import (
     load_policy_documents,
     policy_document_id,
     resolve_rule_values,
+    search_policy_sentences,
 )
 
 __all__ = [
+    "ATTENDANCE_SUSPICION_TYPES",
+    "AttributionResult",
+    "Cause",
+    "FINANCE_SUSPICION_TYPES",
     "LEVEL_HIGH",
     "LEVEL_MEDIUM",
     "RULE_COMP_OFF",
@@ -48,10 +63,13 @@ __all__ = [
     "ComplianceReport",
     "ComplianceScanError",
     "EmployeeFacts",
+    "PolicySentence",
     "RiskFinding",
     "RuleValue",
     "RuleValueBook",
     "RuleValueUnresolvedError",
+    "attribute_absence",
+    "find_anomaly_days",
     "load_employee_facts",
     "load_policy_clauses",
     "load_policy_documents",
@@ -59,4 +77,6 @@ __all__ = [
     "resolve_rule_values",
     "rule_label",
     "scan_compliance",
+    "search_policy_sentences",
+    "suspicion_types_for_domain",
 ]

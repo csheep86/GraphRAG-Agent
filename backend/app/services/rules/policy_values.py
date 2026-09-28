@@ -163,6 +163,51 @@ _SPEC_BY_KEY: Mapping[str, RuleSpec] = {spec.key: spec for spec in _RULE_SPECS}
 
 
 @dataclass(frozen=True, slots=True)
+class PolicySentence:
+    """制度原文里命中关键词的一句话（含出处，供结论引用）。
+
+    **为什么需要**：归因 / 问答的结论里不能出现「自动补卡」这类**未经溯源的制度措辞**
+    ——那是编制度。凡是结论要引用制度，必须走这里把原句与出处一起带出来（守 F3）。
+    """
+
+    source: str
+    reference: str
+    text: str
+
+
+def search_policy_sentences(
+    *,
+    keyword: str,
+    clauses: Sequence[_TextSegment] = (),
+    documents: Sequence[_TextSegment] = (),
+    limit: int = 5,
+) -> tuple[PolicySentence, ...]:
+    """在制度文本里找含 ``keyword`` 的句子，返回 ``(出处, 原句)``。
+
+    **只做包含匹配，不做语义判断**：命中即返回（按来源与顺序排序 ⇒ 同解）。
+    命中多条是**正常的**——例如「自动补卡」在 2025 版（手工补卡）与 2026 版
+    （系统自动补卡）各出现一次，正是 ADR-0005 时效演示要看的**版本更替**。
+    """
+    hits: list[PolicySentence] = []
+    for segments in (
+        sorted(clauses, key=lambda item: item.order),
+        sorted(documents, key=lambda item: item.order),
+    ):
+        for segment in segments:
+            if keyword in segment.text:
+                hits.append(
+                    PolicySentence(
+                        source=segment.source,
+                        reference=segment.reference,
+                        text=segment.text.strip()[:200],
+                    )
+                )
+                if len(hits) >= limit:
+                    return tuple(hits)
+    return tuple(hits)
+
+
+@dataclass(frozen=True, slots=True)
 class RuleValue:
     """一个已解析出的规则值（含出处，可逐条核查）。"""
 

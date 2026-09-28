@@ -140,10 +140,31 @@
     「缺规则值 ⇒ 跳过而非崩溃」）；全量 **447 项无回归**；
     `export_openapi.py --check` 零漂移；`check_seams.py` ERROR 0 / WARN 0
   - **不建表、不动契约**（契约动在 D3，端点在 C3）
-- [ ] **C2** 扩展 M4（**只加不改**）：
-  - `suspicion_type` **域化**（按本体域可配置，保留金融枚举不删）
-  - 新增 `causes: [{reason, confidence, evidence[]}]`
-  - **置信度由证据匹配度确定性加权**，**禁止** LLM 生成置信度
+- [x] **C2** 扩展 M4（**只加不改**）—— **已完成（服务层与域化；落库 / 契约随 D3 一起做）**
+  `backend/app/services/rules/attribution.py`
+  - **新增 `causes`**：`{code, reason, weight, matched, evidence[]}` —— 原因排序 + 证据节点 id
+  - **置信度 = Σ命中权重 / Σ全部权重**（**确定性加权，禁止 LLM 生成**）：
+    `trip_approved 0.35 / order_closed 0.30 / location_match 0.22 / access_contrast 0.13`
+    ⇒ 三项主证据命中 = **0.87**（对齐 proposal §5.4 的示例值）、四项全命中 = **1.00**、
+    **零证据 = 0.00 且结论「不成立」**（不给"60% 凑合分"）
+  - 反向守卫（单测钉死）：**未审批的出差单 / 未闭环的工单 / 与出差地不符的定位
+    一律不算证据**，门禁对比（当日无门禁 + 前一日有门禁）只作**旁证**（制度四：门禁不作唯一判据）
+  - **`suspicion_type` 域化**：`suspicion_types_for_domain()` —— 金融两个类型
+    **保留不删**，考勤域给 `missing_check_in`；**未知域抛错**（不静默回落金融域，
+    否则"考勤疑点"会被当成"关联交易疑点"解释）
+  - **结论里的制度话术可溯源**：「自动补卡」**不硬编码**，走 `search_policy_sentences()`
+    从制度文本取原句与出处 —— 实测命中两条，且正好含 **2025 手工补卡 → 2026 自动补卡**
+    的版本更替 ⇒ 可直接喂 ADR-0005 时效演示
+  - CLI `scripts/explain_attendance_anomaly.py`：列异常日 → 逐条证据（命中 / 权重 / 证据节点）
+    → 置信度 → 结论 → 制度出处；**断言 E001 用例**
+  - 实测（真机图谱）：E001 张伟 2026-10-16 缺卡 ⇒ 出差审批 ✓（武汉 10-16~10-18）+ 工单闭环 ✓
+    （`SO-2026-0912`）+ 定位一致 ✓（武汉光谷 ×2）+ 门禁对比 ✓ ⇒ **100% / 外勤出勤成立 → 自动补卡**
+  - 测试：`tests/test_rules_attribution.py` **9 项全绿**；全量 **456 项无回归**；
+    `export_openapi.py --check` 零漂移；`check_seams.py` ERROR 0 / WARN 0
+  - **边界（显式登记，不是漏做）**：`causes` **尚未落库**、也未进契约。
+    M4 表的 `causes` 列 + `suspicion_type` 的 CheckConstraint 放宽，**与 D3 契约同步一起做**——
+    ① 本项目**无 Alembic**，加列要显式迁移脚本；② `causes` 一进契约就要连带前端
+    `gen:api`，分两次做等于白改一遍
 - [ ] **C3** 合规预警扫描端点：返回风险清单 + 图谱推理依据 + 等级 + 建议动作
 
 ## 批次 D · 问答与推理路径（后端 B）
