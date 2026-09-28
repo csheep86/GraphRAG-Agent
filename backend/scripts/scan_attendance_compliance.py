@@ -12,8 +12,9 @@
 1. 打印**每个规则值的出处**（哪条条款 / 哪份文档第几行）——不是数值本身可信，
    是出处可核查才可信（守 F3）；
 2. 打印风险清单与**计算过程**（演示时要能逐条念出来）；
-3. **断言 4 条已埋设的演示用例**（E002 月加班 + 连续出勤、E003 弹性越界、
-   E004 调休未消化）确实出现——不出现即 **exit 1**，绝不"扫了个寂寞还报成功"。
+3. **断言 5 条已埋设的演示用例**（E002 月加班 + 连续出勤、E003 弹性越界、
+   E004 调休未消化、E005 周工时超限）确实出现——不出现即 **exit 1**，
+   绝不"扫了个寂寞还报成功"。
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from app.services.rules import (  # noqa: E402
     RULE_CONSECUTIVE,
     RULE_CORE_WINDOW,
     RULE_MONTHLY_OVERTIME,
+    RULE_WEEKLY_HOURS,
     scan_compliance,
 )
 
@@ -47,6 +49,7 @@ DEMO_EXPECTATIONS: tuple[tuple[str, str, str], ...] = (
     ("E002", RULE_CONSECUTIVE, "连续出勤 22 天 ≥ 12 天"),
     ("E003", RULE_CORE_WINDOW, "核心时段未在岗 7 次 > 5 次"),
     ("E004", RULE_COMP_OFF, "已产生调休额度 22h、已调休 0h"),
+    ("E005", RULE_WEEKLY_HOURS, "第 42 周实际工时 48h > 40h"),
 )
 
 

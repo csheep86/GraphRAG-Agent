@@ -42,6 +42,18 @@ YEAR, MONTH = 2026, 10
 DAYS: list[dt.date] = [dt.date(YEAR, MONTH, d) for d in range(1, 32)]
 REST_WEEKDAYS = {5, 6}  # 周六 / 周日
 
+#: 综合计算工时制**背景**员工的轮休星期（做五休二：周三 + 周日）。
+#:
+#: 改前为「周一至周六全排 + 周日 35% 出勤」⇒ 月排班 ≈27 天 / ≈216h，
+#: 21/22 名综合制员工**全员**触发月加班超限，演示页被背景噪音淹没（登记为 L11）。
+#: 做五休二 ⇒ 月排班 ≈22 天 / ≈176h，低于「174h 标准 + 36h 上限 = 210h」的触发线；
+#: 综合制按**月**核算（制度二第七条），跨周排班本来就合规，改的是排班强度而非口径。
+COMP_REST_WEEKDAYS = {2, 6}  # 周三 / 周日
+
+#: 背景员工月内 12h 连班**最多 3 天**（否则随机叠加会把月度工时顶过 210h，
+#: 重新引入 L11 的"全员超限"）。演示用例 E002 不受此限（其排班为精确构造）。
+BACKGROUND_LONG_SHIFT_CAP = 3
+
 
 def is_rest(day: dt.date) -> bool:
     return day.weekday() in REST_WEEKDAYS
@@ -58,17 +70,17 @@ DEPT_SPEC: dict[str, tuple[str, str, int]] = {
     "销售部": ("销售经理", "不定时工作制", 2),
 }
 
-#: 4 个演示用例固定占用前 4 个工号，数据由本脚本**精确构造**（非随机）
+#: 5 个演示用例固定占用前 5 个工号，数据由本脚本**精确构造**（非随机）
 DEMO_CASES: list[tuple[str, str, str, str, str]] = [
     ("E001", "张伟", "售后部", "售后工程师", "综合计算工时制"),
     ("E002", "李静", "生产部", "产线操作工", "综合计算工时制"),
     ("E003", "王强", "研发部", "研发工程师", "标准工时制"),
     ("E004", "陈敏", "客服部", "客服专员", "标准工时制"),
+    ("E005", "刘洋", "研发部", "研发工程师", "标准工时制"),
 ]
 
 #: 背景员工姓名池（虚构）
 NAME_POOL = [
-    "刘洋",
     "杨帆",
     "赵磊",
     "孙悦",
@@ -124,6 +136,11 @@ LI_WORK_START, LI_WORK_END = dt.date(2026, 10, 1), dt.date(2026, 10, 22)
 LI_LONG_SHIFTS = {dt.date(2026, 10, d) for d in (3, 4, 9, 10, 14, 15, 16, 17, 21, 22)}
 #: 王强核心时段未在岗日期，共 7 次（> 制度二第十三条的 5 次阈值）
 WANG_CORE_ABSENT = {dt.date(2026, 10, d) for d in (5, 8, 12, 15, 19, 22, 26)}
+#: 刘洋周工时超限周：**第 42 周**（10-12 周一 ~ 10-17 周六）连上 6 天 × 8h = 48h。
+#:
+#: 标准工时制背景员工恒为「周一至周五 5 × 8h = 40h」，**不**大于制度上限 40h，
+#: 故「周工时超限」在改语料前**零命中**（登记为 L10）——必须显式埋设，不能靠随机。
+LIU_WEEK_OVERTIME_DAYS = frozenset(dt.date(2026, 10, d) for d in range(12, 18))
 
 
 def build_employees() -> list[dict[str, str]]:
@@ -217,15 +234,33 @@ def build_shifts(employees: list[dict[str, str]]) -> list[dict[str, object]]:
                     push(eid, day, 8.0)
             continue
 
+        # -- 演示用例 E005 刘洋：第 42 周连上 6 天 → 周工时 48h > 40h ----
+        if eid == "E005":
+            for day in DAYS:
+                if day in LIU_WEEK_OVERTIME_DAYS:
+                    push(eid, day, 8.0)  # 含 10-17 周六，冲刺周排满 6 天
+                elif not is_rest(day) and random.random() < 0.95:
+                    push(eid, day, 8.0)
+            continue
+
         # -- 其余员工：按工时制生成背景排班 -------------------------------
         if wts == "不定时工作制":
             continue  # 不定时工作制不排班
         if wts == "综合计算工时制":
-            workdays = [d for d in DAYS if d.weekday() < 6 or random.random() < 0.35]
+            # 做五休二（周三 + 周日轮休，见 COMP_REST_WEEKDAYS 注释）
+            workdays = [
+                d
+                for d in DAYS
+                if d.weekday() not in COMP_REST_WEEKDAYS and random.random() < 0.95
+            ]
         else:  # 标准工时制
             workdays = [d for d in DAYS if not is_rest(d) and random.random() < 0.95]
+        long_left = BACKGROUND_LONG_SHIFT_CAP if dept == "生产部" else 0
         for day in workdays:
-            hours = 12.0 if (dept == "生产部" and random.random() < 0.20) else 8.0
+            hours = 8.0
+            if long_left and random.random() < 0.20:
+                hours = 12.0
+                long_left -= 1
             push(eid, day, hours)
     return rows
 
@@ -539,7 +574,16 @@ def build_overtime(employees: list[dict[str, str]]) -> list[dict[str, object]]:
         )
         seq += 1
     for emp in employees:
-        if emp["work_time_system"] != "标准工时制" or emp["employee_id"] == "E004":
+        if emp["work_time_system"] != "标准工时制" or emp["employee_id"] in (
+            # E004 的加班单由上面**精确构造**（22h 全未调休），不接受随机单污染；
+            # E003 王强是「弹性时段越界」用例、E005 刘洋是「周工时超限」用例，
+            # 随机加班单会让他们**额外**命中「调休未消化」，演示时同一员工出现
+            # 两条风险、用例不再干净 —— 演示用例只保留自己那条。（E002 除外：
+            # 她**故意**同时命中月加班与连续出勤，用于演示一因多果。）
+            "E003",
+            "E004",
+            "E005",
+        ):
             continue
         for _ in range(random.randint(0, 3)):
             day = dt.date(2026, 10, random.randint(1, 30))
@@ -798,6 +842,49 @@ def self_check(shifts: list[dict[str, object]]) -> None:
     print(
         f"  [{'OK ' if ok else 'FAIL'}] E004 陈敏 月加班 {ot_hours:.0f}h，"
         f"已调休 {used:.0f}h → 调休未消化"
+    )
+
+    # E005 刘洋：**周**工时超限（ISO 周聚合，与规则引擎 engine._rule_weekly_hours 同口径）
+    liu_by_week: dict[tuple[int, int], float] = {}
+    for r in att_rows:
+        if r["employee_id"] != "E005":
+            continue
+        key = dt.date.fromisoformat(r["date"]).isocalendar()[:2]
+        liu_by_week[key] = liu_by_week.get(key, 0.0) + float(r["actual_hours"])
+    worst_week, worst_hours = max(liu_by_week.items(), key=lambda kv: kv[1])
+    ok = worst_hours > WEEK_STANDARD_HOURS
+    print(
+        f"  [{'OK ' if ok else 'FAIL'}] E005 刘洋 {worst_week[0]} 年第 "
+        f"{worst_week[1]} 周实际工时 {worst_hours:g}h > 周上限 "
+        f"{WEEK_STANDARD_HOURS:g}h（阈值严格大于，背景员工恒为 40h ⇒ 不触发）"
+    )
+
+    # L11 回归护栏：背景综合制员工**不得**成片触发月加班超限
+    emp_rows = _read_csv("employees.csv")
+    comp_ids = {
+        r["employee_id"]
+        for r in emp_rows
+        if r["work_time_system"] == "综合计算工时制" and r["employee_id"] != "E002"
+    }
+    breach = sorted(
+        eid
+        for eid in comp_ids
+        if sum(float(s["planned_hours"]) for s in shifts if s["employee_id"] == eid)
+        - MONTH_STANDARD_HOURS
+        > MONTH_OVERTIME_CAP
+    )
+    peak = max(
+        (
+            sum(float(s["planned_hours"]) for s in shifts if s["employee_id"] == eid)
+            for eid in comp_ids
+        ),
+        default=0.0,
+    )
+    ok = not breach
+    print(
+        f"  [{'OK ' if ok else 'FAIL'}] 背景综合制员工 {len(comp_ids)} 人："
+        f"月最高 {peak:.0f}h（触发线 {MONTH_STANDARD_HOURS + MONTH_OVERTIME_CAP:.0f}h），"
+        f"超限 {len(breach)} 人{'' if ok else ' → ' + ', '.join(breach)}"
     )
 
 

@@ -93,17 +93,14 @@ def main() -> int:
                 return 1
 
             target = args.date or days[0]
-            name = (
-                session.run(
-                    "MATCH (e:Entity {entity_type:'EMPLOYEE', kg_version:$kg, "
-                    "org_id:$org}) WHERE e.id = $emp "
-                    "RETURN e.canonical_name AS name",
-                    kg=args.kg_version,
-                    org=org_id,
-                    emp=f"EMPLOYEE:{args.employee}",
-                )
-                .single()
-            )
+            name = session.run(
+                "MATCH (e:Entity {entity_type:'EMPLOYEE', kg_version:$kg, "
+                "org_id:$org}) WHERE e.id = $emp "
+                "RETURN e.canonical_name AS name",
+                kg=args.kg_version,
+                org=org_id,
+                emp=f"EMPLOYEE:{args.employee}",
+            ).single()
             documents = load_policy_documents(org_id=org_id)
             clauses = load_policy_clauses(
                 session=session, kg_version=args.kg_version, org_id=org_id

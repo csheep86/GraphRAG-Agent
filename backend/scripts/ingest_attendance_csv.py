@@ -5,7 +5,8 @@
     uv run python scripts/ingest_attendance_csv.py
     uv run python scripts/ingest_attendance_csv.py --kg-version attendance-demo-v1
     uv run python scripts/ingest_attendance_csv.py --dry-run   # 只解析，不写库
-    uv run python scripts/ingest_attendance_csv.py --purge     # 先清同版本残留
+    uv run python scripts/ingest_attendance_csv.py --purge-csv # 只清 CSV 派生节点（**推荐**）
+    uv run python scripts/ingest_attendance_csv.py --purge     # 清整个版本（含 M2 抽取产物）
 
 设计要点：
 
@@ -20,6 +21,14 @@
    幂等键 ``(id, kg_version)``，重复执行安全可重放。
 4. **写入自检**：回读真实计数，与期望不符即失败回滚——防止"静默丢失"
    （例如端点 id 拼错导致关系全部匹配不到）。
+
+**清理范围（2026-09-28 修）**：本脚本与 ``ingest_attendance_policies.py``（M2 抽取）
+共用同一 ``kg_version``，后者产物为 ``ent_*`` span 实体。因此——
+
+- 自检与失败补偿**只针对本次提交的 id**，不按整个版本计数 / 删除：
+  否则 span 会被算进实际计数（恒报自检失败），失败补偿还会**连带删掉** span
+  （重跑抽取要重烧 MinerU + LLM）；
+- ``--purge-csv`` 只清本 mapping 派生前缀（``<ENTITY_TYPE>:``），``--purge`` 清整个版本。
 """
 
 from __future__ import annotations
@@ -29,6 +38,7 @@ import csv
 import sys
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -77,6 +87,15 @@ def load_mapping(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict) or "nodes" not in data:
         raise IngestError(f"映射文件格式错误: {path}")
     return data
+
+
+def _derived_prefixes(mapping: dict[str, Any]) -> tuple[str, ...]:
+    """本 mapping 会产生的实体类型 ⇒ CSV 派生节点的 **id 前缀**集合。
+
+    id 规则见 ``mapping.yaml`` 注释：``<ENTITY_TYPE>:<业务主键值>``。
+    定向清理据此区分「CSV 派生」与「M2 抽取的 span（``ent_*``）」。
+    """
+    return tuple(sorted({str(node["entity_type"]) for node in mapping["nodes"]}))
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -349,11 +368,55 @@ RETURN count(r) AS merged
 
 _CYPHER_PURGE_VERSION = "MATCH (n:Entity {kg_version: $kg_version}) DETACH DELETE n"
 
+#: **定向清理**：只删本 mapping 派生的节点（id 形如 ``<ENTITY_TYPE>:<主键>``）。
+#:
+#: 为什么不能只用 ``--purge``：同一 ``kg_version`` 里还混着 **M2 抽取的 span 实体**
+#: （``ent_*``，如 ``POLICY_CLAUSE``——规则值解析的图谱侧来源）。``--purge`` 按
+#: ``:Entity{kg_version}`` 全删，**会连带删掉 210 个 span**，重建需要重跑 MinerU + LLM。
+#: 只改 CSV 语料时，用 ``--purge-csv`` 清派生节点、保住抽取产物。
+_CYPHER_PURGE_CSV = """
+MATCH (n:Entity {kg_version: $kg_version})
+WHERE split(n.id, ':')[0] IN $prefixes
+DETACH DELETE n
+"""
+
 _CYPHER_COUNT_VERSION_GRAPH = """
 MATCH (n:Entity {kg_version: $kg_version})
 WITH count(n) AS entity_count
 MATCH ()-[r:RELATION {kg_version: $kg_version}]->()
 RETURN entity_count AS entity_count, count(r) AS relation_count
+"""
+
+#: 写入自检按**本次提交的 id** 计数，而不是按整个 ``kg_version``：
+#: 同一版本里还混着 M2 抽取的 span 实体（``ent_*``）——按版本计数会把它们算进来，
+#: 在「CSV 与抽取结果同版本共存」的场景下**必然**误报「写入自检失败」。
+_CYPHER_COUNT_ENTITIES_BY_IDS = """
+UNWIND $ids AS id
+MATCH (n:Entity {id: id, kg_version: $kg_version})
+RETURN count(DISTINCT n) AS entity_count
+"""
+
+_CYPHER_COUNT_RELATIONS_BY_IDS = """
+UNWIND $ids AS id
+MATCH ()-[r:RELATION {id: id, kg_version: $kg_version}]->()
+RETURN count(DISTINCT r) AS relation_count
+"""
+
+#: 失败补偿同样**只删本次写入**的行。
+#:
+#: 原实现按 ``:Entity{kg_version}`` 全删——而同版本还住着 M2 抽取的 span 实体，
+#: 一次自检失败就会把它们**连带清空**（重跑 B2 要重烧 MinerU + LLM）。
+#: 补偿的正确语义是"撤销我这次写的东西"，不是"清空这个版本"。
+_CYPHER_ROLLBACK_ENTITIES = """
+UNWIND $ids AS id
+MATCH (n:Entity {id: id, kg_version: $kg_version})
+DETACH DELETE n
+"""
+
+_CYPHER_ROLLBACK_RELATIONS = """
+UNWIND $ids AS id
+MATCH ()-[r:RELATION {id: id, kg_version: $kg_version}]->()
+DELETE r
 """
 
 
@@ -475,6 +538,7 @@ def import_graph(
     trace_id: str,
     purge: bool,
     now: str,
+    purge_csv_prefixes: Sequence[str] = (),
 ) -> IngestStats:
     """ADR-0002 三段式写入。"""
     stats = IngestStats(kg_version=kg_version)
@@ -500,7 +564,18 @@ def import_graph(
 
         if purge:
             session.run(_CYPHER_PURGE_VERSION, kg_version=kg_version).consume()
-            print("  [purge] 已清理同版本历史数据")
+            print("  [purge] 已清理同版本历史数据（**含 M2 抽取的 span 实体**）")
+        elif purge_csv_prefixes:
+            result = session.run(
+                _CYPHER_PURGE_CSV,
+                kg_version=kg_version,
+                prefixes=list(purge_csv_prefixes),
+            ).consume()
+            deleted = result.counters.nodes_deleted
+            print(
+                f"  [purge-csv] 已清理 {deleted} 个 CSV 派生节点"
+                f"（前缀 {len(purge_csv_prefixes)} 类；M2 span 实体保留）"
+            )
 
         try:
             # ---- 2/3：MERGE 节点 ----
@@ -524,11 +599,19 @@ def import_graph(
                 ).consume()
             print(f"  [2/3] MERGE 关系 {len(relation_rows)} 条")
 
-            # ---- 写入自检：回读真实计数，防"静默丢失" ----
+            # ---- 写入自检：回读**本次提交的 id**，防"静默丢失" ----
+            # 不按 kg_version 全量计数：同版本还有 M2 抽取的 span，全量会误报。
             record = session.run(
-                _CYPHER_COUNT_VERSION_GRAPH, kg_version=kg_version
+                _CYPHER_COUNT_ENTITIES_BY_IDS,
+                ids=[str(row["id"]) for row in entity_rows],
+                kg_version=kg_version,
             ).single()
             actual_entities = int(record["entity_count"]) if record else 0
+            record = session.run(
+                _CYPHER_COUNT_RELATIONS_BY_IDS,
+                ids=[str(row["id"]) for row in relation_rows],
+                kg_version=kg_version,
+            ).single()
             actual_relations = int(record["relation_count"]) if record else 0
             if actual_entities != len(entity_rows) or actual_relations != len(
                 relation_rows
@@ -560,7 +643,17 @@ def import_graph(
             detail = f"{type(exc).__name__}: {exc}"[:500]
             print(f"  [3b] 失败，回滚并置 failed: {detail}", file=sys.stderr)
             try:
-                session.run(_CYPHER_PURGE_VERSION, kg_version=kg_version).consume()
+                # 只撤销本次写入（**不清空整个版本**，否则会连带删掉 M2 抽取的 span）
+                session.run(
+                    _CYPHER_ROLLBACK_RELATIONS,
+                    ids=[str(row["id"]) for row in relation_rows],
+                    kg_version=kg_version,
+                ).consume()
+                session.run(
+                    _CYPHER_ROLLBACK_ENTITIES,
+                    ids=[str(row["id"]) for row in entity_rows],
+                    kg_version=kg_version,
+                ).consume()
                 session.run(
                     _CYPHER_SET_VERSION_STATUS,
                     kg_version=kg_version,
@@ -653,7 +746,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mapping", default=str(DEFAULT_MAPPING))
     parser.add_argument("--kg-version", default=DEFAULT_KG_VERSION)
     parser.add_argument("--dry-run", action="store_true", help="只解析，不写库")
-    parser.add_argument("--purge", action="store_true", help="先清理同 kg_version 残留")
+    parser.add_argument(
+        "--purge",
+        action="store_true",
+        help="先清理同 kg_version 的**全部**实体（含 M2 抽取的 span，慎用）",
+    )
+    parser.add_argument(
+        "--purge-csv",
+        action="store_true",
+        help="只清理本 mapping 派生的节点（id 前缀 <ENTITY_TYPE>:），保留 M2 抽取产物",
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -705,6 +807,7 @@ def main(argv: list[str] | None = None) -> int:
             trace_id=trace_id,
             purge=args.purge,
             now=now,
+            purge_csv_prefixes=_derived_prefixes(mapping) if args.purge_csv else (),
         )
         with driver.session(database=settings.neo4j_database) as session:
             verify_cases(session, kg_version=kg_version)
