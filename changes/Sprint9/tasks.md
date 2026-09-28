@@ -9,14 +9,19 @@
 - [x] 调用侧：`tasks/registry.py` 把 `document.document_date` 喂给客户端
 - [x] 测试 8 条（`tests/test_extraction_temporal.py`）+ 全绿 516；真机探针 `valid_from` 覆盖率 5/5
 
-## 批次 B（⏳ 下批）
+## 批次 B（⏳ 下批，＝ **CP-T2** 判定点）
+
+> `sprint-calendar` §4 CP-T2：仲裁 R1–R4 落地，**`temporal_poc/run_track_s.py`
+> 迁入 `backend/tests/`**，且 n≥3 达 3/3（当前值 / as-of 回溯 / 历史保留）——
+> **未达即不得宣称 L1 完成**。
 
 - [ ] 四字段落 Neo4j 关系属性（事实维来自抽取，**摄入维 / 血缘由写入侧打**）
 - [ ] R1 跨文档（严格晚于 ⇒ 封旧边）/ R2 同文档变更句（同 `valid_from` 取原文最晚 `tail`）/ R3 禁同批次互封 / R4 不猜值（代码侧：不得回填 `valid_to`）
 - [ ] `relation_expiry_policies` 落表 + 被仲裁消费（`(org_id, relation_type)` 键，`unknown` 兜底）
 - [ ] Cypher 概览 / 子图 / 问答三条链默认过滤 `valid_to IS NULL`；as-of 查询
 - [ ] **L0 第三项**：答案模板加「依据截至 X 日的披露文件」（新 `kg_qa_vN.md`）
-- [ ] 真机复跑 n≥3，判据：当前值正确 3/3、as-of 回溯 3/3、过期治理 3/3
+- [ ] **PoC 迁入正式测试集**：`temporal_poc/run_track_s.py` 的逻辑迁到 `backend/tests/`（CP-T2 强制项），用本项目真实的仲裁接口跑，而不是在临时目录里自证；迁完 `temporal_poc/` 仅留 README 指向新位置
+- [ ] 真机复跑 n≥3，判据：当前值正确 3/3、as-of 回溯 3/3、过期治理 3/3（**PoC 迁入后才有资格宣称**）
 
 ## 待办（本次真机发现，批次 B 处理）
 

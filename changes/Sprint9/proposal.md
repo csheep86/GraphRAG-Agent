@@ -3,7 +3,7 @@
 > 动工日：2026-09-28。`ADR-0005` 已 Accepted，`sprint-calendar` §4 把
 > **CP-T1（S9 首日 schema 冻结含时态四字段）** 定成硬闸门——错过即全链路返工。
 
-## 1. CP-T1：schema 冻结（**第一批全部做完的部分**）
+## 1. CP-T1：schema 冻结（**定义于批次 A 全部冻结，落库分批**）
 
 冻结结论三条，**此后不得改名 / 改语义**：
 
@@ -22,8 +22,13 @@ CP-T1 要防的是「字段语义未定导致后期返工」，而**语义已在
 | 批次 | 内容 | 状态 |
 |---|---|---|
 | **A（已完成）** | L0 前两项 + CP-T1 冻结：`document_date` + `kg_extraction_v3.md`（含 `{{document_date}}` 与 `valid_from`/`valid_to`）+ 抽取侧解析 + 迁移 + 8 条测试 | ✅ 2026-09-28 |
-| **B（下批）** | L1：四字段落 Neo4j 关系属性 + R1–R4 仲裁 + `relation_expiry_policies` 落表并消费 + Cypher 默认过滤 `valid_to IS NULL` + as-of 查询 | ⏳ |
-| C 及以后 | L0 第三项「答案模板：依据截至 X 日的披露文件」、M4 四源对齐（R14）、验收矩阵补项 | ⏳ |
+| **B（下批，＝**CP-T2**）** | **L1 全套**：四字段落 Neo4j 关系属性 + R1–R4 仲裁 + `relation_expiry_policies` 落表并消费 + Cypher 默认过滤 `valid_to IS NULL` + as-of 查询 + **L0 第三项**「答案模板：依据截至 X 日的披露文件」+ **PoC `temporal_poc/run_track_s.py` 迁入 `backend/tests/`** + 真机复跑 n≥3 达 3/3 | ⏳ |
+| C 及以后 | M4 四源对齐（R14）、多跳路径时序（L2 部分）、验收矩阵「当前 vs 过期」验收项 | ⏳ |
+
+> **批次 B ＝ CP-T2 的判定点**（`sprint-calendar` §4：未达不得宣称 L1 完成）。
+> 其中的「PoC 迁入 `backend/tests/`」是日历的强制项——只有迁进正式测试集，
+> n≥3 的 3/3 才是**可持续复算**的，而不是存在临时目录里的一次性脚本。
+> 上一版任务清单曾漏掉这一条，复读时发现。
 
 ## 3. 纪律
 

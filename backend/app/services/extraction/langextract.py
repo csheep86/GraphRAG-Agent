@@ -632,8 +632,8 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 def _coerce_iso_date(value: object) -> str | None:
     """取出 ``YYYY-MM-DD`` 日期；缺失返回 ``None``，格式非法返回 ``None`` 并告警。
 
-    **不抛异常、不影响关系本体**：时态 cleanliness 是加成信息，模型偶尔输出
-    "2025年5月"这类中文日期不该让整条关系消失（召回率比日期格式重要）。
+    **不抛异常、不影响关系本体**：日期是加成信息，模型偶尔输出"2025年5月"
+    这类中文日期不该让整条关系消失（召回率比日期格式重要）。
     """
     text = str(value or "").strip()
     if not text:
