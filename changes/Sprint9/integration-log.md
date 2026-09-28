@@ -46,7 +46,41 @@
    对 `RELATED` 无能为力（不同类型无法判定矛盾）⇒ **L1 的仲裁默认只管受力点明确的
    类型**（`LEGAL_REP` / `REGISTERED_AT` 等），`RELATED` 不参与——批次 B 落实。
 
-## 4. 迁移
+## 4. 批次 B（写侧 + 仲裁）：真机 Neo4j 端到端，**n=1 达 3/3**
+
+场景：同一租户先后构建两份披露文件（doc-A 2023-04-01 法人张三 / doc-B 2025-05-01 法人李四），
+策略表里 `LEGAL_REP` 配成 `single_current`。真机 Neo4j + SQLite 实跑：
+
+| 步骤 | affiliation_edges | expired | 说明 |
+|---|---|---|---|
+| build v-l1-a | 1 | 0 | 首份文档，没有可比旧边 |
+| build v-l1-b | 1 | **1** | 李四取代张三 ⇒ R1 封旧边 |
+
+图谱里的最终状态：
+
+| tail | valid_from | valid_to | source_document_id | invalidated_reason |
+|---|---|---|---|---|
+| 张三 | 2023-04-01 | **2025-05-01** | doc-A | **R1** |
+| 李四 | 2025-05-01 | NULL | doc-B | — |
+
+判分（ADR-0005 P3-L1 口径）：**当前值唯一 = 李四 ✓ / as-of 2024-06-01 = 张三 ✓ /
+历史保留 = 2 条边活着 1 条 ✓** —— 3/3。
+
+**注意 n=1**：CP-T2 要求 n≥3，且要求 PoC 迁入 `backend/tests/`
+（批次 B2 的剩余项）。这一轮先明确：**写侧闭环已被真机证实**，
+"当前值唯一"不再是纸面结论。
+
+## 5. 批次 B 的关键发现（降级登记，不装看不见）
+
+1. **通用 `[:RELATION]` 层做不了跨文档仲裁**——`:Entity` 的 id 是 `ent_<uuid>`，
+   **每次抽取都不同**，两份文档里的同一家公司是两个节点，`(head, relation_type)`
+   匹配无从谈起。要做需先有**实体消解**（属 M4 完整化，`sprint-calendar` S9 已排）。
+   ⇒ 本期仲裁**只对 M4 主体层**（`sha256(name)` 稳定 id）生效，这也是价值最高的两类边
+   （`LEGAL_REP` / `REGISTERED_AT`）。
+2. **同一事实的多份证据必须合并**，且 `valid_from` 取**最早**：dict 直接覆盖是
+   "后来者赢"，会把 2023 年披露的事实改成 2025 年的生效日——悄悄改写历史。
+
+## 6. 迁移
 
 `7989c2c821da_add_documents_document_date_adr_0005_l0.py`：autogenerate 后人工审阅，
 仅一条 `add_column`，`downgrade` 对称。空库 `upgrade head` 通过，

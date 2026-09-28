@@ -15,17 +15,22 @@
 > 迁入 `backend/tests/`**，且 n≥3 达 3/3（当前值 / as-of 回溯 / 历史保留）——
 > **未达即不得宣称 L1 完成**。
 
-- [ ] 四字段落 Neo4j 关系属性（事实维来自抽取，**摄入维 / 血缘由写入侧打**）
-- [ ] R1 跨文档（严格晚于 ⇒ 封旧边）/ R2 同文档变更句（同 `valid_from` 取原文最晚 `tail`）/ R3 禁同批次互封 / R4 不猜值（代码侧：不得回填 `valid_to`）
-- [ ] `relation_expiry_policies` 落表 + 被仲裁消费（`(org_id, relation_type)` 键，`unknown` 兜底）
-- [ ] Cypher 概览 / 子图 / 问答三条链默认过滤 `valid_to IS NULL`；as-of 查询
-- [ ] **L0 第三项**：答案模板加「依据截至 X 日的披露文件」（新 `kg_qa_vN.md`）
-- [ ] **PoC 迁入正式测试集**：`temporal_poc/run_track_s.py` 的逻辑迁到 `backend/tests/`（CP-T2 强制项），用本项目真实的仲裁接口跑，而不是在临时目录里自证；迁完 `temporal_poc/` 仅留 README 指向新位置
-- [ ] 真机复跑 n≥3，判据：当前值正确 3/3、as-of 回溯 3/3、过期治理 3/3（**PoC 迁入后才有资格宣称**）
+- [x] **四字段落 Neo4j 关系属性**（2026-09-28）：M4 两条 typed 边写 `valid_from` / `valid_to` / `created_at` / `source_document_id`；`expired_at` 由仲裁执行时打
+- [x] **R1–R4 仲裁**（2026-09-28，纯函数 `app/services/kg/temporal.py` + 13 条单测）：严格晚于 / 原文最后出现的 tail / 禁同批互封 / 缺日期不参与比较
+- [x] **`relation_expiry_policies` 落表 + 被消费**（2026-09-28，迁移 `4e7759c33526`）：消费者 = `policies.load_expiry_policies` → builder；未配置 ⇒ 并存，默认保守
+- [ ] Cypher 概览 / 子图 / 问答三条链默认过滤 `valid_to IS NULL`；as-of 查询（**读侧，B2**）
+- [ ] **L0 第三项**：答案模板加「依据截至 X 日的披露文件」（新 `kg_qa_vN.md`，**B2**）
+- [ ] **PoC 迁入正式测试集**：`temporal_poc/run_track_s.py` 迁到 `backend/tests/`（CP-T2 强制项），**B2**
+- [ ] 真机复跑 n≥3（当前 **n=1 已 3/3**），判据不变；**PoC 迁入后才有资格宣称 CP-T2 达成**
 
-## 待办（本次真机发现，批次 B 处理）
+## 待办（批次 A 真机发现 → 已由 R2 覆盖）
 
-- [ ] 模型会**自行**给出 `valid_to`（变更句场景，实测第 3 条：张三边 `valid_to=2025-05-01`）。
-      这属"文本明示"、不违反 R4，但 **R2 仍必须存在**：模型并非每次都给，
-      当两条同 `relation_type` 的旧值边都没被模型封口时，只能靠规则兜底 ⇒
-      仲裁结论**不得**依赖模型输出。
+- [x] 模型会**自行**给出 `valid_to`（变更句场景，张三边 `valid_to=2025-05-01`）。
+      R2 已按「原文最后出现的 tail」独立判定，**不依赖模型的 `valid_to`**——
+      模型给不给都一样，这正是 D-3「不依赖 LLM」要的性质。
+
+## 降级登记（批次 B 实测发现，不得含糊）
+
+- [ ] **通用 `[:RELATION]` 层暂无跨文档仲裁**：`:Entity` 的 id 是 `ent_<uuid>`（每次抽取都变），
+      两份文档里的同一家公司是两个节点 ⇒ `(head, relation_type)` 无从匹配。
+      需先有**实体消解**（S9 已排）。本期仲裁只对 **M4 主体层**（`sha256(name)` 稳定 id）生效。

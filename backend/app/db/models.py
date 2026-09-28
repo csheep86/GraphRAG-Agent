@@ -43,6 +43,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -146,6 +147,56 @@ class Document(Base):
     #:   （与外部系统导入同口径），待对接方确需由 API 指定时才提升到契约；
     #: - 消费者：``tasks/registry.py`` 传给 ``LangextractClient`` → 渲染进 Prompt v3。
     document_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class RelationExpiryPolicy(Base):
+    """`relation_expiry_policies` 表（ADR-0005 §6 L1；CP-T1 第 3 条的定义落地）。
+
+    回答一个问题：**某个 ``relation_type`` 是否只能有一个"当前值"**。
+
+    - ``single_current``：同一 ``head`` 只允许一个当前 tail（法定代表人 / 注册地址）
+      ⇒ L1 仲裁会按 R1 / R2 把旧边 ``valid_to`` 封掉；
+    - ``append_only``：多值并存，天然不矛盾（对外投资、供应商）
+      ⇒ 仲裁**完全跳过**该类型。
+
+    ``relation_type = '*'`` 是该租户的**兜底行**（查不到具体类型时用它的策略）；
+    连兜底行都没有 ⇒ 默认 ``append_only``（保守：不封）。见
+    :func:`app.services.kg.policies.load_expiry_policies`。
+
+    **不进 contracts/openapi.yaml**：本期由运维 / 集成侧按租户初始化，
+    没有 REST 写入接口（与外部系统导入同口径）。
+    """
+
+    __tablename__ = "relation_expiry_policies"
+    __table_args__ = (
+        CheckConstraint(
+            "policy IN ('single_current', 'append_only')",
+            name="ck_relation_expiry_policies_policy",
+        ),
+        UniqueConstraint(
+            "org_id", "relation_type", name="uq_relation_expiry_policies_org_type"
+        ),
+        # ADR-0003 §3.1：复合索引必须 org_id 打头
+        Index("ix_relation_expiry_policies_org_id", "org_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    #: 关系类型；``'*'`` = 该租户的兜底行
+    relation_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: 有效期策略（CheckConstraint 限两档）
+    policy: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="append_only"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
 
 class KgVersion(Base):

@@ -58,7 +58,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
@@ -66,6 +66,12 @@ from loguru import logger
 
 from app.core.config import get_settings
 from app.services.graphs import GraphService, GraphUnavailableError
+from app.services.kg.temporal import (
+    PolicyLookup,
+    TemporalRelation,
+    always_append_only,
+    plan_expiries,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +93,9 @@ class BuildStats:
     legal_person_count: int = 0
     #: Sprint 7.1 批次 A（M4）：``LEGAL_REP`` + ``REGISTERED_AT`` 边数
     affiliation_edge_count: int = 0
+    #: Sprint 9 批次 B（ADR-0005 L1）：本次构建被**仲裁封掉**的旧边数。
+    #: 它必须能被观测——仲裁静默封对了不算好，封错了要能从统计里先看见异常。
+    expired_edge_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +310,13 @@ MATCH (s:Subject {id: r.source_id, kg_version: $kg_version})
 MATCH (p:LegalPerson {id: r.target_id, kg_version: $kg_version})
 MERGE (s)-[rel:LEGAL_REP {id: r.id, kg_version: $kg_version}]->(p)
 ON CREATE SET rel.org_id = $org_id,
-              rel.trace_id = $trace_id
+              rel.trace_id = $trace_id,
+              rel.valid_from = r.valid_from,
+              rel.valid_to = r.valid_to,
+              rel.created_at = datetime(),
+              rel.source_document_id = r.source_document_id
+ON MATCH SET rel.valid_from = coalesce(rel.valid_from, r.valid_from),
+             rel.source_document_id = coalesce(rel.source_document_id, r.source_document_id)
 """
 
 #: stage-3.2（Sprint 7.1 批次 A，M4 §4.2）：``(:Subject)-[:REGISTERED_AT]->(:Address)``
@@ -311,7 +326,61 @@ MATCH (s:Subject {id: r.source_id, kg_version: $kg_version})
 MATCH (a:Address {id: r.target_id, kg_version: $kg_version})
 MERGE (s)-[rel:REGISTERED_AT {id: r.id, kg_version: $kg_version}]->(a)
 ON CREATE SET rel.org_id = $org_id,
-              rel.trace_id = $trace_id
+              rel.trace_id = $trace_id,
+              rel.valid_from = r.valid_from,
+              rel.valid_to = r.valid_to,
+              rel.created_at = datetime(),
+              rel.source_document_id = r.source_document_id
+ON MATCH SET rel.valid_from = coalesce(rel.valid_from, r.valid_from),
+             rel.source_document_id = coalesce(rel.source_document_id, r.source_document_id)
+"""
+
+#: ---- stage-3.3（Sprint 9 批次 B，ADR-0005 L1）：仲裁用的查询 / 封边 ----
+#:
+#: **为什么不写动态 Cypher**（把 relation_type 拼进字符串）：Neo4j 不支持参数化
+#: 关系类型，社区版也没有 apoc 可用 ⇒ 只有两类 typed 边，就写两段常量。
+#: 宁愿多写一遍也不拼字符串：拼出来的类型若不存在只会静默"查不到"，
+#: 还顺带开了注入的口子。
+#:
+#: **跨 ``kg_version`` 查询**（``s.id`` 稳定，见 :func:`_stable_node_id`）是刻意的：
+#: 图谱每次构建一套新版本节点，而仲裁的语义是「跨文档」——限定当前版本
+#: 就等于永远看不见上一次构建写的事实，R1 形同虚设。
+_CYPHER_QUERY_ALIVE_LEGAL_REP = """
+UNWIND $heads AS head
+MATCH (s:Subject {id: head})-[r:LEGAL_REP]->(p:LegalPerson)
+WHERE r.org_id = $org_id AND r.valid_to IS NULL
+RETURN head AS head_id,
+       p.id AS tail_id,
+       r.valid_from AS valid_from,
+       r.source_document_id AS source_document_id
+"""
+
+_CYPHER_EXPIRE_LEGAL_REP = """
+UNWIND $batch AS x
+MATCH (s:Subject {id: x.head_id})-[r:LEGAL_REP]->(p:LegalPerson {id: x.tail_id})
+WHERE r.org_id = $org_id AND r.valid_to IS NULL AND r.valid_from = x.valid_from
+SET r.valid_to = x.valid_to,
+    r.expired_at = datetime(),
+    r.invalidated_reason = x.reason
+"""
+
+_CYPHER_QUERY_ALIVE_REGISTERED_AT = """
+UNWIND $heads AS head
+MATCH (s:Subject {id: head})-[r:REGISTERED_AT]->(a:Address)
+WHERE r.org_id = $org_id AND r.valid_to IS NULL
+RETURN head AS head_id,
+       a.id AS tail_id,
+       r.valid_from AS valid_from,
+       r.source_document_id AS source_document_id
+"""
+
+_CYPHER_EXPIRE_REGISTERED_AT = """
+UNWIND $batch AS x
+MATCH (s:Subject {id: x.head_id})-[r:REGISTERED_AT]->(a:Address {id: x.tail_id})
+WHERE r.org_id = $org_id AND r.valid_to IS NULL AND r.valid_from = x.valid_from
+SET r.valid_to = x.valid_to,
+    r.expired_at = datetime(),
+    r.invalidated_reason = x.reason
 """
 
 #: stage-2：单批 LOAD entities（M2 通用实体，**不与 M4 主体层桥接**）
@@ -441,6 +510,44 @@ def _stable_node_id(prefix: str, key: str) -> str:
     return f"{prefix}-{digest}"
 
 
+def _target_position(entity: Mapping[str, Any]) -> int | None:
+    """取 target 实体的字符偏移——**R2 的判据**（ADR-0005 §5）。
+
+    用实体的 ``char_start`` 而不是「名字在全文里最后出现的位置」（PoC 的写法）：
+    后者会被同名干扰（正文别处的"张三"会让偏移变大），前者是该实体在原文里的
+    真实位置。拿不到就返回 ``None`` ⇒ R2 整组跳过（宁可不判）。
+    """
+    value = entity.get("char_start")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return int(value)
+
+
+def _earliest_fact(
+    previous: dict[str, Any] | None, candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """同一条事实（同端点）在**多份文档**里被抽到 ⇒ 合并成一行，``valid_from`` 取**最早**。
+
+    为什么不是"后来者赢"（dict 直接覆盖）：那会把 2023 年披露的事实改成 2025 年
+    那份里的 ``valid_from``——等于悄悄改写历史。``valid_from`` 的语义是事实**开始**
+    成立的日期，取最早证据既保守又正确。血缘跟着最早那条走（它是该生效日的出处）；
+    ``valid_to`` 取**任一非空值**——有一份文档说它失效就够了，信息不丢。
+    """
+    if previous is None:
+        return candidate
+    old_from = previous.get("valid_from")
+    new_from = candidate.get("valid_from")
+    if isinstance(old_from, str) and isinstance(new_from, str) and new_from < old_from:
+        return {
+            **candidate,
+            "valid_to": previous.get("valid_to") or candidate.get("valid_to"),
+        }
+    return {
+        **previous,
+        "valid_to": previous.get("valid_to") or candidate.get("valid_to"),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class AffiliationRows:
     """由抽取产物算出的 M4 主体层写入行（全部去重、id 稳定）。"""
@@ -506,6 +613,7 @@ def build_affiliation_rows(
     relations: Sequence[dict[str, Any]],
     *,
     version: str,
+    source_document_id: str | None = None,
 ) -> AffiliationRows:
     """把 M2 抽取产物翻译成 M4 三类节点 + 两条边；**不是**就不写。
 
@@ -515,6 +623,11 @@ def build_affiliation_rows(
 
     ``tax_id`` / ``region_code`` / ``id_type`` / ``id_hash`` 一律写 ``None``：
     分销材料里没有这些主数据字段，**缺失就 null**（内部纪律：严禁兜底生成）。
+
+    Sprint 9 批次 B（ADR-0005 L1）新增 ``source_document_id`` 与时态字段：这两条边
+    要为上层仲裁提供「事实何时成立 + 出自哪份文档」。
+    ``relations`` 里没有 ``valid_from`` 时**保留 ``None``** ——不猜、不补（R4）；
+    上层仲裁见到 ``None`` 会把该边排除出时效比较，而不是替它编一个日期。
     """
     by_id: dict[str, dict[str, Any]] = {}
     for entity in entities:
@@ -537,6 +650,14 @@ def build_affiliation_rows(
 
         source_type = source.get("entity_type")
         target_type = target.get("entity_type")
+        # 事实维 + 血缘（ADR-0005 §4）。缺失即 None：上层仲裁见到 None 会把该边
+        # 排除出时效比较，而不是替它编一个日期（R4 不猜值）。
+        temporal = {
+            "valid_from": relation.get("valid_from"),
+            "valid_to": relation.get("valid_to"),
+            "source_document_id": source_document_id,
+            "tail_position": _target_position(target),
+        }
         if source_type != _SUBJECT_ENTITY_TYPE:
             # M4 的 :Subject 只收 ORG：把 PERSON / DATE 之类硬塞进来会让
             # "共享法人"的两跳查询分母失真
@@ -565,11 +686,16 @@ def build_affiliation_rows(
             # "甲公司法人是张三"是一条**事实**，在 6 份文档里被抽到 3 次就该是 3 条
             # ``source_entity_ids`` 溯源 + **1 条边**；用 relation id 会 MERGE 出 3 条
             # 并行边，直接后果是 M4 两跳按路径匹配 → 同一疑点重复出 3 遍（真机踩到）。
-            legal_rep_edges[f"{subject_node_id}->{person_id}"] = {
-                "id": f"{version}:lr:{subject_node_id}:{person_id}",
-                "source_id": subject_node_id,
-                "target_id": person_id,
-            }
+            rep_key = f"{subject_node_id}->{person_id}"
+            legal_rep_edges[rep_key] = _earliest_fact(
+                legal_rep_edges.get(rep_key),
+                {
+                    "id": f"{version}:lr:{subject_node_id}:{person_id}",
+                    "source_id": subject_node_id,
+                    "target_id": person_id,
+                    **temporal,
+                },
+            )
         elif relation_type == _RELATION_REGISTERED_AT and (
             target_type == _ADDRESS_ENTITY_TYPE
         ):
@@ -588,11 +714,16 @@ def build_affiliation_rows(
                 source_entity_id=str(target.get("id") or ""),
             )
             subject_node_id = _register_subject(subjects, source)
-            registered_at_edges[f"{subject_node_id}->{address_id}"] = {
-                "id": f"{version}:ra:{subject_node_id}:{address_id}",
-                "source_id": subject_node_id,
-                "target_id": address_id,
-            }
+            address_key = f"{subject_node_id}->{address_id}"
+            registered_at_edges[address_key] = _earliest_fact(
+                registered_at_edges.get(address_key),
+                {
+                    "id": f"{version}:ra:{subject_node_id}:{address_id}",
+                    "source_id": subject_node_id,
+                    "target_id": address_id,
+                    **temporal,
+                },
+            )
 
     return AffiliationRows(
         subjects=list(subjects.values()),
@@ -613,8 +744,16 @@ class ThreeStageKgBuilder:
         batch_size: int | None = None,
         version_strategy: str | None = None,
         session_factory: Any = None,
+        policy_lookup: PolicyLookup | None = None,
     ) -> None:
-        """``session_factory`` 留给测试注入（默认 None ⇒ 用真实 ``GraphService.instance()``）。"""
+        """``session_factory`` 留给测试注入（默认 None ⇒ 用真实 ``GraphService.instance()``）。
+
+        :param policy_lookup: ``relation_type → 是否唯一当前``（ADR-0005 §6 L1）。
+            由调用方从策略表读出后注入（:func:`app.services.kg.policies.load_expiry_policies`），
+            **builder 不碰数据库**——保持它对 PG 的零依赖，测试才能只桩 Neo4j。
+            缺省即「一律并存」⇒ 仲裁跳过所有类型，**行为与接入前完全一致**
+            （既有调用方与单测不受影响，这是分阶段接入的前提）。
+        """
         settings = get_settings()
         if version_strategy is None:
             version_strategy = settings.kg_version_strategy
@@ -629,6 +768,7 @@ class ThreeStageKgBuilder:
             batch_size if batch_size is not None else settings.kg_build_batch_size
         )
         self._session_factory = session_factory
+        self._policy_lookup = policy_lookup or always_append_only
 
     # -------------------------------------------------------------- 主入口
 
@@ -654,7 +794,14 @@ class ThreeStageKgBuilder:
 
         # Sprint 7.1 批次 A：M4 主体层（无 affiliation 数据时一段都不跑）
         affiliation = build_affiliation_rows(
-            request.entities, request.relations, version=request.version
+            request.entities,
+            request.relations,
+            version=request.version,
+            # 血缘：这批事实出自哪份文档。单文档构建即该文档 id；没有 document
+            # （旧调用方 / 单测）时为 None ⇒ 该批所有边同源，R3「同批不互封」照常生效。
+            source_document_id=(
+                str(request.document.doc_id) if request.document else None
+            ),
         )
         affiliation_stats = self._stage_affiliation(request, affiliation)
 
@@ -680,6 +827,7 @@ class ThreeStageKgBuilder:
             address_count=affiliation_stats[1],
             legal_person_count=affiliation_stats[2],
             affiliation_edge_count=affiliation_stats[3],
+            expired_edge_count=affiliation_stats[4],
         ).info("kg_build_done")
 
         return BuildStats(
@@ -692,6 +840,7 @@ class ThreeStageKgBuilder:
             address_count=affiliation_stats[1],
             legal_person_count=affiliation_stats[2],
             affiliation_edge_count=affiliation_stats[3],
+            expired_edge_count=affiliation_stats[4],
         )
 
     # -------------------------------------------------------------- 阶段实现
@@ -855,14 +1004,18 @@ class ThreeStageKgBuilder:
 
     def _stage_affiliation(
         self, request: KgBuildRequest, rows: AffiliationRows
-    ) -> tuple[int, int, int, int]:
-        """stage-2.6 + stage-3.2：写入 M4 三类节点与两条边。
+    ) -> tuple[int, int, int, int, int]:
+        """stage-2.6 + stage-3.2 + stage-3.3：写 M4 三类节点、两条边，**再**跑仲裁。
 
-        :returns: ``(subject_count, address_count, legal_person_count, affiliation_edge_count)``
-        ``rows.is_empty`` 时**一段都不跑**（保持既有调用方与单测观察到的行为）。
+        .. note:: 顺序不能颠倒：**先写后封**。封边依赖新事实已经在图里
+           （R2 封的是本次刚写入的旧值边），反过来做会一封一个空。
+
+        :returns: ``(subject_count, address_count, legal_person_count,
+            affiliation_edge_count, expired_edge_count)``
+            ``rows.is_empty`` 时**一段都不跑**（保持既有调用方与单测观察到的行为）。
         """
         if rows.is_empty:
-            return (0, 0, 0, 0)
+            return (0, 0, 0, 0, 0)
 
         acl_scope = request.document.acl_scope if request.document else None
         common_params = {
@@ -891,16 +1044,109 @@ class ThreeStageKgBuilder:
                     self._run(cypher, {"batch": list(chunk), **common_params})
                     edges += len(chunk)
 
+            # stage-3.3：先写后封（顺序见 docstring 的 note）
+            expired = self._arbitrate_affiliation_edges(request, rows)
+
             return (
                 written["subjects"],
                 written["addresses"],
                 written["persons"],
                 edges,
+                expired,
             )
         except GraphUnavailableError:
             raise
         except Exception as exc:  # noqa: BLE001 - 统一包装
-            raise GraphUnavailableError(f"stage-2.6/3.2 失败: {exc}") from exc
+            raise GraphUnavailableError(f"stage-2.6/3.2/3.3 失败: {exc}") from exc
+
+    def _arbitrate_affiliation_edges(
+        self, request: KgBuildRequest, rows: AffiliationRows
+    ) -> int:
+        """stage-3.3：按 R1 / R2 把被取代的旧边 ``valid_to`` 封掉，返回封掉条数。
+
+        判定**全部**在 :func:`plan_expiries`（纯函数）里，这里只做三件事：
+        取现状 → 交给仲裁 → 按结论执行 ``SET``。
+        仲裁失败照其它 stage 的纪律**抛错**（由外层判任务失败 + PG 状态），
+        不静默跳过——静默跳过的后果是"答案里两个法定代表人同时在位"且无人知晓。
+
+        **为什么只对 M4 主体层做**：这里的 head / tail 是 ``sha256(name)`` 稳定 id，
+        跨文档可对齐；M2 的 ``:Entity`` id 是 ``ent_<uuid>``，每次抽取都变，
+        跨文档匹配要先解决实体消解（属 M4 完整化，见 ``changes/Sprint9/proposal.md``）。
+        """
+        expired_total = 0
+        for query_cypher, expire_cypher, batch, relation_type in (
+            (
+                _CYPHER_QUERY_ALIVE_LEGAL_REP,
+                _CYPHER_EXPIRE_LEGAL_REP,
+                rows.legal_rep_edges,
+                _RELATION_LEGAL_REP,
+            ),
+            (
+                _CYPHER_QUERY_ALIVE_REGISTERED_AT,
+                _CYPHER_EXPIRE_REGISTERED_AT,
+                rows.registered_at_edges,
+                _RELATION_REGISTERED_AT,
+            ),
+        ):
+            if not batch or not self._policy_lookup(relation_type):
+                continue  # 策略未配 single_current ⇒ 多值并存，不仲裁
+
+            heads = sorted({str(row["source_id"]) for row in batch})
+            alive_rows = self._run(
+                query_cypher, {"heads": heads, "org_id": str(request.org_id)}
+            )
+            existing = [
+                TemporalRelation(
+                    head_id=str(row["head_id"]),
+                    tail_id=str(row["tail_id"]),
+                    relation_type=relation_type,
+                    valid_from=row["valid_from"],
+                    source_document_id=row["source_document_id"],
+                )
+                for row in alive_rows or []
+            ]
+            incoming = [
+                TemporalRelation(
+                    head_id=str(row["source_id"]),
+                    tail_id=str(row["target_id"]),
+                    relation_type=relation_type,
+                    valid_from=row.get("valid_from"),
+                    valid_to=row.get("valid_to"),
+                    source_document_id=row.get("source_document_id"),
+                    tail_position=row.get("tail_position"),
+                )
+                for row in batch
+            ]
+            plans = plan_expiries(
+                existing=existing,
+                incoming=incoming,
+                is_single_current=self._policy_lookup,
+            )
+            if not plans:
+                continue
+
+            payload = [
+                {
+                    "head_id": plan.relation.head_id,
+                    "tail_id": plan.relation.tail_id,
+                    "valid_from": plan.relation.valid_from,
+                    "valid_to": plan.valid_to,
+                    "reason": plan.reason,
+                }
+                for plan in plans
+            ]
+            self._run(expire_cypher, {"batch": payload, "org_id": str(request.org_id)})
+            expired_total += len(payload)
+            # 必须可观测：封了哪类、封了几条、封之前还剩多少条活的
+            logger.bind(
+                trace_id=str(request.trace_id),
+                org_id=str(request.org_id),
+                relation_type=relation_type,
+                alive_before=len(existing),
+                expired=len(payload),
+                reasons=sorted({plan.reason for plan in plans}),
+            ).info("kg_arbitration_expired")
+        return expired_total
 
     # -------------------------------------------------------------- 内部
 

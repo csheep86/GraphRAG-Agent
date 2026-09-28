@@ -85,6 +85,7 @@ tag v1.0.0（现状基线，Sprint 4 已收尾，黄金路径 2/7）
 
 | 日期 | 版本 | 变更 | 依据 |
 |---|---|---|---|
+| 2026-09-28 | **v1.12** | **Sprint 9 批次 B1（ADR-0005 L1 写侧闭环）登记**：① `optimization-plan-2026-09.md` P3-L1 置「写侧已完成，真机 n=1 达 3/3」，读侧默认过滤 / as-of 留批次 B2，并显式登记「通用 `[:RELATION]` 层需先实体消解」这一降级；② `changes/Sprint9/` 批次重划为 **B1（已完）/ B2（读侧 + PoC 迁入 + n≥3）**，并注明 **B1 结束时尚未达 `CP-T2`，不得提前宣称 L1 完成** | 用户 2026-09-28「复读一遍再提交」；`changes/Sprint9/integration-log.md` §4–§5（真机端到端：张三被 R1 封到 2025-05-01，当前值唯一 / as-of 回溯 / 历史保留各 1/1） |
 | 2026-09-28 | **v1.11** | **Sprint 9 批次 A（`CP-T1` schema 冻结 + ADR-0005 L0 前两项）登记**：① §4 CP-T1 置「已冻结」，策略表定义冻结、落表随 R1–R4 仲裁（批次 B）；② `optimization-plan-2026-09.md` P3-L0 置「完成 2/3，答案模板项留批次 B」（真机 `valid_from` 覆盖率 **5/5 = 100%**，`document_date` 兜底生效）；③ 每次 schema 变更自带 Alembic 迁移（S9.7 纪律首次实战） | 用户 2026-09-28「按你建议来，继续」；`changes/Sprint9/`（proposal / tasks / integration-log） |
 | 2026-09-28 | **v1.10** | **Sprint 9.7（Alembic 迁移基线）登记**：① §5 表格新增 **S9.7** 行（批次 H1~H2 完成，D-2 前置 / CP-D0 第一半）；② `deployment-spec.md` §11 **D-2** 置「基线已完成，PG 实测与升级演练留 S11」；③ 启动行为不动（`create_all` 留 dev 兜底），生产升级按 §7.2 手动执行，两者等价由等价性测试钉死 | 用户 2026-09-28「按建议顺序继续」；`changes/Sprint9.7/proposal.md`（明确不做：compose / Dockerfile 属 D-1） |
 | 2026-09-28 | **v1.9** | **Sprint 9.6（R10 修复 + 演示观感）登记**：① §5 表格新增 **S9.6** 行（批次 G1~G4 完成）；② `dev-doc-status.md` **R10 已修复**（GOVERNED_BY 80 条 / 真机推理链落到条款 / `_CYPHER_PATHS` LIMIT 截断缺陷一并修掉）、**R14 / R17 前置项同日闭合**；③ 依据为 `changes/Sprint9.6/proposal.md`（真机探针三事实：span 噪声 17 个 / 条款名碎片 / CSV chunk 天然排除） | 用户 2026-09-28 前端截图点验通过后按建议顺序开工；默认演示问题改事实型（问答页与合规页结论冲突治理） |

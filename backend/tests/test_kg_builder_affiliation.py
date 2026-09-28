@@ -437,5 +437,6 @@ def test_driver_failure_is_wrapped_as_graph_unavailable() -> None:
         session_factory=_Factory(),
     )
 
-    with pytest.raises(GraphUnavailableError, match="stage-2.6/3.2 失败"):
+    # Sprint 9 批次 B：stage-3.3（仲裁）并入同一段编排，文案随之带上新段
+    with pytest.raises(GraphUnavailableError, match="stage-2.6/3.2/3.3 失败"):
         builder.build(_request([_ORG, _PERSON], [_LEGAL_REP]))

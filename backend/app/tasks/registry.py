@@ -55,6 +55,7 @@ from app.services.extraction.langextract import ExtractionResult
 from app.services.graphs import GraphUnavailableError
 from app.services.kg import ThreeStageKgBuilder
 from app.services.kg.builder import KgDocumentRef
+from app.services.kg.policies import load_expiry_policies
 from app.services.kg.versioning import KgVersioningService
 from app.services.ontology import extraction_type_vocabulary
 from app.services.parsing import MineruApiError, MineruClient
@@ -721,7 +722,11 @@ async def _do_kg_build(
                 f"实际={type(chunks).__name__}"
             )
 
-        builder = ThreeStageKgBuilder()
+        builder = ThreeStageKgBuilder(
+            # Sprint 9 批次 B（ADR-0005 L1）：策略表决定哪些 relation_type 要做
+            # 「当前值唯一」仲裁（法定代表人 / 注册地址），未配置 ⇒ 一律并存。
+            policy_lookup=load_expiry_policies(db, org_id=document.org_id)
+        )
         from app.services.kg.builder import KgBuildRequest
 
         stats = builder.build(
