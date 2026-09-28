@@ -41,6 +41,13 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    # 依赖**本机才有**的东西（未入库的真机产物 / 需 URI 与口令的真机 Neo4j）。
+    # 这些用例在 CI 上必然 skip——注册成 marker 而不是各自散着写 skipif，
+    # 是为了让 CI 能把它们挑出来**单独跑一遍并打印 skip 原因**：
+    # 目的只有一个：不许出现"看着绿、其实没跑"。
+    "local_only: 仅本机可跑（依赖未入库的真机产物或真机连接），CI 上必然 skip 并显式登记",
+]
 
 [tool.ruff]
 line-length = 88

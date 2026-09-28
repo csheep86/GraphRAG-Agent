@@ -207,10 +207,17 @@ def test_whitelist_blocks_cypher_injection_attempt() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 真实产物回归（仓库内已提交 bridge_web_demo/output.json）
+# 真实产物回归（依赖 bridge_web_demo/output.json）
+#
+# **这个文件并未入库**：`git ls-files bridge_web_demo/output.json` 无输出，
+# 命中 `bridge_web_demo/.gitignore:19:output.json`。⇒ 本用例本地跑得到、
+# **CI 上必然 skip**（上一稿此处写「仓库内已提交」与 git 的事实不符，已更正）。
+# 打 `local_only` marker ⇒ CI 会把它挑出来单独跑一遍、并把 skip 原因打印进日志，
+# 让"没跑"成为可见事实，而不是被 `-q` 吞掉的静默差异。
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.local_only
 @pytest.mark.skipif(
     not DEFAULT_INPUT.is_file(), reason="bridge_web_demo/output.json 不存在"
 )

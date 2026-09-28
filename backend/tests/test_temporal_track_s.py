@@ -211,6 +211,9 @@ def _real_driver():  # noqa: ANN202 - 第三方类型
     return driver
 
 
+# local_only：需 `TEMPORAL_TRACK_REAL_URI` + 真机口令，CI 上无凭据 ⇒ 必然 skip。
+# 标记后 CI 用单独一步跑它并打印 skip 原因，避免「谁都说跑过、其实无人能复算」。
+@pytest.mark.local_only
 @pytest.mark.skipif(not _real_uri(), reason=f"设 {_REAL_URI_ENV} 后才会连接真机 Neo4j")
 @pytest.mark.parametrize("round_index", _ROUNDS)
 def test_as_of_query_against_real_neo4j(round_index: str) -> None:

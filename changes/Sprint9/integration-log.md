@@ -369,3 +369,63 @@ Prompt 判据基准：cdb77c1cacb2624cefefc89be8feb9ad25583349（…）  ← 脚
 
 ⇒ 一句话：既然这条判据的原则是"读 git，不读人的陈述"，那么 CI 是否真跑、
 基准是否真比到，**同样只能靠流水线的输出证明**——这次是靠抓 CI 日志才发现的。
+
+---
+
+## 11. 同型病普查：写好的测试在 CI 上一次都没跑（第三、四例）
+
+§10 修的是"门禁空转"，于是顺着同一条线索普查整条流水线，还有哪些**不报错也不执行**的东西。
+方法不是看目录外观，是读 CI 日志 + `git ls-files`。
+
+### 11.1 事实
+
+| 证据 | 结果 |
+| --- | --- |
+| 上一次 CI | `573 passed, 5 skipped` |
+| 同一版本本地 | `575 passed, 3 skipped` |
+| 差额 2 个 | `test_import_to_neo4j.py::test_real_bridge_output_is_fully_resolvable`、`test_page_index.py::test_real_mineru_artifacts_alignment` |
+| `git check-ignore -v` | 分别命中 `bridge_web_demo/.gitignore:19:output.json`、根 `.gitignore:40:**/output/*` |
+| 本地是否存在 | `bridge_web_demo\output.json` = True、`mineru_mvp\output\complex_table\` 存在 |
+
+⇒ 这两条用例**本地跑得到、CI 永远跑不到**，且 `pytest -q` 不打 skip 原因 → **日志上完全无痕**。
+这与 §10 的假绿同型，只是伪装得更好：它连"假 OK"都不需要，直接静音。
+
+顺带更正一处陈旧注释：`test_import_to_neo4j.py` 原写「仓库内已提交
+`bridge_web_demo/output.json`」——`git ls-files` 无输出，**早已取消跟踪**（见开发指南的 `git rm --cached` 记录）。
+
+### 11.2 修法（把"没跑"变成可见事实）
+
+1. **统一 marker `local_only`**：登记进 `backend/pyproject.toml` 的 `markers`
+   （不注册则拼写错误会静默失效），打在三处——上述两条 + 依赖
+   `TEMPORAL_TRACK_REAL_URI` 的真机时态 3 轮。`pytest -m local_only` 恰好收 5 条，
+   与 CI 的 5 skip **严丝合缝**。
+2. **CI 打印 skip 原因**：后端 job 改 `pytest -q -rs`；并新增一步单独跑
+   `-m local_only`，把"这些用例本次没跑"写进日志而不是留在沉默里。
+3. **登记一致性测试**（`tests/test_local_only_boundary.py`，+2 条）：
+   - 登记集合 = `-m local_only` 实际收集到的集合 ⇒ **漏登记就红**（新增这类用例必须显式承认自己不上 CI）；
+   - 依赖产物必须**仍未被 git 跟踪** ⇒ 一旦有人把产物提交，测试立刻红：
+     那时它已在 CI 上跑得到，**应当摘掉标记**，而不是继续挂着免死牌。
+
+**模拟 CI 验证**（把两份产物临时挪走再跑，完即还原，`Test-Path` 确认真存在）：
+
+```
+SKIPPED [1] tests/test_import_to_neo4j.py:220: bridge_web_demo/output.json 不存在
+SKIPPED [1] tests/test_page_index.py:231: 真实 MinerU 产物缺失：…/mineru_mvp/output/complex_table
+SKIPPED [3] tests/test_temporal_track_s.py:216: 设 TEMPORAL_TRACK_REAL_URI 后才会连接真机 Neo4j
+5 skipped, 573 deselected
+```
+
+本地 `pytest -q -rs` 与 CI 的 skip 差由此可在日志里直接读出来，不再是隐性差额。
+
+### 11.3 同一份普查里的其他条目（**只登记，未动手**）
+
+| 项 | 事实 | 处置建议 |
+|---|---|---|
+| `temporal_poc/` | 无依赖声明、无测试、无 CI，但 README 顶部**已明示**判据迁入正式测试集 | 已明示冻结，不修 |
+| `bridge_web_demo` / `mineru_mvp` / `langchain_mvp` / `langextract_mvp` | 有 pyproject + uv.lock，**零测试、零 CI 覆盖**；其中三个连 README 都没有 | 至少补一行"已转正为 `backend/app/…`、此目录只读"的标注，防误改 |
+| `demo/attendance/generate_corpus.py` | 产物被 5 个 backend 脚本 + 1 个测试引用（**已接**），**生成器本体**无测试无 lint | 低优先，等产物口径变了再补 |
+| 根 `tests/` 空壳 | 只有 3 个 `.gitkeep`，而根 `README.md:50` 宣称它是 unit/integration/e2e 的落点；`testpaths` 指向 `backend/tests`，**永远收集不到** | 删空壳或改 README，二选一 |
+| `changes/archive/**` 的 15 个 `.py` | 零 import、零 CI；根 README 定义其为"联调证据存档" | 有意留档，不动 |
+
+普查交由独立子代理执行（只读），结论每条都带文件路径 + 行号；无法判定的
+（如"是否被 git 跟踪"）一律标注为**推定**，再逐一用命令打到**确证**为止。

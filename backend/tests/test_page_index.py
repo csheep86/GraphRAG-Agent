@@ -212,12 +212,18 @@ def test_locate_range_returns_none_without_overlap() -> None:
     assert index.locate_range(5, 1) is None
 
 
+@pytest.mark.local_only
 def test_real_mineru_artifacts_alignment() -> None:
     """**实测反哺**：用真实 MinerU 产物验证「文本顺序对齐」可行（T0 实测 10/10）。
 
     同时固化两条实测事实，防止日后有人误以为可以从 markdown 直接取页码：
     - ``full.md`` **不含**任何页分隔标记；
     - ``content_list.json`` 的 ``page_idx`` 存在且从 0 计。
+
+    **产物未入库**：命中根 `.gitignore` 第 40 行的 `**/output/*` 规则，
+    `git ls-files mineru_mvp/output/complex_table` 无输出 ⇒ CI 上必然 skip。
+    登记为 `local_only` 后由 CI 单独一步打印原因，
+    免得「这批测试从没在流水线上跑过」这件事永远沉在水面下。
     """
     markdown_path = _REAL_ARTIFACTS / "full.md"
     candidates = sorted(_REAL_ARTIFACTS.glob("*_content_list.json"))

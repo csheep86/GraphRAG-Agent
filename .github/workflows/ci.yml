@@ -96,8 +96,18 @@ jobs:
           echo "Prompt 判据基准 = ${base:-HEAD}"
           uv run python scripts/check_seams.py --base "${base:-HEAD}"
 
+      # `-rs`：把 skip **原因**打进日志。只用 `-q` 时，"本地 3 skip / CI 5 skip"
+      # 这种差异在日志里完全无痕——依赖未入库产物的用例会悄悄地一次都没跑过。
       - name: Pytest
-        run: uv run pytest -q
+        run: uv run pytest -q -rs
+
+      # 依赖本机产物 / 真机连接的用例在 CI 上必然 skip；单独跑一遍是为了让这件事
+      # **写在日志里**而不是留在沉默里。数量变化（不再是全部 skip）说明环境变了。
+      - name: 本地独占用例（CI 上必 skip，仅做可见登记）
+        run: |
+          echo "::group::以下用例依赖本机产物/真机连接，CI 上不执行（不构成门禁结论）"
+          uv run pytest -rs -m local_only || true
+          echo "::endgroup::"
 
       - name: 失败摘要
         if: failure()
