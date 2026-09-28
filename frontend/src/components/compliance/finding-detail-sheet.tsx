@@ -1,11 +1,57 @@
 "use client";
 
 import { FileText, Scale } from "lucide-react";
+import { useEffect, useState } from "react";
 
+import { getEntityDetail } from "@/api/graph";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { COMPLIANCE_LEVEL_META, COMPLIANCE_RULE_META } from "@/lib/compliance";
 import { useComplianceStore } from "@/store/use-compliance-store";
+
+/** `graph:clause:ent_<hex>` → 提取实体 id；其余引用形态（`document:doc:…`）本就可读 */
+const CLAUSE_REF = /^graph:clause:(.+)$/;
+
+/**
+ * 条款引用可读化（Sprint 9.6 G3，截图点验暴露的演示观感问题）：
+ * `graph:clause:ent_c974307a4bd5` 这种裸哈希 id 客户看不懂——
+ * 回查契约内现成的 `GET /entities/{id}` 拿 `canonical_name` 做标题，
+ * 原 ref 降级为副标题。**回查失败/加载中都降级显示原 ref**（不伪造标题）；
+ * `document:doc:…` 形态本就可读，不回查。
+ */
+function useClauseTitles(refs: string[]): Record<string, string> {
+  const [titles, setTitles] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const clauseIds = [
+      ...new Set(
+        refs
+          .map((ref) => CLAUSE_REF.exec(ref)?.[1])
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (clauseIds.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      clauseIds.map((id) =>
+        getEntityDetail(id)
+          .then((d) => [id, d.canonical_name || ""] as const)
+          .catch(() => [id, ""] as const),
+      ),
+    ).then((pairs) => {
+      if (!cancelled) {
+        setTitles((prev) => ({ ...prev, ...Object.fromEntries(pairs.filter(([, title]) => title)) }));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [refs]);
+
+  return titles;
+}
 
 /**
  * 一条风险的详情抽屉。
@@ -22,6 +68,7 @@ export function FindingDetailSheet() {
   const detail = useComplianceStore((state) => state.detail);
   const closeDetail = useComplianceStore((state) => state.closeDetail);
   const data = useComplianceStore((state) => state.data);
+  const clauseTitles = useClauseTitles(detail?.policy_refs ?? []);
 
   return (
     <Sheet
@@ -72,14 +119,31 @@ export function FindingDetailSheet() {
                   制度依据（{detail.policy_refs.length} 条）
                 </h3>
                 <ul className="mt-2 space-y-1.5">
-                  {detail.policy_refs.map((ref) => (
-                    <li
-                      key={ref}
-                      className="rounded-lg border border-border px-3 py-2 font-mono text-[11px] break-all text-foreground/85"
-                    >
-                      {ref}
-                    </li>
-                  ))}
+                  {detail.policy_refs.map((ref) => {
+                    const clauseId = CLAUSE_REF.exec(ref)?.[1];
+                    const title = clauseId ? clauseTitles[clauseId] : undefined;
+                    return (
+                      <li
+                        key={ref}
+                        className="rounded-lg border border-border px-3 py-2"
+                      >
+                        {title ? (
+                          <>
+                            <p className="text-[12px] leading-5 text-foreground/90">
+                              {title}
+                            </p>
+                            <p className="mt-0.5 font-mono text-[10px] break-all text-muted-foreground">
+                              {ref}
+                            </p>
+                          </>
+                        ) : (
+                          <span className="font-mono text-[11px] break-all text-foreground/85">
+                            {ref}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
 

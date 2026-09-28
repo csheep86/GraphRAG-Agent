@@ -56,8 +56,15 @@ _MIN_ANCHOR_NAME_LEN = 2
 #: 锚点兜底查询的节点上限（**只取 id + 名字**，且已按命名空间过滤掉 span 噪声）
 _ANCHOR_FALLBACK_LIMIT = 5000
 
-#: Cypher 返回的候选路径上限（**排序在 Python 侧做**——Cypher 无法按 list 排序，
-#: 且 Python 侧排序更容易被单测钉死「同解」）
+#: Cypher 返回的候选路径上限。
+#:
+#: **2026-09-28（Sprint 9.6 G2）把排序口径推进 Cypher**——此前「排序在 Python
+#: 侧做」的前提是候选**全量**返回，但真机数据下无向 1..3 跳候选有数万条，
+#: ``LIMIT``（无 ORDER BY）任意截断 ⇒ 排序器再对也只对「截断后的幸存者」生效，
+#: 3 跳条款链（EMPLOYEE→POSITION→WORK_TIME_SYSTEM→POLICY_CLAUSE，R10 连通后
+#: 真实存在）被淹没在候选海里，从未进过排序。故 Cypher 侧先按「条款优先 ⇒
+#: 跳数升序 ⇒ 终点 id 字典序」排好序再截断；Python 侧 :func:`_select_shortest_path`
+#: 保留完整精排（含 ``_TERMINAL_RANK`` 次级口径）作为兜底，两者口径一致。
 _PATH_CANDIDATE_LIMIT = 400
 
 #: 路径的**合法终点类型**＝「命中的条款 / 事实」（proposal §5.5）。
@@ -132,10 +139,14 @@ MATCH p = (a:Entity {{kg_version: $kg, org_id: $org}})
 WHERE a.id IN $anchor_ids
   AND b.entity_type IN $terminal_types
   AND ALL(r IN rels WHERE r.kg_version = $kg AND r.org_id = $org)
+  AND none(n IN nodes(p)[1..-1] WHERE n.entity_type = $hub)
 RETURN [n IN nodes(p) | n.id] AS ids,
        [n IN nodes(p) | n.canonical_name] AS names,
        [n IN nodes(p) | n.entity_type] AS types,
        [r IN relationships(p) | r.relation_type] AS rels
+ORDER BY (CASE WHEN types[-1] = $prio_type THEN 0 ELSE 1 END),
+         size(rels),
+         ids[-1]
 LIMIT $limit
 """
 
@@ -280,6 +291,8 @@ def build_reasoning_path(
             org=str(org_id),
             anchor_ids=list(anchors),
             terminal_types=list(TERMINAL_ENTITY_TYPES),
+            hub=HUB_EMPLOYEE_TYPE,
+            prio_type=TERMINAL_PRIORITY_TYPE,
             limit=_PATH_CANDIDATE_LIMIT,
         )
     )

@@ -420,6 +420,97 @@ DELETE r
 """
 
 # --------------------------------------------------------------------------- #
+# B3 汇合：WORK_TIME_SYSTEM -GOVERNED_BY-> POLICY_CLAUSE（R10 / Sprint 9.6 G1）
+# --------------------------------------------------------------------------- #
+#:
+#: mapping.yaml 尾部**预留的 B3 设计**在此落地：CSV 派生的工时制节点连到
+#: M2 抽取的条款节点，让「员工 → 岗位 → 工时制 → 条款」3 跳可达
+#: （``reasoning.py`` 的 ``*1..3`` 变长遍历即可把推理链落到条款）。
+#:
+#: **三条纪律**（由 2026-09-28 真机探针钉死，见 ``changes/Sprint9.6/proposal.md`` §1）：
+#:
+#: 1. 只连 **CSV 派生**的 ``WORK_TIME_SYSTEM:<名>``（id 前缀圈定）——
+#:    M2 span 里同名类型有 17 个噪声节点（「系统」「核心在岗时段」…），一律不参与；
+#: 2. 匹配文本源是**条款的 MENTIONS chunk 文本**——条款 ``canonical_name``
+#:    多为碎片（「第七条」「2026 年 1 月 1 日」），按属性匹配必失败，
+#:    完整句子只在 chunk 里；CSV 证据 chunk（R14）只 MENTIONS 到 EMPLOYEE，
+#:    被该模式天然排除；
+#: 3. 纯 Python 包含匹配，**不经 LLM**；产出的边**并入 relation_rows**
+#:    ⇒ 复用写入自检与失败回滚，不另起写入通道。
+
+
+def fetch_policy_context(session: Any, *, kg_version: str) -> list[dict[str, Any]]:
+    """读「条款 + 其 MENTIONS chunk 文本」作为匹配语料。
+
+    按 ``id`` 升序 ⇒ 同库多次调用**同解**（确定性纪律）。
+    """
+    rows = list(
+        session.run(
+            "MATCH (p:Entity {entity_type: 'POLICY_CLAUSE', kg_version: $kg}) "
+            "OPTIONAL MATCH (c:Chunk {kg_version: $kg})-[:MENTIONS]->(p) "
+            "WITH p, reduce(t = '', x IN collect(c.text) | t + coalesce(x, '')) AS text "
+            "RETURN p.id AS id, p.canonical_name AS name, text "
+            "ORDER BY p.id",
+            kg=kg_version,
+        )
+    )
+    return [
+        {"id": str(row["id"]), "name": row["name"] or "", "text": row["text"] or ""}
+        for row in rows
+    ]
+
+
+def build_governed_by_relations(
+    wts_rows: list[dict[str, Any]],
+    policy_context: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """把工时制节点连到正文含其名称的条款。
+
+    :param wts_rows: **CSV 派生**的工时制实体行（来自 ``build_nodes``，
+        id 形如 ``WORK_TIME_SYSTEM:<名>``）。
+    :param policy_context: :func:`fetch_policy_context` 的产物。
+    :returns: ``(relation_rows, misses)``——``misses`` 是未命中任何条款的
+        工时制名，调用方必须让它**可见**（连通失败不得静默）。
+    """
+    rows: list[dict[str, Any]] = []
+    misses: list[str] = []
+    seen: set[tuple[str, str]] = set()
+
+    for wts in sorted(wts_rows, key=lambda r: str(r["id"])):
+        wts_id = str(wts["id"])
+        # 纪律 1 的防御断言：span 噪声（ent_*）绝不允许出现在边端点
+        if not wts_id.startswith("WORK_TIME_SYSTEM:"):
+            misses.append(f"[skipped-non-csv] {wts_id}")
+            continue
+        name = str(wts.get("canonical_name") or "").strip()
+        if not name:
+            misses.append(f"[skipped-empty-name] {wts_id}")
+            continue
+        hit = 0
+        for ctx in policy_context:  # 已按 id 升序 ⇒ 边行顺序确定
+            clause_id = str(ctx["id"])
+            if not ctx["text"] or name not in ctx["text"]:
+                continue
+            key = (wts_id, clause_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            hit += 1
+            rows.append(
+                {
+                    "id": f"GOVERNED_BY:{wts_id}->{clause_id}",
+                    "relation_type": "GOVERNED_BY",
+                    "head": wts_id,
+                    "tail": clause_id,
+                }
+            )
+        if hit == 0:
+            misses.append(name)
+
+    return rows, misses
+
+
+# --------------------------------------------------------------------------- #
 # 证据层：结构化事实 → :Document + :Chunk + MENTIONS（R14，2026-09-28）
 # --------------------------------------------------------------------------- #
 #:
@@ -479,6 +570,16 @@ UNWIND $doc_ids AS doc_id
 MATCH (d:Document {id: doc_id, kg_version: $kg_version})
 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk {kg_version: $kg_version})
 DETACH DELETE c, d
+"""
+
+#: B3 汇合边的**链路验收**（G2）：李静 3 跳可达条款——
+#: 「员工 → 岗位 → 工时制 → 条款」是 R10 的目标链。
+_CYPHER_CASE_LI_CLAUSE = """
+MATCH (:Entity {id: 'EMPLOYEE:E002', kg_version: $kg_version})
+      -[:RELATION {relation_type: 'HAS_POSITION'}]->(:Entity {entity_type: 'POSITION'})
+      -[:RELATION {relation_type: 'APPLIES_WORK_TIME'}]->(:Entity {entity_type: 'WORK_TIME_SYSTEM'})
+      -[:RELATION {relation_type: 'GOVERNED_BY'}]->(p:Entity {entity_type: 'POLICY_CLAUSE'})
+RETURN count(p) AS clauses, collect(p.canonical_name)[..3] AS names
 """
 
 
@@ -674,6 +775,16 @@ def verify_cases(session: Any, *, kg_version: str) -> None:
         "（出差 ↔ 工单按日期窗口匹配，非外键）"
     )
 
+    # R10（Sprint 9.6 G2）：李静 3 跳可达条款——事实与条款本体连通的验收用例
+    clause = session.run(_CYPHER_CASE_LI_CLAUSE, kg_version=kg_version).single()
+    clause_count = int(clause["clauses"])
+    names = [str(x) for x in (clause["names"] or [])]
+    print(
+        f"  [{'OK ' if clause_count > 0 else 'FAIL'}] E002 李静 → 岗位 → 工时制 → "
+        f"POLICY_CLAUSE：{clause_count} 条可达（样例 {names}）"
+        "——R10 事实↔条款连通"
+    )
+
 
 def import_graph(
     *,
@@ -738,6 +849,35 @@ def import_graph(
                     trace_id=trace_id,
                 ).consume()
             print(f"  [2/3] MERGE 实体 {len(entity_rows)} 个")
+
+            # ---- 2.2/3：B3 汇合边（R10 / Sprint 9.6 G1）----
+            # 必须在实体 MERGE **之后**（工时制节点要先在库内）；
+            # 产出的边并入 relation_rows ⇒ 写入自检与失败回滚自动覆盖。
+            wts_rows = [
+                row
+                for row in entity_rows
+                if row.get("entity_type") == "WORK_TIME_SYSTEM"
+            ]
+            if wts_rows:
+                context = fetch_policy_context(session, kg_version=kg_version)
+                governed_rows, misses = build_governed_by_relations(wts_rows, context)
+                relation_rows.extend(governed_rows)
+                print(
+                    f"  [governed-by] 工时制 {len(wts_rows)} 类 × 条款语料 "
+                    f"{len(context)} 条 ⇒ 连边 {len(governed_rows)} 条"
+                )
+                if misses:
+                    print(
+                        f"  [governed-by][warn] {len(misses)} 项未命中（可见，不静默）:",
+                        file=sys.stderr,
+                    )
+                    for item in misses:
+                        print(f"       - {item}", file=sys.stderr)
+                if not governed_rows:
+                    raise IngestError(
+                        "GOVERNED_BY 连边为 0——事实与条款未连通（R10 目标未达），"
+                        "拒绝以 active 收场"
+                    )
 
             for batch in _batched(relation_rows, BATCH_SIZE):
                 session.run(
