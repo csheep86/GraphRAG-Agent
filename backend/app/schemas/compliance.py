@@ -1,7 +1,7 @@
 """考勤域**合规预警**契约（Sprint 9.5 批次 C3 / D3）。
 
 字段来源：
-- ``changes/Sprint9.5/proposal.md`` §5.3（五条规则 + 规则值来自制度文本）；
+- ``changes/archive/2026-09-28-Sprint9.5/proposal.md`` §5.3（五条规则 + 规则值来自制度文本，**已归档**）；
 - ``backend/app/services/rules/engine.py`` 的 :class:`ComplianceReport` /
   :class:`RiskFinding`（本文件是它们的**契约投影**，不是另起一套语义）。
 

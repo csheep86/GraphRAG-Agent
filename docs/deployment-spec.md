@@ -209,7 +209,7 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 
 ### 8.1 第三方出网事实登记（**必须向客户明示，不得静默**）
 
-> 登记动机：见 `changes/Sprint9.5/tasks.md` 环境备注 B0-2 / 遗留问题 L4。
+> 登记动机：见 `changes/archive/2026-09-28-Sprint9.5/tasks.md`（**已归档**）环境备注 B0-2 / 遗留问题 L4。
 > 2026-09-27 **Sprint 9.5 批次 B2 首次真正调用 MinerU 云**（考勤制度 docx 解析），
 > 该动作此前只有定性、未落笔 ⇒ 本条在此把**事实**写死，供交付说明 / release notes 直接引用。
 

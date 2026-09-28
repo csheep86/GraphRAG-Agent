@@ -130,7 +130,7 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.KG_VERSION_NOT_ACTIVE: "ADR-0002 §3.2 / M3 §4.1",
     ErrorCode.KG_TENANT_LEAK: "ADR-0003 §4 / Sprint 5 批次 B",
     ErrorCode.TASK_INTERRUPTED: "ADR-0001 §3.2",
-    ErrorCode.COMPLIANCE_NO_FACTS: "Sprint 9.5 批次 C3 / changes/Sprint9.5/proposal.md §5.3",
+    ErrorCode.COMPLIANCE_NO_FACTS: "Sprint 9.5 批次 C3 / changes/archive/2026-09-28-Sprint9.5/proposal.md §5.3",
     ErrorCode.NOT_IMPLEMENTED: "backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2",
     ErrorCode.RATE_LIMITED: "M5 §3 验收 5 / 决策 A14（Sprint 8.1 批次 B）",
     ErrorCode.INTERNAL_ERROR: "CODEBUDDY.md 错误响应规范",
