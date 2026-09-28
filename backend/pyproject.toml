@@ -21,6 +21,7 @@ dependencies = [
     "langchain-openai>=1.6.2",
     "httpx>=0.27,<1.0",
     "slowapi>=0.1.10",
+    "alembic>=1.13,<2.0",
 ]
 
 [project.scripts]
@@ -44,6 +45,9 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+# migrations/ 由 alembic autogenerate 生成（Union / import 顺序不按本项目风格），
+# 人工审阅入库，不进 lint；等价性由 tests/test_migrations_baseline.py 钉死
+extend-exclude = ["migrations"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

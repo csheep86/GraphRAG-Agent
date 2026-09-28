@@ -30,7 +30,9 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        # Sprint 1 直接建表；Sprint 3 接入 Alembic 迁移后移除（见 db/session.py）
+        # create_all 仅 dev / 测试兜底（Sprint 9.7 起）：生产升级走
+        # `alembic upgrade head`（不在 lifespan 里跑迁移——多实例并发风险），
+        # 两者等价由 tests/test_migrations_baseline.py 钉死
         init_db()
         # ADR-0001 §3.2 / M1 §3 验收 8：进程启动回收遗留 pending / processing 任务
         recovery = recover_orphan_tasks()

@@ -40,9 +40,12 @@ def get_session() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """建表。
+    """建表（``create_all``）。
 
-    仅 Sprint 1 使用；Sprint 3 接入 Alembic 迁移后删除本函数调用。
+    **dev / 测试兜底**（启动行为不变，Sprint 9.7 起）：生产升级走
+    ``alembic upgrade head``（基线见 ``migrations/versions/``，部署流程见
+    ``docs/deployment-spec.md`` §7.2）。两者等价由
+    ``tests/test_migrations_baseline.py`` 钉死——**加表 / 加列必须生成新迁移**。
     """
     from app.db.models import Base
 

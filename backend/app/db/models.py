@@ -20,7 +20,11 @@ Sprint 9.5 批次 A2 新增 `ontology_schemas` 表（M6 §4.1 的**最小子集*
 字段逐字照 `specs/m6-ontology-incremental.md` §4.1；
 主键按 spec 取 **`(org_id, version)` 复合主键**（version 每 org 独立自增），
 与其余表的 UUID 单主键不同——**以 spec 为准，不套用本文件的 UUID 惯例**。
-**无 Alembic**：建表靠启动时的 ``create_all``（见 :mod:`app.db.session`）。
+**Alembic 基线已建立**（Sprint 9.7，``migrations/versions/00f44b912817_*``）：
+生产升级按 ``docs/deployment-spec.md`` §7.2 手动 ``alembic upgrade head``；
+``create_all`` 保留为 dev / 测试兜底，两者等价由
+``tests/test_migrations_baseline.py`` 机械钉死（**加表 / 加列必须生成新迁移**，
+否则该测试必红）。
 """
 
 from __future__ import annotations
