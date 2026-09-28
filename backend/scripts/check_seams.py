@@ -5,8 +5,10 @@
     uv run python scripts/check_seams.py             # 报告（未到期项记 WARN，不阻塞）—— 每 Sprint 收尾用这个
     uv run python scripts/check_seams.py --strict     # WARN 亦判失败 —— 只适用于 Demo-MVP 完成点（v1.4.0，接缝全部到期）
     uv run python scripts/check_seams.py --json       # 机器可读输出
+    uv run python scripts/check_seams.py --base main  # Prompt 判据的对比基准（默认 HEAD）
 
-四类判据（依据 ADR-0004 §3 第 4、5 条 + 计划文档 §4.3 / §6.3 / §7.2 / §12 R9）：
+五类判据（依据 ADR-0004 §3 第 4、5 条 + 计划文档 §4.3 / §6.3 / §7.2 / §12 R9
++ `CODEBUDDY.md`「Prompt 版本管理规范」）：
 
 1. **接口实现集合 = 登记集合**（ADR-0004 §2.1）——同时拦"多做"（登记外实现，如 `LdapAuthProvider`）
    与"少做"（到期仍无实现）。注意接缝 5 事件出口登记的就是 `db` + `log` **两个**实现，
@@ -22,6 +24,17 @@
 4. **登记表一致**（代码 → 文档，单向）——门禁里的登记集合必须能在 ADR-0004 §2.1 的
    第 N 行里逐字找到。缺了就是"改了门禁没改登记表"（否则该改动是静默的）；而反向
    "只改登记表"会由判据 1 报"登记外实现"。两个方向都红 ⇒ 不存在"只改一侧还能过"的漏口。
+5. **Prompt 版本不可覆盖**（`CODEBUDDY.md`「Prompt 版本管理规范」第 2 条）——
+   `prompts/*_v{N}.md` 一旦入库就是历史：只允许**新增**版本文件，
+   **原地修改 / 删除**一律 ERROR。
+
+   本条的由来值得一记：提出它时以为仓库里发生过一次 `v2` 原地覆盖，
+   `git log --diff-filter=MD -- prompts/` 一查却是**空**——从未发生过。
+   记忆不可靠，人工记录也可能缺记；只有 git 的事实算数，所以这条判据读的是
+   git，而不是任何人的陈述（包括本注释的前一稿，它就写错过一次）。
+
+**为何这一条要用 git**：「你可以在 Sheet 上写纪律，也可以在 Sheet 上写事实」——
+文件内容由人改，而"是否被改过"是 git 的事实。判据只认后一个。
 
 **版本闸门**：每条判据带 `required_from`。`settings.app_version` 低于该值时，"尚未到位"记 WARN
 （不阻塞开发）；达到即自动转 ERROR——**打 tag 那一刻门禁上闸，无需改脚本**。
@@ -34,7 +47,9 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +59,7 @@ REPO_ROOT = BACKEND_DIR.parent
 CONTRACT_FILE = REPO_ROOT / "contracts" / "openapi.yaml"
 CONFIG_FILE = BACKEND_DIR / "app" / "core" / "config.py"
 ADR_FILE = REPO_ROOT / "docs" / "adr" / "0004-integration-seams.md"
+PROMPTS_REL = "prompts"
 
 SCAN_DIRS: tuple[Path, ...] = (BACKEND_DIR / "app", BACKEND_DIR / "scripts")
 SKIP_FILES: frozenset[Path] = frozenset(
@@ -158,6 +174,19 @@ RESERVED_FIELDS: tuple[str, ...] = (
     "deleted_at",
 )
 RESERVED_REQUIRED_FROM = "1.1.0"
+
+#: `prompts/` 下**带版本号**的 Prompt 文件（与 loader 的命名规则同构；
+#: 规则的第二份真源会让漏判安静发生，故此处与 loader 的正则保持逐字一致）。
+_PROMPT_VERSIONED_RE = re.compile(r"^prompts/[a-z0-9][a-z0-9_]*_v\d+\.md$")
+#: git 状态里**允许**出现的：A=新增版本文件、C=复制出新版本。其余一律违规。
+_PROMPT_ALLOWED_STATUS = frozenset({"A", "C"})
+_PROMPT_STATUS_LABEL = {
+    "M": "原地修改",
+    "D": "删除",
+    "T": "类型变更",
+    "U": "冲突未合并",
+    "X": "状态未知",
+}
 
 
 # ------------------------------------------------------------------------------
@@ -658,6 +687,94 @@ def _check_reserved_fields(
         )
 
 
+def _git_prompt_name_status(base: str) -> tuple[int, str]:
+    """取 `prompts/` 相对 ``base`` 的文件变更（``--name-status``），返回 (退出码, 输出)。
+
+    ``--no-renames`` 是刻意为之：``git mv kg_qa_v2.md kg_qa_v3.md`` 若启用重命名检测
+    会显示为一条 R，看上去"不是覆盖"，实则把历史版本的身份挪给了新内容——更隐蔽。
+    禁用后它落成 D + A，删除那一头跑不掉。
+    """
+    proc = subprocess.run(  # noqa: S607 - 固定参数、不接用户输入
+        ["git", "diff", "--name-status", "--no-renames", base, "--", PROMPTS_REL],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return proc.returncode, (proc.stdout or "").strip()
+
+
+def _check_prompt_versions(findings: list[Finding], *, base: str) -> None:
+    """判据 5：历史 Prompt 版本不得被改写 / 删除（`CODEBUDDY.md` 第 2 条）。"""
+    check = "Prompt 版本不可覆盖"
+    code, output = _git_prompt_name_status(base)
+    if code != 0:
+        # 判不出来就**不放行**：一个悄悄通过的门禁等于没有门禁。
+        findings.append(
+            Finding(
+                "ERROR",
+                check,
+                f"无法判定：`git diff --name-status {base} -- {PROMPTS_REL}` 退出码 "
+                f"{code}（可能不在 git 仓库内，或 {base} 不可达）——"
+                f"门禁不可用时不放行，请确认基准后再跑",
+            )
+        )
+        return
+
+    violations: list[tuple[str, str]] = []
+    added: list[str] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        status, _, path = line.partition("\t")
+        status = status.strip()[:1].upper()
+        path = (path.strip() or line.split()[-1]).replace("\\", "/")
+        if not _PROMPT_VERSIONED_RE.match(path):
+            continue
+        if status in _PROMPT_ALLOWED_STATUS:
+            added.append(path)
+        else:
+            violations.append((status, path))
+
+    for status, path in violations:
+        label = _PROMPT_STATUS_LABEL.get(status, status)
+        findings.append(
+            Finding(
+                "ERROR",
+                check,
+                f"{path} 被{label}（git 状态 {status}）——历史 Prompt 版本不得改写："
+                f"改需求请**新增**下一个版本文件（如 {_next_version_hint(path)}），"
+                f"见 CODEBUDDY.md「Prompt 版本管理规范」第 2 条",
+            )
+        )
+    if not violations:
+        extra = f"；新增 {len(added)} 个版本文件" if added else ""
+        findings.append(
+            Finding("OK", check, f"prompts/ 相对 {base} 无历史版本被改写{extra}")
+        )
+
+
+def _next_version_hint(path: str) -> str:
+    """提示该往哪儿加新版本：`kg_qa` 现有 v1/v2/v3 ⇒ 提示 `prompts/kg_qa_v4.md`。
+
+    **不能简单 +1**：被改的若是 `v1` 而磁盘上已有 `v1/v2/v3`，机械加一会把人
+    引向"再去覆盖 v2"——提示本身变成了误导。
+    """
+    match = re.search(
+        r"^(?:.*/)?(?P<name>[a-z0-9][a-z0-9_]*)_v(?P<version>\d+)\.md$", path
+    )
+    if match is None:
+        return "prompts/<name>_v<N+1>.md"
+    name = match.group("name")
+    versions = [
+        int(found.group("version"))
+        for candidate in sorted((REPO_ROOT / PROMPTS_REL).glob(f"{name}_v*.md"))
+        if (found := re.search(r"_v(?P<version>\d+)\.md$", candidate.name))
+    ]
+    return f"prompts/{name}_v{max(versions or [int(match.group('version'))]) + 1}.md"
+
+
 # ------------------------------------------------------------------------------
 # 入口
 # ------------------------------------------------------------------------------
@@ -671,9 +788,31 @@ def _current_version() -> str:
     return get_settings().app_version
 
 
+def _resolve_base(argv: list[str]) -> str:
+    """Prompt 判据的对比基准。
+
+    **默认 HEAD 在 CI 上是假绿**：CI checkout 后工作区恒干净，与 HEAD 比永远是
+    "无改动"——门禁看起来通过，其实什么也没验。故优先取 PR 的 base
+    （``GITHUB_BASE_REF``），本地可用 ``--base <ref>`` 显式指定（如 ``--base main``
+    审查"已提交但尚未过门禁"的区间）。
+    """
+    for arg in argv[1:]:
+        if arg.startswith("--base="):
+            return arg.split("=", 1)[1] or "HEAD"
+        if arg == "--base":
+            index = argv.index(arg)
+            if index + 1 < len(argv):
+                return argv[index + 1]
+    ref = os.environ.get("GITHUB_BASE_REF")
+    if ref:
+        return f"origin/{ref}"
+    return "HEAD"
+
+
 def main(argv: list[str]) -> int:
     strict = "--strict" in argv[1:]
     as_json = "--json" in argv[1:]
+    base = _resolve_base(argv)
 
     version = _current_version()
     index = _collect_classes()
@@ -691,6 +830,7 @@ def main(argv: list[str]) -> int:
     _check_presence(_collect_tables(), version, consumed, findings)
     _check_settings_consumers(fields, properties, consumers, version, findings)
     _check_reserved_fields(columns, contract_text, version, findings)
+    _check_prompt_versions(findings, base=base)
 
     errors = [f for f in findings if f.level == "ERROR"]
     warnings = [f for f in findings if f.level == "WARN"]
@@ -721,6 +861,9 @@ def main(argv: list[str]) -> int:
         print(
             "模式："
             + ("--strict（WARN 亦判失败）" if strict else "默认（未到期项记 WARN）")
+        )
+        print(
+            f"Prompt 判据基准：{base}（可由 --base 覆盖；CI 下自动取 GITHUB_BASE_REF）"
         )
         current = ""
         for finding in findings:

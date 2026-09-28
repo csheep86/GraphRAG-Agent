@@ -267,3 +267,98 @@ def test_missing_adr_file_is_error_never_silent(tmp_path, monkeypatch) -> None:
 
     assert _levels(findings) == ["ERROR"]
     assert "禁止静默放行" in _messages(findings)
+
+
+# --------------------------------------------------------------------------- #
+# 判据 5：Prompt 版本不可覆盖（CODEBUDDY.md「Prompt 版本管理规范」第 2 条）
+# --------------------------------------------------------------------------- #
+
+
+def _stub_git(monkeypatch, output: str, code: int = 0) -> None:
+    monkeypatch.setattr(gate, "_git_prompt_name_status", lambda base: (code, output))
+
+
+def test_inplace_prompt_edit_is_error(monkeypatch) -> None:
+    """原地改历史版本 ⇒ ERROR：这才是本判据存在的全部理由。"""
+    _stub_git(monkeypatch, "M\tprompts/kg_qa_v2.md")
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="HEAD")
+
+    assert _levels(findings) == ["ERROR"]
+    assert "被原地修改" in _messages(findings)
+    # 提示必须跳过**已存在**的版本：kg_qa 现有 v1/v2/v3 ⇒ 该加 v4。
+    # 若机械 +1 会把人引向"再去覆盖 v3"，提示本身就成了误导。
+    assert "kg_qa_v4.md" in _messages(findings)
+    assert "kg_qa_v3.md" not in _messages(findings)
+
+
+def test_prompt_deletion_is_error(monkeypatch) -> None:
+    """删历史版本同样是覆盖，必须拦。"""
+    _stub_git(monkeypatch, "D\tprompts/kg_extraction_v2.md")
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="HEAD")
+
+    assert "ERROR" in _levels(findings)
+    assert "删除" in _messages(findings)
+
+
+def test_new_prompt_version_is_allowed(monkeypatch) -> None:
+    """新增版本文件 ⇒ OK（规范要求的正确做法）。"""
+    _stub_git(monkeypatch, "A\tprompts/kg_qa_v4.md\nA\tprompts/kg_extraction_v4.md")
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="HEAD")
+
+    assert _levels(findings) == ["OK"]
+    assert "新增 2 个版本文件" in _messages(findings)
+
+
+def test_rename_trick_collapses_to_delete_and_is_caught(monkeypatch) -> None:
+    """`git mv v2 v3` 在 --no-renames 下落成 D + A，删除那一头必须红。"""
+    _stub_git(monkeypatch, "D\tprompts/kg_qa_v2.md\nA\tprompts/kg_qa_v3.md")
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="HEAD")
+
+    assert "ERROR" in _levels(findings)
+    assert "kg_qa_v2.md" in _messages(findings)
+
+
+def test_unversioned_files_are_ignored(monkeypatch) -> None:
+    """不带版本号的文件（README / 草稿）不受本判据约束。"""
+    _stub_git(monkeypatch, "M\tprompts/README.md\nM\tprompts/draft.md")
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="HEAD")
+
+    assert _levels(findings) == ["OK"]
+
+
+def test_unreadable_git_state_is_error_never_green(monkeypatch) -> None:
+    """判不出来 ⇒ 必须红。悄悄通过的门禁比没有门禁更危险。"""
+    _stub_git(monkeypatch, "", code=128)
+
+    findings: list = []
+    gate._check_prompt_versions(findings, base="main")
+
+    assert _levels(findings) == ["ERROR"]
+    assert "无法判定" in _messages(findings)
+
+
+def test_base_defaults_to_head(monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    assert gate._resolve_base(["--json"]) == "HEAD"
+
+
+def test_base_from_explicit_flag() -> None:
+    # argv[0] 是脚本名，与 main() 的口径一致（两者同样忽略第 0 项）
+    assert gate._resolve_base(["check_seams.py", "--base=main"]) == "main"
+    assert gate._resolve_base(["check_seams.py", "--base", "6ffd2167"]) == "6ffd2167"
+
+
+def test_base_from_pr_base_ref(monkeypatch) -> None:
+    """CI 上必须比 PR base：比 HEAD 恒为空 ⇒ 假绿。"""
+    monkeypatch.setenv("GITHUB_BASE_REF", "main")
+    assert gate._resolve_base([]) == "origin/main"
