@@ -52,8 +52,10 @@ def _patch_graph(
         doc_id: UUID | None,
         org_id: UUID,
         scope: str,
+        as_of: str | None = None,  # Sprint 9 批次 B2：时态视图
     ) -> object:
         calls["subgraph_org_id"] = org_id
+        calls["subgraph_as_of"] = as_of
         return _StubSubgraph()
 
     def fake_validate(

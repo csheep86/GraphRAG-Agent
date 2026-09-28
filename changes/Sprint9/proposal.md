@@ -22,12 +22,13 @@ CP-T1 要防的是「字段语义未定导致后期返工」，而**语义已在
 | 批次 | 内容 | 状态 |
 |---|---|---|
 | **A（已完成）** | L0 前两项 + CP-T1 冻结：`document_date` + `kg_extraction_v3.md`（含 `{{document_date}}` 与 `valid_from`/`valid_to`）+ 抽取侧解析 + 迁移 + 8 条测试 | ✅ 2026-09-28 |
-| **B1（✅ 2026-09-28）** | **写侧闭环**：四字段落 M4 typed 边 + R1–R4 纯函数仲裁 + `relation_expiry_policies` 落表并被消费 + 迁移 + 19 条测试；真机端到端 **n=1 达 3/3** | ✅ |
-| **B2（⏳ 收尾）** | **读侧 + 收口**：Cypher 默认过滤 `valid_to IS NULL` + as-of 查询 + L0 第三项「答案模板」+ **PoC 迁入 `backend/tests/`** + 真机 n≥3 | ⏳ |
+| **B1（✅ 2026-09-28）** | **写侧闭环**：四字段落 M4 typed 边 + R1–R4 纯函数仲裁 + `relation_expiry_policies` 落表并被消费 + 迁移 + 19 条测试；真机端到端 n=1 达 3/3 | ✅ |
+| **B2（✅ 2026-09-28）** | **读侧 + 收口**：五条链接入时态视图（`_temporal_view` 单一判据）+ as-of 查询 + 答案模板 `kg_qa_v2`（`{{as_of_date}}` 取自 `document_date`）+ **PoC 判分迁入 `backend/tests/test_temporal_track_s.py`** + 真机 **n=3 达 3/3** | ✅ |
 | C 及以后 | M4 四源对齐（R14）、多跳路径时序（L2 部分）、验收矩阵「当前 vs 过期」验收项、通用 `[:RELATION]` 层的实体消解前提 | ⏳ |
 
 > **B1 + B2 ＝ CP-T2 判定点**（`sprint-calendar` §4：未达不得宣称 L1 完成）。
-> B1 结束时尚**未**达 CP-T2——缺 PoC 迁入与 n≥3，**不要**提前宣称。
+> **2026-09-28：B2 完成 ⇒ CP-T2 达成**，L1 可宣称完成（写侧 + 读侧 + 答案模板 + 真机 n=3）。
+> 唯一未做的是 **as-of 上 REST**——那是 UI 入口问题，见任务卡批次 C。
 
 > **批次 B ＝ CP-T2 的判定点**（`sprint-calendar` §4：未达不得宣称 L1 完成）。
 > 其中的「PoC 迁入 `backend/tests/`」是日历的强制项——只有迁进正式测试集，

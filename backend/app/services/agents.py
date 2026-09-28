@@ -263,12 +263,23 @@ class AgentService:
 
         # 2) 拉取子图：一次拿到 Prompt 文本 + 结构化节点 / 关系
         #    （批次 A：nodes / edges 用于填充契约 kg_nodes / kg_relations）
+        #    Sprint 9 批次 B2：先算出「这次回答依据的是哪一天」，再把同一天传给子图
+        #    ——答案模板与图视图必须**同一**个日期，否则会出现"说依据 2024 年，
+        #      注入的其实是现在的数据"这种无从察觉的错位。
+        as_of_date, as_of_doc_id = _resolve_context_date(
+            db=db, org_id=org_id, doc_id=request.doc_id
+        )
+        if as_of_date is None:
+            logger.bind(trace_id=trace_id, org_id=str(org_id)).info(
+                "agent_query_as_of_unknown"
+            )
         try:
             subgraph = self._fetch_subgraph_for_question(
                 kg_version=version,
                 doc_id=request.doc_id,
                 org_id=org_id,
                 scope=request.scope,
+                as_of=as_of_date,
             )
         except GraphUnavailableError as exc:
             logger.bind(trace_id=trace_id, reason=str(exc)).error(
@@ -396,12 +407,20 @@ class AgentService:
         # 3) 加载 Prompt（任何占位符错误都立即暴露，禁止硬编码）
         template = load_prompt("kg_qa")
         try:
-            system_prompt = template.render(
-                graph_subgraph=subgraph.serialized,
-                text_chunks=text_chunks,
-                chat_history="",
-                question=request.question,
-            )
+            # 按模板**声明**的占位符给值（与抽取侧同套路）：加 Prompt 版本不必改
+            # 代码，也避免把 v2 的变量喂给 v1（loader 会报"收到未声明的变量"）。
+            values: dict[str, str] = {
+                "graph_subgraph": subgraph.serialized,
+                "text_chunks": text_chunks,
+                "chat_history": "",
+                "question": request.question,
+            }
+            declared = set(template.placeholders)
+            if "as_of_date" in declared:
+                values["as_of_date"] = as_of_date or _AS_OF_UNKNOWN
+            if "as_of_source" in declared:
+                values["as_of_source"] = as_of_doc_id or _AS_OF_UNKNOWN
+            system_prompt = template.render(**values)
         except PromptRenderError as exc:
             # Prompt 渲染失败属于实现错误，不可降级为拒答
             logger.bind(trace_id=trace_id, error=str(exc)).error(
@@ -529,12 +548,17 @@ class AgentService:
         doc_id: UUID | None,
         org_id: UUID,
         scope: str,
+        as_of: str | None = None,
     ) -> _SubgraphResult:
         """拉取与问题相关的子图：Prompt 文本 + 结构化节点 / 关系。
 
         - ``scope = single_doc``（Pydantic 已保证 ``doc_id`` 非空）→ 文档子图；
         - ``scope = cross_doc``（``doc_id`` 为空）→ **全部**已导入实体图，
           对应 :meth:`GraphService.fetch_all_subgraph`（不依赖 PG ``document_id``）。
+
+        ``as_of``（Sprint 9 批次 B2）：把它一路传给 Cypher 的时态视图，子图因此是
+        **那一天的图**而不是"当下的图"。问答再说不清依据哪天，答案就无从判断
+        是不是过期的信息——这正是 ADR-0005 L0 第 3 项要的答案模板前提。
 
         图谱为空时 ``serialized`` 为 ``<graph: empty>``，让 Prompt 明确
         「无证据」而非留白，避免 LLM 用自身记忆补全。
@@ -550,6 +574,7 @@ class AgentService:
                 kg_version=kg_version,
                 org_id=org_id,
                 node_limit=_GRAPH_NODE_LIMIT,
+                as_of=as_of,
             )
         else:
             nodes, edges, truncated = graph.fetch_document_subgraph(
@@ -843,6 +868,53 @@ def _snippet(text: str) -> str:
     if len(stripped) <= _SNIPPET_LIMIT:
         return stripped
     return f"{stripped[:_SNIPPET_LIMIT]}…"
+
+
+#: Prompt 里截至日期的兜底字面量：日期**不可得**时就照实说，不替 LLM 编一个
+_AS_OF_UNKNOWN = "unknown"
+
+
+def _resolve_context_date(
+    *, db: Any, org_id: UUID, doc_id: UUID | None
+) -> tuple[str | None, str | None]:
+    """答案模板里「依据截至 X 日的披露文件」的那个 X —— **必须能说出出处**。
+
+    来源优先级：本次问答限定的文档 → 该租户**最新**一份已登记日期的披露文件
+    （``documents.document_date``，Sprint 9 批次 A 落的列；**这就是它的消费点**——
+    没有这句回填，那列只是一份"将来会用"的预留）。
+
+    两者都取不到 ⇒ 返回 ``None``：**代码不编日期**（与抽取侧 R4 同口径），
+    由模板降级为「截至日期未知」。宁可让答案说得含糊，也不能让它说得**确定而错误**。
+
+    **查询失败同样降级为 ``None``**：截至日期是加成信息，不能让一次 DB 抖动
+    拖垮整轮问答——这与既有语义一致（连 QaLog 写失败都不该影响回答）。
+    """
+    if db is None:
+        return None, None
+
+    from sqlalchemy import select
+
+    from app.db.models import Document
+
+    stmt = select(Document.id, Document.document_date).where(
+        Document.org_id == org_id, Document.document_date.is_not(None)
+    )
+    if doc_id is not None:
+        stmt = stmt.where(Document.id == doc_id)
+    else:
+        stmt = stmt.order_by(Document.document_date.desc())
+
+    try:
+        row = db.execute(stmt).first()
+    except Exception as exc:  # noqa: BLE001 - 加成信息不允许拖垮主流程
+        logger.bind(exc_type=type(exc).__name__).warning(
+            "agent_query_as_of_lookup_failed"
+        )
+        return None, None
+    if row is None:
+        return None, None
+    document_date = row[1]
+    return document_date.isoformat(), str(row[0])
 
 
 def _serialize_chunks(chunks: Sequence[EvidenceChunk]) -> str:

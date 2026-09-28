@@ -207,7 +207,7 @@ S11 (2026-12-19, RBAC)              ──► 设计稿角色权限页此时才�
 | P1 | 侧栏三级分组与 badge 生效；工作台出现域卡片并可点击；覆盖率/动态用真实数据；顶栏健康态灯反映真实依赖；图谱页有域分区与图例 |
 | P2 | 后台新增/停用域后，侧栏与 `/domains/[slug]` 同步变化；域 overview 有真实 KPI |
 | P3-L0 | 🔀 **2026-09-28 完成 2/3**：`Document.document_date` 可写入（`Date`、可空、不进契约，迁移 `7989c2c821da`）；抽取 **v3** 产出 `valid_from` / `valid_to`，真机 DeepSeek 实测**覆盖率 5/5 = 100%**（n=1，稳定性 3 轮留批次 B），无显式日期取 `document_date` 兜底 ✓；`kg_extraction_v2.md` 文件未被修改 ✓。**未完成项**：答案模板「依据截至 X 日的披露文件」（批次 B） |
-| P3-L1 | 🔀 **2026-09-28 写侧已完成（真机 n=1 达 3/3）**：M4 typed 边带四字段（`valid_from` / `valid_to` / `created_at` / `expired_at` + `source_document_id`）；R1–R4 纯函数仲裁生效——真机实测「张三 valid_to 被封到 2025-05-01、当前值唯一为李四、as-of 2024-06-01 回溯到张三、历史 2 条边保留」；`relation_expiry_policies` 表有真实消费点（未配置 ⇒ 并存，默认保守）。**未完成**：查询默认过滤 `valid_to IS NULL` 与 as-of 查询（读侧，批次 B2）；**降级登记**：通用 `[:RELATION]` 层因 `:Entity` id 是随机 uuid 无法跨文档匹配，需先有实体消解 |
+| P3-L1 | ✅ **2026-09-28 完成（CP-T2 达成）**：M4 typed 边带四字段（`valid_from` / `valid_to` / `created_at` / `expired_at` + `source_document_id`）；R1–R4 纯函数仲裁生效；`relation_expiry_policies` 表有真实消费点（未配置 ⇒ 并存）；**读侧**五条链接入统一时态视图 `_temporal_view` 并支持 as-of 查询；答案模板 `kg_qa_v3`（v1 / v2 零改动）会说「依据截至 X 日的披露文件」（X 取自 `documents.document_date`）；**PoC 判分迁入 `backend/tests/test_temporal_track_s.py`**，真机 n=3 达 3/3（当前值李四 / as-of 2024-06-01 张三 / 历史 2 条边活 1 条）。**降级登记**：通用 `[:RELATION]` 层因 `:Entity` id 是随机 uuid 无法跨文档匹配，需先有实体消解；`as_of` 暂未上 REST（待 UI 入口） |
 | P3-L2 | 多跳路径时序不倒置；页面对失效边有视觉区分 + 截至日期；验收矩阵「当前 vs 过期」验收项已登记且有判据 |
 
 ---

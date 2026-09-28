@@ -12,11 +12,15 @@ from app.prompts.prompt_loader import (
     resolve_prompt,
 )
 
+#: Sprint 9 批次 B2：``kg_qa`` 升到 v2 并新增 ``as_of_date``（答案模板要说清依据
+#: 截至哪天的披露文件）；变量集随最新版更新——这正是 loader「未知变量必报错」
+#: 存在的意义：升级 Prompt 时**必须**在调用方留下痕迹。
 KG_QA_VARS = {
     "graph_subgraph": "<graph/>",
     "text_chunks": "<chunks/>",
     "chat_history": "",
     "question": "A 公司与 B 公司是什么关系？",
+    "as_of_date": "2026-09-28",
 }
 
 

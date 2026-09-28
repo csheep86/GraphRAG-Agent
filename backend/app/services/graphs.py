@@ -145,6 +145,62 @@ class EvidenceChunk:
     char_end: int
 
 
+# --------------------------------------------------------------------------- #
+# Sprint 9 批次 B2（ADR-0005 §6 L1）：读侧的**时态视图**
+# --------------------------------------------------------------------------- #
+
+
+def validate_as_of(as_of: str | None) -> str | None:
+    """校验 as-of 日期；格式非法**抛错**而不是静默当作"查当前"。
+
+    静默忽略的后果比报错糟得多：调用方以为在查 2024 年的状态，实际拿到的是
+    「现在」的数据——它不会报错，只会在答案里表现为"当时的人明明不是他却答了现在的人"。
+    """
+    if as_of is None:
+        return None
+    try:
+        datetime.strptime(as_of, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(f"as_of 必须是 YYYY-MM-DD 格式: {as_of!r}") from exc
+    return as_of
+
+
+def _temporal_view(alias: str = "r") -> str:
+    """读侧的时态视图谓词：一段可直接拼进 ``WHERE`` 的 AND 条件。
+
+    ``$as_of`` 为 ``NULL`` ⇒ 只取**当前**关系（``valid_to IS NULL``）；非空 ⇒ 把视图
+    倒回那一天：该日之前已成立、且那时尚未失效的关系。**两种视图共用同一段判据**，
+    是为了让"默认视图"和"as-of 视图"不可能出现口径漂移。
+
+    .. warning::
+       第二个条件的"$as_of 为 NULL"分支**不能**写成 ``$as_of IS NULL OR valid_to IS NULL
+       OR valid_to > $as_of``（初版就写错了）：那样 ``NULL`` 时整个条件恒真，
+       默认视图会变成"什么都查得到"，旧事实统统混进"当前"。真机用例正是这样
+       抓到的（读到 ``['张三', '李四']`` 两条"当前"法定代表人）——**单元测试挡不住这类错，
+       因为它错的就是"语义"，只有真跑一遍 Cypher 才能暴露**。
+
+    为什么不各处散写一遍：写入侧的判据已经由
+    :func:`app.services.kg.temporal.plan_expiries` 独家守着；读侧若再散落五份
+    不同的过滤条件，"答案里一半新事实一半旧事实"就只是时间问题。
+
+    用 ``properties(r)['valid_to']`` 而非 ``r.valid_to``：属性键尚不存在时后者
+    会触发 Neo4j 的 ``01N52`` 通知（与既有查询同口径）。
+
+    **M2 的 ``:RELATION`` 边没有这两个属性 ⇒ 谓词恒真**（属性缺失即 NULL）。
+    这是预期行为：本期只有 M4 主体层的两条 typed 边纳入时效治理，
+    其余关系一律视为有效——不会因为"加了治理"就查不到它们。
+    """
+    # 两条条件的 OR 结构不同，不要为了"对称"而统一：
+    # ① 起始日：as_of 为 NULL 时**不设限**（未来才开始生效的关系也算当前已知事实）；
+    # ② 失效日：as_of 为 NULL 时**必须是 NULL**（＝当前值），非空时才放宽到"那天还没失效"。
+    return f"""
+  AND ($as_of IS NULL OR properties({alias})['valid_from'] IS NULL
+       OR properties({alias})['valid_from'] <= $as_of)
+  AND (properties({alias})['valid_to'] IS NULL
+       OR ($as_of IS NOT NULL AND properties({alias})['valid_to'] > $as_of))
+"""
+
+
 #: Cypher 查询：当前 active kg_version（ADR-0002 §3.2 —— **仅** active 可被消费）。
 #: 阶段九由 ``scripts/import_to_neo4j.py`` 在 Neo4j 侧维护 :KgVersion 状态机；
 #: Sprint 4 接入 PG ``kg_versions`` 后，PG 为真源、此查询退化为兜底。
@@ -202,7 +258,8 @@ RETURN count(n) AS leaked
 #: Cypher 查询：**全部**已导入实体子图（不依赖 PG ``document_id``）。
 #: 供 ``bridge_web_demo`` 阶段六产物（``:Entity`` + 实体间关系）查询使用。
 #: ``elementId`` 用于稳定去重，``id`` 属性作为对外节点标识（与边的 source/target 对齐）。
-_QUERY_ALL_ENTITY_SUBGRAPH = """
+_QUERY_ALL_ENTITY_SUBGRAPH = (
+    """
 MATCH (n:Entity {kg_version: $kg_version})
 // 用 properties(n)['org_id'] 而非 n.org_id：后者在库中尚无该属性键时
 // 会触发 ``01N52 property key does not exist`` 通知（噪声日志）。
@@ -215,7 +272,9 @@ WITH all_nodes[0..$node_limit] AS nodes, size(all_nodes) AS total_nodes
 RETURN
   nodes,
   total_nodes,
-  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes | {
+  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes"""
+    + _temporal_view("r")
+    + """ | {
     id: coalesce(r.id, elementId(r)),
     type: type(r),
     source: a.id,
@@ -223,6 +282,7 @@ RETURN
     properties: properties(r)
   }] AS edges
 """
+)
 
 #: Cypher 查询：单个文档的子图（节点 + 关系），受 doc_id + kg_version 双重约束。
 #: 规模上限 500 节点，超限由 Python 侧裁剪 + ``truncated = true`` 标记。
@@ -295,8 +355,9 @@ LIMIT $limit
 #:    spec 只按 ``kg_version`` 过滤，但 ``kg_version`` 不等于租户边界。
 #: 用 ``properties(n)['org_id']`` 而非 ``n.org_id``：属性键不存在时后者会触发
 #: ``01N52 property key does not exist`` 通知（与既有查询同口径）。
-_QUERY_SHARED_LEGAL_REP = """
-MATCH (s1:Subject)-[:LEGAL_REP]->(l:LegalPerson)<-[:LEGAL_REP]-(s2:Subject)
+_QUERY_SHARED_LEGAL_REP = (
+    """
+MATCH (s1:Subject)-[rep1:LEGAL_REP]->(l:LegalPerson)<-[rep2:LEGAL_REP]-(s2:Subject)
 WHERE s1.id < s2.id
   AND s1.kg_version = $kg_version
   AND s2.kg_version = $kg_version
@@ -304,7 +365,12 @@ WHERE s1.id < s2.id
   AND ($org_id IS NULL OR properties(s1)['org_id'] IS NULL
        OR properties(s1)['org_id'] = $org_id)
   AND ($org_id IS NULL OR properties(s2)['org_id'] IS NULL
-       OR properties(s2)['org_id'] = $org_id)
+       OR properties(s2)['org_id'] = $org_id)"""
+    # **这条查询是时态视图真正生效的地方**：共享法人的判据是「现在是否还由同一人
+    # 代表」，旧法定代表人早在旧年就被 R1 封了边 ⇒ 不该再算作疑点（否则年年报警）
+    + _temporal_view("rep1")
+    + _temporal_view("rep2")
+    + """
 RETURN
   s1.id AS subject_a_id, s1.name AS subject_a_name,
   s2.id AS subject_b_id, s2.name AS subject_b_name,
@@ -312,10 +378,12 @@ RETURN
 ORDER BY subject_a_id, subject_b_id
 LIMIT $limit
 """
+)
 
 #: Sprint 7.1 批次 A（M4 §5.4 第 154 行**照抄**）：共享地址 —— 同上两处同样偏离。
-_QUERY_SHARED_ADDRESS = """
-MATCH (s1:Subject)-[:REGISTERED_AT]->(a:Address)<-[:REGISTERED_AT]-(s2:Subject)
+_QUERY_SHARED_ADDRESS = (
+    """
+MATCH (s1:Subject)-[reg1:REGISTERED_AT]->(a:Address)<-[reg2:REGISTERED_AT]-(s2:Subject)
 WHERE s1.id < s2.id
   AND s1.kg_version = $kg_version
   AND s2.kg_version = $kg_version
@@ -323,7 +391,11 @@ WHERE s1.id < s2.id
   AND ($org_id IS NULL OR properties(s1)['org_id'] IS NULL
        OR properties(s1)['org_id'] = $org_id)
   AND ($org_id IS NULL OR properties(s2)['org_id'] IS NULL
-       OR properties(s2)['org_id'] = $org_id)
+       OR properties(s2)['org_id'] = $org_id)"""
+    # 同上：已迁址的旧地址不再构成「两家公司注册在同一处」的疑点
+    + _temporal_view("reg1")
+    + _temporal_view("reg2")
+    + """
 RETURN
   s1.id AS subject_a_id, s1.name AS subject_a_name,
   s2.id AS subject_b_id, s2.name AS subject_b_name,
@@ -331,6 +403,7 @@ RETURN
 ORDER BY subject_a_id, subject_b_id
 LIMIT $limit
 """
+)
 
 #: Sprint 7.1 批次 A：疑点证据 —— 由主体层节点（``:Subject`` / ``:LegalPerson`` /
 #: ``:Address``）经 ``source_entity_ids`` 溯源到 M2 ``:Entity``，再走 S6 的
@@ -365,7 +438,8 @@ LIMIT $limit
 #: 节点选取按**度数降序**（连接数多的枢纽优先，平局按 `id` 保证确定性）：
 #: 此前是 `all_nodes[0..$node_limit]` 无序截断——任意前 500 个节点之间几乎没有边
 #: （真机实测 500 节点仅 36 边，画出来全是孤点噪云），违背「保护前端渲染」的初衷。
-_QUERY_GRAPH_OVERVIEW = """
+_QUERY_GRAPH_OVERVIEW = (
+    """
 MATCH (n:Entity {kg_version: $kg_version})
 WHERE $org_id IS NULL
    OR properties(n)['org_id'] IS NULL
@@ -377,7 +451,9 @@ WITH all_nodes[0..$node_limit] AS nodes, size(all_nodes) AS total_nodes
 RETURN
   nodes,
   total_nodes,
-  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes AND (a <> b) | {
+  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes AND (a <> b)"""
+    + _temporal_view("r")
+    + """ | {
     id: coalesce(r.id, elementId(r)),
     type: type(r),
     source: a.id,
@@ -385,11 +461,13 @@ RETURN
     properties: properties(r)
   }] AS edges
 """
+)
 
 
 #: 批次 C：实体详情 —— 单节点 + 1 跳出边邻居（带方向过滤：仅取指向其它 Entity 的边）。
 #: ``has_neighbor_more`` 表示是否还有更多邻居（用于前端分页 / 「展开更多」按钮）。
-_QUERY_ENTITY_DETAIL = """
+_QUERY_ENTITY_DETAIL = (
+    """
 MATCH (e:Entity {id: $entity_id, kg_version: $kg_version})
 WHERE $org_id IS NULL
    OR properties(e)['org_id'] IS NULL
@@ -398,7 +476,10 @@ OPTIONAL MATCH (e)-[r]->(n:Entity {kg_version: $kg_version})
 WHERE n <> e
   AND ($org_id IS NULL
        OR properties(n)['org_id'] IS NULL
-       OR properties(n)['org_id'] = $org_id)
+       OR properties(n)['org_id'] = $org_id)"""
+    # r 为 null（OPTIONAL MATCH 无命中）时谓词恒真 ⇒ 行为与加之前一致
+    + _temporal_view("r")
+    + """
 WITH e,
      collect({rel: r, neighbor: n}) AS all_neighbors
 WITH e,
@@ -411,6 +492,7 @@ RETURN
   size([(e)-[r2]->(:Entity {kg_version: $kg_version}) | r2]) AS out_degree,
   size([(:Entity {kg_version: $kg_version})-[r3]->(e) | r3]) AS in_degree
 """
+)
 
 
 class GraphService:
@@ -648,8 +730,12 @@ class GraphService:
         org_id: UUID | None = None,
         node_limit: int = 500,
         db: Any = None,
+        as_of: str | None = None,
     ) -> tuple[list[GraphNode], list[GraphEdge], bool]:
         """取**全部**已导入实体子图，不依赖 PG ``document_id``。
+
+        Sprint 9 批次 B2 新增 ``as_of``：默认只投影**当前**关系；传入日期则把整张
+        子图倒回那一天——"三年前这张图长什么样"这个问题从此有确定答案。
 
         用于 ``bridge_web_demo`` 阶段六产物（``:Entity`` 实体图）的查询与可视化。
         若 ``kg_version`` 为 ``None``，自动取 :meth:`fetch_active_kg_version`
@@ -671,6 +757,7 @@ class GraphService:
                     kg_version=version,
                     org_id=str(org_id) if org_id else None,
                     node_limit=node_limit,
+                    as_of=validate_as_of(as_of),
                 ).single()
         except GraphUnavailableError:
             raise
@@ -846,9 +933,19 @@ class GraphService:
     # ------------------------------------------------- Sprint 7.1 批次 A（M4）
 
     def fetch_shared_affiliations(
-        self, *, kg_version: str, org_id: UUID | None = None, limit: int = 100
+        self,
+        *,
+        kg_version: str,
+        org_id: UUID | None = None,
+        limit: int = 100,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         """M4 两跳查询：**共享法人** + **共享地址**（``specs/m4-affiliation-detection.md`` §5.4）。
+
+        Sprint 9 批次 B2 新增 ``as_of``：共享法人 / 地址的判据是「**现在**是否仍由
+        同一人代表 / 同一地址注册」。旧法定代表人早在当年就被 R1 封了边，
+        若不过滤有效期，这条疑点会**年复一年地报警**——属 D-3 要防的
+        「把历史关系当现状」最典型的形态。
 
         :returns: ``[{"suspicion_type": "shared_legal_rep"|"shared_address",
             "subject_a_id", "subject_a_name", "subject_b_id", "subject_b_name",
@@ -869,6 +966,7 @@ class GraphService:
                             kg_version=kg_version,
                             org_id=str(org_id) if org_id else None,
                             limit=limit,
+                            as_of=validate_as_of(as_of),
                         )
                     )
             except GraphUnavailableError:
@@ -924,6 +1022,7 @@ class GraphService:
         trace_id: str,
         node_limit: int = _GRAPH_OVERVIEW_NODE_LIMIT,
         db: Any = None,
+        as_of: str | None = None,
     ) -> GraphOverviewResponse:
         """全局图谱概览（`GET /graph/overview`，Sprint 5 批次 C）。
 
@@ -945,6 +1044,7 @@ class GraphService:
                     kg_version=version,
                     org_id=str(org_id) if org_id else None,
                     node_limit=node_limit,
+                    as_of=validate_as_of(as_of),
                 ).single()
         except GraphUnavailableError:
             raise
@@ -1060,10 +1160,14 @@ class GraphService:
         trace_id: str,
         neighbor_limit: int = _ENTITY_NEIGHBOR_LIMIT,
         db: Any = None,
+        as_of: str | None = None,
     ) -> EntityDetail:
         """实体详情（`GET /entities/{entity_id}`，Sprint 5 批次 C）。
 
         查询范围：当前 active kg_version 内、``Entity`` 标签节点 + 1 跳出边邻居。
+
+        Sprint 9 批次 B2 新增 ``as_of``：**默认**只展示未被取代的关系
+        （``valid_to IS NULL``）；传入 ``YYYY-MM-DD`` 则把邻居视图倒回那一天。
         不存在（无该实体节点 / org_id 不符）→ 抛 :class:`EntityNotFoundError` 或
         :class:`GraphUnavailableError`，由路由层分别转 ``404 ENTITY_NOT_FOUND`` /
         ``501 NOT_IMPLEMENTED``。
@@ -1085,6 +1189,7 @@ class GraphService:
                     kg_version=version,
                     org_id=str(org_id) if org_id else None,
                     neighbor_limit=neighbor_limit,
+                    as_of=validate_as_of(as_of),
                 ).single()
         except GraphUnavailableError:
             raise
