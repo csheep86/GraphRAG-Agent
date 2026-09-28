@@ -3,6 +3,60 @@
 # 重新生成：cd backend && uv run python scripts/export_openapi.py
 components:
   schemas:
+    AffiliationCauseItem:
+      description: '归因的一条原因（Sprint 9.5 批次 C2 扩展，结构即 M4 的 ``causes[]`` 元素）。
+
+
+        **置信度不在这里**——它由 ``Σ命中权重 / Σ全部权重`` 在服务层算出（**禁止 LLM
+
+        生成置信度**，纪律 3）：模型给的百分数不可复核，而这里每个 ``weight`` 都是
+
+        确定性常量，命中与否由证据说话。
+
+
+        ``matched=False`` 的项**照样返回**（不隐藏）：演示时要能说清「哪一项没对上」，
+
+        只给命中项会让用户误以为证据齐备。'
+      example:
+        code: trip_approved
+        evidence:
+        - BUSINESS_TRIP:BT-2026-0017
+        matched: true
+        reason: 当日存在已审批的出差申请（武汉 10-16 ~ 10-18）
+        weight: 0.35
+      properties:
+        code:
+          description: 原因编码（如 `trip_approved` / `order_closed`）
+          title: Code
+          type: string
+        evidence:
+          description: 支撑该原因的证据节点 id；未命中时为空列表
+          items:
+            type: string
+          title: Evidence
+          type: array
+        matched:
+          description: 该证据是否命中（未命中不计入置信度分子）
+          title: Matched
+          type: boolean
+        reason:
+          description: 原因说明（人可读）
+          title: Reason
+          type: string
+        weight:
+          description: 该证据的确定性权重（合计 1.0）
+          maximum: 1.0
+          minimum: 0.0
+          title: Weight
+          type: number
+      required:
+      - code
+      - reason
+      - weight
+      - matched
+      - evidence
+      title: AffiliationCauseItem
+      type: object
     AffiliationDetectRequest:
       description: '`POST /affiliation/detect` 请求体。
 
@@ -156,6 +210,14 @@ components:
         task_id: 9a4b2c6d-1e3f-4a8b-8c2d-5e7f0a1b3c5d
         trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
       properties:
+        causes:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/AffiliationCauseItem'
+            type: array
+          - type: 'null'
+          description: 归因原因链（Sprint 9.5 批次 C2 扩展）：`{code, reason, weight, matched, evidence[]}`，按权重降序。**考勤域疑点才有**；金融域疑点与 C2 之前落库的历史数据为 `null`（**不**用空列表冒充「已归因」）。
+          title: Causes
         created_at:
           description: 疑点落库时间
           format: date-time
@@ -223,6 +285,7 @@ components:
           enum:
           - shared_address
           - shared_legal_rep
+          - missing_check_in
           title: Suspicion Type
           type: string
         task_id:
@@ -873,6 +936,190 @@ components:
       - snippet
       title: Citation
       type: object
+    ComplianceFinding:
+      description: 一条合规风险（含计算过程与证据 —— 演示要能逐条念出来）。
+      example:
+        calculation: 月排班 216h（22 天）− 月标准 174h = 加班 42h > 上限 36h
+        department: 生产部
+        employee_id: E002
+        employee_name: 李静
+        evidence:
+        - SHIFT:S00023
+        - SHIFT:S00024
+        level: high
+        observed: 42.0
+        policy_refs:
+        - graph:clause:ent_c974307a4bd5
+        rule: monthly_overtime_exceeded
+        rule_label: 月加班超限
+        threshold: 36.0
+        title: 月加班超限
+        unit: 小时
+        work_time_system: 综合计算工时制
+      properties:
+        calculation:
+          description: 计算过程（可直接展示 / 朗读）
+          title: Calculation
+          type: string
+        department:
+          description: 所属部门
+          title: Department
+          type: string
+        employee_id:
+          description: 员工工号（如 `E002`）
+          title: Employee Id
+          type: string
+        employee_name:
+          description: 员工姓名
+          title: Employee Name
+          type: string
+        evidence:
+          description: 证据节点 id 列表（`GET /entities/{id}` 可回查详情）
+          items:
+            type: string
+          title: Evidence
+          type: array
+        level:
+          description: 风险等级
+          enum:
+          - high
+          - medium
+          title: Level
+          type: string
+        observed:
+          description: 实测值
+          title: Observed
+          type: number
+        policy_refs:
+          description: 制度依据引用（`graph:clause:…` / `document:doc:…`）
+          items:
+            type: string
+          title: Policy Refs
+          type: array
+        rule:
+          description: 命中的规则
+          enum:
+          - weekly_hours_exceeded
+          - monthly_overtime_exceeded
+          - comp_off_undigested
+          - core_window_absence
+          - consecutive_attendance
+          title: Rule
+          type: string
+        rule_label:
+          description: 规则中文名
+          title: Rule Label
+          type: string
+        threshold:
+          description: 制度阈值（来自 `rule_values[]`）
+          title: Threshold
+          type: number
+        title:
+          description: 风险标题
+          title: Title
+          type: string
+        unit:
+          description: 单位
+          title: Unit
+          type: string
+        work_time_system:
+          description: 工时制（综合计算 / 标准 / 不定时工作制）
+          title: Work Time System
+          type: string
+      required:
+      - rule
+      - rule_label
+      - employee_id
+      - employee_name
+      - department
+      - work_time_system
+      - level
+      - title
+      - observed
+      - threshold
+      - unit
+      - calculation
+      - policy_refs
+      - evidence
+      title: ComplianceFinding
+      type: object
+    ComplianceScanResponse:
+      description: '`GET /attendance/compliance/scan` 响应：一次全量合规扫描。
+
+
+        **同步返回**（非异步任务）：扫描是**纯读**（不落库、不调 LLM），
+
+        40 名员工实测秒级完成 —— 引入 `task_id` 轮询只会多一轮往返且无状态可存。'
+      example:
+        as_of: '2026-10-31'
+        employee_count: 40
+        findings: []
+        kg_version: attendance-demo-v1
+        rule_values: []
+        skipped_rules: []
+        total: 8
+        trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
+        unresolved: []
+      properties:
+        as_of:
+          description: 观察日；缺省取数据窗口末日（**不取系统当天**，保证可复现）
+          format: date
+          title: As Of
+          type: string
+        employee_count:
+          description: 参与扫描的员工数
+          minimum: 0.0
+          title: Employee Count
+          type: integer
+        findings:
+          description: 风险清单（按等级 / 工号排序）
+          items:
+            $ref: '#/components/schemas/ComplianceFinding'
+          title: Findings
+          type: array
+        kg_version:
+          description: 扫描所基于的图谱版本（只读 active 版本）
+          title: Kg Version
+          type: string
+        rule_values:
+          description: 已解析出的规则值（每个都带制度出处）
+          items:
+            $ref: '#/components/schemas/RuleValueItem'
+          title: Rule Values
+          type: array
+        skipped_rules:
+          description: 因缺规则值而跳过的规则（不是「没风险」，是「没判据」）
+          items:
+            type: string
+          title: Skipped Rules
+          type: array
+        total:
+          description: 风险条数（与 `len(findings)` 一致）
+          minimum: 0.0
+          title: Total
+          type: integer
+        trace_id:
+          description: 本次请求的 trace_id
+          title: Trace Id
+          type: string
+        unresolved:
+          description: '**未**解析出的规则值 key；对应规则已跳过，**未用默认值兜底**'
+          items:
+            type: string
+          title: Unresolved
+          type: array
+      required:
+      - kg_version
+      - as_of
+      - employee_count
+      - rule_values
+      - unresolved
+      - skipped_rules
+      - findings
+      - total
+      - trace_id
+      title: ComplianceScanResponse
+      type: object
     DocumentChunkResponse:
       description: '`GET /api/v1/documents/{id}/chunks/{chunk_id}` 响应：单个原文片段。
 
@@ -1358,6 +1605,7 @@ components:
       - UNSUPPORTED_MEDIA_TYPE
       - KG_VERSION_NOT_ACTIVE
       - KG_TENANT_LEAK
+      - COMPLIANCE_NO_FACTS
       - TASK_INTERRUPTED
       - NOT_IMPLEMENTED
       - RATE_LIMITED
@@ -1366,6 +1614,7 @@ components:
       title: ErrorCode
       type: string
       x-enum-descriptions:
+        COMPLIANCE_NO_FACTS: active kg_version 内查不到 CSV 派生的 EMPLOYEE 节点，合规规则无从下手（Sprint 9.5 批次 C3）。与 501 区分：库是通的、版本是对的，只是没有考勤数据。
         DOCUMENT_NOT_FOUND: 文档不存在或未在本租户可见范围内。
         ENTITY_NOT_FOUND: 实体不存在或不属于当前 active kg_version；与跨租户 403 区分。
         FILE_TOO_LARGE: 上传文件超过 MAX_UPLOAD_SIZE_MB（默认 100MB，M1 验收 2）。
@@ -1382,6 +1631,7 @@ components:
         UNSUPPORTED_MEDIA_TYPE: 上传文件 MIME 不在白名单（M1 验收 3）。
         VALIDATION_ERROR: 请求体 / 查询参数 / 路径参数未通过 Pydantic 校验。
       x-enum-sources:
+        COMPLIANCE_NO_FACTS: Sprint 9.5 批次 C3 / changes/Sprint9.5/proposal.md §5.3
         DOCUMENT_NOT_FOUND: M1 §5.4
         ENTITY_NOT_FOUND: Sprint 5 批次 C / plans §4.2 批次 C
         FILE_TOO_LARGE: M1 §3 验收 2
@@ -1786,6 +2036,58 @@ components:
       - activated_at
       - trace_id
       title: KgVersionActivationResponse
+      type: object
+    RuleValueItem:
+      description: 一个**解析自制度文本**的规则值（含出处，可逐条核查）。
+      example:
+        evidence: 每月加班时间不得超过 36 小时
+        key: monthly_overtime_cap
+        label: 月加班上限
+        reference: clause:ent_d165867ab6e8
+        source: graph
+        unit: 小时
+        value: 36.0
+      properties:
+        evidence:
+          description: 命中的制度原文片段（供前端直接回显）
+          title: Evidence
+          type: string
+        key:
+          description: 规则值标识（如 `monthly_overtime_cap`）
+          title: Key
+          type: string
+        label:
+          description: 中文名（如「月加班上限」）
+          title: Label
+          type: string
+        reference:
+          description: 出处定位：`clause:<节点 id>` 或 `doc:<文档 stem>:L<行号>`
+          title: Reference
+          type: string
+        source:
+          description: 出处类型
+          enum:
+          - graph
+          - document
+          title: Source
+          type: string
+        unit:
+          description: 单位：小时 / 次 / 天
+          title: Unit
+          type: string
+        value:
+          description: 解析出的数值（**制度文本里认出来的**，非硬编码）
+          title: Value
+          type: number
+      required:
+      - key
+      - label
+      - value
+      - unit
+      - source
+      - reference
+      - evidence
+      title: RuleValueItem
       type: object
     TokenUsage:
       description: 'LLM token 用量（对齐 DeepSeek / OpenAI 兼容 API 的 `usage` 格式）。
@@ -2265,6 +2567,142 @@ paths:
       summary: 图谱问答
       tags:
       - agent
+  /api/v1/attendance/compliance/scan:
+    get:
+      description: '对当前租户 **active kg_version** 内的全部员工跑一遍**确定性规则**（五条），返回风险清单 + 每条的计算过程 + 制度依据。
+
+
+        **规则值来自制度文本，不硬编码**：响应里的 `rule_values[]` 每个值都带 `source` / `reference` / `evidence`，可逐条点开核查；制度改了，规则自动变。
+
+
+        **无判据即跳过**：规则值解析不到时，对应规则**跳过**并在 `skipped_rules[]` 里列出，**不**用默认值兜底算结论（守 F3）。
+
+
+        **观察日 `as_of`**：影响「调休未消化」的临期判据（季度剩余 < 30 天判 high）。缺省取数据窗口末日（**不取系统当天**，保证可复现）——同一份数据换个 `as_of`，同一条风险会从 medium 升到 high。
+
+
+        **过滤**：`employee_id` / `rule` / `level` 只影响 `findings`，`rule_values[]` 始终全量返回（判据不因过滤而消失）。
+
+
+        **错误语义**：
+
+        - 无 active 版本 → **409** `KG_VERSION_NOT_ACTIVE`（不静默降级）；
+
+        - 版本内没有考勤事实 → **409** `COMPLIANCE_NO_FACTS`；
+
+        - Neo4j 不可用 → **501** `NOT_IMPLEMENTED`；
+
+        - 跨租户 → **403** `FORBIDDEN`。'
+      operationId: scanAttendanceCompliance
+      parameters:
+      - description: 观察日（ISO 日期，如 `2026-12-15`）；缺省取数据窗口末日。推进观察日可演示调休「临期升级」
+        in: query
+        name: as_of
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: 观察日（ISO 日期，如 `2026-12-15`）；缺省取数据窗口末日。推进观察日可演示调休「临期升级」
+          title: As Of
+      - description: 只看该员工（如 `E002`）
+        in: query
+        name: employee_id
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 32
+            minLength: 1
+            type: string
+          - type: 'null'
+          description: 只看该员工（如 `E002`）
+          title: Employee Id
+      - description: 只看该规则
+        in: query
+        name: rule
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - weekly_hours_exceeded
+            - monthly_overtime_exceeded
+            - comp_off_undigested
+            - core_window_absence
+            - consecutive_attendance
+            type: string
+          - type: 'null'
+          description: 只看该规则
+          title: Rule
+      - description: 只看该等级
+        in: query
+        name: level
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - high
+            - medium
+            type: string
+          - type: 'null'
+          description: 只看该等级
+          title: Level
+      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+        in: header
+        name: X-Org-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          title: X-Org-Id
+      - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+        in: header
+        name: X-Actor-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+          title: X-Actor-Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceScanResponse'
+          description: Successful Response
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: active kg_version 内没有考勤事实（`COMPLIANCE_NO_FACTS`）：查不到 CSV 派生的 `EMPLOYEE` 节点，规则**无从下手**。与 501 区分——库是通的、版本是对的，只是这份图里没有考勤数据，请先执行 `scripts/ingest_attendance_csv.py`
+        '501':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`）
+      security:
+      - bearerAuth: []
+      summary: 考勤域合规预警扫描（Sprint 9.5 批次 C3）
+      tags:
+      - attendance
   /api/v1/audit:
     get:
       description: '返回当前租户（`X-Org-Id` / Bearer token 解析出的 `org_id`）可见的审计记录，**跨租户记录永不出现在结果里**（ADR-0003；RLS 未启用前由应用层过滤兜底）。

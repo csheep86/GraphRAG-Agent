@@ -134,6 +134,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/attendance/compliance/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 考勤域合规预警扫描（Sprint 9.5 批次 C3）
+         * @description 对当前租户 **active kg_version** 内的全部员工跑一遍**确定性规则**（五条），返回风险清单 + 每条的计算过程 + 制度依据。
+         *
+         *     **规则值来自制度文本，不硬编码**：响应里的 `rule_values[]` 每个值都带 `source` / `reference` / `evidence`，可逐条点开核查；制度改了，规则自动变。
+         *
+         *     **无判据即跳过**：规则值解析不到时，对应规则**跳过**并在 `skipped_rules[]` 里列出，**不**用默认值兜底算结论（守 F3）。
+         *
+         *     **观察日 `as_of`**：影响「调休未消化」的临期判据（季度剩余 < 30 天判 high）。缺省取数据窗口末日（**不取系统当天**，保证可复现）——同一份数据换个 `as_of`，同一条风险会从 medium 升到 high。
+         *
+         *     **过滤**：`employee_id` / `rule` / `level` 只影响 `findings`，`rule_values[]` 始终全量返回（判据不因过滤而消失）。
+         *
+         *     **错误语义**：
+         *     - 无 active 版本 → **409** `KG_VERSION_NOT_ACTIVE`（不静默降级）；
+         *     - 版本内没有考勤事实 → **409** `COMPLIANCE_NO_FACTS`；
+         *     - Neo4j 不可用 → **501** `NOT_IMPLEMENTED`；
+         *     - 跨租户 → **403** `FORBIDDEN`。
+         */
+        get: operations["scanAttendanceCompliance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -431,6 +465,53 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AffiliationCauseItem
+         * @description 归因的一条原因（Sprint 9.5 批次 C2 扩展，结构即 M4 的 ``causes[]`` 元素）。
+         *
+         *     **置信度不在这里**——它由 ``Σ命中权重 / Σ全部权重`` 在服务层算出（**禁止 LLM
+         *     生成置信度**，纪律 3）：模型给的百分数不可复核，而这里每个 ``weight`` 都是
+         *     确定性常量，命中与否由证据说话。
+         *
+         *     ``matched=False`` 的项**照样返回**（不隐藏）：演示时要能说清「哪一项没对上」，
+         *     只给命中项会让用户误以为证据齐备。
+         * @example {
+         *       "code": "trip_approved",
+         *       "evidence": [
+         *         "BUSINESS_TRIP:BT-2026-0017"
+         *       ],
+         *       "matched": true,
+         *       "reason": "当日存在已审批的出差申请（武汉 10-16 ~ 10-18）",
+         *       "weight": 0.35
+         *     }
+         */
+        AffiliationCauseItem: {
+            /**
+             * Code
+             * @description 原因编码（如 `trip_approved` / `order_closed`）
+             */
+            code: string;
+            /**
+             * Evidence
+             * @description 支撑该原因的证据节点 id；未命中时为空列表
+             */
+            evidence: string[];
+            /**
+             * Matched
+             * @description 该证据是否命中（未命中不计入置信度分子）
+             */
+            matched: boolean;
+            /**
+             * Reason
+             * @description 原因说明（人可读）
+             */
+            reason: string;
+            /**
+             * Weight
+             * @description 该证据的确定性权重（合计 1.0）
+             */
+            weight: number;
+        };
+        /**
          * AffiliationDetectRequest
          * @description `POST /affiliation/detect` 请求体。
          *
@@ -567,6 +648,11 @@ export interface components {
          */
         AffiliationSuspicionItem: {
             /**
+             * Causes
+             * @description 归因原因链（Sprint 9.5 批次 C2 扩展）：`{code, reason, weight, matched, evidence[]}`，按权重降序。**考勤域疑点才有**；金融域疑点与 C2 之前落库的历史数据为 `null`（**不**用空列表冒充「已归因」）。
+             */
+            causes?: components["schemas"]["AffiliationCauseItem"][] | null;
+            /**
              * Created At
              * Format: date-time
              * @description 疑点落库时间
@@ -625,7 +711,7 @@ export interface components {
              * @description 疑点类型
              * @enum {string}
              */
-            suspicion_type: "shared_address" | "shared_legal_rep";
+            suspicion_type: "shared_address" | "shared_legal_rep" | "missing_check_in";
             /**
              * Task Id
              * Format: uuid
@@ -1204,6 +1290,171 @@ export interface components {
             snippet: string;
         };
         /**
+         * ComplianceFinding
+         * @description 一条合规风险（含计算过程与证据 —— 演示要能逐条念出来）。
+         * @example {
+         *       "calculation": "月排班 216h（22 天）− 月标准 174h = 加班 42h > 上限 36h",
+         *       "department": "生产部",
+         *       "employee_id": "E002",
+         *       "employee_name": "李静",
+         *       "evidence": [
+         *         "SHIFT:S00023",
+         *         "SHIFT:S00024"
+         *       ],
+         *       "level": "high",
+         *       "observed": 42,
+         *       "policy_refs": [
+         *         "graph:clause:ent_c974307a4bd5"
+         *       ],
+         *       "rule": "monthly_overtime_exceeded",
+         *       "rule_label": "月加班超限",
+         *       "threshold": 36,
+         *       "title": "月加班超限",
+         *       "unit": "小时",
+         *       "work_time_system": "综合计算工时制"
+         *     }
+         */
+        ComplianceFinding: {
+            /**
+             * Calculation
+             * @description 计算过程（可直接展示 / 朗读）
+             */
+            calculation: string;
+            /**
+             * Department
+             * @description 所属部门
+             */
+            department: string;
+            /**
+             * Employee Id
+             * @description 员工工号（如 `E002`）
+             */
+            employee_id: string;
+            /**
+             * Employee Name
+             * @description 员工姓名
+             */
+            employee_name: string;
+            /**
+             * Evidence
+             * @description 证据节点 id 列表（`GET /entities/{id}` 可回查详情）
+             */
+            evidence: string[];
+            /**
+             * Level
+             * @description 风险等级
+             * @enum {string}
+             */
+            level: "high" | "medium";
+            /**
+             * Observed
+             * @description 实测值
+             */
+            observed: number;
+            /**
+             * Policy Refs
+             * @description 制度依据引用（`graph:clause:…` / `document:doc:…`）
+             */
+            policy_refs: string[];
+            /**
+             * Rule
+             * @description 命中的规则
+             * @enum {string}
+             */
+            rule: "weekly_hours_exceeded" | "monthly_overtime_exceeded" | "comp_off_undigested" | "core_window_absence" | "consecutive_attendance";
+            /**
+             * Rule Label
+             * @description 规则中文名
+             */
+            rule_label: string;
+            /**
+             * Threshold
+             * @description 制度阈值（来自 `rule_values[]`）
+             */
+            threshold: number;
+            /**
+             * Title
+             * @description 风险标题
+             */
+            title: string;
+            /**
+             * Unit
+             * @description 单位
+             */
+            unit: string;
+            /**
+             * Work Time System
+             * @description 工时制（综合计算 / 标准 / 不定时工作制）
+             */
+            work_time_system: string;
+        };
+        /**
+         * ComplianceScanResponse
+         * @description `GET /attendance/compliance/scan` 响应：一次全量合规扫描。
+         *
+         *     **同步返回**（非异步任务）：扫描是**纯读**（不落库、不调 LLM），
+         *     40 名员工实测秒级完成 —— 引入 `task_id` 轮询只会多一轮往返且无状态可存。
+         * @example {
+         *       "as_of": "2026-10-31",
+         *       "employee_count": 40,
+         *       "findings": [],
+         *       "kg_version": "attendance-demo-v1",
+         *       "rule_values": [],
+         *       "skipped_rules": [],
+         *       "total": 8,
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91",
+         *       "unresolved": []
+         *     }
+         */
+        ComplianceScanResponse: {
+            /**
+             * As Of
+             * Format: date
+             * @description 观察日；缺省取数据窗口末日（**不取系统当天**，保证可复现）
+             */
+            as_of: string;
+            /**
+             * Employee Count
+             * @description 参与扫描的员工数
+             */
+            employee_count: number;
+            /**
+             * Findings
+             * @description 风险清单（按等级 / 工号排序）
+             */
+            findings: components["schemas"]["ComplianceFinding"][];
+            /**
+             * Kg Version
+             * @description 扫描所基于的图谱版本（只读 active 版本）
+             */
+            kg_version: string;
+            /**
+             * Rule Values
+             * @description 已解析出的规则值（每个都带制度出处）
+             */
+            rule_values: components["schemas"]["RuleValueItem"][];
+            /**
+             * Skipped Rules
+             * @description 因缺规则值而跳过的规则（不是「没风险」，是「没判据」）
+             */
+            skipped_rules: string[];
+            /**
+             * Total
+             * @description 风险条数（与 `len(findings)` 一致）
+             */
+            total: number;
+            /**
+             * Trace Id
+             * @description 本次请求的 trace_id
+             */
+            trace_id: string;
+            /**
+             * Unresolved
+             * @description **未**解析出的规则值 key；对应规则已跳过，**未用默认值兜底**
+             */
+            unresolved: string[];
+        };
+        /**
          * DocumentChunkResponse
          * @description `GET /api/v1/documents/{id}/chunks/{chunk_id}` 响应：单个原文片段。
          *
@@ -1621,7 +1872,7 @@ export interface components {
          * @description 统一业务错误码。HTTP 状态码与业务错误码分离（CODEBUDDY.md 错误响应规范）。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | "HTTP_ERROR";
+        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "COMPLIANCE_NO_FACTS" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | "HTTP_ERROR";
         /**
          * ErrorResponse
          * @description 统一错误响应体（**所有** 4xx / 5xx 均使用本结构）。
@@ -1949,6 +2200,57 @@ export interface components {
              * @description 被激活的 kg_version 版本号
              */
             version: string;
+        };
+        /**
+         * RuleValueItem
+         * @description 一个**解析自制度文本**的规则值（含出处，可逐条核查）。
+         * @example {
+         *       "evidence": "每月加班时间不得超过 36 小时",
+         *       "key": "monthly_overtime_cap",
+         *       "label": "月加班上限",
+         *       "reference": "clause:ent_d165867ab6e8",
+         *       "source": "graph",
+         *       "unit": "小时",
+         *       "value": 36
+         *     }
+         */
+        RuleValueItem: {
+            /**
+             * Evidence
+             * @description 命中的制度原文片段（供前端直接回显）
+             */
+            evidence: string;
+            /**
+             * Key
+             * @description 规则值标识（如 `monthly_overtime_cap`）
+             */
+            key: string;
+            /**
+             * Label
+             * @description 中文名（如「月加班上限」）
+             */
+            label: string;
+            /**
+             * Reference
+             * @description 出处定位：`clause:<节点 id>` 或 `doc:<文档 stem>:L<行号>`
+             */
+            reference: string;
+            /**
+             * Source
+             * @description 出处类型
+             * @enum {string}
+             */
+            source: "graph" | "document";
+            /**
+             * Unit
+             * @description 单位：小时 / 次 / 天
+             */
+            unit: string;
+            /**
+             * Value
+             * @description 解析出的数值（**制度文本里认出来的**，非硬编码）
+             */
+            value: number;
         };
         /**
          * TokenUsage
@@ -2304,6 +2606,76 @@ export interface operations {
                 };
             };
             /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scanAttendanceCompliance: {
+        parameters: {
+            query?: {
+                /** @description 观察日（ISO 日期，如 `2026-12-15`）；缺省取数据窗口末日。推进观察日可演示调休「临期升级」 */
+                as_of?: string | null;
+                /** @description 只看该员工（如 `E002`） */
+                employee_id?: string | null;
+                /** @description 只看该规则 */
+                rule?: ("weekly_hours_exceeded" | "monthly_overtime_exceeded" | "comp_off_undigested" | "core_window_absence" | "consecutive_attendance") | null;
+                /** @description 只看该等级 */
+                level?: ("high" | "medium") | null;
+            };
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComplianceScanResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description active kg_version 内没有考勤事实（`COMPLIANCE_NO_FACTS`）：查不到 CSV 派生的 `EMPLOYEE` 节点，规则**无从下手**。与 501 区分——库是通的、版本是对的，只是这份图里没有考勤数据，请先执行 `scripts/ingest_attendance_csv.py` */
             409: {
                 headers: {
                     [name: string]: unknown;

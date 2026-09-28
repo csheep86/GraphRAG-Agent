@@ -68,6 +68,8 @@ ACTION_BY_ROUTE_NAME: dict[str, str] = {
     # M5 审计自身（自举记录：查审计也是一次 API 调用）
     "list_audit_logs_endpoint": "audit.list",
     "list_audit_logs_by_trace_endpoint": "audit.trace",
+    # Sprint 9.5 批次 C3：考勤域合规扫描（合规结论必须留痕——它是可对外引用的判断）
+    "scan_attendance_compliance": "compliance.scan",
 }
 
 #: 列宽上限（``audit_log.action`` / ``resource`` 均为 ``String(255)``）。

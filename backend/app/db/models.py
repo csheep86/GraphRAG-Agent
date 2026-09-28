@@ -190,13 +190,21 @@ AFFILIATION_TASK_STATUS_VALUES = ("pending", "processing", "completed", "failed"
 SUSPICION_STATUS_VALUES = ("open", "dismissed", "confirmed")
 """`affiliation_suspicions.status` 合法值（spec §4.3）。"""
 
-SUSPICION_TYPE_VALUES = ("shared_legal_rep", "shared_address")
-"""本批次能产出的疑点类型（spec §3 验收 3 的最小集）。
+SUSPICION_TYPE_VALUES = ("shared_legal_rep", "shared_address", "missing_check_in")
+"""能产出的疑点类型（spec §3 验收 3 的最小集 + Sprint 9.5 批次 C2 域化新增）。
+
+- 前两类是 **M4 金融域**（``shared_legal_rep`` / ``shared_address``），**保留不删**；
+- ``missing_check_in`` 是 **考勤域**「工作日缺卡」（``attribution.ANOMALY_MISSING_CHECK_IN``）。
 
 spec 全集还含 ``shared_phone`` / ``cycle`` / ``amount_mismatch``，但它们依赖
 ``:Phone`` / ``:Invoice`` / ``:Voucher`` / ``:Contract`` 节点（**Sprint 9 批次 B**）。
 **不提前把产不出的数据写进允许集合**——那等于向调用方承诺不存在的能力；
 S9 落地时同步扩本常量 + CheckConstraint + 契约枚举。
+
+**改这里必须同步**：
+``ck_affiliation_suspicions_type`` CheckConstraint（本文件）+ 契约枚举
+（``app/schemas/affiliation.py::SuspicionType``）+ 迁移脚本
+``scripts/migrate_add_suspicion_causes.py``（**无 Alembic**，`create_all` 不会改已存在的表）。
 """
 
 SUSPICION_SEVERITY_VALUES = ("high", "medium", "low")
@@ -273,7 +281,8 @@ class AffiliationSuspicion(Base):
             name="ck_affiliation_suspicions_status",
         ),
         CheckConstraint(
-            "suspicion_type IN ('shared_legal_rep', 'shared_address')",
+            "suspicion_type IN ('shared_legal_rep', 'shared_address', "
+            "'missing_check_in')",
             name="ck_affiliation_suspicions_type",
         ),
         CheckConstraint(
@@ -298,6 +307,13 @@ class AffiliationSuspicion(Base):
     entity_names: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     #: 原文证据引用列表（**非空**：无证据的疑点不落库）
     evidence: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    #: 归因原因链（Sprint 9.5 批次 C2 扩展）：``[{code, reason, weight, matched,
+    #: evidence[]}]``。
+    #:
+    #: **可空且默认为空**：金融域疑点与 C2 之前的历史数据没有归因，
+    #: 用 ``None`` 表示「未归因」，**不**用空列表冒充「归过因、零命中」——
+    #: 二者语义相反（后者等于说证据全没对上）。
+    causes: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     kg_version: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     #: 复核人（`X-Actor-Id`；M5 落地后改为 token 主体）

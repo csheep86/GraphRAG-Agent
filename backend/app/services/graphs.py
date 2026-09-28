@@ -41,8 +41,8 @@ import hashlib
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from loguru import logger
@@ -65,6 +65,9 @@ _ENTITY_NEIGHBOR_LIMIT = 50
 
 #: 批次 C：图谱概览节点上限，与 ``DocumentGraphResponse`` 对齐（500）。
 _GRAPH_OVERVIEW_NODE_LIMIT = 500
+
+if TYPE_CHECKING:  # 仅类型检查：运行时走函数内延迟导入，避免加长依赖链
+    from app.services.rules import ComplianceReport
 
 #: Sprint 6 批次 B：单次问答注入 Prompt 的证据片段上限。
 #: 与 ``_GRAPH_NODE_LIMIT`` 同源思路——片段是**全文**，过量会直接撑爆 Prompt token。
@@ -1148,6 +1151,56 @@ class GraphService:
             relations=relations,
             trace_id=trace_id,
         )
+
+    # ------------------------------------------------- Sprint 9.5 批次 C3
+
+    def scan_attendance_compliance(
+        self,
+        *,
+        org_id: UUID | None = None,
+        db: Any = None,
+        as_of: date | None = None,
+    ) -> ComplianceReport:
+        """考勤域合规扫描（``GET /attendance/compliance/scan`` 的服务层入口）。
+
+        **为什么放在这里而不是路由里直接开 driver**：``kg_version`` 必须由
+        :meth:`fetch_active_kg_version` 决定（PG 为真源、只读 active），
+        而 Neo4j session 只由本类的懒加载 driver 产出。两者都在本类内 ⇒
+        路由层拿不到「私自开连接」的口子，杜绝绕过版本真源。
+
+        **延迟导入** ``app.services.rules``：``graphs`` 被 ``agents`` 依赖，
+        在模块级牵上规则引擎会加长依赖链；且规则引擎本身不依赖本模块，无循环风险。
+
+        :raises NoActiveKgVersionError: 无 active 版本（路由层 409）
+        :raises GraphUnavailableError: Neo4j 不可用（路由层 501）
+        :raises ComplianceScanError: 版本里没有考勤事实（路由层 409 ``COMPLIANCE_NO_FACTS``）
+        """
+        from app.services.rules import (  # 延迟导入：缩短依赖链
+            ComplianceScanError,
+            scan_compliance,
+        )
+
+        version = self.fetch_active_kg_version(org_id=org_id, db=db).version
+        try:
+            with self._session() as session:
+                return scan_compliance(
+                    session=session,
+                    kg_version=version,
+                    org_id=str(org_id) if org_id else None,
+                    as_of=as_of,
+                )
+        except NoActiveKgVersionError:
+            raise
+        except GraphUnavailableError:
+            raise
+        except ComplianceScanError:
+            # **不是**基础设施故障：库是通的、版本是对的，只是这份图里没有考勤数据。
+            # 包装成 GraphUnavailableError 会让前端看到 501「服务不可用」——错报。
+            raise
+        except Exception as exc:  # noqa: BLE001 - 其余一律视为图不可用
+            raise GraphUnavailableError(
+                f"合规扫描失败: kg_version={version}: {exc}"
+            ) from exc
 
 
 # ---------------------------------------------------------------------------

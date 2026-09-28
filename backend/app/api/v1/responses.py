@@ -121,6 +121,18 @@ AFFILIATION_SUSPICION_NOT_FOUND: dict[int, dict[str, Any]] = {
     }
 }
 
+COMPLIANCE_NO_FACTS: dict[int, dict[str, Any]] = {
+    409: {
+        "model": ErrorResponse,
+        "description": (
+            "active kg_version 内没有考勤事实（`COMPLIANCE_NO_FACTS`）："
+            "查不到 CSV 派生的 `EMPLOYEE` 节点，规则**无从下手**。"
+            "与 501 区分——库是通的、版本是对的，只是这份图里没有考勤数据，"
+            "请先执行 `scripts/ingest_attendance_csv.py`"
+        ),
+    }
+}
+
 VALIDATION_ERROR: dict[int, dict[str, Any]] = {
     400: {
         "model": ErrorResponse,

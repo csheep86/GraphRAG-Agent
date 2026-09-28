@@ -51,13 +51,19 @@ export type SuspicionBadgeVariant =
 
 type SuspicionMeta = { label: string; variant: SuspicionBadgeVariant };
 
-/** 疑点类型（契约 `suspicion_type`） */
+/**
+ * 疑点类型（契约 `suspicion_type`）
+ *
+ * `missing_check_in` 为 **Sprint 9.5 批次 C2 域化新增**（考勤域「工作日缺卡」）；
+ * 金融域两类保留不动 —— 契约是「只加不改」，前端按域各显示各的，不做跨域混用。
+ */
 export const SUSPICION_TYPE_META: Record<
   AffiliationSuspicionType,
   SuspicionMeta
 > = {
   shared_legal_rep: { label: "共享法定代表人", variant: "outline" },
   shared_address: { label: "共享注册地址", variant: "outline" },
+  missing_check_in: { label: "工作日缺卡", variant: "outline" },
 };
 
 /** 严重度：高=红 · 中=蓝 · 低=灰 */

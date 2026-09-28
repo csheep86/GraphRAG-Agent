@@ -22,8 +22,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-#: 疑点类型——**本批次只产出两类**（规则型；另三类属 S9）
-SuspicionType = Literal["shared_address", "shared_legal_rep"]
+#: 疑点类型——**M4 原有两类照旧**（规则型；`shared_phone` 等三类属 S9）
+#: + **Sprint 9.5 批次 C2 域化新增** `missing_check_in`（考勤域「工作日缺卡」）。
+#:
+#: 域化口径（proposal §5.4：**只加不改**）：金融两类**保留不删**，考勤域新增一类；
+#: 前端按域选择展示哪些类型，不做跨域混用。
+SuspicionType = Literal["shared_address", "shared_legal_rep", "missing_check_in"]
 #: 疑点严重度（spec §4.3）
 SuspicionSeverity = Literal["high", "medium", "low"]
 #: 疑点复核状态（spec §4.3）；`open` 为初始态
@@ -194,6 +198,36 @@ class AffiliationEvidenceRef(BaseModel):
     text: str = Field(description="片段原文（用于前端高亮回显）")
 
 
+class AffiliationCauseItem(BaseModel):
+    """归因的一条原因（Sprint 9.5 批次 C2 扩展，结构即 M4 的 ``causes[]`` 元素）。
+
+    **置信度不在这里**——它由 ``Σ命中权重 / Σ全部权重`` 在服务层算出（**禁止 LLM
+    生成置信度**，纪律 3）：模型给的百分数不可复核，而这里每个 ``weight`` 都是
+    确定性常量，命中与否由证据说话。
+
+    ``matched=False`` 的项**照样返回**（不隐藏）：演示时要能说清「哪一项没对上」，
+    只给命中项会让用户误以为证据齐备。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "code": "trip_approved",
+                "reason": "当日存在已审批的出差申请（武汉 10-16 ~ 10-18）",
+                "weight": 0.35,
+                "matched": True,
+                "evidence": ["BUSINESS_TRIP:BT-2026-0017"],
+            }
+        }
+    )
+
+    code: str = Field(description="原因编码（如 `trip_approved` / `order_closed`）")
+    reason: str = Field(description="原因说明（人可读）")
+    weight: float = Field(ge=0, le=1, description="该证据的确定性权重（合计 1.0）")
+    matched: bool = Field(description="该证据是否命中（未命中不计入置信度分子）")
+    evidence: list[str] = Field(description="支撑该原因的证据节点 id；未命中时为空列表")
+
+
 class AffiliationSuspicionItem(BaseModel):
     """一条疑点（结构对齐 M4 §3 验收 3：`{type, severity, entities[], evidence[]}`）。
 
@@ -236,6 +270,14 @@ class AffiliationSuspicionItem(BaseModel):
     )
     evidence: list[AffiliationEvidenceRef] = Field(
         description="原文证据引用列表（非空：无证据的疑点不会落库）"
+    )
+    causes: list[AffiliationCauseItem] | None = Field(
+        default=None,
+        description=(
+            "归因原因链（Sprint 9.5 批次 C2 扩展）：`{code, reason, weight, matched, "
+            "evidence[]}`，按权重降序。**考勤域疑点才有**；金融域疑点与 C2 之前落库的"
+            "历史数据为 `null`（**不**用空列表冒充「已归因」）。"
+        ),
     )
     kg_version: str = Field(description="疑点所属的图谱版本")
     status: SuspicionReviewStatus = Field(description="复核状态；初始恒为 `open`")
