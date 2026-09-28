@@ -28,6 +28,14 @@ Sprint 7.1 批次 A 新增（真机驱动，详见 ``changes/Sprint7.1/integrati
 - **``char_offset`` 以 ``mention`` 回查为准**：模型自报偏移与 ``mention`` 不符时
   （7.0 实测 top20 中 14/20 不符），丢弃模型偏移、用 ``mention`` 回查定位，
   否则 §2.3 的证据回查会漂到错误位置。
+
+Sprint 9 批次 A（**ADR-0005 §4 / §6 L0**，知识时效）：
+- 关系新增**事实维**两字段 ``valid_from`` / ``valid_to``（Prompt 由
+  ``kg_extraction_v2`` 升到 ``kg_extraction_v3``，v2 文件保留不动）；
+- ``{{document_date}}`` 是 R4「不猜值」的兜底源：文本没写生效日期时由模型取文档日期，
+  **代码不代填**——这里只负责把它渲染进 Prompt 并解析回来；
+- 格式非法 ⇒ **只丢时态字段、不丢关系**（日志 ``langextract_invalid_temporal_date``）：
+  主信息（谁和谁、什么关系）比时态重要，静默丢整条关系会让召回率莫名下降。
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ import re
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Final
 
 from loguru import logger
@@ -132,6 +141,8 @@ _MIN_CONFIDENCE: Final[float] = 0.5
 _REASON_SNIPPET: Final[int] = 200
 #: Prompt 的 ``{{language}}`` 取值（语种常量，非配置；改语种须走 Prompt 新版本）
 _PROMPT_LANGUAGE: Final[str] = "chinese"
+#: 文档日期未知的占位值（Prompt v3 的 ``{{document_date}}``；语义见 _render_extraction_prompt）
+_DOCUMENT_DATE_UNKNOWN: Final[str] = "unknown"
 #: llm 档里跟随 System 指令的用户侧指令（约束"只输出 JSON"，不承载模板语义）
 _LLM_USER_INSTRUCTION: Final[str] = (
     "请严格按上述输出约定对 System 中的文本做抽取，只输出 JSON 对象，"
@@ -161,7 +172,12 @@ class ExtractedEntity:
 
 @dataclass(frozen=True, slots=True)
 class ExtractedRelation:
-    """抽取出的关系。"""
+    """抽取出的关系。
+
+    ``valid_from`` / ``valid_to`` 是 ADR-0005 §4 的**事实维**（``YYYY-MM-DD`` 字符串，
+    为空即"未定"）：事实在现实中从何时成立到何时失效。**摄入维**
+    （``created_at`` / ``expired_at``）在写入图谱时由系统打，不进本结构。
+    """
 
     id: str
     source_entity_id: str
@@ -169,6 +185,8 @@ class ExtractedRelation:
     relation_type: str
     evidence: str
     confidence: float
+    valid_from: str | None = None
+    valid_to: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +258,9 @@ class ExtractionResult:
                     "relation_type": r.relation_type,
                     "evidence": r.evidence,
                     "confidence": r.confidence,
+                    # 事实维（ADR-0005 §4）；None 即未定，下游不得解读为"今天生效"
+                    "valid_from": r.valid_from,
+                    "valid_to": r.valid_to,
                 }
                 for r in self.relations
             ],
@@ -400,6 +421,7 @@ def _render_extraction_prompt(
     *,
     text: str,
     vocabulary: TypeVocabulary = DEFAULT_VOCABULARY,
+    document_date: date | None = None,
 ) -> str:
     """渲染 ``kg_extraction`` 模板；**按模板实际声明的占位符**给值。
 
@@ -410,6 +432,10 @@ def _render_extraction_prompt(
 
     Sprint 9.5 批次 B2：两个枚举取自 :class:`TypeVocabulary`（默认内置，有本体时
     注入本体读数）。**换域只换词表，Prompt 文件不动**。
+
+    Sprint 9 批次 A：v3 新增 ``{{document_date}}``——ADR-0005 R4「不猜值」的兜底源。
+    未知时渲染为字面量 ``"unknown"``（Prompt 里已写明该值只作兜底、不得用于回填
+    ``valid_to``）；**代码不代填日期**——"看不见作者署期就替他编一个"违背同一条纪律。
     """
     values: dict[str, str] = {"text": text, "language": _PROMPT_LANGUAGE}
     declared = set(template.placeholders)
@@ -417,6 +443,10 @@ def _render_extraction_prompt(
         values["entity_types"] = "|".join(vocabulary.entity_types)
     if "relation_types" in declared:
         values["relation_types"] = "|".join(vocabulary.relation_types)
+    if "document_date" in declared:
+        values["document_date"] = (
+            document_date.isoformat() if document_date else _DOCUMENT_DATE_UNKNOWN
+        )
     return template.render(**values)
 
 
@@ -425,6 +455,7 @@ def _build_llm_chunk_extractor(
     prompt_version: str,
     invoker: LlmInvokerFn,
     vocabulary: TypeVocabulary = DEFAULT_VOCABULARY,
+    document_date: date | None = None,
 ) -> ChunkExtractorFn:
     """构造 llm 档的 chunk 抽取器：单 chunk → 一次 LLM 调用 → 严格解析。
 
@@ -444,6 +475,7 @@ def _build_llm_chunk_extractor(
             ),
             text=text,
             vocabulary=vocabulary,
+            document_date=document_date,
         )
 
         try:
@@ -593,6 +625,25 @@ def _entities_from_payload(
     return entities, id_map
 
 
+#: ADR-0005 §4：时态日期一律 ``YYYY-MM-DD``（Cypher / SQL 可直接比较，无需解析）
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _coerce_iso_date(value: object) -> str | None:
+    """取出 ``YYYY-MM-DD`` 日期；缺失返回 ``None``，格式非法返回 ``None`` 并告警。
+
+    **不抛异常、不影响关系本体**：时态 cleanliness 是加成信息，模型偶尔输出
+    "2025年5月"这类中文日期不该让整条关系消失（召回率比日期格式重要）。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if not _ISO_DATE.match(text):
+        logger.bind(invalid_date=text).warning("langextract_invalid_temporal_date")
+        return None
+    return text
+
+
 def _relations_from_payload(
     payload: Mapping[str, Any],
     id_map: Mapping[str, str],
@@ -643,6 +694,8 @@ def _relations_from_payload(
                 relation_type=relation_type,
                 evidence=str(raw.get("evidence") or "").strip(),
                 confidence=confidence,
+                valid_from=_coerce_iso_date(raw.get("valid_from")),
+                valid_to=_coerce_iso_date(raw.get("valid_to")),
             )
         )
 
@@ -668,6 +721,8 @@ class LangextractClient:
         chunk_extractor: ChunkExtractorFn | None = None,
         llm_invoker: LlmInvokerFn | None = None,
         type_vocabulary: TypeVocabulary | None = None,
+        #: ADR-0005 §4：本文档的日期（事实维 ``valid_from`` 的兜底源）；None = 未知
+        document_date: date | None = None,
     ) -> None:
         if provider != "langextract":
             # 未知档位显式报错（与 llm_provider / parser_provider 同策略，
@@ -706,6 +761,7 @@ class LangextractClient:
                 prompt_version=prompt_version,
                 invoker=llm_invoker or _default_llm_invoke,
                 vocabulary=self._vocabulary,
+                document_date=document_date,
             )
 
     # -------------------------------------------------------------- 工厂
@@ -717,6 +773,7 @@ class LangextractClient:
         entity_types: tuple[str, ...] = (),
         relation_types: tuple[str, ...] = (),
         max_chars_per_chunk: int | None = None,
+        document_date: date | None = None,
     ) -> LangextractClient:
         """从 settings 构造默认客户端（``document.extract`` 执行体使用）。
 
@@ -732,6 +789,8 @@ class LangextractClient:
             600 字切片抽出 **16** 条。切片粒度是抽取召回率的真实杠杆，
             而它**随文档类型而异**（年报适合大切片、法规条款适合沿条文切），
             故不宜拍死成全局常量。
+        :param document_date: ADR-0005 §4 的文档日期（``Document.document_date``），
+            为 R4「不猜值」提供兜底源；``None`` = 未知，Prompt 渲染为 ``"unknown"``。
         """
         settings = get_settings()
         return cls(
@@ -749,6 +808,7 @@ class LangextractClient:
                 entity_types=entity_types or ENTITY_TYPES,
                 relation_types=relation_types or RELATION_TYPES,
             ),
+            document_date=document_date,
         )
 
     # -------------------------------------------------------------- 主入口

@@ -133,4 +133,8 @@ def test_extraction_result_shape_matches_prompt_schema() -> None:
         "relation_type",
         "evidence",
         "confidence",
+        # 事实维时态字段（ADR-0005 §4，Prompt v3 起由模型产出；
+        # 本用例断言的是"产物 shape 与 Prompt Schema 一致"，故须随模板同步）
+        "valid_from",
+        "valid_to",
     }

@@ -133,7 +133,11 @@ class Settings(BaseSettings):
     #: Prompt 版本（CODEBUDDY.md 版本管理规范）；prompt_loader 必须有对应版本文件。
     #: Sprint 7.1 批次 A：v2 = v1 + 类型枚举参数化（``{{entity_types}}`` /
     #: ``{{relation_types}}``）+ 法人 / 地址两类（M4 算法的数据前提）；v1 文件保留不动。
-    extraction_prompt_version: str = "kg_extraction_v2"
+    #: Sprint 9 批次 A：**v3 = v2 + 知识时效**（ADR-0005 §4 / §6 L0）——关系带
+    #: ``valid_from`` / ``valid_to``，并新增 ``{{document_date}}`` 作为 R4 不猜值的
+    #: 兜底源；v1 / v2 文件保留不动。切版本只需改这里——渲染层按模板**声明的占位符**
+    #: 给值（见 ``extraction._render_extraction_prompt``），**不按版本号走分支**。
+    extraction_prompt_version: str = "kg_extraction_v3"
 
     # -- KG 构建（Sprint 5 批次 B：ADR-0002 三段式写入 Neo4j）--
     #: stage-2 / stage-3 batch LOAD 的批大小（防内存峰值）

@@ -497,6 +497,9 @@ async def _do_extract(
         client = LangextractClient.from_settings(
             entity_types=entity_types,
             relation_types=relation_types,
+            # Sprint 9 批次 A（ADR-0005 R4）：文档日期是时态字段 valid_from 的兜底源。
+            # None ⇒ Prompt 渲染为 "unknown"，由模型标注"无法定时效"，代码不代填。
+            document_date=document.document_date,
             # 调用方可按文档类型指定切片粒度（制度文档要沿条款切，见 Sprint 9.5 B2）
             max_chars_per_chunk=payload.get("max_chars_per_chunk"),  # type: ignore[arg-type]
         )

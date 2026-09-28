@@ -77,5 +77,8 @@ def test_kg_extraction_v1_registered() -> None:
     assert v1.version == 1
     assert set(v1.placeholders) == {"text", "language"}
 
+    # Sprint 9 批次 A：又新增 ``kg_extraction_v3``。这里**不写死版本号**——
+    # 断言语义是"取最大版本"，写死会让每次升版都红一次，逼人把范围判断改成数字。
     latest = load_prompt("kg_extraction")
-    assert latest.version == 2, "不指定版本时取最大版本"
+    available = [ref.version for ref in list_prompts() if ref.name == "kg_extraction"]
+    assert latest.version == max(available), "不指定版本时取最大版本"

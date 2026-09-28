@@ -30,13 +30,14 @@ Sprint 9.5 批次 A2 新增 `ontology_schemas` 表（M6 §4.1 的**最小子集*
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Index,
     Integer,
@@ -135,6 +136,16 @@ class Document(Base):
     )
     #: 本次构建产物 ``kg_versions.id``（ready 后回填；与 ``kg_versions.org_id`` 同租户）
     kg_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
+    # -- 知识时效（Sprint 9 批次 A，ADR-0005 §4 / §6 L0）--
+    #: 文档的**业务日期**（签署日 / 披露日 / 报表期首日），
+    #: 是关系 ``valid_from`` 的**兜底源**（R4 不猜值：文本无显式日期时取它）。
+    #:
+    #: - 可空：不是每份文档都有可识别日期，**不代填"今天"**（假日期比没日期危险）；
+    #: - **不进 contracts/openapi.yaml**：本期由集成侧写入，REST 上传接口暂不接收
+    #:   （与外部系统导入同口径），待对接方确需由 API 指定时才提升到契约；
+    #: - 消费者：``tasks/registry.py`` 传给 ``LangextractClient`` → 渲染进 Prompt v3。
+    document_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
 class KgVersion(Base):

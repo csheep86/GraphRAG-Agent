@@ -50,7 +50,7 @@ tag v1.0.0（现状基线，Sprint 4 已收尾，黄金路径 2/7）
 | S5 批次 A2 第 1 天末 | 2026-09-22 | CP：`llm_provider` 抽象完成且"只多一层" | 触发 plan §4.4 降级第 2 条 |
 | S5 批次 A2 第 2.5 天末 | 2026-09-24 | CP：provider / 8 字段 / `AuthProvider` / `pipeline_stages` 按 ADR-0004 §2.1 落位，`check_seams.py` 无登记外实现 | 未完成项降级登记，不得挤占批次 B |
 | S6 第 3 天 | 2026-10-14 | go/no-go：chunk 级引用跑不通即降级为文档级引用（`doc-` 前缀） | 演示故事不断，登记降级事实 |
-| **S9 首日** | 2026-11-11 | **CP-T1**：schema 冻结**必须含时态四字段**（`valid_from` / `valid_to` / `created_at` / `expired_at` + `source_document_id`）+ `Document.document_date` + `relation_type → 有效期策略` 配置表（`ADR-0005` §4 / §6） | **未冻结即返工**：四源对齐做完再补时间字段 = 全链路重做 |
+| **S9 首日** | 2026-11-11 | **CP-T1**：schema 冻结**必须含时态四字段**（`valid_from` / `valid_to` / `created_at` / `expired_at` + `source_document_id`）+ `Document.document_date` + `relation_type → 有效期策略` 配置表（`ADR-0005` §4 / §6） | **未冻结即返工**：四源对齐做完再补时间字段 = 全链路重做。**✅ 2026-09-28 已冻结**（定义见 `changes/Sprint9/proposal.md` §1：`document_date` 已落库 + 迁移；策略表定义冻结、落表与 R1–R4 仲裁同批＝批次 B，提前建表会先出现无消费者表） |
 | **S9 批次 C 末** | ≈2026-11-25 | **CP-T2**：仲裁 R1–R4 落地，`temporal_poc/run_track_s.py` 迁入 `backend/tests/` 且 **n ≥ 3 达 3/3**（当前值 / as-of 回溯 / 历史保留） | 未达即不得宣称 L1 完成，显式降级登记 |
 | **S10 收尾** | 2026-12-18 | **CP-1**：S11 的 `tasks.md` 立项"m6 spec v1.0 定稿" | 缺失即计划缺口 |
 | **S11 中段** | ≈ 2027-01-01 | **CP-2**：schema-suggestion PoC 必须**跑通**（不接受写一半） | 不通即升级报用户裁决（顺延 S12 或 F1~F5 显式降级） |
@@ -85,6 +85,7 @@ tag v1.0.0（现状基线，Sprint 4 已收尾，黄金路径 2/7）
 
 | 日期 | 版本 | 变更 | 依据 |
 |---|---|---|---|
+| 2026-09-28 | **v1.11** | **Sprint 9 批次 A（`CP-T1` schema 冻结 + ADR-0005 L0 前两项）登记**：① §4 CP-T1 置「已冻结」，策略表定义冻结、落表随 R1–R4 仲裁（批次 B）；② `optimization-plan-2026-09.md` P3-L0 置「完成 2/3，答案模板项留批次 B」（真机 `valid_from` 覆盖率 **5/5 = 100%**，`document_date` 兜底生效）；③ 每次 schema 变更自带 Alembic 迁移（S9.7 纪律首次实战） | 用户 2026-09-28「按你建议来，继续」；`changes/Sprint9/`（proposal / tasks / integration-log） |
 | 2026-09-28 | **v1.10** | **Sprint 9.7（Alembic 迁移基线）登记**：① §5 表格新增 **S9.7** 行（批次 H1~H2 完成，D-2 前置 / CP-D0 第一半）；② `deployment-spec.md` §11 **D-2** 置「基线已完成，PG 实测与升级演练留 S11」；③ 启动行为不动（`create_all` 留 dev 兜底），生产升级按 §7.2 手动执行，两者等价由等价性测试钉死 | 用户 2026-09-28「按建议顺序继续」；`changes/Sprint9.7/proposal.md`（明确不做：compose / Dockerfile 属 D-1） |
 | 2026-09-28 | **v1.9** | **Sprint 9.6（R10 修复 + 演示观感）登记**：① §5 表格新增 **S9.6** 行（批次 G1~G4 完成）；② `dev-doc-status.md` **R10 已修复**（GOVERNED_BY 80 条 / 真机推理链落到条款 / `_CYPHER_PATHS` LIMIT 截断缺陷一并修掉）、**R14 / R17 前置项同日闭合**；③ 依据为 `changes/Sprint9.6/proposal.md`（真机探针三事实：span 噪声 17 个 / 条款名碎片 / CSV chunk 天然排除） | 用户 2026-09-28 前端截图点验通过后按建议顺序开工；默认演示问题改事实型（问答页与合规页结论冲突治理） |
 | 2026-09-28 | **v1.8** | **Sprint 9.5（应试演示临时 Sprint）登记**：① §5 表格新增 **S9.5** 行（批次 A~D / E1~E5 / F1 完成，**tag 待打**；偏差记录里写明三项未完，不伪装）；② 依据为 `changes/archive/2026-09-28-Sprint9.5/tasks.md`（**已归档**）与真机彩排 `scripts/demo_rehearsal.py --domain attendance`（关 Mock **PASS 9 / FAIL 0**）；③ **S9.5 不计入 plan §13 的 S5~S13 序列**，是为客户演示临时插入，S9 及其后各 Sprint 排期不变 | 用户 2026-09-28「先按建议走，把 C/D/E/F 任务卡剩下的收干净」；`docs/dev-doc-status.md` §8 新增 **R9~R13**（语料标注机制 / 事实与条款不连通 / 混住噪声节点 / 子图采样挤掉锚点 / 本机无 LLM 凭据） |
