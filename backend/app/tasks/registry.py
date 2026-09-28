@@ -59,6 +59,7 @@ from app.services.kg.policies import load_expiry_policies
 from app.services.kg.versioning import KgVersioningService
 from app.services.ontology import extraction_type_vocabulary
 from app.services.parsing import MineruApiError, MineruClient
+from app.services.parsing.document_date import resolve_document_date
 from app.services.parsing.page_index import build_page_index
 from app.storage import (
     build_extract_artifact_key,
@@ -495,6 +496,23 @@ async def _do_extract(
         entity_types, relation_types = extraction_type_vocabulary(
             db=db, org_id=document.org_id
         )
+
+        # Sprint 9 批次 C（ADR-0005 §4）：文档日期是关系 ``valid_from`` 的兜底源。
+        # 上传时没给 ⇒ **在这里从正文认一次**；认不出就留 None（R4：不代填）。
+        # 为什么不在上传接口里做：正文要等 MinerU 解析完才有，而文件名**只落 hash**
+        # （M5 §4.5 禁原文）——此处是唯一能拿到文本的时机。
+        if document.document_date is None:
+            resolved, source = resolve_document_date(text=markdown)
+            if resolved is not None:
+                document.document_date = resolved
+                db.commit()
+            logger.bind(
+                trace_id=trace_id,
+                document_id=str(document_id),
+                document_date=resolved.isoformat() if resolved else None,
+                source=source,
+            ).info("document_date_resolved")
+
         client = LangextractClient.from_settings(
             entity_types=entity_types,
             relation_types=relation_types,

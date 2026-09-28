@@ -24,11 +24,13 @@ export function UploadDialog() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [documentDate, setDocumentDate] = useState("");
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setFile(null);
+    setDocumentDate("");
     setError(null);
     setDragging(false);
   };
@@ -56,7 +58,7 @@ export function UploadDialog() {
       setError("请先选择要上传的文件");
       return;
     }
-    await upload(file);
+    await upload(file, documentDate || undefined);
     reset();
   };
 
@@ -123,6 +125,27 @@ export function UploadDialog() {
             </span>
           </div>
         ) : null}
+
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="document-date"
+            className="text-xs text-muted-foreground"
+          >
+            文档日期（可选）
+          </label>
+          <input
+            id="document-date"
+            type="date"
+            value={documentDate}
+            onChange={(event) => setDocumentDate(event.target.value)}
+            disabled={uploading}
+            className="h-9 w-full rounded-lg border border-border bg-transparent px-3 text-[13px] text-foreground outline-none transition-colors focus:border-primary/60"
+          />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            披露日 / 报表期首日。留空则系统尝试从正文识别，识别不出即为空
+            ——不会替你猜测日期。
+          </p>
+        </div>
 
         {error ? (
           <p className="text-xs text-destructive" role="alert">

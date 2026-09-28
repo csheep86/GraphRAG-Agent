@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import date  # noqa: TC003 - FastAPI Form 需要运行时的 date 类型
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
@@ -192,12 +193,17 @@ async def create_document_upload(
     identity: Identity,
     trace_id: str,
     task_manager: TaskManager | None = None,
+    document_date: date | None = None,
 ) -> UploadResponse:
     """受理上传，返回 `task_id`（= `documents.id`）。
 
     当 ``task_manager`` 不为 ``None`` 时，注册 ``document.parse`` 异步执行体
     （ADR-0001 §3.1）。pytest 不传 ``task_manager``，跳过异步任务注册，
     维持 ``status = pending``，与原 Sprint 1 行为一致。
+
+    :param document_date: 文档的**业务日期**（披露日 / 报表期首日），ADR-0005 §4
+        中关系 ``valid_from`` 的**兜底源**。上传时可选填——人给的永远优先；
+        不填则由抽取执行体从正文认（认不出就是 ``None``，代码不代填）。
     """
     settings = get_settings()
 
@@ -235,6 +241,7 @@ async def create_document_upload(
         storage_key=None,
         retry_count=0,
         trace_id=UUID(trace_id),
+        document_date=document_date,
     )
     session.add(document)
     session.commit()

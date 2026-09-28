@@ -74,9 +74,13 @@ export async function listRecentDocuments(
 /**
  * 上传文档。
  * ✅ 契约已存在：`POST /api/v1/documents/upload`（M1，异步受理，立即返回 task_id）。
+ *
+ * `documentDate`（可选）：文档业务日期（YYYY-MM-DD），是知识时效的兜底源
+ * （ADR-0005 §4）——留空则由后端从正文认，认不出就是 null，**不代填**。
  */
 export async function uploadDocument(
   file: File,
+  documentDate?: string,
 ): Promise<components["schemas"]["UploadResponse"]> {
   if (shouldMock("/api/v1/documents/upload")) {
     await delay(720);
@@ -89,6 +93,8 @@ export async function uploadDocument(
 
   const form = new FormData();
   form.append("file", file);
+  // 空字符串会让后端把 "" 当非法日期（422）——**没填就整个字段不传**
+  if (documentDate) form.append("document_date", documentDate);
 
   return request<components["schemas"]["UploadResponse"]>(
     "/api/v1/documents/upload",

@@ -327,6 +327,8 @@ export interface paths {
          *     **当前局限**：状态机与错误落库为真实链路；MinerU 结构化解析与 LangExtract 实体关系抽取尚未接入，执行体当前返回空结果（后续版本补齐，见 v1.1.0 待办）。
          *
          *     文件名以 SHA-256 落库（`filename_hash`），日志与响应均不含原文。
+         *
+         *     `document_date`（可选）是文档的业务日期：留空则由抽取执行体从正文认，认不出即 `null`——不代填、不猜（ADR-0005 §4 / R4）。
          */
         post: operations["uploadDocument"];
         delete?: never;
@@ -1478,6 +1480,11 @@ export interface components {
         };
         /** Body_uploadDocument */
         Body_uploadDocument: {
+            /**
+             * Document Date
+             * @description 文档**业务日期**（YYYY-MM-DD，可空）：披露日 / 报表期首日。它是知识时效的兜底源（ADR-0005 §4）——正文没写生效日期时，抽取会取它作为关系的 ``valid_from``。**不填则尝试从正文认，认不出就是 null，代码不代填**——宁可说不清，不可说错。
+             */
+            document_date?: string | null;
             /**
              * File
              * @description 待解析文件。白名单：PDF / DOCX / CSV；单文件 ≤ 100MB

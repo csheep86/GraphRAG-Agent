@@ -25,7 +25,7 @@ type DocumentStore = {
   setKeyword: (keyword: string) => void;
   setStatus: (status: StatusFilter) => void;
   setUploadOpen: (open: boolean) => void;
-  upload: (file: File) => Promise<void>;
+  upload: (file: File, documentDate?: string) => Promise<void>;
   reprocess: (documentId: string) => Promise<void>;
 };
 
@@ -103,10 +103,10 @@ export const useDocumentStore = create<DocumentStore>((set, get) => ({
 
   setUploadOpen: (uploadOpen) => set({ uploadOpen }),
 
-  upload: async (file) => {
+  upload: async (file, documentDate) => {
     set({ uploading: true, error: null });
     try {
-      const response = await uploadDocument(file);
+      const response = await uploadDocument(file, documentDate);
 
       const item: DocumentListItem = {
         id: response.task_id,

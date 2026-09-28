@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, File, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, Query, UploadFile
 
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
@@ -145,7 +146,9 @@ async def list_documents_endpoint(
         "`GET /documents/{id}/status`。\n\n"
         "**当前局限**：状态机与错误落库为真实链路；MinerU 结构化解析与 LangExtract "
         "实体关系抽取尚未接入，执行体当前返回空结果（后续版本补齐，见 v1.1.0 待办）。\n\n"
-        "文件名以 SHA-256 落库（`filename_hash`），日志与响应均不含原文。"
+        "文件名以 SHA-256 落库（`filename_hash`），日志与响应均不含原文。\n\n"
+        "`document_date`（可选）是文档的业务日期：留空则由抽取执行体从正文认，"
+        "认不出即 `null`——不代填、不猜（ADR-0005 §4 / R4）。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **FILE_TOO_LARGE, **UNSUPPORTED_MEDIA_TYPE},
 )
@@ -158,6 +161,19 @@ async def upload_document(
     identity: CurrentIdentity,
     session: DbSession,
     trace_id: TraceId,
+    # 带默认值的参数必须排在无默认值参数之后（Python 语法）；
+    # FastAPI 按**参数名**匹配表单字段，位置不影响取值。
+    document_date: Annotated[
+        date | None,
+        Form(
+            description=(
+                "文档**业务日期**（YYYY-MM-DD，可空）：披露日 / 报表期首日。"
+                "它是知识时效的兜底源（ADR-0005 §4）——正文没写生效日期时，"
+                "抽取会取它作为关系的 ``valid_from``。**不填则尝试从正文认，"
+                "认不出就是 null，代码不代填**——宁可说不清，不可说错。"
+            )
+        ),
+    ] = None,
 ) -> UploadResponse:
     return await create_document_upload(
         session=session,
@@ -165,6 +181,7 @@ async def upload_document(
         identity=identity,
         trace_id=trace_id,
         task_manager=TaskManager(background_tasks),
+        document_date=document_date,
     )
 
 
