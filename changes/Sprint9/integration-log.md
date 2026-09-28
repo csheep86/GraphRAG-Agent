@@ -352,6 +352,17 @@ IDE 目录树默认不显示点目录（`.github`），而我没有先问 git �
 | 浅克隆（`--depth 1`）比历史提交 `339006de` | `fatal: bad revision`，EXIT=128 ⇒ **`fetch-depth: 0` 必需** |
 | 浅克隆比 `origin/main` | EXIT=0，**能解析**（指向同一提交 ⇒ diff 空） |
 
+**推上 CI 之后的流水线上实测（run `36433539687`，success）**——这次的证据不再是本地模拟，
+而是 GitHub Actions 自己的输出：
+
+```
+Prompt 判据基准 = cdb77c1cacb2624cefefc89be8feb9ad25583349      ← workflow 传进来的 github.event.before
+Prompt 判据基准：cdb77c1cacb2624cefefc89be8feb9ad25583349（…）  ← 脚本实际用来 diff 的基准
+```
+
+`cdb77c1c…` 即本次推送**之前**的 HEAD。与上一次 CI 的 `Prompt 判据基准：HEAD` 对比，
+差别就是"diff 恒空 ⇒ 恒 OK"变成了"与上一次推送做真 diff"。
+
 最后一行是另一处自我更正：动工时推测"PR 事件会因浅克隆取不到 `origin/<base>` 而假红"，
 实测在浅克隆里 `origin/main` **能解析**（对比 refs 指向的同一个提交），所以这个推测
 **未证实**——PR 场景大概率是"比了个不完整的浅历史"而不是红。结论只写实证过的部分。
