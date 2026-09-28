@@ -327,6 +327,28 @@ class AgentService:
         #      故障语义与子图查询一致：Neo4j 故障上抛 501，
         #      **不**降级为「无片段」——空片段会让 LLM 无从引用，进而伪装成正常拒答。
         entity_ids = [node.id for node in subgraph.nodes if node.label == "Entity"]
+        # 2.6a) **锚点并入证据检索范围**（2026-09-28 真机事故修，见 R12 / R14）：
+        #       子图是 ``node_limit`` 采样出来的，``EMPLOYEE`` 这类「数量少、粒度粗」
+        #       的锚点常被事实节点挤出去 ⇒ 只按子图取证据，会注入**与当事人无关**
+        #       的 chunk。实测后果：问「李静的月加班…」时注入的只有制度条款，
+        #       LLM 于是答「资料中没有李静的任何信息」——**却仍带着 1 条引用**
+        #       （引的是制度条款）。答案与引用不符，比拒答更危险。
+        #       与 D1 推理路径**共用同一套锚点**（含子图定位不到时的直查兜底）。
+        try:
+            anchors = GraphService.instance().fetch_anchor_entity_ids(
+                kg_version=version,
+                org_id=org_id,
+                question=request.question,
+                nodes=subgraph.nodes,
+            )
+        except GraphUnavailableError as exc:
+            logger.bind(trace_id=trace_id, reason=str(exc)).error(
+                "agent_query_anchor_unavailable"
+            )
+            raise AgentUnavailableError(f"Neo4j 锚点查询失败: {exc}") from exc
+        if anchors:
+            # 锚点排前面：证据注入的条数上限若生效，先保住当事人
+            entity_ids = list(dict.fromkeys([*anchors, *entity_ids]))
         try:
             evidence_chunks = GraphService.instance().fetch_evidence_chunks(
                 kg_version=version,

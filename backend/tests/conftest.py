@@ -128,6 +128,11 @@ def graph_reasoning_path_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         GraphService, "fetch_reasoning_path", lambda _self, **_kwargs: []
     )
+    # 同上：证据注入的锚点查询（R14 修）也是新依赖，不打桩会让这批改过的
+    # 用例去连不可达的 Neo4j ⇒ 501。默认「无锚点」，验锚点的用例自行覆盖。
+    monkeypatch.setattr(
+        GraphService, "fetch_anchor_entity_ids", lambda _self, **_kwargs: ()
+    )
 
 
 @pytest.fixture

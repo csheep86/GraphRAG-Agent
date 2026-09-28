@@ -1202,6 +1202,44 @@ class GraphService:
                 f"推理路径查询失败: kg_version={kg_version}: {exc}"
             ) from exc
 
+    def fetch_anchor_entity_ids(
+        self,
+        *,
+        kg_version: str,
+        org_id: Any,
+        question: str,
+        nodes: Sequence[GraphNode],
+    ) -> tuple[str, ...]:
+        """本次问句的锚点实体 id（供**证据注入**与推理路径共用）。
+
+        **为什么要单独开这个入口**（2026-09-28 真机事故）：证据注入的
+        ``entity_ids`` 原本只取 ``fetch_all_subgraph(node_limit=500)`` 的节点。
+        子图采样会把锚点类型挤掉 ⇒ 问「李静的月加班…」时 ``EMPLOYEE:E002``
+        不在那 500 个节点里 ⇒ 注入的只有制度 chunk ⇒ LLM 答
+        「资料中没有李静的任何信息」**却带着 1 条引用**（引的是制度条款）。
+        答案与引用不符，比拒答更危险。与推理路径共用同一套锚点即可闭合。
+
+        :raises GraphUnavailableError: Neo4j 不可用（**不**返回空——空会让
+            上层以为"这个问题没有锚点"，把故障伪装成正常结论）
+        """
+        from app.services.reasoning import resolve_anchors  # 延迟导入
+
+        try:
+            with self._session() as session:
+                return resolve_anchors(
+                    session=session,
+                    kg_version=kg_version,
+                    org_id=str(org_id) if org_id is not None else "",
+                    question=question,
+                    nodes=nodes,
+                )
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装为图不可用
+            raise GraphUnavailableError(
+                f"锚点查询失败: kg_version={kg_version}: {exc}"
+            ) from exc
+
     # ------------------------------------------------- Sprint 9.5 批次 C3
 
     def scan_attendance_compliance(

@@ -205,6 +205,41 @@ def anchor_ids_for_question(
     return tuple(anchors[:limit])
 
 
+def resolve_anchors(
+    *,
+    session: Any,
+    kg_version: str,
+    org_id: Any,
+    question: str,
+    nodes: Sequence[GraphNode],
+) -> tuple[str, ...]:
+    """定位锚点：**先本轮子图，定位不到才按名字直查兜底**。
+
+    抽成独立函数是为了让**推理路径**与**证据注入**吃同一套锚点
+    （2026-09-28 真机实测：两者不一致会直接产出错误答案，见下）。
+
+    **为什么允许兜底**：``/agent/query`` 的 ``fetch_all_subgraph`` 有
+    ``node_limit``（默认 500），而 CSV 派生的考勤事实（SHIFT / ATTENDANCE_RECORD
+    各数百条）会把**数量少但粒度粗**的锚点类型（EMPLOYEE / POSITION / SITE）
+    挤出子图 ⇒ 问「张伟…」时 ``EMPLOYEE:E001`` 压根不在 ``nodes`` 里 ⇒ 定位不到。
+    零命中会被读成「图上没有这条链 / 这个人」，实际是「起点没进这次的子图采样」
+    ——这也是一种失真，故允许按名字直查一次**确定性派生**实体，并记日志。
+    """
+    anchors = anchor_ids_for_question(question=question, nodes=nodes)
+    if not anchors:
+        anchors = _fallback_anchors(
+            session=session,
+            kg_version=kg_version,
+            org_id=org_id,
+            question=question,
+        )
+    if not anchors:
+        logger.bind(
+            kg_version=kg_version, node_count=len(nodes), question_len=len(question)
+        ).info("reasoning_path_no_anchor")
+    return anchors
+
+
 # --------------------------------------------------------------------------- #
 # 第二 / 三步：沿关系跳转 → 命中条款 / 事实 → 逐跳标注来源
 # --------------------------------------------------------------------------- #
@@ -228,25 +263,14 @@ def build_reasoning_path(
     :returns: 逐跳链（首尾相接）；**零命中返回空列表**（不是 ``None``——
         ``None`` 的语义是「未产出」，留给拒答分支，见契约字段说明）。
     """
-    anchors = anchor_ids_for_question(question=question, nodes=nodes)
+    anchors = resolve_anchors(
+        session=session,
+        kg_version=kg_version,
+        org_id=org_id,
+        question=question,
+        nodes=nodes,
+    )
     if not anchors:
-        # **子图被截断时的锚点兜底**（2026-09-28 真机实测逼出来的）：
-        # `/agent/query` 的 `fetch_all_subgraph` 有 `node_limit`（默认 500），
-        # 而 CSV 派生的考勤事实（SHIFT / ATTENDANCE_RECORD 各数百条）会把
-        # **数量少但粒度粗**的锚点类型（EMPLOYEE / POSITION / SITE）挤出子图
-        # ⇒ 问「张伟…」时 `EMPLOYEE:E001` 压根不在 `nodes` 里 ⇒ 定位不到 ⇒ 返回 []。
-        # 零命中会被读成「图上没有这条链」，实际是「起点没进这次的子图采样」——
-        # 这也是一种失真，故允许按名字直查一次**确定性派生**实体作为兜底，并记日志。
-        anchors = _fallback_anchors(
-            session=session,
-            kg_version=kg_version,
-            org_id=org_id,
-            question=question,
-        )
-    if not anchors:
-        logger.bind(
-            kg_version=kg_version, node_count=len(nodes), question_len=len(question)
-        ).info("reasoning_path_no_anchor")
         return []
 
     rows = list(

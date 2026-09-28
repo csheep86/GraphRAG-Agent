@@ -419,6 +419,154 @@ MATCH ()-[r:RELATION {id: id, kg_version: $kg_version}]->()
 DELETE r
 """
 
+# --------------------------------------------------------------------------- #
+# 证据层：结构化事实 → :Document + :Chunk + MENTIONS（R14，2026-09-28）
+# --------------------------------------------------------------------------- #
+#:
+# **为什么要有这一段**：CSV 派生的事实节点此前**没有任何证据边**——实测
+# ``EMPLOYEE:E002`` 的 ``MENTIONS`` 入边为 0，22 个 ``OVERTIME:`` 节点带 chunk 边的
+# 也是 0（全图仅 33 个 ``:Chunk``，只覆盖制度文档）。于是 M3 守 F3
+# 「无溯源即拒答」在考勤域**恒为真**：真机问答 100% 拒答
+# （``refused=true / citations=0``），政策问答页演示时只会显示"无法回答"。
+#
+# 修法（三选一中的①，取舍见 ``docs/dev-doc-status.md`` **R14**）：
+# 把 **CSV 原文本身**当作可引用材料——每张表落一个 ``:Document``，
+# 按员工切 ``:Chunk``（chunk 文本 = 该员工在该表里的**原始行**），
+# 再建 ``(:Chunk)-[:MENTIONS]->(:Entity)``。要点：
+#
+# - 引用指向**真实原文**（CSV 行），不是模型生成、也不是我们编的措辞；
+# - 契约**不动**：``Citation.doc_id`` 仍是合法 UUID（指向该表文档），
+#   前端抽屉高亮复用现成链路（``_QUERY_EVIDENCE_CHUNKS_BY_ENTITIES``）；
+# - 未来接第三方（EHR 等）时，同步结果同样**物化为快照**即可复用这一段，
+#   所以它不是只为演示打的补丁。
+#
+# **MENTIONS 只连 ``EMPLOYEE``**：语义上 chunk 也"提到"了具体的 SHIFT / OVERTIME
+# 节点，但连全部会让边数翻约 20 倍（每员工每表约 20 行），并**加剧 R12**
+# （子图采样挤掉锚点）。引用命中路径由员工锚点保证：锚点 ``EMPLOYEE:E002``
+# ⇒ 反查到该员工在各表中的 chunk ⇒ 答案可引回原始行。
+
+_CYPHER_MERGE_DOCUMENTS = """
+UNWIND $rows AS row
+MERGE (d:Document {id: row.id, kg_version: $kg_version})
+SET d.title = row.title, d.org_id = $org_id, d.trace_id = $trace_id
+RETURN count(d) AS merged
+"""
+
+_CYPHER_MERGE_CHUNKS = """
+UNWIND $rows AS row
+MATCH (d:Document {id: row.doc_id, kg_version: $kg_version})
+MERGE (c:Chunk {id: row.id, kg_version: $kg_version})
+SET c.text = row.text, c.page = row.page,
+    c.char_start = row.char_start, c.char_end = row.char_end,
+    c.org_id = $org_id, c.trace_id = $trace_id
+MERGE (d)-[:HAS_CHUNK]->(c)
+RETURN count(c) AS merged
+"""
+
+_CYPHER_MERGE_MENTIONS = """
+UNWIND $rows AS row
+MATCH (c:Chunk {id: row.chunk_id, kg_version: $kg_version})
+MATCH (e:Entity {id: row.entity_id, kg_version: $kg_version})
+MERGE (c)-[r:MENTIONS {id: row.id, kg_version: $kg_version}]->(e)
+SET r.org_id = $org_id, r.trace_id = $trace_id
+RETURN count(r) AS merged
+"""
+
+#: 重跑幂等：先删**本脚本产出**的文档及其 chunk（按 doc_id 定向，
+#: 不动 M2 抽取产物——与 ``_CYPHER_PURGE_CSV`` 同一条纪律）。
+_CYPHER_PURGE_EVIDENCE = """
+UNWIND $doc_ids AS doc_id
+MATCH (d:Document {id: doc_id, kg_version: $kg_version})
+OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk {kg_version: $kg_version})
+DETACH DELETE c, d
+"""
+
+
+def _evidence_doc_id(file_name: str) -> str:
+    """CSV → ``:Document`` id（``uuid5`` ⇒ 同一张表永远同一个 id，重跑幂等）。"""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"graphrag/attendance/csv/{file_name}"))
+
+
+def _evidence_chunk_id(file_name: str, employee_id: str) -> str:
+    """一行组 → ``:Chunk`` id。
+
+    **形态必须与 M2 抽取产物一致：``chunk-<12 hex>``**（2026-09-28 真机事故）。
+    初版用了可读的 ``chunk:attendance:<表>:<员工>``（冒号），结果——
+    ``app/services/agents.py::_CITATION_ID_PATTERN`` 只认 ``chunk-[0-9A-Za-z]``，
+    抠不出 id ⇒ 引用**全部被丢弃** ⇒ 问答以 ``no_grounded_evidence`` 拒答。
+    症状极具迷惑性：证据明明注入了 15 个 chunk（日志可查），答案却说
+    「资料中没有…信息」——像是模型不懂，实则是 id 形态不合规。
+    可读性由 ``text`` 与 ``title`` 承载，不靠 id 字面。
+    """
+    seed = uuid.uuid5(
+        uuid.NAMESPACE_URL, f"graphrag/attendance/chunk/{file_name}/{employee_id}"
+    )
+    return f"chunk-{seed.hex[:12]}"
+
+
+def build_evidence(
+    mapping: dict[str, Any], node_ids: set[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """把 CSV **原文行**落为可引用证据（R14）。
+
+    :returns: ``(doc_rows, chunk_rows, mention_rows)``
+    """
+    doc_rows: list[dict[str, Any]] = []
+    chunk_rows: list[dict[str, Any]] = []
+    mention_rows: list[dict[str, Any]] = []
+
+    for spec in mapping["nodes"]:
+        if spec.get("derive") == "distinct":
+            # 部门 / 岗位 / 工时制由 employees.csv 的列值派生，**没有自己的行原文**
+            continue
+        file_name = str(spec["file"])
+        rows = read_csv(CORPUS_DIR / file_name)
+        if not rows:
+            continue
+
+        header = ",".join(str(key) for key in rows[0].keys())
+        lines = [header] + [
+            ",".join(str(value) for value in row.values()) for row in rows
+        ]
+        full_text = "\n".join(lines)
+
+        doc_id = _evidence_doc_id(file_name)
+        doc_rows.append({"id": doc_id, "title": file_name})
+
+        # 按员工分组：一个员工在这张表里的全部原始行 = 一个 chunk
+        grouped: dict[str, list[str]] = {}
+        for index, raw in enumerate(rows, start=1):
+            employee_id = str(raw.get("employee_id") or "").strip()
+            grouped.setdefault(employee_id or "_ALL", []).append(lines[index])
+
+        for employee_id, chunk_lines in sorted(grouped.items()):
+            text = "\n".join(chunk_lines)
+            # char 偏移按**整表文本**定位（行文本含主键，故 find 唯一）；
+            # 取不到就退化为 0，绝不伪造一个"看起来对"的偏移。
+            char_start = max(full_text.find(chunk_lines[0]), 0)
+            chunk_id = _evidence_chunk_id(file_name, employee_id)
+            chunk_rows.append(
+                {
+                    "id": chunk_id,
+                    "doc_id": doc_id,
+                    "text": text,
+                    "char_start": char_start,
+                    "char_end": char_start + len(text),
+                    "page": None,  # CSV 无页码 ⇒ null（沿用「严禁伪造」纪律）
+                }
+            )
+            target = f"EMPLOYEE:{employee_id}"
+            if employee_id != "_ALL" and target in node_ids:
+                mention_rows.append(
+                    {
+                        "id": f"{chunk_id}:mentions:{target}",
+                        "chunk_id": chunk_id,
+                        "entity_id": target,
+                    }
+                )
+
+    return doc_rows, chunk_rows, mention_rows
+
 
 def _batched(items: list[Any], size: int) -> list[list[Any]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
@@ -539,6 +687,8 @@ def import_graph(
     purge: bool,
     now: str,
     purge_csv_prefixes: Sequence[str] = (),
+    evidence: tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]
+    | None = None,
 ) -> IngestStats:
     """ADR-0002 三段式写入。"""
     stats = IngestStats(kg_version=kg_version)
@@ -624,6 +774,45 @@ def import_graph(
             print(
                 f"  [self-check] 回读 Entity={actual_entities} / Relation={actual_relations}"
             )
+
+            # ---- 2.5/3：证据层（R14）----
+            # 放在自检**之后**：MENTIONS 依赖实体先落库；放在 active 之前：
+            # 证据写失败也要让版本停在 failed，不能对外声称"这个版本可用"。
+            if evidence is not None:
+                doc_rows, chunk_rows, mention_rows = evidence
+                session.run(
+                    _CYPHER_PURGE_EVIDENCE,
+                    doc_ids=[str(row["id"]) for row in doc_rows],
+                    kg_version=kg_version,
+                ).consume()
+                for batch in _batched(doc_rows, BATCH_SIZE):
+                    session.run(
+                        _CYPHER_MERGE_DOCUMENTS,
+                        rows=batch,
+                        kg_version=kg_version,
+                        org_id=org_id,
+                        trace_id=trace_id,
+                    ).consume()
+                for batch in _batched(chunk_rows, BATCH_SIZE):
+                    session.run(
+                        _CYPHER_MERGE_CHUNKS,
+                        rows=batch,
+                        kg_version=kg_version,
+                        org_id=org_id,
+                        trace_id=trace_id,
+                    ).consume()
+                for batch in _batched(mention_rows, BATCH_SIZE):
+                    session.run(
+                        _CYPHER_MERGE_MENTIONS,
+                        rows=batch,
+                        kg_version=kg_version,
+                        org_id=org_id,
+                        trace_id=trace_id,
+                    ).consume()
+                print(
+                    f"  [evidence] Document {len(doc_rows)} / Chunk {len(chunk_rows)}"
+                    f" / MENTIONS {len(mention_rows)}"
+                )
 
             # ---- 3/3：-> active ----
             session.run(
@@ -771,6 +960,12 @@ def main(argv: list[str] | None = None) -> int:
     entity_rows, node_ids = build_nodes(mapping)
     relation_rows, unresolved = build_relations(mapping, node_ids)
     print(f"规范化结果 : 实体 {len(entity_rows)} / 关系 {len(relation_rows)}")
+    # 证据层（R14）：CSV 原文行 → Document / Chunk / MENTIONS
+    evidence = build_evidence(mapping, node_ids)
+    print(
+        f"证据层     : Document {len(evidence[0])} / Chunk {len(evidence[1])}"
+        f" / MENTIONS {len(evidence[2])}"
+    )
     if unresolved:
         print(
             f"[warn] {len(unresolved)} 条关系端点无法解析（已跳过）:",
@@ -808,6 +1003,7 @@ def main(argv: list[str] | None = None) -> int:
             purge=args.purge,
             now=now,
             purge_csv_prefixes=_derived_prefixes(mapping) if args.purge_csv else (),
+            evidence=evidence,
         )
         with driver.session(database=settings.neo4j_database) as session:
             verify_cases(session, kg_version=kg_version)
