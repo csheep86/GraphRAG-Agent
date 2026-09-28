@@ -50,6 +50,14 @@ const CONTRACT_COVERED_PATTERNS: RegExp[] = [
   // 与 plan §7.2「审计页关 Mock 硬门槛」直接冲突 —— 契约新增端点必须同步此处。
   /^\/api\/v1\/audit$/,
   /^\/api\/v1\/audit\/trace\/[^/]+$/,
+  // Sprint 9.5 批次 C3：考勤域合规扫描。漏登记会让 USE_MOCK=false 时该端点走 Mock，
+  // 屏幕上的风险清单就不再是真机算出来的 —— 契约新增端点必须同步此处。
+  /^\/api\/v1\/attendance\/compliance\/scan$/,
+  // 批次 C4：考勤域异常归因两端点（清单 + 归因）。同理，漏登记会让它们走 Mock。
+  /^\/api\/v1\/attendance\/anomalies$/,
+  /^\/api\/v1\/attendance\/anomalies\/explain$/,
+  // Sprint 9.5 批次 C3：问答端点（D1 起带 reasoning_path）。同理，漏登记会让政策问答页走 Mock。
+  /^\/api\/v1\/agent\/query$/,
 ];
 
 /**

@@ -618,6 +618,17 @@ components:
           target: e-002
           type: AFFILIATED_WITH
         kg_version: 20260320T1430Z-01H9X9ABCDEF
+        reasoning_path:
+        - origin: graph
+          relation: HAS_POSITION
+          source:
+            entity_type: EMPLOYEE
+            id: EMPLOYEE:E001
+            name: 张伟
+          target:
+            entity_type: POSITION
+            id: POSITION:售后工程师
+            name: 售后工程师
         refused: false
         route: m3_graphqa
         token_usage:
@@ -660,6 +671,14 @@ components:
           description: 本次检索实际使用的图谱版本（必为 active）
           title: Kg Version
           type: string
+        reasoning_path:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/ReasoningPathHop'
+            type: array
+          - type: 'null'
+          description: 多跳推理路径（proposal §5.5）：「问句 → 定位实体 → 沿关系跳转 → 命中的条款/事实」的**逐跳链**，每一跳带起点 / 终点实体、关系类型与该跳来源。**可空语义（与 C2 `causes` 同一口径，二者语义相反，不许混用）**：`null` = **未产出**（拒答分支不给路径——路径是证据链，拒答时返回它会让前端误以为答案有据可依，与 `citations = []` 同一条纪律）；`[]` = **检索了但零命中**（问句没在本轮子图里定位到锚点实体，或锚点沿关系走不到任何条款 / 事实节点），**禁止**填示例路径充数。
+          title: Reasoning Path
         refusal_reason:
           anyOf:
           - enum:
@@ -698,6 +717,166 @@ components:
       - kg_version
       - trace_id
       title: AgentQueryResponse
+      type: object
+    AnomalyCaseItem:
+      description: 一条待归因的异常（谁 / 哪天 / 什么状态）。
+      example:
+        date: '2026-10-16'
+        employee_id: E001
+        employee_name: 张伟
+        status: absent
+      properties:
+        date:
+          description: 异常日（ISO 日期）
+          title: Date
+          type: string
+        employee_id:
+          description: 员工工号（如 `E001`）
+          title: Employee Id
+          type: string
+        employee_name:
+          description: 员工姓名
+          title: Employee Name
+          type: string
+        status:
+          description: 考勤状态：`absent`（缺勤）/ `missing_check_in`（缺卡）
+          title: Status
+          type: string
+      required:
+      - employee_id
+      - employee_name
+      - date
+      - status
+      title: AnomalyCaseItem
+      type: object
+    AnomalyExplainResponse:
+      description: '``GET /attendance/anomalies/explain`` 响应：一条异常的归因结论。
+
+
+        **未命中的原因照样返回**（``matched=false``）：演示时要能说清「哪一项没对上」，
+
+        只给命中项会让用户误以为证据齐备。
+
+
+        ``policy_refs`` 是结论文案（如「自动补卡」）的**制度出处**——话术不是硬编码的，
+
+        取不到时该数组为空，此时**不得**声称结论有制度依据。'
+      example:
+        action: 系统自动补卡
+        anomaly_type: absent
+        causes:
+        - code: trip_approved
+          evidence:
+          - BUSINESS_TRIP:BT-2026-0017
+          matched: true
+          reason: 出差审批覆盖当日（武汉 10-16~10-18）
+          weight: 0.35
+        conclusion: 外勤出勤成立
+        confidence: 1
+        date: '2026-10-16'
+        employee_id: E001
+        employee_name: 张伟
+        kg_version: attendance-demo-v1
+        policy_refs:
+        - document:doc:fieldwork-attendance-rules:L12
+        trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
+      properties:
+        action:
+          description: 建议动作（如「系统自动补卡」）
+          title: Action
+          type: string
+        anomaly_type:
+          description: 异常类型（`absent` / `missing_check_in`）
+          title: Anomaly Type
+          type: string
+        causes:
+          description: 原因排序（含未命中项）；置信度 = Σ命中权重 / Σ全部权重
+          items:
+            $ref: '#/components/schemas/AffiliationCauseItem'
+          title: Causes
+          type: array
+        conclusion:
+          description: 结论：`外勤出勤成立` / `证据不足，需人工复核` / `外勤出勤不成立`
+          title: Conclusion
+          type: string
+        confidence:
+          description: 确定性加权置信度（**禁止 LLM 生成**）；0 表示证据零命中
+          maximum: 1.0
+          minimum: 0.0
+          title: Confidence
+          type: number
+        date:
+          description: 被归因的异常日（ISO 日期）
+          title: Date
+          type: string
+        employee_id:
+          description: 员工工号
+          title: Employee Id
+          type: string
+        employee_name:
+          description: 员工姓名
+          title: Employee Name
+          type: string
+        kg_version:
+          description: 归因所基于的图谱版本（只读 active 版本）
+          title: Kg Version
+          type: string
+        policy_refs:
+          description: 结论文案的制度出处；为空表示**没有**制度依据，不得声称
+          items:
+            type: string
+          title: Policy Refs
+          type: array
+        trace_id:
+          description: 本次请求的 trace_id
+          title: Trace Id
+          type: string
+      required:
+      - kg_version
+      - employee_id
+      - employee_name
+      - date
+      - anomaly_type
+      - causes
+      - confidence
+      - conclusion
+      - action
+      - policy_refs
+      - trace_id
+      title: AnomalyExplainResponse
+      type: object
+    AnomalyListResponse:
+      description: '``GET /attendance/anomalies`` 响应：当前图谱里有哪些缺卡 / 缺勤待归因。'
+      example:
+        items: []
+        kg_version: attendance-demo-v1
+        total: 12
+        trace_id: 5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91
+      properties:
+        items:
+          description: 异常清单（按工号 / 日期排序）
+          items:
+            $ref: '#/components/schemas/AnomalyCaseItem'
+          title: Items
+          type: array
+        kg_version:
+          description: 扫描所基于的图谱版本（只读 active 版本）
+          title: Kg Version
+          type: string
+        total:
+          description: 异常条数（与 `len(items)` 一致）
+          title: Total
+          type: integer
+        trace_id:
+          description: 本次请求的 trace_id
+          title: Trace Id
+          type: string
+      required:
+      - kg_version
+      - items
+      - total
+      - trace_id
+      title: AnomalyListResponse
       type: object
     AuditLogItem:
       description: '一条审计记录（`audit_log` 行的契约投影）。
@@ -2037,6 +2216,62 @@ components:
       - trace_id
       title: KgVersionActivationResponse
       type: object
+    ReasoningPathHop:
+      description: 推理路径上的**一跳**：起点 --关系--> 终点 + 该跳来源。**刻意没有任何数值字段**（守「数值不出 LLM」）：路径只承载检索到的节点与边，数值结论由规则引擎（批次 C1）出，LLM 只出措辞（批次 D2）。
+      properties:
+        evidence:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 原文出处（仅 ``origin = document`` 时有值）：``chunk:<chunk_id>``；其余来源为 ``null``（**不**留空串冒充有出处）
+          title: Evidence
+        origin:
+          description: 该跳的来源（证据强度取最高）
+          enum:
+          - cypher
+          - graph
+          - document
+          title: Origin
+          type: string
+        relation:
+          description: 关系类型（图上真实的 ``relation_type``）。**不**做契约枚举投影——投影会把域关系一律兜底成 ``MENTIONS``（L7 同族失真）
+          title: Relation
+          type: string
+        source:
+          $ref: '#/components/schemas/ReasoningPathNode'
+          description: 起点实体
+        target:
+          $ref: '#/components/schemas/ReasoningPathNode'
+          description: 终点实体
+      required:
+      - source
+      - relation
+      - target
+      - origin
+      title: ReasoningPathHop
+      type: object
+    ReasoningPathNode:
+      description: 推理路径上的一个实体（proposal §5.5）：三个要素齐全才叫「可核查」——``id``（能回查图谱）、``name``（人能看懂）、``entity_type``（知道落在哪类实体上）。
+      properties:
+        entity_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 实体类型（`entity_type`）；节点缺该属性时为 `null`（**不**猜类型）
+          title: Entity Type
+        id:
+          description: 图谱节点 id（`Entity.id`），可回查 `GET /entities/{id}`
+          title: Id
+          type: string
+        name:
+          description: 节点名称（`canonical_name`）；节点缺该属性时回落 ``id``，**严禁**编造一个看起来像名字的值
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      title: ReasoningPathNode
+      type: object
     RuleValueItem:
       description: 一个**解析自制度文本**的规则值（含出处，可逐条核查）。
       example:
@@ -2567,6 +2802,185 @@ paths:
       summary: 图谱问答
       tags:
       - agent
+  /api/v1/attendance/anomalies:
+    get:
+      description: '列出当前 **active kg_version** 内的全部缺卡 / 缺勤记录（谁、哪天、什么状态），供异常归因子页挑选「要给谁归因」。
+
+
+        **空列表是正常结果**：这份图里没人缺卡 —— 与合规扫描不同，那边「扫不到事实」要显式报 409，这边「没有异常」正是想听到的答案。
+
+
+        **错误语义**：无 active 版本 → **409** `KG_VERSION_NOT_ACTIVE`；Neo4j 不可用 → **501** `NOT_IMPLEMENTED`；跨租户 → **403** `FORBIDDEN`。'
+      operationId: listAttendanceAnomalies
+      parameters:
+      - description: 只看该员工（如 `E001`）
+        in: query
+        name: employee_id
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 32
+            minLength: 1
+            type: string
+          - type: 'null'
+          description: 只看该员工（如 `E001`）
+          title: Employee Id
+      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+        in: header
+        name: X-Org-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          title: X-Org-Id
+      - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+        in: header
+        name: X-Actor-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+          title: X-Actor-Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnomalyListResponse'
+          description: Successful Response
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2）
+        '501':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`）
+      security:
+      - bearerAuth: []
+      summary: 考勤域待归因异常清单（Sprint 9.5 批次 C4）
+      tags:
+      - attendance
+  /api/v1/attendance/anomalies/explain:
+    get:
+      description: '给「某员工某天缺卡」做归因：跨 **HR / 门禁 / 工单 / 定位** 四个系统取证，按确定性权重给出置信度与结论。
+
+
+        **置信度不出 LLM**：`confidence = Σ命中权重 / Σ全部权重`，每个 `weight` 都是常量（出差审批 0.35 / 工单闭环 0.30 / 定位一致 0.22 / 门禁对比 0.13），命中与否由图谱证据说话 —— 不是模型的自我感觉。
+
+
+        **未命中的原因照样返回**（`matched=false`）：演示时要能说清「哪一项没对上」，只给命中项会让用户误以为证据齐备。
+
+
+        **`date` 缺省**取该员工的第一个异常日（与 CLI 同口径）。
+
+
+        **错误语义**：员工不在图上 / 该日没有异常 → **404** `NOT_FOUND`（**不**返回零证据结果冒充「不成立」）；无 active 版本 → **409**；Neo4j 不可用 → **501**。'
+      operationId: explainAttendanceAnomaly
+      parameters:
+      - description: 员工工号（如 `E001`）
+        in: query
+        name: employee_id
+        required: true
+        schema:
+          description: 员工工号（如 `E001`）
+          maxLength: 32
+          minLength: 1
+          title: Employee Id
+          type: string
+      - description: 异常日（ISO）；缺省取该员工第一个异常日
+        in: query
+        name: date
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: 异常日（ISO）；缺省取该员工第一个异常日
+          title: Date
+      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+        in: header
+        name: X-Org-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          title: X-Org-Id
+      - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+        in: header
+        name: X-Actor-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+          title: X-Actor-Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnomalyExplainResponse'
+          description: Successful Response
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 要归因的对象不存在（`NOT_FOUND`）：员工不在当前 active 版本内，或该员工在指定日期没有异常记录。**不**返回零证据的归因结果——那会被读成「系统判断他不成立」，而实际是根本没查到这个人 / 这一天（Sprint 9.5 批次 C4）
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2）
+        '501':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`）
+      security:
+      - bearerAuth: []
+      summary: 考勤异常归因（Sprint 9.5 批次 C4）
+      tags:
+      - attendance
   /api/v1/attendance/compliance/scan:
     get:
       description: '对当前租户 **active kg_version** 内的全部员工跑一遍**确定性规则**（五条），返回风险清单 + 每条的计算过程 + 制度依据。

@@ -67,6 +67,8 @@ AGENT_QUERY_KEYS = {
     "refusal_reason",
     "kg_version",
     "trace_id",
+    # Sprint 9.5 批次 D1：多跳推理路径（拒答时为 null，成功时为 hop 列表）
+    "reasoning_path",
     # Sprint 4 阶段 10.0 批次 A：契约已扩展（Sprint 3 缺口 1）
     "kg_nodes",
     "kg_relations",

@@ -14,6 +14,17 @@ QueryRoute = Literal["m3_graphqa", "m4_affiliation"]
 QueryConfidence = Literal["high", "medium", "low"]
 RefusalReason = Literal["no_grounded_evidence", "out_of_scope", "low_confidence"]
 
+ReasoningHopOrigin = Literal["cypher", "graph", "document"]
+"""推理路径每一跳的**来源**（Sprint 9.5 批次 D1 / proposal §5.5）。
+
+- ``cypher``：该跳由**多跳 Cypher**沿 ``:RELATION`` 遍历得出（本轮子图边集里没有）；
+- ``graph``：该跳的两端点已在本轮**已检索子图的边集**里（直接来自图谱检索结果）；
+- ``document``：该跳的终点能在**文档证据片段的原文**里找到（最强：有原文支撑）。
+
+三者**互斥、按证据强度取最高**：``document`` > ``graph`` > ``cypher``。
+**不得**为了让路径"看起来完整"而把弱来源标成强来源。
+"""
+
 
 class AgentQueryRequest(BaseModel):
     """`POST /api/v1/agent/query` 请求体（M3 §4.1）。"""
@@ -88,6 +99,45 @@ class TokenUsage(BaseModel):
     total_tokens: int = Field(default=0, ge=0, description="总 token 数")
 
 
+class ReasoningPathNode(BaseModel):
+    """推理路径上的一个实体（proposal §5.5）：三个要素齐全才叫「可核查」——``id``（能回查图谱）、``name``（人能看懂）、``entity_type``（知道落在哪类实体上）。"""  # noqa: E501 - 契约描述串不折行（E501 已在 ruff 配置中关闭）
+
+    id: str = Field(
+        description="图谱节点 id（`Entity.id`），可回查 `GET /entities/{id}`"
+    )
+    name: str = Field(
+        description=(
+            "节点名称（`canonical_name`）；节点缺该属性时回落 ``id``，"
+            "**严禁**编造一个看起来像名字的值"
+        )
+    )
+    entity_type: str | None = Field(
+        default=None,
+        description="实体类型（`entity_type`）；节点缺该属性时为 `null`（**不**猜类型）",
+    )
+
+
+class ReasoningPathHop(BaseModel):
+    """推理路径上的**一跳**：起点 --关系--> 终点 + 该跳来源。**刻意没有任何数值字段**（守「数值不出 LLM」）：路径只承载检索到的节点与边，数值结论由规则引擎（批次 C1）出，LLM 只出措辞（批次 D2）。"""  # noqa: E501 - 契约描述串不折行（E501 已在 ruff 配置中关闭）
+
+    source: ReasoningPathNode = Field(description="起点实体")
+    relation: str = Field(
+        description=(
+            "关系类型（图上真实的 ``relation_type``）。**不**做契约枚举投影——"
+            "投影会把域关系一律兜底成 ``MENTIONS``（L7 同族失真）"
+        )
+    )
+    target: ReasoningPathNode = Field(description="终点实体")
+    origin: ReasoningHopOrigin = Field(description="该跳的来源（证据强度取最高）")
+    evidence: str | None = Field(
+        default=None,
+        description=(
+            "原文出处（仅 ``origin = document`` 时有值）：``chunk:<chunk_id>``；"
+            "其余来源为 ``null``（**不**留空串冒充有出处）"
+        ),
+    )
+
+
 class AgentQueryResponse(BaseModel):
     """`POST /api/v1/agent/query` 响应（M3 §4.2）。
 
@@ -139,6 +189,23 @@ class AgentQueryResponse(BaseModel):
                     "completion_tokens": 256,
                     "total_tokens": 2304,
                 },
+                "reasoning_path": [
+                    {
+                        "source": {
+                            "id": "EMPLOYEE:E001",
+                            "name": "张伟",
+                            "entity_type": "EMPLOYEE",
+                        },
+                        "relation": "HAS_POSITION",
+                        "target": {
+                            "id": "POSITION:售后工程师",
+                            "name": "售后工程师",
+                            "entity_type": "POSITION",
+                        },
+                        "origin": "graph",
+                        "evidence": None,
+                    }
+                ],
             }
         }
     )
@@ -179,5 +246,17 @@ class AgentQueryResponse(BaseModel):
         default=None,
         description=(
             "LLM token 用量；拒答分支未调用 LLM、或 LLM 未返回 usage 时为 `null`"
+        ),
+    )
+    reasoning_path: list[ReasoningPathHop] | None = Field(
+        default=None,
+        description=(
+            "多跳推理路径（proposal §5.5）：「问句 → 定位实体 → 沿关系跳转 → 命中的条款/事实」"
+            "的**逐跳链**，每一跳带起点 / 终点实体、关系类型与该跳来源。"
+            "**可空语义（与 C2 `causes` 同一口径，二者语义相反，不许混用）**："
+            "`null` = **未产出**（拒答分支不给路径——路径是证据链，拒答时返回它会让前端误以为"
+            "答案有据可依，与 `citations = []` 同一条纪律）；"
+            "`[]` = **检索了但零命中**（问句没在本轮子图里定位到锚点实体，"
+            "或锚点沿关系走不到任何条款 / 事实节点），**禁止**填示例路径充数。"
         ),
     )

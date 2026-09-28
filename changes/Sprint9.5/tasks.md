@@ -182,11 +182,78 @@
     （季度剩余 16 天 < 30）⇒ 可演示「同一事实随观察日自动升级」
   - 测试 `tests/test_compliance_scan_endpoint.py` **7 项全绿**；全量 **463 项无回归**；
     `export_openapi.py --check` 零漂移；`check_seams.py` ERROR 0 / WARN 0
+- [x] **C4（=C2-API）** 异常归因 HTTP 端点 —— **已完成（2026-09-28）**
+  **为什么现在才补**：C2 只交付了服务层 + CLI（`explain_attendance_anomaly.py`），
+  前端 E3 拿不到数据。任务卡原先**漏登记**这一项，做 E3 时才暴露。
+  - 端点：`GET /api/v1/attendance/anomalies`（待归因清单）+
+    `GET /api/v1/attendance/anomalies/explain?employee_id=&date=`
+    （causes + 置信度 + 证据链 + 制度出处）
+  - **置信度不出 LLM**：Σ命中权重 / Σ全部权重，权重是常量，命中由图谱证据说话
+  - **404 而非零证据 200**：员工不在图上 / 该日无异常 ⇒ `AnomalyNotFoundError`
+    → 404 `NOT_FOUND`。零证据会被算成置信度 0%，看起来像「系统判断他不成立」，
+    而实际是根本没查到这个人——二者语义相反
+  - **空列表是正常结果**（没人缺卡），与合规扫描的 409 `COMPLIANCE_NO_FACTS` 区分
+  - 走满 5 步同步（Pydantic → 导出契约 → `gen:api` → 零漂移 → 门禁），
+    并登记 `api/client.ts::CONTRACT_COVERED_PATTERNS`
+  - **顺手修掉 C2 一处失真（HTTP 暴露后才看得见）**：`anomaly_type` 原先是
+    **硬编码常量** `missing_check_in`，而 E001 当日真实状态是 `absent`
+    ⇒ 列表端点说 absent、归因端点说 missing_check_in。改为自动从图谱读
+    `ATTENDANCE_RECORD.status`，读不到才回落同枚举值
+  - **顺手补的洞**：`explain` 服务的 `employee_name` 原先是空串
+    （`attribute_absence` 默认不查姓名）⇒ 响应里出现「E001 」。已在服务层显式查一次
+  - 新增端点已登记进 `services/audit.py::ACTION_BY_ROUTE_NAME`（否则审计会
+    WARNING `audit_action_route_not_registered`——那是「新增了未登记路由」的留痕）
+  - 测试 `tests/test_anomaly_endpoint.py` **10 项全绿**；全量 **473 项**；
+    `export_openapi.py --check` 零漂移；`check_seams.py` ERROR 0 / WARN 0
+  - **真机实测**：E001 张伟 2026-10-16 缺卡 ⇒ 出差审批 ✓ + 工单闭环 ✓ +
+    定位一致 ✓ + 门禁对比 ✓ ⇒ **100% / 外勤出勤成立 → 自动补卡**，
+    制度出处 2 条（含 2025 手工补卡 → 2026 自动补卡的版本更替原句）
 
 ## 批次 D · 问答与推理路径（后端 B）
 
-- [ ] **D1** M3 响应新增 `reasoning_path`（`proposal.md` §5.5 结构），多跳 Cypher 补全路径返回
-- [ ] **D2** 定职责边界：**规则引擎出数值 → LLM 只出措辞**；无溯源即拒答（守 F3）
+- [x] **D1** M3 响应新增 `reasoning_path`（`proposal.md` §5.5 结构），多跳 Cypher 补全路径返回 —— **已完成（2026-09-28）**
+  - 字段结构：`ReasoningPathHop{source{id,name,entity_type}, relation, target{...}, origin, evidence}`；
+    `origin` ∈ `document`（终点名字命中注入 Prompt 的原文，带 `chunk:<id>`）/
+    `graph`（本轮子图里就有这条边）/ `cypher`（多跳遍历得出），**按证据强度取最高**、三者互斥
+  - **可空语义**：`null` = 拒答分支未产出（路径是证据链，拒答时不给）；`[]` = 检索了零命中。二者相反，不许混用
+  - `ReasoningPathHop` **没有任何数值字段**（守「数值不出 LLM」）
+  - 主链路第 2.7 步插入 `GraphService.fetch_reasoning_path`，故障语义与第 2.6 步一致：
+    Neo4j 不可用 ⇒ 501，**不**降级为空（空 = 零命中，会把故障伪装成"图上没有链"）
+  - 测试 `tests/test_agent_reasoning_path.py` 16 例 + `conftest.py` 新增 autouse
+    默认桩（`@graph_reasoning_path_default`）——新依赖接入主链路后，既有问答用例
+    若逐个补桩会各背一段无关样板；**桩在类上**（写实例属性会遮蔽类属性，
+    导致用例自己 `setattr(GraphService, ...)` 覆盖不掉）
+  - **真机实测反哺（4 处针对性修复，全是"本机跑出来才看得见"的）**：
+    1. **锚点不再命中 M2 span 噪声**：原先锚到 `ent_<hex>`（抽取碎片「加班」「第七条」），
+       `EMPLOYEE:E001` 压根没被定位 ⇒ 加 `_is_deterministic_node_id`（只认 `NAMESPACE:ID`），
+       与 `list_anomaly_cases` 的 `STARTS WITH 'EMPLOYEE:'` 同一条纪律
+    2. **子图截断兜底**：`fetch_all_subgraph(node_limit)` 会把数量少但粒度粗的
+       `EMPLOYEE` / `POSITION` 挤出子图 ⇒ 零锚点。加 `_fallback_anchors()`（按名字直查
+       确定性派生实体，记 `reasoning_path_anchor_fallback` 日志），**不做**任何路径编造
+    3. **终点排序改为「解释力优先于跳数」**：纯最短路径永远停在 `ACCESS_RECORD`
+       （员工第一跳就是门禁刷卡），每句问答出的都是同一条无关链。现排序：
+       制度条款 > 跨域证据（出差/工单/加班/请假/排班/考勤/定位）> 门禁旁证 > 跳数 > id 字典序
+    4. **中途禁止经过 `EMPLOYEE`**：曾走出「张伟 → 岗位 → **罗伟(同事)** → 郑州出差单」——
+       每一步都是真边，但落到同事头上，演示台上会被读成"系统回答了别人的问题"
+  - 现真机效果：「李静的月加班超过上限了吗？」⇒ EMPLOYEE:E002 →HAS_ATTENDANCE→
+    ATTENDANCE_RECORD:A00023 →OCCURRED_ON→ SHIFT:S00023（2 跳，逐跳可回查）
+  - ⚠️ **发现的数据层限制（不是 D1 的 bug，需后续决策）**：CSV 派生的考勤事实与
+    `POLICY_CLAUSE` 在这张图上**完全不连通**（≤3 跳路径数实测 = 0），故链能到
+    「事实记录」但到不了「制度条款」。要演示「员工 → 条款」需本体层补两条 link 关系
+- [x] **D2** 定职责边界：**规则引擎出数值 → LLM 只出措辞**；无溯源即拒答（守 F3） —— **已完成（2026-09-28）**
+  - 交付形态是**测试守卫**而非文档：`tests/test_boundary_numeric_provenance.py`
+    （数值必现于 `calculation` / `policy_refs` 出自 `RuleValueBook` / 证据为图谱节点 id /
+    归因零证据 ⇒ 0.0 +「不成立」（不给凑合分）/ 路径无数值字段 /
+    **出数值模块源码级机械扫描不得出现 langchain / ChatOpenAI / build_chat_model / llm_api_key**）
+  - 守卫**当场揪出 2 条既有违规**，且都已**修掉**（不是留 xfail 豁免）：
+    1. C1 `_rule_comp_off` 的 `threshold=0.0` 是裸代码常量 ⇒ 提为具名常量
+       `SENTINEL_UNUSED_BOUNDARY` 并在 `calculation` 里说出它的语义；
+       守卫改为「除语义常量外 threshold 必出制度值，且用常量的必须自述」——
+       不给守卫开后门，任何新裸数值照样打红
+    2. C2 `attribution.py` 的 `action` 无条件硬编码「系统自动补卡」，制度缺失时
+       `policy_refs=()` 却仍声称制度动作 ⇒ 改为 `sentences` 非空才给制度动作，
+       否则落「按异常处理流程跟进」；`test_rules_attribution.py` 相应补制度原文入参
+  - 结果：全量 **498 通过、0 xfail**（违规清零，不是豁免）
 - [ ] **D3** 契约同步 5 步走（`reasoning_path` / `causes` / 合规端点 / 域化枚举）
   - **已完成 3 项（2026-09-28，随 C3 一次做完）**：合规端点（+3 个 schema）、
     `causes`（`AffiliationCauseItem` + 落库列 + 迁移脚本）、域化枚举
@@ -198,11 +265,69 @@
 
 ## 批次 E · 前端（前端）
 
-- [ ] **E1** 业务域导航（对齐 `docs/demo.html` 侧栏）；非考勤域标「规划中」
-- [ ] **E2** 政策问答子页：**推理路径链可视化** + 判定结论条
-- [ ] **E3** 异常归因子页：用例列表 + 原因排序（含置信度条）+ 跨系统证据链
-- [ ] **E4** 合规预警子页：风险清单表 + 依据 + 建议动作
-- [ ] **E5** 页脚/页头标注「演示语料（仿真）」（R9）
+- [x] **E1** 业务域导航（对齐 `docs/demo.html` 侧栏）；非考勤域标「规划中」 —— **已完成（2026-09-28）**
+  - `lib/nav.ts` 新增 `domainNav`（**7 个业务域**，对齐 `docs/demo.html:409-416`）：
+    考勤域可点（`/attendance`），其余 6 个标「规划中」且 **`disabled` 渲染为不可点
+    `<div>`**——给不存在页面的域一个能跳的路由就是死链，比灰掉更糟（会被读成"做了但坏了"）
+  - `NavItem` 新增 `badge` / `disabled` 两个字段；`sidebar.tsx` 新增 **Domain 分组**
+  - 顶栏面包屑改走新增的 `breadcrumbFor()`：子页要显示「合规预警」，
+    否则 `matchNavItem` 的前缀匹配会让它停在「考勤域」（与侧栏重复）
+  - 三个子页**不进侧栏**（否则同一域三层结构把侧栏撑爆），由 `/attendance` 域首页进入
+- [x] **E2** 政策问答子页：**推理路径链可视化** + 判定结论条 —— **已完成（2026-09-28，接 D1 字段）**
+  - `api/policy-qa.ts` + `store/use-policy-qa-store.ts` + `components/qa/`（
+    推理路径链 / 判定结论条）+ `app/attendance/qa/page.tsx`；两个预设问题取自演示语料（避免问空）
+  - **三种路径状态分开呈现**（混为一谈即失真）：`null` = 拒答未产出（写明"没有结论就不给链"）、
+    `[]` = 图上没接通（写明"不补示例链充数"）、有链 = 逐跳渲染，顺序照后端来、**前端不重排**
+  - 每跳显示：起点实体（中文类型 + 名字 + **可回查的 id**）→ 关系中文名 → 终点实体，
+    下方标**来源**（原文命中 / 本轮子图 / 多跳遍历）+ 所属系统 + `chunk:` 出处
+  - 判定结论条区分「拒答（200 正常判定，不是故障）/ 已答」+ 置信度 + 引用数 + 路径跳数 + 版本
+  - **Mock 的真假成分在文件里就写死**：`reasoning_path` 是 **2026-09-28 真机实跑**
+    （问句「李静的月加班超过上限了吗？」的真实返回，推理路径本就不出 LLM）；
+    而 `answer` / `confidence` / `citations` **是占位且标注了占位**——本机没有配置
+    `LLM_API_KEY`，`/agent/query` 到 LLM 侧必然 501，**拿不到真答案就不能冒充有**
+  - 门禁：tsc / eslint 通过、`next build` 编译通过（14 路由）
+- [x] **E3** 异常归因子页：用例列表 + 原因排序（含置信度条）+ 跨系统证据链 —— **已完成（2026-09-28，接 C4 两端点）**
+  - `api/anomaly.ts` + `store/use-attribution-store.ts` +
+    `components/attribution/`（用例列表 / 归因面板）+ `app/attendance/attribution/page.tsx`
+  - **两步加载**：先拉异常清单，选中一条才拉归因（跨四系统取证不批量跑，
+    正好还原 HR「一次处理一条」的真实节奏）；首屏自动选中第一条
+  - **原因顺序照后端来，前端不重排**；每条标出**来源系统**（HR / 工单 / 定位 / 门禁），
+    「跨四系统取证」这件事靠这一列说清
+  - **置信度条下面直接写算式**（0.87 / 1.00），可手工核对；阈值 0.80 / 0.50 与
+    `rules/attribution.py` 的 `CONFIDENCE_ACCEPT` / `CONFIDENCE_REVIEW` 对齐
+    （后端没把阈值放进契约，故前端手写一份并注明唯一同步点）
+  - **未命中项照样渲染**（打叉 + 灰化），不隐藏 —— 演示要能说清「哪一项没对上」
+  - `policy_refs` 为空时明确写「不得声称有依据」，不把结论包装成有据可依
+  - Mock 同样是**真机快照**（`api/mock/anomaly.ts`）；清单只有 1 条，因为语料里
+    本来就只埋了 E001 这一条缺卡——不为了"列表好看"去填
+  - 门禁：tsc / eslint 通过、`next build` 编译通过（13 路由）
+- [x] **E4** 合规预警子页：风险清单表 + 依据 + 建议动作 —— **已完成（2026-09-28，真接 C3 端点）**
+  - `api/compliance.ts` + `store/use-compliance-store.ts` + `components/compliance/`（
+    工具栏 / 规则值面板 / 风险表 / 详情抽屉）+ `app/attendance/compliance/page.tsx`
+  - **筛选走后端参数**（`as_of` / `rule` / `level`）而非前端内存过滤：契约支持就别闲置；
+    代价是每次筛选一次秒级纯读请求。`rule_values[]` **始终全量展示**——
+    判据不因过滤而消失，这是本页可核查性的根基
+  - **观察日 2026-12-15 是演示亮点**：季度剩余 16 天 < 阈值 30 天，同一条「调休未消化」
+    由 medium **升 high**，可现场展示「同一事实随时间自动升级」
+  - **三类非成功态各有明确呈现**，不混为一谈：`KG_VERSION_NOT_ACTIVE` /
+    `COMPLIANCE_NO_FACTS` 走 `COMPLIANCE_ERROR_MESSAGE` 专项文案（**不是空清单**——
+    空清单会被读成"全员合规"，这是本页最危险的误读）；
+    `skipped_rules[]` 非空时挂黄色提示条「有规则没跑，不是无风险」
+  - **Mock 是真机快照而非编造**（`api/mock/compliance.ts`）：2026-09-28 对
+    `attendance-demo-v1` 的真实返回原样照录。与 `mock/affiliation.ts`「示例甲/乙」
+    的假名做法**不同**——那套的前提是关 Mock 后跑客户真实文档；合规页跑的本来就是
+    仿真语料，真机与 Mock 同源，换成假名反而让 42h / 216h 算不回去
+  - **建议动作标注为前端建议**：契约**没有** `suggested_action` 字段，
+    `COMPLIANCE_RULE_META[].action` 是前端给的处置建议，UI 与抽屉里都写明
+    「不是制度条款」——不能假借制度权威给处置意见
+  - **未做**：风险处置（确认 / 驳回 / 派单）——契约无对应端点，不做假交互
+  - 类型一律取 `components["schemas"]["ComplianceFinding"]["rule"]` 等生成类型，
+    `Record` 键完整性 ⇒ 契约新增规则值时 **tsc 直接编译失败**（防 L3 同族失配）
+  - 门禁：`tsc --noEmit` 通过、`eslint src` 通过、`next build` 编译通过（12 路由）
+- [x] **E5** 页脚/页头标注「演示语料（仿真）」（R9） —— **已完成（2026-09-28）**
+  - 落点：侧栏底部常驻一行小字（本应用**没有全局页脚**；放侧栏保证每页同屏可见——
+    客户看到「42h 加班」的同一屏就该看到这是仿真语料）
+  - 考勤域首页与合规预警页描述里亦各写一次「演示语料（仿真），非真实客户数据」
 
 ## 批次 F · 彩排与文档（架构师）
 

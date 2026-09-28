@@ -76,6 +76,12 @@ CONFIDENCE_REVIEW = 0.50
 #: 结论文案的制度关键词（**不硬编码结论**，只声明要找什么）
 ACTION_KEYWORD = "自动补卡"
 
+#: 动作文案：前者是**制度动作**（前提：取到制度原句），后者是**兜底动作**
+#: 二者的分界由 ``sentences``（制度原句）决定，不由置信度单独决定——
+#: 见 `attribute_absence` 里的说明。
+ACTION_AUTO_FIX = "系统自动补卡"
+ACTION_MANUAL = "按异常处理流程跟进"
+
 
 def suspicion_types_for_domain(domain: str | None) -> tuple[str, ...]:
     """按业务域给出合法的 ``suspicion_type`` 集合（M4 枚举域化）。
@@ -151,6 +157,15 @@ RETURN l.id AS node_id, l.time AS time, l.site AS site
 ORDER BY l.id
 """
 
+_CYPHER_DAY_STATUS = """
+MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
+      -[:RELATION {relation_type: 'HAS_ATTENDANCE', kg_version: $kg}]->
+      (r:Entity {entity_type: 'ATTENDANCE_RECORD', kg_version: $kg})
+WHERE e.id = $emp AND r.date = $day
+RETURN r.status AS status
+ORDER BY r.id
+"""
+
 _CYPHER_ACCESS = """
 MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
       -[:RELATION {relation_type: 'SWIPED_AT', kg_version: $kg}]->
@@ -189,6 +204,115 @@ def find_anomaly_days(
     return tuple(str(row["date"]) for row in rows)
 
 
+class AnomalyNotFoundError(LookupError):
+    """要归因的**对象不存在**：员工不在图上，或该员工在指定日期没有异常记录。
+
+    **显式失败**，不返回「零证据归因结果」——零证据会被算成置信度 0%，
+    看起来像「系统判断他不成立」，实际是**根本没查到这个人/这一天**，
+    二者语义相反（路由层映射为 404 ``NOT_FOUND``）。
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class AnomalyCase:
+    """一条待归因的异常（列表端点用）：谁、哪天、什么状态。"""
+
+    employee_id: str
+    employee_name: str
+    day: str
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnomalyCaseList:
+    """异常清单 + 它所属的版本。
+
+    **为什么连 ``kg_version`` 一起返回**：列表端点也要标出"这些异常是从哪个版本
+    读出来的"，否则前端只看到一堆 E001 / 10-16，无法回答"你查的是哪张图"。
+    """
+
+    kg_version: str
+    cases: tuple[AnomalyCase, ...]
+
+
+_CYPHER_EMPLOYEE_NAME = """
+MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
+WHERE e.id = $emp
+RETURN e.canonical_name AS name
+"""
+
+
+def employee_name(
+    *, session: Any, kg_version: str, org_id: Any, employee_id: str
+) -> str:
+    """取员工姓名。
+
+    **服务层必须显式查一次再传给** :func:`attribute_absence`——那边
+    ``employee_name`` 默认为空串，不传就会在响应里出现「E001 」（空名字），
+    演示时很不体面。查不到（员工不在图上 / 是抽取噪声节点）返回空串，
+    由调用方决定是否报错。
+    """
+    rows = _rows(
+        session,
+        _CYPHER_EMPLOYEE_NAME,
+        kg=kg_version,
+        org=str(org_id),
+        emp=f"EMPLOYEE:{employee_id}",
+    )
+    if not rows:
+        return ""
+    return str(rows[0]["name"] or "")
+
+
+_CYPHER_ANOMALY_CASES = """
+MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
+      -[:RELATION {relation_type: 'HAS_ATTENDANCE', kg_version: $kg}]->
+      (r:Entity {entity_type: 'ATTENDANCE_RECORD', kg_version: $kg})
+WHERE r.status IN $statuses
+  AND e.id STARTS WITH 'EMPLOYEE:'
+  AND ($emp IS NULL OR e.id = $emp)
+RETURN replace(e.id, 'EMPLOYEE:', '') AS employee_id,
+       e.canonical_name AS employee_name,
+       r.date AS date, r.status AS status
+ORDER BY employee_id, date
+"""
+
+
+def list_anomaly_cases(
+    *,
+    session: Any,
+    kg_version: str,
+    org_id: Any,
+    employee_id: str | None = None,
+) -> AnomalyCaseList:
+    """列出待归因的异常（全部员工，或只看某人）。
+
+    ``e.id STARTS WITH 'EMPLOYEE:'`` **不可省**：同一个 ``kg_version`` 里还住着
+    M2 抽取的噪声节点（实测 EMPLOYEE 47 个里只有 40 个是 CSV 派生的，
+    其余叫「全体在册员工」）——不过滤就会给一个**不存在的人**归因。
+    """
+    rows = _rows(
+        session,
+        _CYPHER_ANOMALY_CASES,
+        kg=kg_version,
+        org=str(org_id),
+        statuses=list(ANOMALY_STATUSES),
+        emp=f"EMPLOYEE:{employee_id}" if employee_id else None,
+    )
+    return AnomalyCaseList(
+        kg_version=kg_version,
+        cases=tuple(
+            AnomalyCase(
+                employee_id=str(row["employee_id"]),
+                employee_name=str(row["employee_name"] or row["employee_id"]),
+                day=str(row["date"]),
+                status=str(row["status"]),
+            )
+            for row in rows
+        ),
+    )
+
+
 def _cause(code: str, reason: str, matched: bool, evidence: Sequence[str]) -> Cause:
     return Cause(
         code=code,
@@ -207,6 +331,7 @@ def attribute_absence(
     employee_id: str,
     day: date | str,
     employee_name: str = "",
+    anomaly_type: str = "",
     policy_documents: Sequence[Any] = (),
     policy_clauses: Sequence[Any] = (),
     storage: Any = None,
@@ -214,10 +339,30 @@ def attribute_absence(
     """给「某员工某天缺卡」做归因。
 
     :param day: 异常日（``date`` 或 ISO 字符串）。
+    :param anomaly_type: 异常类型；**为空时自动从图谱读**该员工当日的
+        ``ATTENDANCE_RECORD.status``（``absent`` / ``missing_check_in``）。
     :param policy_documents / policy_clauses: 制度文本片段；**都为空时**自动从
         存储 / 图谱加载一次（调用方复用可省一次 IO）。
     """
     day_text = day.isoformat() if isinstance(day, date) else str(day)
+
+    if not anomaly_type:
+        # **不硬编码异常类型**（2026-09-28 修）：原先恒为 ``missing_check_in``，
+        # 而当天真实状态是 ``absent``。CLI 只有一条用例时看不出来，一旦经 HTTP
+        # 暴露就变成明显的失真——列表端点说 absent、归因端点说 missing_check_in。
+        # 读不到（该日无考勤记录）才回落，且回落的是**同一套枚举**里的值。
+        status_rows = _rows(
+            session,
+            _CYPHER_DAY_STATUS,
+            kg=kg_version,
+            org=str(org_id),
+            emp=f"EMPLOYEE:{employee_id}",
+            day=day_text,
+        )
+        anomaly_type = (
+            str(status_rows[0]["status"]) if status_rows else ANOMALY_MISSING_CHECK_IN
+        )
+
     params = {
         "kg": kg_version,
         "org": str(org_id),
@@ -309,7 +454,15 @@ def attribute_absence(
         clauses=policy_clauses,
         storage=storage,
     )
-    action = "系统自动补卡" if confidence >= CONFIDENCE_ACCEPT else "按异常处理流程跟进"
+    # **制度措辞必须可溯源**（守 F3；2026-09-28 由 D2 守卫逼出来的修）：
+    # 「自动补卡」是**制度动作**，不是我们的处置意见——制度原句取不到时
+    # （`policy_refs` 为空）就**不许**声称补卡，只能落到人工跟进流程。
+    # 否则屏幕上会出现一句「依据制度：自动补卡」而制度出处是空的。
+    action = (
+        ACTION_AUTO_FIX
+        if (confidence >= CONFIDENCE_ACCEPT and sentences)
+        else ACTION_MANUAL
+    )
 
     if confidence < CONFIDENCE_ACCEPT:
         logger.bind(employee=employee_id, day=day_text, confidence=confidence).info(
@@ -320,7 +473,7 @@ def attribute_absence(
         employee_id=employee_id,
         employee_name=employee_name,
         date=day_text,
-        anomaly_type=ANOMALY_MISSING_CHECK_IN,
+        anomaly_type=anomaly_type,
         causes=tuple(causes),
         confidence=confidence,
         conclusion=conclusion,

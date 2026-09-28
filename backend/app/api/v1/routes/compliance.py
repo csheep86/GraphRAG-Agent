@@ -1,4 +1,10 @@
-"""考勤域合规预警路由（Sprint 9.5 批次 C3）：`GET /attendance/compliance/scan`。
+"""考勤域**合规预警 + 异常归因**路由（Sprint 9.5 批次 C3 / C4）。
+
+三个端点（前缀 `/attendance`）：
+
+- ``GET /compliance/scan`` —— 全量合规扫描（批次 C3）；
+- ``GET /anomalies`` —— 待归因的缺卡 / 缺勤清单（批次 C4）；
+- ``GET /anomalies/explain`` —— 一条异常的归因结论（批次 C4）。
 
 **为什么是同步 GET 而不是异步任务**：扫描是**纯读**——不落库、不调 LLM、不写外部系统，
 40 名员工实测秒级完成。异步任务形态（`POST … /scan` + `task_id` 轮询）是为「长耗时且
@@ -23,12 +29,19 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
+    ANOMALY_NOT_FOUND,
     COMPLIANCE_NO_FACTS,
     KG_VERSION_NOT_ACTIVE,
     NOT_IMPLEMENTED,
     TENANT_ERROR_RESPONSES,
 )
 from app.core.errors import AppError, ErrorCode
+from app.schemas.affiliation import AffiliationCauseItem
+from app.schemas.anomaly import (
+    AnomalyCaseItem,
+    AnomalyExplainResponse,
+    AnomalyListResponse,
+)
 from app.schemas.compliance import (
     ComplianceFinding,
     ComplianceLevel,
@@ -41,7 +54,11 @@ from app.services.graphs import (
     GraphUnavailableError,
     NoActiveKgVersionError,
 )
-from app.services.rules import ComplianceScanError, rule_label
+from app.services.rules import (
+    AnomalyNotFoundError,
+    ComplianceScanError,
+    rule_label,
+)
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -173,5 +190,166 @@ async def scan_attendance_compliance(
             for item in findings
         ],
         total=len(findings),
+        trace_id=trace_id,
+    )
+
+
+@router.get(
+    "/anomalies",
+    response_model=AnomalyListResponse,
+    operation_id="listAttendanceAnomalies",
+    summary="考勤域待归因异常清单（Sprint 9.5 批次 C4）",
+    description=(
+        "列出当前 **active kg_version** 内的全部缺卡 / 缺勤记录（谁、哪天、什么状态），"
+        "供异常归因子页挑选「要给谁归因」。\n\n"
+        "**空列表是正常结果**：这份图里没人缺卡 —— 与合规扫描不同，那边「扫不到事实」"
+        "要显式报 409，这边「没有异常」正是想听到的答案。\n\n"
+        "**错误语义**：无 active 版本 → **409** `KG_VERSION_NOT_ACTIVE`；"
+        "Neo4j 不可用 → **501** `NOT_IMPLEMENTED`；跨租户 → **403** `FORBIDDEN`。"
+    ),
+    responses={
+        **TENANT_ERROR_RESPONSES,
+        **KG_VERSION_NOT_ACTIVE,
+        **NOT_IMPLEMENTED,
+    },
+)
+async def list_attendance_anomalies(
+    identity: CurrentIdentity,
+    db: DbSession,
+    trace_id: TraceId,
+    employee_id: Annotated[
+        str | None,
+        Query(min_length=1, max_length=32, description="只看该员工（如 `E001`）"),
+    ] = None,
+) -> AnomalyListResponse:
+    graph = GraphService.instance()
+    try:
+        listing = graph.list_attendance_anomalies(
+            org_id=identity.org_id, db=db, employee_id=employee_id
+        )
+    except NoActiveKgVersionError as exc:
+        raise AppError(
+            ErrorCode.KG_VERSION_NOT_ACTIVE,
+            detail={"status": "none", "hint": "无 active 版本，拒绝静默降级"},
+        ) from exc
+    except GraphUnavailableError as exc:
+        raise AppError(
+            ErrorCode.NOT_IMPLEMENTED,
+            "Graph store is unavailable",
+            detail={
+                "blocked_by": "Neo4j 不可用或 Cypher 执行失败",
+                "hint": "list_attendance_anomalies 失败",
+                "reason": str(exc),
+            },
+        ) from exc
+
+    return AnomalyListResponse(
+        kg_version=listing.kg_version,
+        items=[
+            AnomalyCaseItem(
+                employee_id=case.employee_id,
+                employee_name=case.employee_name,
+                date=case.day,
+                status=case.status,
+            )
+            for case in listing.cases
+        ],
+        total=len(listing.cases),
+        trace_id=trace_id,
+    )
+
+
+@router.get(
+    "/anomalies/explain",
+    response_model=AnomalyExplainResponse,
+    operation_id="explainAttendanceAnomaly",
+    summary="考勤异常归因（Sprint 9.5 批次 C4）",
+    description=(
+        "给「某员工某天缺卡」做归因：跨 **HR / 门禁 / 工单 / 定位** 四个系统取证，"
+        "按确定性权重给出置信度与结论。\n\n"
+        "**置信度不出 LLM**：`confidence = Σ命中权重 / Σ全部权重`，"
+        "每个 `weight` 都是常量（出差审批 0.35 / 工单闭环 0.30 / 定位一致 0.22 / "
+        "门禁对比 0.13），命中与否由图谱证据说话 —— 不是模型的自我感觉。\n\n"
+        "**未命中的原因照样返回**（`matched=false`）：演示时要能说清「哪一项没对上」，"
+        "只给命中项会让用户误以为证据齐备。\n\n"
+        "**`date` 缺省**取该员工的第一个异常日（与 CLI 同口径）。\n\n"
+        "**错误语义**：员工不在图上 / 该日没有异常 → **404** `NOT_FOUND`"
+        "（**不**返回零证据结果冒充「不成立」）；无 active 版本 → **409**；"
+        "Neo4j 不可用 → **501**。"
+    ),
+    responses={
+        **TENANT_ERROR_RESPONSES,
+        **KG_VERSION_NOT_ACTIVE,
+        **ANOMALY_NOT_FOUND,
+        **NOT_IMPLEMENTED,
+    },
+)
+async def explain_attendance_anomaly(
+    identity: CurrentIdentity,
+    db: DbSession,
+    trace_id: TraceId,
+    employee_id: Annotated[
+        str, Query(min_length=1, max_length=32, description="员工工号（如 `E001`）")
+    ],
+    date_value: Annotated[
+        date | None,
+        Query(alias="date", description="异常日（ISO）；缺省取该员工第一个异常日"),
+    ] = None,
+) -> AnomalyExplainResponse:
+    graph = GraphService.instance()
+    try:
+        version, result = graph.explain_attendance_anomaly(
+            org_id=identity.org_id,
+            db=db,
+            employee_id=employee_id,
+            day=date_value,
+        )
+    except NoActiveKgVersionError as exc:
+        raise AppError(
+            ErrorCode.KG_VERSION_NOT_ACTIVE,
+            detail={"status": "none", "hint": "无 active 版本，拒绝静默降级"},
+        ) from exc
+    except AnomalyNotFoundError as exc:
+        raise AppError(
+            ErrorCode.NOT_FOUND,
+            "Anomaly not found",
+            detail={
+                "employee_id": employee_id,
+                "date": date_value.isoformat() if date_value else None,
+                "reason": str(exc),
+                "hint": "先用 GET /attendance/anomalies 确认该员工的异常日",
+            },
+        ) from exc
+    except GraphUnavailableError as exc:
+        raise AppError(
+            ErrorCode.NOT_IMPLEMENTED,
+            "Graph store is unavailable",
+            detail={
+                "blocked_by": "Neo4j 不可用或 Cypher 执行失败",
+                "hint": "explain_attendance_anomaly 失败",
+                "reason": str(exc),
+            },
+        ) from exc
+
+    return AnomalyExplainResponse(
+        kg_version=version,
+        employee_id=result.employee_id,
+        employee_name=result.employee_name,
+        date=result.date,
+        anomaly_type=result.anomaly_type,
+        causes=[
+            AffiliationCauseItem(
+                code=cause.code,
+                reason=cause.reason,
+                weight=cause.weight,
+                matched=cause.matched,
+                evidence=list(cause.evidence),
+            )
+            for cause in result.causes
+        ],
+        confidence=result.confidence,
+        conclusion=result.conclusion,
+        action=result.action,
+        policy_refs=list(result.policy_refs),
         trace_id=trace_id,
     )

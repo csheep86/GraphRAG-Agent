@@ -235,6 +235,7 @@ class AgentService:
         2. 从 Neo4j 拉取与问题相关的子图；
         2.5 拉取证据片段（Sprint 6 批次 B：chunk 原文注入 ``kg_qa`` 的 ``text_chunks``，
            并建 ``chunk_id`` 索引供引用回查）；
+        2.7 取多跳推理路径（Sprint 9.5 批次 D1：确定性取自图谱，与 LLM 无关）；
         3. 经 :mod:`app.prompts.prompt_loader` 加载 ``kg_qa`` Prompt；
         4. tenacity 重试调用 LLM；
         5. 解析 LLM 输出 → 映射为契约 :class:`AgentQueryResponse`。
@@ -347,6 +348,29 @@ class AgentService:
             chunk_count=len(evidence_chunks),
         ).info("agent_query_evidence_chunks")
 
+        # 2.7) 多跳推理路径（Sprint 9.5 批次 D1 / proposal §5.5）
+        #      放在 LLM 之前：路径是**确定性**地从图上取出来的，与 LLM 输出无关
+        #      ——它要能在「LLM 拒答」时依然说清楚「图上到底有没有这条链」。
+        #      故障语义与证据片段一致：Neo4j 故障上抛 501，
+        #      **不**降级为空路径（空 = 零命中，会把故障伪装成"图上没有链"）。
+        try:
+            reasoning_path = GraphService.instance().fetch_reasoning_path(
+                kg_version=version,
+                org_id=org_id,
+                question=request.question,
+                nodes=subgraph.nodes,
+                edges=subgraph.edges,
+                chunks=evidence_chunks,
+            )
+        except GraphUnavailableError as exc:
+            logger.bind(trace_id=trace_id, reason=str(exc)).error(
+                "agent_query_reasoning_path_unavailable"
+            )
+            raise AgentUnavailableError(f"Neo4j 推理路径查询失败: {exc}") from exc
+        logger.bind(trace_id=trace_id, hop_count=len(reasoning_path)).info(
+            "agent_query_reasoning_path"
+        )
+
         # 3) 加载 Prompt（任何占位符错误都立即暴露，禁止硬编码）
         template = load_prompt("kg_qa")
         try:
@@ -428,6 +452,7 @@ class AgentService:
             kg_nodes=subgraph.nodes,
             kg_relations=subgraph.edges,
             token_usage=token_usage,
+            reasoning_path=reasoning_path,
         )
 
     # ------------------------------------------------------------------ helpers
@@ -535,10 +560,13 @@ class AgentService:
         拒答是**正常业务判定**（HTTP ``200`` + ``refused = true``），
         **不是**基础设施故障——后者必须抛 :class:`AgentUnavailableError`（501）。
 
-        三个图谱 / 用量字段在此**显式置空**，理由如下（严禁拼凑数据）：
+        三个图谱 / 用量 / 路径字段在此**显式置空**，理由如下（严禁拼凑数据）：
         - ``kg_nodes`` / ``kg_relations``：拒答意味着**没有**任何支撑答案的证据，
           若把检索到的子图一并返回，前端会误以为答案有据可依；
-        - ``token_usage``：拒答语义下不承担用量统计，即使 LLM 曾被调用过也不回填。
+        - ``token_usage``：拒答语义下不承担用量统计，即使 LLM 曾被调用过也不回填；
+        - ``reasoning_path``：路径是**证据链**，与上面同族——拒答时给 ``None``
+          （语义「未产出」），**不**给 ``[]``（那是「检索过、零命中」，
+          二者语义相反，见 ``AgentQueryResponse.reasoning_path`` 的字段说明）。
 
         :param note: 人类可读的拒答缘由，**仅**进日志便于检索（不入契约）。
         """
@@ -557,6 +585,7 @@ class AgentService:
             kg_nodes=[],
             kg_relations=[],
             token_usage=None,
+            reasoning_path=None,
         )
 
 

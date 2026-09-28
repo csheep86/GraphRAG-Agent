@@ -53,6 +53,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 from app.main import create_app  # noqa: E402
+from app.services.graphs import GraphService  # noqa: E402
 from app.services.kg.versioning import KgVersioningService  # noqa: E402
 
 OTHER_ORG_ID = "00000000-0000-4000-8000-000000000002"
@@ -105,6 +106,28 @@ def pg_active_kg_version(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(KgVersioningService, "get_active", _get_active)
     monkeypatch.setattr(KgVersioningService, "get_by_version", _get_by_version)
+
+
+@pytest.fixture(autouse=True)
+def graph_reasoning_path_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """给特性开关留的默认桩：推理路径一律「零命中」，除非用例自己覆盖。
+
+    **为什么要有这个默认桩**：批次 D1 在问答主链路第 2.7 步新增了
+    ``GraphService.fetch_reasoning_path``（与既有第 2.6 步同 semantics：Neo4j
+    故障 ⇒ 501，**不**降级为空）。既有问答用例（`test_agent_citations.py` /
+    `test_graph_and_agent_routes.py` / `test_audit.py`）验的是引用 / 拒答 / 审计，
+    没有给它打桩 ⇒ 全部走到不可达的 Neo4j ⇒ 被判 501 打红——那不是回归，
+    是**新依赖没接线**。逐个补桩会让这些用例各背一段与己无关的样板。
+
+    与 :func:`pg_active_kg_version` 同一口径：**不打桩会让基础设施故障伪装成
+    别的语义**。要验路径本身的用例请 monkeypatch 覆盖本桩（顺序：autouse 先、
+    显式后，覆盖生效），集中在 ``test_agent_reasoning_path.py``。
+    """
+    # 桩在**类**上（不是 instance）：写到实例属性会遮蔽类属性，
+    # 用例自己再 setattr(GraphService, ...) 就覆盖不掉了。
+    monkeypatch.setattr(
+        GraphService, "fetch_reasoning_path", lambda _self, **_kwargs: []
+    )
 
 
 @pytest.fixture

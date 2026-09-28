@@ -133,6 +133,18 @@ COMPLIANCE_NO_FACTS: dict[int, dict[str, Any]] = {
     }
 }
 
+ANOMALY_NOT_FOUND: dict[int, dict[str, Any]] = {
+    404: {
+        "model": ErrorResponse,
+        "description": (
+            "要归因的对象不存在（`NOT_FOUND`）：员工不在当前 active 版本内，"
+            "或该员工在指定日期没有异常记录。"
+            "**不**返回零证据的归因结果——那会被读成「系统判断他不成立」，"
+            "而实际是根本没查到这个人 / 这一天（Sprint 9.5 批次 C4）"
+        ),
+    }
+}
+
 VALIDATION_ERROR: dict[int, dict[str, Any]] = {
     400: {
         "model": ErrorResponse,

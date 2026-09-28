@@ -120,6 +120,17 @@ def test_all_evidence_hits_gives_full_confidence() -> None:
         org_id="org",
         employee_id="E001",
         day="2026-10-16",
+        # 「自动补卡」是**制度动作**：结论要声称它，就得给得出制度原句（守 F3）。
+        # 本用例走的正是有制度的场景；无出处时的行为由
+        # `test_boundary_numeric_provenance.py` 的守卫钉死。
+        policy_clauses=[
+            _TextSegment(
+                text="第九条 缺卡经跨域证据自动取证的，系统自动补卡。",
+                source="document",
+                reference="doc:attendance:L9",
+                order=("attendance", 9),
+            ),
+        ],
     )
     assert result.confidence == 1.0
     assert result.conclusion == "外勤出勤成立"

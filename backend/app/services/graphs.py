@@ -67,7 +67,12 @@ _ENTITY_NEIGHBOR_LIMIT = 50
 _GRAPH_OVERVIEW_NODE_LIMIT = 500
 
 if TYPE_CHECKING:  # 仅类型检查：运行时走函数内延迟导入，避免加长依赖链
-    from app.services.rules import ComplianceReport
+    from app.schemas.agent import ReasoningPathHop
+    from app.services.rules import (
+        AnomalyCaseList,
+        AttributionResult,
+        ComplianceReport,
+    )
 
 #: Sprint 6 批次 B：单次问答注入 Prompt 的证据片段上限。
 #: 与 ``_GRAPH_NODE_LIMIT`` 同源思路——片段是**全文**，过量会直接撑爆 Prompt token。
@@ -1152,6 +1157,51 @@ class GraphService:
             trace_id=trace_id,
         )
 
+    # ------------------------------------------------- Sprint 9.5 批次 D1
+
+    def fetch_reasoning_path(
+        self,
+        *,
+        kg_version: str,
+        org_id: Any,
+        question: str,
+        nodes: Sequence[GraphNode],
+        edges: Sequence[GraphEdge] = (),
+        chunks: Sequence[EvidenceChunk] = (),
+    ) -> list[ReasoningPathHop]:
+        """M3 多跳推理路径（``reasoning_path`` 的服务层入口）。
+
+        **会话只由本类开**（与 :meth:`scan_attendance_compliance` 同口径）：
+        调用方拿不到"私自开连接"的口子，``kg_version`` 由上游
+        :meth:`fetch_active_kg_version` 给定，杜绝绕过版本真源。
+
+        **延迟导入** :mod:`app.services.reasoning`：本模块被 ``agents`` 依赖，
+        模块级牵上会加长依赖链（且 ``reasoning`` 只依赖 schema，无循环风险）。
+
+        :returns: 逐跳链；零命中为 ``[]``（``None`` 的语义留给拒答分支，见契约）
+        :raises GraphUnavailableError: Neo4j 不可用 / 查询失败（**不**静默返回
+            ``[]``——空路径会被上层当成"图上没有链"，把故障伪装成正常结论）
+        """
+        from app.services.reasoning import build_reasoning_path  # 延迟导入
+
+        try:
+            with self._session() as session:
+                return build_reasoning_path(
+                    session=session,
+                    kg_version=kg_version,
+                    org_id=str(org_id) if org_id is not None else "",
+                    question=question,
+                    nodes=nodes,
+                    edges=edges,
+                    chunks=chunks,
+                )
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装为图不可用
+            raise GraphUnavailableError(
+                f"推理路径查询失败: kg_version={kg_version}: {exc}"
+            ) from exc
+
     # ------------------------------------------------- Sprint 9.5 批次 C3
 
     def scan_attendance_compliance(
@@ -1200,6 +1250,101 @@ class GraphService:
         except Exception as exc:  # noqa: BLE001 - 其余一律视为图不可用
             raise GraphUnavailableError(
                 f"合规扫描失败: kg_version={version}: {exc}"
+            ) from exc
+
+    # ------------------------------------------------- Sprint 9.5 批次 C4
+
+    def list_attendance_anomalies(
+        self,
+        *,
+        org_id: UUID | None = None,
+        db: Any = None,
+        employee_id: str | None = None,
+    ) -> AnomalyCaseList:
+        """列出待归因的考勤异常（``GET /attendance/anomalies`` 的服务层入口）。
+
+        **空列表是正常结果**（这份图里没人缺卡），**不是**失败——与合规扫描不同，
+        那边「扫不到事实」要显式报错，这边「没有异常」正是想听到的答案。
+        """
+        from app.services.rules import list_anomaly_cases
+
+        version = self.fetch_active_kg_version(org_id=org_id, db=db).version
+        try:
+            with self._session() as session:
+                return list_anomaly_cases(
+                    session=session,
+                    kg_version=version,
+                    org_id=str(org_id) if org_id else None,
+                    employee_id=employee_id,
+                )
+        except (NoActiveKgVersionError, GraphUnavailableError):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise GraphUnavailableError(
+                f"异常清单查询失败: kg_version={version}: {exc}"
+            ) from exc
+
+    def explain_attendance_anomaly(
+        self,
+        *,
+        org_id: UUID | None = None,
+        db: Any = None,
+        employee_id: str,
+        day: date | None = None,
+    ) -> tuple[str, AttributionResult]:
+        """给一条考勤异常做归因（``GET /attendance/anomalies/explain`` 的服务层入口）。
+
+        返回 ``(kg_version, 归因结论)``——``AttributionResult`` 本身不带版本，
+        而响应必须标出「这次归因读的是哪张图」。
+
+        ``day`` 缺省时取该员工的**第一个**异常日（与 CLI 同口径）。
+
+        :raises AnomalyNotFoundError: 员工不在图上 / 该日没有异常记录
+            （路由层 404；**不**返回零证据的归因结果冒充「不成立」）
+        """
+        from app.services.rules import (
+            AnomalyNotFoundError,
+            attribute_absence,
+            employee_name,
+            find_anomaly_days,
+        )
+
+        version = self.fetch_active_kg_version(org_id=org_id, db=db).version
+        try:
+            with self._session() as session:
+                if day is None:
+                    days = find_anomaly_days(
+                        session=session,
+                        kg_version=version,
+                        org_id=str(org_id) if org_id else None,
+                        employee_id=employee_id,
+                    )
+                    if not days:
+                        raise AnomalyNotFoundError(
+                            f"员工 {employee_id} 在 kg_version={version} 内没有异常记录"
+                        )
+                    day = date.fromisoformat(days[0])
+
+                result = attribute_absence(
+                    session=session,
+                    kg_version=version,
+                    org_id=str(org_id) if org_id else None,
+                    employee_id=employee_id,
+                    day=day,
+                    # 姓名要显式查：`attribute_absence` 默认空串，不传响应里就是「E001 」
+                    employee_name=employee_name(
+                        session=session,
+                        kg_version=version,
+                        org_id=str(org_id) if org_id else None,
+                        employee_id=employee_id,
+                    ),
+                )
+                return version, result
+        except (NoActiveKgVersionError, GraphUnavailableError, AnomalyNotFoundError):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise GraphUnavailableError(
+                f"异常归因失败: kg_version={version}: {exc}"
             ) from exc
 
 

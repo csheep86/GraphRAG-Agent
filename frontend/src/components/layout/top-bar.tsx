@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { matchNavItem } from "@/lib/nav";
+import { breadcrumbFor } from "@/lib/nav";
 
 /** 品牌标识：蓝色圆角方块 + 白色内嵌图形（对齐设计稿 Logo） */
 function BrandMark() {
@@ -27,7 +27,9 @@ function BrandMark() {
 
 export function TopBar() {
   const pathname = usePathname();
-  const current = matchNavItem(pathname);
+  // 用 breadcrumbFor 而非 matchNavItem：子页（如 /attendance/compliance）
+  // 要显示「合规预警」，否则顶栏会跟侧栏一样停在「考勤域」。
+  const current = breadcrumbFor(pathname);
 
   return (
     <header className="relative z-40 flex h-[var(--topbar-height)] shrink-0 items-center gap-4 border-b border-border bg-background px-5">
@@ -49,7 +51,7 @@ export function TopBar() {
       >
         <span className="text-muted-foreground">工作台</span>
         <span className="text-muted-foreground/40">/</span>
-        <span className="text-foreground">{current.breadcrumb}</span>
+        <span className="text-foreground">{current}</span>
       </nav>
 
       {/* 右：通知 + 账号 */}

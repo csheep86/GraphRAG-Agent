@@ -70,6 +70,9 @@ ACTION_BY_ROUTE_NAME: dict[str, str] = {
     "list_audit_logs_by_trace_endpoint": "audit.trace",
     # Sprint 9.5 批次 C3：考勤域合规扫描（合规结论必须留痕——它是可对外引用的判断）
     "scan_attendance_compliance": "compliance.scan",
+    # Sprint 9.5 批次 C4：考勤域异常归因（归因结论同样可对外引用，一并留痕）
+    "list_attendance_anomalies": "compliance.anomaly_list",
+    "explain_attendance_anomaly": "compliance.anomaly_explain",
 }
 
 #: 列宽上限（``audit_log.action`` / ``resource`` 均为 ``String(255)``）。

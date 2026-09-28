@@ -35,6 +35,9 @@ CORE_PATHS = {
     "/api/v1/audit/trace/{trace_id}",
     # Sprint 9.5 批次 C3：考勤域合规预警扫描（确定性规则引擎的对外出口）
     "/api/v1/attendance/compliance/scan",
+    # Sprint 9.5 批次 C4：考勤域异常归因两端点（清单 + 归因；前端 E3 消费）
+    "/api/v1/attendance/anomalies",
+    "/api/v1/attendance/anomalies/explain",
 }
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
@@ -66,7 +69,9 @@ def test_core_paths_match_contract(schema: dict) -> None:
     Sprint 7.2 批次 B 再增 M4 疑点四端点（`/affiliation/detect` / `/affiliation/tasks/{id}` /
     `/affiliation/suspicions` / `PATCH /affiliation/suspicions/{id}`，spec §5.5）→ **14 路径**；
     Sprint 8.1 批次 A 再增审计两端点（`GET /audit` / `GET /audit/trace/{trace_id}`）→ **16 路径**；
-    Sprint 9.5 批次 C3 再增合规扫描端点（`GET /attendance/compliance/scan`）→ **17 路径**。
+    Sprint 9.5 批次 C3 再增合规扫描端点（`GET /attendance/compliance/scan`）→ **17 路径**；
+    批次 C4 再增异常归因两端点（`GET /attendance/anomalies` +
+    `GET /attendance/anomalies/explain`）→ **19 路径**。
     """
     assert set(schema["paths"]) == CORE_PATHS
 
@@ -88,8 +93,9 @@ def test_operation_ids_are_unique(schema: dict) -> None:
     ]
     # 10 → 14（Sprint 7.2 批次 B 四个 affiliation 端点）→ 16
     # （Sprint 8.1 批次 A 两个 audit 端点）→ 17
-    # （Sprint 9.5 批次 C3 合规扫描端点；operation_id 不得重复）
-    assert len(operation_ids) == len(set(operation_ids)) == 17
+    # （Sprint 9.5 批次 C3 合规扫描端点）→ 19
+    # （批次 C4 异常归因两端点；operation_id 不得重复）
+    assert len(operation_ids) == len(set(operation_ids)) == 19
 
 
 def test_info_version_is_constant(schema: dict) -> None:

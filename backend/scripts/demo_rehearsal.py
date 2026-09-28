@@ -6,10 +6,15 @@
 用法（工作目录 = `backend/`，**先**起服务）：
 
     uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
-    uv run python scripts/demo_rehearsal.py                          # ¥0 默认
+    uv run python scripts/demo_rehearsal.py                          # ¥0 默认（关联交易 6 步）
     uv run python scripts/demo_rehearsal.py --with-llm               # 含真实问答（**烧 token**）
     uv run python scripts/demo_rehearsal.py --frontend-base http://127.0.0.1:3000
     uv run python scripts/demo_rehearsal.py --json reports/rehearsal.json
+
+    # 考勤域（Sprint 9.5）：异常清单 → 合规扫描 → 异常归因 → 问答 → 审计 → 前端 4 页
+    uv run python scripts/demo_rehearsal.py --domain attendance
+    uv run python scripts/demo_rehearsal.py --domain attendance --as-of 2026-12-15
+    uv run python scripts/demo_rehearsal.py --domain attendance --frontend-base http://127.0.0.1:3000
 
 退出码：**0** = 无 FAIL（SKIP 不算失败）／**1** = 有 FAIL／**2** = 配置或连通性错误。
 
@@ -53,6 +58,27 @@ REQUIRED_ACTIONS = (
 
 #: 抄自 `docs/demo-seed-dataset.md` §4 的复核问题（语料同源，避免问空）。
 DEFAULT_QUESTION = "招商局集团有限公司与招商局轮船有限公司之间存在哪些关联？"
+
+# ------------------------------------------------------------------ attendance
+#: `--domain attendance`（Sprint 9.5 批次 F1）的必需 action。
+#: `agent.query` **不**在默认集合里——问答默认 SKIP（¥0），把只在 `--with-llm`
+#: 下才会出现的 action 写进来会让默认用例必 FAIL。
+ATTENDANCE_REQUIRED_ACTIONS = (
+    "compliance.scan",  # 步骤 A2 合规扫描
+    "compliance.anomaly_list",  # 步骤 A1 异常清单
+    "compliance.anomaly_explain",  # 步骤 A3 异常归因
+)
+
+#: 考勤域演示问题（语料同源：员工名 / 城市取自 `demo/attendance/`）
+ATTENDANCE_QUESTION = "李静的月加班超过上限了吗？"
+
+#: 考勤域前端页与各自的**必含关键词**（VA：页面是不是真的把真数据渲染出来了）
+ATTENDANCE_PAGES = (
+    ("/attendance", "考勤域", "考勤域首页"),
+    ("/attendance/compliance", "合规预警", "合规预警页"),
+    ("/attendance/attribution", "异常归因", "异常归因子页"),
+    ("/attendance/qa", "政策问答", "政策问答子页"),
+)
 
 
 @dataclass
@@ -263,13 +289,22 @@ def step_5_suspicions(client: httpx.Client, report: Rehearsal) -> None:
 
 
 def step_6_audit(
-    client: httpx.Client, report: Rehearsal, trace_id: str, *, min_rows: int
+    client: httpx.Client,
+    report: Rehearsal,
+    trace_id: str,
+    *,
+    min_rows: int,
+    required: tuple[str, ...] = REQUIRED_ACTIONS,
+    with_llm: bool = False,
 ) -> None:
     """步骤 6（审计）：同一 trace 回放 —— 条数达标 **且** 各步 action 齐全。"""
     data = client.get(f"/audit/trace/{trace_id}").json()
     items = data.get("items") or []
     actions = {i.get("action") for i in items}
-    missing = [a for a in REQUIRED_ACTIONS if a not in actions]
+    missing = [a for a in required if a not in actions]
+    # 问答只在 `--with-llm` 下才发生：没跑就别要求它的 action 出现（反之必须出现）
+    if with_llm and "agent.query" not in actions:
+        missing.append("agent.query")
     if len(items) < min_rows:
         _fail(
             report, "6", "审计回放", f"同一 trace 仅 {len(items)} 条（需 ≥ {min_rows}）"
@@ -288,16 +323,162 @@ def step_6_audit(
     )
 
 
-def step_7_frontend(report: Rehearsal, base: str | None, *, timeout: float) -> None:
-    """可选：`USE_MOCK=false` 下前端页走查（audit 页真数据 + settings「演示环境」标注）。"""
+# ------------------------------------------------------------------ attendance
+def step_a1_anomalies(client: httpx.Client, report: Rehearsal) -> list[dict]:
+    """A1 异常清单：**有人才谈得上归因**。
+
+    空清单 ⇒ FAIL：演示剧本第一件事就是「谁缺卡了」，没有用例说明语料没导入。
+    """
+    data = client.get("/attendance/anomalies").json()
+    items = data.get("items") or []
+    if not items:
+        _fail(
+            report,
+            "A1",
+            "异常清单",
+            "items 为空——先执行 scripts/ingest_attendance_csv.py 导入演示语料",
+        )
+        return []
+    report.add(
+        "A1",
+        "异常清单",
+        "PASS",
+        f"total={data.get('total')} kg_version={data.get('kg_version')} "
+        f"首条={items[0].get('employee_name')} / {items[0].get('date')}",
+    )
+    return items
+
+
+def step_a2_compliance(
+    client: httpx.Client, report: Rehearsal, *, as_of: str | None
+) -> None:
+    """A2 合规扫描：有风险 + **每个规则值都带制度出处** + 没有规则被跳过。
+
+    **为什么要单独验 `unresolved`**：规则值解析不出来时后端会「跳过该规则」，
+    演示时表现为"扫完了没事"——但其实是**没算**。这是本项目最危险的静默失败，
+    彩排必须在开讲前把它挑出来。
+    """
+    data = client.get(
+        "/attendance/compliance/scan",
+        params={"as_of": as_of} if as_of else None,
+    ).json()
+    findings = data.get("findings") or []
+    values = data.get("rule_values") or []
+
+    if not values:
+        _fail(report, "A2", "规则值", "rule_values 为空（制度文本没解析出任何判据）")
+        return
+    sourceless = [
+        item.get("key")
+        for item in values
+        if not (item.get("source") and item.get("reference") and item.get("evidence"))
+    ]
+    if sourceless:
+        _fail(report, "A2", "规则值出处", f"以下规则值无出处：{sourceless}")
+        return
+    if data.get("unresolved"):
+        _fail(
+            report,
+            "A2",
+            "规则值解析",
+            f"unresolved={data['unresolved']}（有判据没解析出来 ⇒ 对应规则被跳过）",
+        )
+        return
+    if data.get("skipped_rules"):
+        _fail(report, "A2", "规则跳过", f"skipped_rules={data['skipped_rules']}")
+        return
+    if not findings:
+        _fail(
+            report, "A2", "合规扫描", "findings 为空（五条规则零命中？语料被改坏了？）"
+        )
+        return
+
+    high = sum(1 for item in findings if item.get("level") == "high")
+    sample = findings[0]
+    report.add(
+        "A2",
+        "合规扫描",
+        "PASS",
+        f"total={data.get('total')}（high {high} / medium {len(findings) - high}）"
+        f" 规则值 {len(values)} 条全部带出处；样例 {sample.get('employee_name')}"
+        f"「{sample.get('calculation')}」",
+    )
+
+
+def step_a3_attribution(
+    client: httpx.Client, report: Rehearsal, cases: list[dict]
+) -> None:
+    """A3 异常归因：**自己重算一遍置信度**，对不上就是 Regression（含「补卡」措辞出处）。"""
+    if not cases:
+        report.add("A3", "异常归因", "SKIP", "无异常用例（见步骤 A1）")
+        return
+
+    case = cases[0]
+    data = client.get(
+        "/attendance/anomalies/explain",
+        params={"employee_id": case["employee_id"], "date": case["date"]},
+    ).json()
+    causes = data.get("causes") or []
+    if not causes:
+        _fail(report, "A3", "原因排序", "causes 为空（归因没跑出任何原因）")
+        return
+
+    total = sum(float(item["weight"]) for item in causes)
+    hit = sum(float(item["weight"]) for item in causes if item["matched"])
+    expected = round(hit / total, 4) if total else 0.0
+    if abs(float(data.get("confidence") or 0) - expected) > 1e-6:
+        _fail(
+            report,
+            "A3",
+            "置信度可核算",
+            f"confidence={data.get('confidence')} ≠ Σ命中/Σ全部={expected}"
+            "（确定性加权被改动）",
+        )
+        return
+
+    evidenceless = [
+        item["code"] for item in causes if item["matched"] and not item["evidence"]
+    ]
+    if evidenceless:
+        _fail(report, "A3", "证据可回查", f"命中却无证据节点：{evidenceless}")
+        return
+
+    action = str(data.get("action") or "")
+    if "补卡" in action and not data.get("policy_refs"):
+        _fail(
+            report,
+            "A3",
+            "制度措辞出处",
+            f"结论里出现「补卡」（action={action}）但 policy_refs 为空（守 F3 不成立）",
+        )
+        return
+
+    report.add(
+        "A3",
+        "异常归因",
+        "PASS",
+        f"{case['employee_name']} {case['date']} ⇒ {data.get('conclusion')}"
+        f"（置信度 {data.get('confidence')} = {hit:g}/{total:g}，4 项原因、"
+        f"政策出处 {len(data.get('policy_refs') or [])} 条）",
+    )
+
+
+def step_7_frontend(
+    report: Rehearsal,
+    base: str | None,
+    *,
+    timeout: float,
+    pages: tuple[tuple[str, str, str], ...] = (
+        ("/audit", "审计", "audit 页"),
+        ("/settings", "演示环境", "settings 页 A16 标注"),
+    ),
+) -> None:
+    """可选：`USE_MOCK=false` 下前端页走查（按域给定 `pages`）。"""
     if not base:
         report.add("7", "前端页", "SKIP", "未给 --frontend-base（需先起 next dev）")
         return
     with httpx.Client(base_url=base, timeout=timeout) as client:
-        for path, must, title in (
-            ("/audit", "审计", "audit 页"),
-            ("/settings", "演示环境", "settings 页 A16 标注"),
-        ):
+        for path, must, title in pages:
             try:
                 response = client.get(path)
             except httpx.HTTPError as exc:  # 前端没起 ≠ 演示失败 ⇒ SKIP 而非 FAIL
@@ -314,6 +495,16 @@ def step_7_frontend(report: Rehearsal, base: str | None, *, timeout: float) -> N
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="演示剧本 6 步彩排走查（默认 ¥0）")
+    parser.add_argument(
+        "--domain",
+        choices=("default", "attendance"),
+        default="default",
+        help=(
+            "演示剧本：`default`=既有关联交易 6 步；"
+            "`attendance`=考勤域（Sprint 9.5：异常清单 A1 / 合规扫描 A2 / "
+            "异常归因 A3 / 问答 A4 / 审计 A6 / 前端 A7）"
+        ),
+    )
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="后端地址")
     parser.add_argument("--api-prefix", default="/api/v1", help="API 前缀")
     parser.add_argument("--frontend-base", default=None, help="前端地址（可选）")
@@ -323,7 +514,14 @@ def main(argv: list[str] | None = None) -> int:
         help="跑真实问答（步骤 3），**会产生 LLM 费用**；默认跳过",
     )
     parser.add_argument(
-        "--question", default=DEFAULT_QUESTION, help="--with-llm 时的提问"
+        "--question",
+        default=None,
+        help="--with-llm 时的提问（缺省按 --domain 取该域的语料同源问题）",
+    )
+    parser.add_argument(
+        "--as-of",
+        default=None,
+        help="考勤域合规扫描的观察日（ISO 日期；演示调休「临期升级」用 2026-12-15）",
     )
     parser.add_argument(
         "--min-trace-rows", type=int, default=7, help="步骤 6 最少审计条数"
@@ -339,8 +537,12 @@ def main(argv: list[str] | None = None) -> int:
 
     trace_id = str(uuid4())
     report = Rehearsal()
+    question = args.question or (
+        ATTENDANCE_QUESTION if args.domain == "attendance" else DEFAULT_QUESTION
+    )
     print(
-        f"彩排开始：base={args.base_url} trace_id={trace_id} with_llm={args.with_llm}"
+        f"彩排开始：domain={args.domain} base={args.base_url} "
+        f"trace_id={trace_id} with_llm={args.with_llm}"
     )
 
     client = httpx.Client(
@@ -364,16 +566,43 @@ def main(argv: list[str] | None = None) -> int:
             f"version={health.get('version')} checks={health.get('checks')}",
         )
 
-        doc_ids = step_1_corpus(client, report)
-        step_2_graph(client, report)
-        step_3_ask(client, report, with_llm=args.with_llm, question=args.question)
-        step_4_trace_back(client, report, doc_ids)
-        step_5_suspicions(client, report)
-        step_6_audit(client, report, trace_id, min_rows=args.min_trace_rows)
+        if args.domain == "attendance":
+            cases = step_a1_anomalies(client, report)
+            step_a2_compliance(client, report, as_of=args.as_of)
+            step_a3_attribution(client, report, cases)
+            step_3_ask(client, report, with_llm=args.with_llm, question=question)
+            step_6_audit(
+                client,
+                report,
+                trace_id,
+                min_rows=3,
+                required=ATTENDANCE_REQUIRED_ACTIONS,
+                with_llm=args.with_llm,
+            )
+            frontend_pages = ATTENDANCE_PAGES
+        else:
+            doc_ids = step_1_corpus(client, report)
+            step_2_graph(client, report)
+            step_3_ask(client, report, with_llm=args.with_llm, question=question)
+            step_4_trace_back(client, report, doc_ids)
+            step_5_suspicions(client, report)
+            step_6_audit(
+                client,
+                report,
+                trace_id,
+                min_rows=args.min_trace_rows,
+                with_llm=args.with_llm,
+            )
+            frontend_pages = (
+                ("/audit", "审计", "audit 页"),
+                ("/settings", "演示环境", "settings 页 A16 标注"),
+            )
     finally:
         client.close()
 
-    step_7_frontend(report, args.frontend_base, timeout=args.timeout)
+    step_7_frontend(
+        report, args.frontend_base, timeout=args.timeout, pages=frontend_pages
+    )
 
     failed = report.failed
     passed = sum(1 for c in report.checks if c.status == "PASS")
@@ -383,6 +612,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json_path:
         payload: dict[str, Any] = {
             "trace_id": trace_id,
+            "domain": args.domain,
             "base_url": args.base_url,
             "with_llm": args.with_llm,
             "summary": {"pass": passed, "fail": failed, "skip": skipped},

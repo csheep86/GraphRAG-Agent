@@ -14,10 +14,15 @@
 from app.services.rules.attribution import (
     ATTENDANCE_SUSPICION_TYPES,
     FINANCE_SUSPICION_TYPES,
+    AnomalyCase,
+    AnomalyCaseList,
+    AnomalyNotFoundError,
     AttributionResult,
     Cause,
     attribute_absence,
+    employee_name,
     find_anomaly_days,
+    list_anomaly_cases,
     suspicion_types_for_domain,
 )
 from app.services.rules.engine import (
@@ -50,6 +55,9 @@ from app.services.rules.policy_values import (
 
 __all__ = [
     "ATTENDANCE_SUSPICION_TYPES",
+    "AnomalyCase",
+    "AnomalyCaseList",
+    "AnomalyNotFoundError",
     "AttributionResult",
     "Cause",
     "FINANCE_SUSPICION_TYPES",
@@ -69,7 +77,9 @@ __all__ = [
     "RuleValueBook",
     "RuleValueUnresolvedError",
     "attribute_absence",
+    "employee_name",
     "find_anomaly_days",
+    "list_anomaly_cases",
     "load_employee_facts",
     "load_policy_clauses",
     "load_policy_documents",

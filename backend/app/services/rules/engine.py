@@ -76,6 +76,13 @@ RULE_CONSECUTIVE = "consecutive_attendance"
 
 _LEVEL_RANK = {LEVEL_HIGH: 0, LEVEL_MEDIUM: 1}
 
+#: **规则语义边界**（**不是**制度阈值，见 `_rule_comp_off` 的说明）：
+#: 用于「是否已开始消化」这类**有无判定**，制度里不存在对应的数值可解析。
+#: 与其余阈值（全部来自 `RuleValueBook`）区分开，使 D2 守卫
+#: `test_every_threshold_comes_from_policy_values` 能按常量识别、不放宽断言。
+#: 现行的唯一使用者：`comp_off_undigested`（已调休 > 0 ⇒ 已消化）。
+SENTINEL_UNUSED_BOUNDARY = 0.0
+
 
 class ComplianceScanError(RuntimeError):
     """扫描无法进行（无数据 / 无员工 / 无法确定观察日）。
@@ -491,10 +498,18 @@ def _rule_comp_off(
         level=level,
         title="调休未消化",
         observed=earned,
-        threshold=0.0,
+        # **规则语义边界，不是制度阈值**（2026-09-28 由 D2 守卫逼出来的显化）：
+        # 本规则判定的是「有没有开始消化」——已调休 > 0 即视为已消化，
+        # 与制度的临期判据（季度剩余 < 30 天，来自 `RuleValueBook`）是两回事。
+        # 原先写成一个裸露的 `0.0`，与其余「阈值全出自规则值」的口径不一致，
+        # 于是提为具名常量并在 `calculation` 里说出它的语义。
+        threshold=SENTINEL_UNUSED_BOUNDARY,
         unit="小时",
         calculation=(
-            f"已产生调休额度 {earned:g}h，已调休 {used:g}h；观察日 {as_of.isoformat()}，"
+            f"已产生调休额度 {earned:g}h，已调休 {used:g}h"
+            f"（判定边界 {SENTINEL_UNUSED_BOUNDARY:g}h：>0 即视为已消化）；"
+            f"观察日 {as_of.isoformat()}，"
+            f"季度剩余 {remaining} 天"
             f"季度剩余 {remaining} 天"
             + (
                 f" < 阈值 {limit:g} 天 ⇒ 临期未消化"

@@ -134,6 +134,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/attendance/anomalies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 考勤域待归因异常清单（Sprint 9.5 批次 C4）
+         * @description 列出当前 **active kg_version** 内的全部缺卡 / 缺勤记录（谁、哪天、什么状态），供异常归因子页挑选「要给谁归因」。
+         *
+         *     **空列表是正常结果**：这份图里没人缺卡 —— 与合规扫描不同，那边「扫不到事实」要显式报 409，这边「没有异常」正是想听到的答案。
+         *
+         *     **错误语义**：无 active 版本 → **409** `KG_VERSION_NOT_ACTIVE`；Neo4j 不可用 → **501** `NOT_IMPLEMENTED`；跨租户 → **403** `FORBIDDEN`。
+         */
+        get: operations["listAttendanceAnomalies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attendance/anomalies/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 考勤异常归因（Sprint 9.5 批次 C4）
+         * @description 给「某员工某天缺卡」做归因：跨 **HR / 门禁 / 工单 / 定位** 四个系统取证，按确定性权重给出置信度与结论。
+         *
+         *     **置信度不出 LLM**：`confidence = Σ命中权重 / Σ全部权重`，每个 `weight` 都是常量（出差审批 0.35 / 工单闭环 0.30 / 定位一致 0.22 / 门禁对比 0.13），命中与否由图谱证据说话 —— 不是模型的自我感觉。
+         *
+         *     **未命中的原因照样返回**（`matched=false`）：演示时要能说清「哪一项没对上」，只给命中项会让用户误以为证据齐备。
+         *
+         *     **`date` 缺省**取该员工的第一个异常日（与 CLI 同口径）。
+         *
+         *     **错误语义**：员工不在图上 / 该日没有异常 → **404** `NOT_FOUND`（**不**返回零证据结果冒充「不成立」）；无 active 版本 → **409**；Neo4j 不可用 → **501**。
+         */
+        get: operations["explainAttendanceAnomaly"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/attendance/compliance/scan": {
         parameters: {
             query?: never;
@@ -1008,6 +1060,22 @@ export interface components {
          *         }
          *       ],
          *       "kg_version": "20260320T1430Z-01H9X9ABCDEF",
+         *       "reasoning_path": [
+         *         {
+         *           "origin": "graph",
+         *           "relation": "HAS_POSITION",
+         *           "source": {
+         *             "entity_type": "EMPLOYEE",
+         *             "id": "EMPLOYEE:E001",
+         *             "name": "张伟"
+         *           },
+         *           "target": {
+         *             "entity_type": "POSITION",
+         *             "id": "POSITION:售后工程师",
+         *             "name": "售后工程师"
+         *           }
+         *         }
+         *       ],
          *       "refused": false,
          *       "route": "m3_graphqa",
          *       "token_usage": {
@@ -1051,6 +1119,11 @@ export interface components {
              */
             kg_version: string;
             /**
+             * Reasoning Path
+             * @description 多跳推理路径（proposal §5.5）：「问句 → 定位实体 → 沿关系跳转 → 命中的条款/事实」的**逐跳链**，每一跳带起点 / 终点实体、关系类型与该跳来源。**可空语义（与 C2 `causes` 同一口径，二者语义相反，不许混用）**：`null` = **未产出**（拒答分支不给路径——路径是证据链，拒答时返回它会让前端误以为答案有据可依，与 `citations = []` 同一条纪律）；`[]` = **检索了但零命中**（问句没在本轮子图里定位到锚点实体，或锚点沿关系走不到任何条款 / 事实节点），**禁止**填示例路径充数。
+             */
+            reasoning_path?: components["schemas"]["ReasoningPathHop"][] | null;
+            /**
              * Refusal Reason
              * @description 仅 `refused = true` 时非空
              */
@@ -1069,6 +1142,162 @@ export interface components {
             /** @description LLM token 用量；拒答分支未调用 LLM、或 LLM 未返回 usage 时为 `null` */
             token_usage?: components["schemas"]["TokenUsage"] | null;
             /** Trace Id */
+            trace_id: string;
+        };
+        /**
+         * AnomalyCaseItem
+         * @description 一条待归因的异常（谁 / 哪天 / 什么状态）。
+         * @example {
+         *       "date": "2026-10-16",
+         *       "employee_id": "E001",
+         *       "employee_name": "张伟",
+         *       "status": "absent"
+         *     }
+         */
+        AnomalyCaseItem: {
+            /**
+             * Date
+             * @description 异常日（ISO 日期）
+             */
+            date: string;
+            /**
+             * Employee Id
+             * @description 员工工号（如 `E001`）
+             */
+            employee_id: string;
+            /**
+             * Employee Name
+             * @description 员工姓名
+             */
+            employee_name: string;
+            /**
+             * Status
+             * @description 考勤状态：`absent`（缺勤）/ `missing_check_in`（缺卡）
+             */
+            status: string;
+        };
+        /**
+         * AnomalyExplainResponse
+         * @description ``GET /attendance/anomalies/explain`` 响应：一条异常的归因结论。
+         *
+         *     **未命中的原因照样返回**（``matched=false``）：演示时要能说清「哪一项没对上」，
+         *     只给命中项会让用户误以为证据齐备。
+         *
+         *     ``policy_refs`` 是结论文案（如「自动补卡」）的**制度出处**——话术不是硬编码的，
+         *     取不到时该数组为空，此时**不得**声称结论有制度依据。
+         * @example {
+         *       "action": "系统自动补卡",
+         *       "anomaly_type": "absent",
+         *       "causes": [
+         *         {
+         *           "code": "trip_approved",
+         *           "evidence": [
+         *             "BUSINESS_TRIP:BT-2026-0017"
+         *           ],
+         *           "matched": true,
+         *           "reason": "出差审批覆盖当日（武汉 10-16~10-18）",
+         *           "weight": 0.35
+         *         }
+         *       ],
+         *       "conclusion": "外勤出勤成立",
+         *       "confidence": 1,
+         *       "date": "2026-10-16",
+         *       "employee_id": "E001",
+         *       "employee_name": "张伟",
+         *       "kg_version": "attendance-demo-v1",
+         *       "policy_refs": [
+         *         "document:doc:fieldwork-attendance-rules:L12"
+         *       ],
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
+         *     }
+         */
+        AnomalyExplainResponse: {
+            /**
+             * Action
+             * @description 建议动作（如「系统自动补卡」）
+             */
+            action: string;
+            /**
+             * Anomaly Type
+             * @description 异常类型（`absent` / `missing_check_in`）
+             */
+            anomaly_type: string;
+            /**
+             * Causes
+             * @description 原因排序（含未命中项）；置信度 = Σ命中权重 / Σ全部权重
+             */
+            causes: components["schemas"]["AffiliationCauseItem"][];
+            /**
+             * Conclusion
+             * @description 结论：`外勤出勤成立` / `证据不足，需人工复核` / `外勤出勤不成立`
+             */
+            conclusion: string;
+            /**
+             * Confidence
+             * @description 确定性加权置信度（**禁止 LLM 生成**）；0 表示证据零命中
+             */
+            confidence: number;
+            /**
+             * Date
+             * @description 被归因的异常日（ISO 日期）
+             */
+            date: string;
+            /**
+             * Employee Id
+             * @description 员工工号
+             */
+            employee_id: string;
+            /**
+             * Employee Name
+             * @description 员工姓名
+             */
+            employee_name: string;
+            /**
+             * Kg Version
+             * @description 归因所基于的图谱版本（只读 active 版本）
+             */
+            kg_version: string;
+            /**
+             * Policy Refs
+             * @description 结论文案的制度出处；为空表示**没有**制度依据，不得声称
+             */
+            policy_refs: string[];
+            /**
+             * Trace Id
+             * @description 本次请求的 trace_id
+             */
+            trace_id: string;
+        };
+        /**
+         * AnomalyListResponse
+         * @description ``GET /attendance/anomalies`` 响应：当前图谱里有哪些缺卡 / 缺勤待归因。
+         * @example {
+         *       "items": [],
+         *       "kg_version": "attendance-demo-v1",
+         *       "total": 12,
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
+         *     }
+         */
+        AnomalyListResponse: {
+            /**
+             * Items
+             * @description 异常清单（按工号 / 日期排序）
+             */
+            items: components["schemas"]["AnomalyCaseItem"][];
+            /**
+             * Kg Version
+             * @description 扫描所基于的图谱版本（只读 active 版本）
+             */
+            kg_version: string;
+            /**
+             * Total
+             * @description 异常条数（与 `len(items)` 一致）
+             */
+            total: number;
+            /**
+             * Trace Id
+             * @description 本次请求的 trace_id
+             */
             trace_id: string;
         };
         /**
@@ -2202,6 +2431,53 @@ export interface components {
             version: string;
         };
         /**
+         * ReasoningPathHop
+         * @description 推理路径上的**一跳**：起点 --关系--> 终点 + 该跳来源。**刻意没有任何数值字段**（守「数值不出 LLM」）：路径只承载检索到的节点与边，数值结论由规则引擎（批次 C1）出，LLM 只出措辞（批次 D2）。
+         */
+        ReasoningPathHop: {
+            /**
+             * Evidence
+             * @description 原文出处（仅 ``origin = document`` 时有值）：``chunk:<chunk_id>``；其余来源为 ``null``（**不**留空串冒充有出处）
+             */
+            evidence?: string | null;
+            /**
+             * Origin
+             * @description 该跳的来源（证据强度取最高）
+             * @enum {string}
+             */
+            origin: "cypher" | "graph" | "document";
+            /**
+             * Relation
+             * @description 关系类型（图上真实的 ``relation_type``）。**不**做契约枚举投影——投影会把域关系一律兜底成 ``MENTIONS``（L7 同族失真）
+             */
+            relation: string;
+            /** @description 起点实体 */
+            source: components["schemas"]["ReasoningPathNode"];
+            /** @description 终点实体 */
+            target: components["schemas"]["ReasoningPathNode"];
+        };
+        /**
+         * ReasoningPathNode
+         * @description 推理路径上的一个实体（proposal §5.5）：三个要素齐全才叫「可核查」——``id``（能回查图谱）、``name``（人能看懂）、``entity_type``（知道落在哪类实体上）。
+         */
+        ReasoningPathNode: {
+            /**
+             * Entity Type
+             * @description 实体类型（`entity_type`）；节点缺该属性时为 `null`（**不**猜类型）
+             */
+            entity_type?: string | null;
+            /**
+             * Id
+             * @description 图谱节点 id（`Entity.id`），可回查 `GET /entities/{id}`
+             */
+            id: string;
+            /**
+             * Name
+             * @description 节点名称（`canonical_name`）；节点缺该属性时回落 ``id``，**严禁**编造一个看起来像名字的值
+             */
+            name: string;
+        };
+        /**
          * RuleValueItem
          * @description 一个**解析自制度文本**的规则值（含出处，可逐条核查）。
          * @example {
@@ -2598,6 +2874,145 @@ export interface operations {
             };
             /** @description 403 跨租户拒绝，两种成因：① `FORBIDDEN`（ADR-0003 §3.3）——请求资源 org_id 不符；② `KG_TENANT_LEAK`（ADR-0003 §4，Sprint 5 批次 B）——fail-closed 校验发现 active kg_version 内存在不属于当前 org 的节点，属数据质量事故伪装为正常结论，**不**降级为拒答（200） */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listAttendanceAnomalies: {
+        parameters: {
+            query?: {
+                /** @description 只看该员工（如 `E001`） */
+                employee_id?: string | null;
+            };
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnomalyListResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    explainAttendanceAnomaly: {
+        parameters: {
+            query: {
+                /** @description 员工工号（如 `E001`） */
+                employee_id: string;
+                /** @description 异常日（ISO）；缺省取该员工第一个异常日 */
+                date?: string | null;
+            };
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnomalyExplainResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 要归因的对象不存在（`NOT_FOUND`）：员工不在当前 active 版本内，或该员工在指定日期没有异常记录。**不**返回零证据的归因结果——那会被读成「系统判断他不成立」，而实际是根本没查到这个人 / 这一天（Sprint 9.5 批次 C4） */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
