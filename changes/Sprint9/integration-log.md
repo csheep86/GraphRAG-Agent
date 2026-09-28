@@ -1,4 +1,4 @@
-# Sprint 9 批次 A 集成日志（证据链）
+# Sprint 9 集成日志（证据链）
 
 > 2026-09-28 实跑（Windows / DeepSeek 真机 / SQLite）。
 
@@ -146,7 +146,71 @@ v2 的 chunk 引用纪律（chunk_id 必须逐字出现在 text_chunks、F3 引�
 只有**真跑一遍 Cypher**才暴露。教训：凡是"判据"，注释声称的语义必须有一条真机断言看着。
 现在这段 warning 就写在 `_temporal_view` 的 docstring 里，防止有人为了"对称"改回去。
 
-## 7. 迁移
+## 7. 真机体检（CP-T2 之后的「能力是否真的接上」复核）
+
+CP-T2 达成只证明**逻辑对**，不证明**接上了**。于是做了一次只读真机体检
+（¥0、不写库、不调 LLM），结果抓到两个「表/列存在、但没人写」的洞——
+这类洞的共同特点是**不报错，只安静降级**。
+
+新增两个脚本（都幂等 / 只读优先）：
+
+| 脚本 | 作用 |
+|---|---|
+| `scripts/probe_temporal_state.py` | 体检：迁移漂移 / 列落地 / 文档日期覆盖 / 策略与**仲裁判定** / 图上时态边；任一 FAIL ⇒ 退出码 1 |
+| `scripts/seed_expiry_policies.py` | 初始化 `relation_expiry_policies`（幂等，已存在不覆盖） |
+
+### 7.1 洞一：dev 库从未应用过迁移（已修）
+
+`alembic current` **为空**，而 head 是 `4e7759c33526`——库是 `create_all` 建出来的，
+`documents` 表**根本没有 `document_date` 列**（模型里却有）⇒ 读它的代码在
+开发态直接 `no such column`。
+
+**为什么没人发现**：测试用的是 `create_all` 建的**新库**（列齐全），
+于是「模型与库漂移」这件事被测试天然掩盖了。
+
+修：按不丢数据的路线对齐——`stamp 00f44b912817`（baseline 视为已应用）→
+`upgrade 7989c2c821da`（补列）→ `stamp 4e7759c33526`（`relation_expiry_policies`
+已由 `create_all` 建好，跳过建表）。现在 `current == head`。
+体检脚本第 1 项就是这条：**库没 stamp、或版本不等于 head ⇒ FAIL**。
+
+### 7.2 洞二：`relation_expiry_policies` 0 行 ⇒ L1 仲裁永不生效（已补）
+
+真机：策略表 **0 行** ⇒ `load_expiry_policies` 走保守默认 `append_only`
+⇒ **L1 不封任何旧边**。「法定代表人换了人，旧边被封」在真实租户下根本不会发生。
+
+对照讽刺的一点：PoC 与 `test_temporal_track_s` 之所以 3/3，是因为它们**自己插了
+策略行**——缺的从来不是逻辑，是把逻辑接上的那一步初始化。
+
+补：`seed_expiry_policies.py` 按 ADR-0005 §6 L1 落三类行
+（`LEGAL_REP` / `REGISTERED_AT` = `single_current`，`'*'` = `append_only` 兜底）。
+现已写入默认租户，体检转绿且**断言的是仲裁函数本身**（`judge('LEGAL_REP') is True`），
+不是数行数——数行会放过「类型名拼错」这种同样安静的失败。
+
+### 7.3 洞三：`document_date` 全库 0 条（**未修，需决策**）
+
+`documents` 13 条，**`document_date` 非空 = 0**。连锁后果：
+
+- 抽取侧：`{{document_date}}` 恒渲染 `unknown` ⇒ R4 兜底源在真实数据上从未生效
+  （批次 A 真机那次 5/5 覆盖，日期是**手工给**的）；
+- 问答侧：`as_of_date` 恒 `unknown` ⇒ 答案模板只能说「截至日期未知」。
+
+根因：**没有任何写入路径**。全项目只有两处**读**（`registry.py`、`agents.py`），
+`backend/scripts` 里 0 处写；模型注释写的是「本期由集成侧写入，REST 上传暂不接收」。
+
+⇒ 这是**需要拍板**的一项（涉及契约 / 前端表单，不擅自跨端做），候选方案：
+甲 上传接口加可选字段（进契约 + 前端可选日期输入）；
+乙 后台任务从正文/文件名解析后回填（可人工覆盖）；
+丙 维持只靠集成侧导入（真实用户路径继续降级）。
+
+### 7.4 顺带看到的一个事实
+
+真机 active kg_version = `attendance-demo-v1`（考勤域），全库 4239 条边里
+**只有 15 条带 `valid_from`**，且集中在 `LEGAL_REP` / `REGISTERED_AT` /
+`HAS_FINANCIAL_INDICATOR` 这三类**披露域**类型上。⇒ 时态治理在当前演示域
+几乎没有受力点：不是逻辑问题，是**域不匹配**。切换演示域或给考勤域定义
+「唯一当前」的关系类型，是让这项能力可见的另一条路（同样需决策，未擅动）。
+
+## 8. 迁移
 
 `7989c2c821da_add_documents_document_date_adr_0005_l0.py`：autogenerate 后人工审阅，
 仅一条 `add_column`，`downgrade` 对称。空库 `upgrade head` 通过，
