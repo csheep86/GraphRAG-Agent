@@ -1,10 +1,6 @@
 import { create } from "zustand";
 
-import {
-  listDocuments,
-  reprocessDocument,
-  uploadDocument,
-} from "@/api/documents";
+import { listDocuments, uploadDocument } from "@/api/documents";
 import { inferFileType } from "@/lib/file";
 import type { DocumentListItem, DocumentStatus } from "@/types/mock";
 
@@ -26,7 +22,6 @@ type DocumentStore = {
   setStatus: (status: StatusFilter) => void;
   setUploadOpen: (open: boolean) => void;
   upload: (file: File, documentDate?: string) => Promise<void>;
-  reprocess: (documentId: string) => Promise<void>;
 };
 
 function nowStamp(): string {
@@ -133,28 +128,6 @@ export const useDocumentStore = create<DocumentStore>((set, get) => ({
         uploading: false,
         error: error instanceof Error ? error.message : "上传失败，请重试",
       });
-    }
-  },
-
-  reprocess: async (documentId) => {
-    set((state) => ({
-      items: state.items.map((item) =>
-        item.id === documentId
-          ? { ...item, status: "processing", entity_count: null }
-          : item,
-      ),
-    }));
-
-    try {
-      await reprocessDocument(documentId);
-      scheduleProgress(get, set, documentId);
-    } catch (error) {
-      set((state) => ({
-        error: error instanceof Error ? error.message : "重新处理失败",
-        items: state.items.map((item) =>
-          item.id === documentId ? { ...item, status: "failed" } : item,
-        ),
-      }));
     }
   },
 }));

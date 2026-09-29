@@ -12,7 +12,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   selectActiveMessages,
   selectActiveSession,
@@ -22,7 +21,6 @@ import {
 export function ChatPanel() {
   const session = useChatStore(selectActiveSession);
   const messages = useChatStore(selectActiveMessages);
-  const messagesLoading = useChatStore((state) => state.messagesLoading);
   const sending = useChatStore((state) => state.sending);
   const selectEvidence = useChatStore((state) => state.selectEvidence);
   // 批次 C：对话区引用条目 → 打开原文抽屉
@@ -43,8 +41,10 @@ export function ChatPanel() {
           <CardTitle className="truncate">
             {session?.title ?? "新的会话"}
           </CardTitle>
+          {/* R18：会话只存在于本机（后端无会话端点，见 use-chat-store.initialize
+              的注释）。这里如实标明范围，不显示任何"文档数"之类的编造计数。 */}
           <p className="truncate text-[11px] text-muted-foreground">
-            基于 {session?.doc_count ?? 0} 份文档 · 图谱增强检索
+            本机会话 · 刷新后清空 · 图谱增强检索
           </p>
         </div>
 
@@ -77,13 +77,7 @@ export function ChatPanel() {
         ref={scrollRef}
         className="min-h-0 flex-1 overflow-y-auto scrollbar-subtle px-5 py-5"
       >
-        {messagesLoading ? (
-          <div className="flex flex-col gap-4">
-            <Skeleton className="h-20 w-full rounded-xl" />
-            <Skeleton className="h-32 w-full rounded-xl" />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4">
             {messages.map((message) => (
               <ChatMessageItem
                 key={message.id}
@@ -109,7 +103,6 @@ export function ChatPanel() {
               </div>
             ) : null}
           </div>
-        )}
       </div>
 
       <ChatComposer />

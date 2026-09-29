@@ -24,7 +24,7 @@ export function DocumentTable() {
   const items = useDocumentStore((state) => state.items);
   const loading = useDocumentStore((state) => state.loading);
   const initialized = useDocumentStore((state) => state.initialized);
-  const reprocess = useDocumentStore((state) => state.reprocess);
+
 
   const showSkeleton = loading || !initialized;
 
@@ -103,10 +103,13 @@ export function DocumentTable() {
                         </Link>
                       </Button>
 
+                      {/* 契约无 `POST /documents/{id}/reprocess`（R18）：此前点了会走 Mock
+                          空动作（看着成功、实则什么都没做）。按 A16 改为**明示未实现**。 */}
                       <Button
                         variant="outline"
                         size="xs"
-                        onClick={() => void reprocess(document.id)}
+                        disabled
+                        title="功能预留：后端尚未实现「重新处理」"
                       >
                         <RefreshCw className="size-3.5" />
                         重新处理

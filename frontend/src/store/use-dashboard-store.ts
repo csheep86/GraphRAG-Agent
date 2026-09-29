@@ -9,10 +9,11 @@ type DashboardStore = {
   /**
    * 首页 KPI 数据源。
    *
-   * ⚠️ **刻意不用 `getMetricOverview()`**：它打的是 `/api/v1/metrics/overview`，
+   * ⚠️ **刻意不消费曾经存在的 `getMetricOverview()`**（打 `/api/v1/metrics/overview`）：
    * 该端点**不在契约内**，因此 `shouldMock()` 对它恒返回 true
    * （`api/client.ts:68-71`）——即使 `USE_MOCK=false` 也仍然是 Mock 常量。
    * 首页拿它出数字等于展示假数据，与 A16「诚实可核」冲突。
+   * ⇒ 该函数与其 Mock 常量已随 R18 **整体删除**，避免再次被拿来填数。
    *
    * 改用契约内已实装的 `GET /api/v1/graph/overview`（`entity_count` /
    * `relation_count` / `doc_count` / `kg_version`），关 Mock 即为真值。

@@ -3,7 +3,6 @@ import type {
   DocumentListQuery,
   DocumentListResponse,
   DocumentListItem,
-  ReprocessResponse,
 } from "@/types/mock";
 
 import { delay, mockId, request, shouldMock } from "./client";
@@ -143,21 +142,8 @@ export async function getDocumentChunk(
   );
 }
 
-/** 重新处理。契约缺失：需后端补 `POST /api/v1/documents/{id}/reprocess` */
-export async function reprocessDocument(
-  documentId: string,
-): Promise<ReprocessResponse> {
-  if (shouldMock("/api/v1/documents/{id}/reprocess")) {
-    await delay(420);
-    return {
-      task_id: mockId("task"),
-      status: "processing",
-      trace_id: mockId("trace"),
-    };
-  }
-
-  return request<ReprocessResponse>(
-    `/api/v1/documents/${documentId}/reprocess`,
-    { method: "POST" },
-  );
-}
+/**
+ * ⚠️ 这里**不再**提供 `reprocessDocument`（原打 `POST /api/v1/documents/{id}/reprocess`，
+ * 契约外 ⇒ `shouldMock()` 恒 true ⇒ 点了是 Mock 空动作：UI 显示成功、实际什么都没做）。
+ * 文档表的「重新处理」按钮已改为 `disabled` 并明示"后端尚未实现"（R18）。
+ */

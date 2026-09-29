@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import { ApiError } from "@/api/client";
 import { getDocumentChunk } from "@/api/documents";
-import { listMessages, listSessions, sendQuestion } from "@/api/qa";
+import { sendQuestion } from "@/api/qa";
 import type { ChatMessage, ChatSession, Citation } from "@/types/mock";
 import type { components } from "@/types/api";
 
@@ -26,8 +26,6 @@ type ChatStore = {
   messagesBySession: Record<string, ChatMessage[]>;
   activeSessionId: string | null;
 
-  sessionsLoading: boolean;
-  messagesLoading: boolean;
   sending: boolean;
 
   /** 当前在右侧「引用证据」面板中聚焦的 assistant 消息 */
@@ -41,8 +39,8 @@ type ChatStore = {
   chunkLoading: boolean;
   chunkError: ChunkViewerError | null;
 
-  initialize: () => Promise<void>;
-  selectSession: (sessionId: string) => Promise<void>;
+  initialize: () => void;
+  selectSession: (sessionId: string) => void;
   createSession: () => void;
   send: (question: string) => Promise<void>;
   selectEvidence: (messageId: string) => void;
@@ -66,8 +64,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   messagesBySession: {},
   activeSessionId: null,
 
-  sessionsLoading: true,
-  messagesLoading: false,
   sending: false,
 
   evidenceMessageId: null,
@@ -77,40 +73,32 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   chunkLoading: false,
   chunkError: null,
 
-  initialize: async () => {
-    if (get().sessions.length > 0) return;
-
-    set({ sessionsLoading: true });
-    const sessions = await listSessions();
-    set({
-      sessions,
-      sessionsLoading: false,
-      activeSessionId: sessions[0]?.id ?? null,
-    });
-
-    const first = sessions[0];
-    if (first) {
-      set({ messagesLoading: true });
-      const messages = await listMessages(first.id);
-      set((state) => ({
-        messagesBySession: { ...state.messagesBySession, [first.id]: messages },
-        messagesLoading: false,
-      }));
-    }
+  /**
+   * **本地会话初始化**（R18）——**不发起任何服务端调用**。
+   *
+   * 原实现打 `GET /api/v1/qa/sessions`：该端点**不在契约内** ⇒ `shouldMock()` 恒
+   * 返回 true（`api/client.ts:68-71`）⇒ 即使 `NEXT_PUBLIC_USE_MOCK=false`，屏上的
+   * 历史会话也仍是 Mock 常量。现已删除该调用，会话列表改由本 store **本地维护**。
+   *
+   * ⇒ 列表里的每一条都对应一次**真实**发生过的本地问答（答案是
+   *   `POST /api/v1/agent/query` 的真实返回）；**首次进入列表为空是预期行为**——
+   *   后端没有会话端点，且 `qa_logs` 按脱敏纪律只存 `question_hash` /
+   *   `answer_hash` 不存原文，服务端不存在"历史会话"的真相源。
+   */
+  initialize: () => {
+    set({ sessions: [], activeSessionId: null });
   },
 
-  selectSession: async (sessionId) => {
+  selectSession: (sessionId) => {
     if (get().activeSessionId === sessionId) return;
 
-    set({ activeSessionId: sessionId, evidenceMessageId: null });
-
-    if (get().messagesBySession[sessionId]) return;
-
-    set({ messagesLoading: true });
-    const messages = await listMessages(sessionId);
     set((state) => ({
-      messagesBySession: { ...state.messagesBySession, [sessionId]: messages },
-      messagesLoading: false,
+      activeSessionId: sessionId,
+      evidenceMessageId: null,
+      messagesBySession: {
+        ...state.messagesBySession,
+        [sessionId]: state.messagesBySession[sessionId] ?? [],
+      },
     }));
   },
 
@@ -120,7 +108,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       id: sessionId,
       title: "新的会话",
       updated_at_label: "刚刚",
-      doc_count: 0,
     };
 
     set((state) => ({
@@ -144,7 +131,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         id: sessionId,
         title: trimmed.slice(0, 14),
         updated_at_label: "刚刚",
-        doc_count: 0,
       };
       set((state) => ({
         sessions: [created, ...state.sessions],

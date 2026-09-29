@@ -5,7 +5,6 @@ import { Plus, Search } from "lucide-react";
 
 import { Card, CardAction, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/use-chat-store";
 
@@ -14,7 +13,6 @@ export function SessionList() {
   const activeSessionId = useChatStore((state) => state.activeSessionId);
   const selectSession = useChatStore((state) => state.selectSession);
   const createSession = useChatStore((state) => state.createSession);
-  const sessionsLoading = useChatStore((state) => state.sessionsLoading);
 
   const [keyword, setKeyword] = useState("");
 
@@ -52,47 +50,50 @@ export function SessionList() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto scrollbar-subtle px-3 pb-3">
-        {sessionsLoading
-          ? Array.from({ length: 5 }).map((_, index) => (
-              <Skeleton key={index} className="h-12 w-full rounded-lg" />
-            ))
-          : visible.map((session) => {
-              const active = session.id === activeSessionId;
+        {visible.map((session) => {
+          const active = session.id === activeSessionId;
 
-              return (
-                <button
-                  key={session.id}
-                  type="button"
-                  onClick={() => void selectSession(session.id)}
-                  aria-current={active ? "true" : undefined}
-                  className={cn(
-                    "rounded-lg px-3 py-2.5 text-left transition-colors",
-                    active
-                      ? "bg-accent ring-1 ring-primary/25 ring-inset"
-                      : "hover:bg-foreground/[0.04]",
-                  )}
-                >
-                  <p
-                    className={cn(
-                      "truncate text-[13px]",
-                      active
-                        ? "font-medium text-foreground"
-                        : "text-foreground/85",
-                    )}
-                  >
-                    {session.title}
-                  </p>
-                  <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                    {session.updated_at_label}
-                  </p>
-                </button>
-              );
-            })}
+          return (
+            <button
+              key={session.id}
+              type="button"
+              onClick={() => selectSession(session.id)}
+              aria-current={active ? "true" : undefined}
+              className={cn(
+                "rounded-lg px-3 py-2.5 text-left transition-colors",
+                active
+                  ? "bg-accent ring-1 ring-primary/25 ring-inset"
+                  : "hover:bg-foreground/[0.04]",
+              )}
+            >
+              <p
+                className={cn(
+                  "truncate text-[13px]",
+                  active ? "font-medium text-foreground" : "text-foreground/85",
+                )}
+              >
+                {session.title}
+              </p>
+              <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                {session.updated_at_label}
+              </p>
+            </button>
+          );
+        })}
 
-        {!sessionsLoading && visible.length === 0 ? (
-          <p className="px-3 py-6 text-center text-[11px] text-muted-foreground">
-            没有匹配的会话
-          </p>
+        {/* 首次进入列表为空是**预期**（后端无会话端点，见 use-chat-store 注释）：
+            如实说明，不用假会话填充占位。 */}
+        {visible.length === 0 ? (
+          <div className="px-3 py-6 text-center">
+            <p className="text-[11px] text-muted-foreground">
+              {keyword.trim() ? "没有匹配的会话" : "暂无会话"}
+            </p>
+            {keyword.trim() ? null : (
+              <p className="mt-1.5 text-[11px] text-muted-foreground/80">
+                提问后在此生成 · 仅保存在本机，刷新后清空
+              </p>
+            )}
+          </div>
         ) : null}
       </div>
     </Card>

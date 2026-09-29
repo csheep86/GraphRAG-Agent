@@ -68,56 +68,15 @@ export type EntityRelation = components["schemas"]["EntityRelation"];
 export type EntityDetail = components["schemas"]["EntityDetail"];
 
 /* --------------------------------------------------------------------------
- * 工作台概览（p01）—— 契约缺失，需后端补 GET /api/v1/metrics/overview
- * ------------------------------------------------------------------------ */
-
-export type MetricOverview = {
-  /** 已处理文档数 */
-  processed_documents: number;
-  /** 已处理文档数环比（%），正数为上升 */
-  processed_documents_delta_pct: number;
-  /** KG 实体总数 */
-  kg_entities: number;
-  /** 已建立的实体关系总数 */
-  kg_relations: number;
-  /** 今日回答次数 */
-  today_answers: number;
-  /** 今日活跃用户数 */
-  active_users: number;
-  /** 回答成功率（%） */
-  answer_success_rate: number;
-  /** 回答成功率环比（%） */
-  answer_success_rate_delta_pct: number;
-};
-
-/* --------------------------------------------------------------------------
- * 文档管理 —— 仅「重新处理」仍为 Mock 预留（后端未实装 POST /api/v1/documents/{id}/reprocess）
- * ------------------------------------------------------------------------ */
-
-/** 「重新处理」响应；契约缺失，需后端补 POST /api/v1/documents/{id}/reprocess */
-export type ReprocessResponse = {
-  task_id: string;
-  status: DocumentStatus;
-  trace_id: string;
-};
-
-/* --------------------------------------------------------------------------
- * 问答历史（p01 最近问答历史）
- * —— 契约缺失，需后端补 GET /api/v1/qa/history
- * ------------------------------------------------------------------------ */
-
-export type QaHistoryItem = {
-  id: string;
-  question: string;
-  /** 展示用相对时间文案（Mock 直接返回，避免时区换算） */
-  asked_at_label: string;
-  citation_count: number;
-};
-
-/* --------------------------------------------------------------------------
  * 知识问答（p03）
- * —— 契约 `POST /api/v1/agent/query` 明确为「单轮、不做多轮上下文」，
- *    与设计稿的多轮会话形态冲突，故会话相关结构全部为 Mock 预留。
+ * —— 契约 `POST /api/v1/agent/query` 为「单轮、不做多轮上下文」，而 UI 是多轮
+ *    会话形态 ⇒ **会话只存在于本地**（`store/use-chat-store.ts`）。后端无会话端点，
+ *    且 `qa_logs` 按脱敏纪律只存哈希、不存问答原文 ⇒ 服务端不存在"历史会话"的
+ *    真相源（详见 R18）。**禁止**再用 Mock 会话充当历史。
+ *
+ *    ⚠️ 已随 R18 删除 `MetricOverview`（`/metrics/overview`）、`QaHistoryItem`
+ *    （`/qa/history`）、`ReprocessResponse`（`POST /documents/{id}/reprocess`）
+ *    三个契约外类型——留着只会诱导下一个人拿它们往屏幕上填数字。
  * ------------------------------------------------------------------------ */
 
 export type ChatRole = "user" | "assistant";
@@ -127,8 +86,7 @@ export type ChatSession = {
   title: string;
   /** 展示用相对时间文案 */
   updated_at_label: string;
-  /** 检索所覆盖的文档数（p03 会话副标题「基于 N 份文档」）；契约缺失 */
-  doc_count: number;
+
 };
 
 export type ChatMessage = {

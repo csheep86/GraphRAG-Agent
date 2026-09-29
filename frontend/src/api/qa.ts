@@ -1,34 +1,22 @@
 import type { components } from "@/types/api";
-import type {
-  ChatMessage,
-  ChatSession,
-  SendQuestionPayload,
-} from "@/types/mock";
+import type { ChatMessage, SendQuestionPayload } from "@/types/mock";
 
 import { delay, request, shouldMock } from "./client";
-import { MOCK_MESSAGES, MOCK_SESSIONS, buildMockAnswer } from "./mock/qa";
+import { buildMockAnswer } from "./mock/qa";
 
-/** 会话列表。契约缺失：需后端补 `GET /api/v1/qa/sessions` */
-export async function listSessions(): Promise<ChatSession[]> {
-  if (shouldMock("/api/v1/qa/sessions")) {
-    await delay(200);
-    return MOCK_SESSIONS;
-  }
-
-  return request<ChatSession[]>("/api/v1/qa/sessions");
-}
-
-/** 会话消息。契约缺失：需后端补 `GET /api/v1/qa/sessions/{id}` */
-export async function listMessages(
-  sessionId: string,
-): Promise<ChatMessage[]> {
-  if (shouldMock("/api/v1/qa/sessions/{id}")) {
-    await delay(260);
-    return MOCK_MESSAGES[sessionId] ?? [];
-  }
-
-  return request<ChatMessage[]>(`/api/v1/qa/sessions/${sessionId}`);
-}
+/**
+ * ⚠️ 这里**不再**提供 `listSessions` / `listMessages`（原打 `GET /api/v1/qa/sessions`，
+ * 契约外 ⇒ `shouldMock()` 恒 true ⇒ 关 Mock 也静默返回 `MOCK_SESSIONS`，
+ * 屏上的会话列表是编的）。
+ *
+ * 会话列表改由 `store/use-chat-store.ts` **本地维护**（见 R18）：列表里的每一条
+ * 都是用户在本浏览器里真的问过、`POST /api/v1/agent/query` 真的答过的记录，
+ * 不是服务端"历史会话"。
+ *
+ * **为什么不等后端补会话表**：后端 `qa_logs`（S8 已建已写）按脱敏纪律只存
+ * `question_hash` / `answer_hash`，**不存原文** ⇒ 补一个 `/qa/sessions` 端点也
+ * 重建不出会话内容。真要做服务端会话，需先裁决"是否明文留存问答"这一产品/合规问题。
+ */
 
 /**
  * 契约响应 → 前端会话消息的适配器。
