@@ -74,13 +74,18 @@
 
 ### 交接时的其他欠账（**来自注意力检查，未动手**）
 
-- [ ] **四个 MVP 目录没有"只读"标注**（**未做，且标注前必须先核实**）：
-      `bridge_web_demo` / `mineru_mvp` / `langchain_mvp` / `langextract_mvp`（另有 `demo/`，
-      是否同批待查）。来源结论是"均已转正进 `backend/app/`"（细则见
-      `integration-log.md` §11.3 表）——**但这是转述，未经本轮核实**。
-      ⚠️ **动手前必须逐个核实**是否真的已转正 / 有无代码仍在读这些目录：
-      核实不实就写"已转正"标注，等于往仓库里添一条**新的假声明**，
-      比不标注更糟（参照下面那条 `tests/` 的教训）。
+- [x] **四个 MVP 目录标注（2026-09-29 已做，且核实**推翻**了原结论的一半）**：
+      原结论"均已转正进 `backend/app/`、目录里没有说明"——**"已转正可忽略"这部分不实**。
+      实测引用关系（grep 得出）：`backend/scripts/import_to_neo4j.py:56` 默认输入
+      = `bridge_web_demo/output.json`；`backend/app/services/parsing/mineru.py`、
+      `parsing/page_index.py`、`extraction/langextract.py` 均写明"对齐 xxx_mvp 实测口径"；
+      `backend/tests/` 三个测试直接引用这两个路径（产物未入库 ⇒ CI 上 skip）；
+      链路 `mineru_mvp → bridge_web_demo → langchain_mvp`（`kg_tools.py:32`）。
+      ⇒ **不能标"废弃"**，那样会诱导人删掉 `import_to_neo4j` 的默认数据源。
+      **处置**：`README.md` 四行描述补全 + 表格后加一段「谁在消费它」引用表与警示；
+      另补 `demo/` 行（**活跃**演示语料，与 MVP 性质不同，勿混为一谈）。
+      **教训（与 `tests/` 那条同源）**：目录名给人的印象（"像 MVP 遗留"）不是证据，
+      grep 出来的引用才是。两次都是先核实才避开了写入假声明。
 - [x] **根 `tests/` 空壳（2026-09-29 已处置，且**推翻了"删"的选项**）**：起初判断是垃圾、
       打算删——核实后发现 `docs/03-prd.md:249` 与 `specs/_template/tasks.md:15,23`
       都把它定为**规划落点**，`tests/unit|integration|e2e` 至今仍按此分层下发任务

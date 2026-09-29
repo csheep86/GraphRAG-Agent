@@ -43,15 +43,32 @@
 | `contracts/` | API 契约（`openapi.yaml`），前后端共同遵守的唯一接口事实源 |
 | `prompts/` | LLM Prompt 模板，带版本号（如 `kg_qa_v1.md`），只增版本不改历史 |
 | `changes/` | 变更工作目录：每个批次一个 `changes/Sprint<N>.<M>/`，内含 SDD 三件套（`proposal.md` / `design.md` / `tasks.md`）与联调证据（`integration-log.md` + 探针脚本 + 日志）。**工作期不入库**，批次收尾归档为 `changes/archive/<日期>-Sprint<N>.<M>/` 并 `git add`（**只归档 `.md` 与 `.py`**，`*.log` / `*.pyc` 不入库） |
-| `mineru_mvp/` | MinerU 解析 MVP：`input/` 放待解析文件，`output/` 存解析结果 |
-| `langextract_mvp/` | LangExtract 抽取 MVP，`output/` 存抽取结果 |
-| `bridge_web_demo/` | Web 桥接演示 |
-| `langchain_mvp/` | LangChain 编排 MVP |
+| `demo/` | **活跃**演示语料与配置：`attendance/` 含 `corpus/`（CSV + 政策文档）、`mapping.yaml`、`ontology_schema.json`、`generate_corpus.py` |
+| `mineru_mvp/` | MinerU 解析工具链（独立 uv 环境）：`input/` 放待解析文件，`output/` 存解析结果 |
+| `langextract_mvp/` | LangExtract 抽取工具链，`output/` 存抽取结果 |
+| `bridge_web_demo/` | Web 桥接演示：串联 `mineru_mvp` 产物 → LangExtract → `output.json` |
+| `langchain_mvp/` | LangChain ReAct 编排 MVP，默认读 `../bridge_web_demo/output.json` |
 | `tests/` | **规划**的分层测试落点（`unit/` 单元、`integration/` 集成、`e2e/` 端到端，`specs/_template/tasks.md` 至今仍按此分层下发任务）——**当前是空壳**（仅 3 个 `.gitkeep`）；测试实际位于 `backend/tests/`（pytest `testpaths` 指向它）。**勿删此目录**：它是 PRD 既定结构，删了就成了隐性违背；也**勿往里放测试**——放进去不会被收集 |
 | `.github/workflows/` | CI 工作流 |
 | `.codebuddy/rules/` | Harness 规则：`always-on/` 常驻、`model-decision/` 模型自主决策、`glob/` 按文件匹配触发 |
 | `.codebuddy/skills/` | 技能库：**13 个 Superpowers 开发流程技能（已启用）** + 6 个 `openspec-*` 技能（**已停用，仅留痕**，见决议 O-1）；`openspec-*` 的 `description` 已标注禁止调用 |
 | `.codebuddy/agents/` | 自定义代理定义 |
+
+> **⚠️ 关于四个 `*_mvp` / `*_demo` 目录（2026-09-29 核实更正）**
+>
+> 它们**不是废弃代码，也不是"已全部转正、可忽略"**：业务逻辑确实已进 `backend/app/`，
+> 但这些目录的**产物至今仍被下游消费**，删改会直接打断链路——
+>
+> | 目录 | 谁在消费它 |
+> |---|---|
+> | `mineru_mvp/output/` | `bridge_web_demo` 默认目录；`backend/app/services/parsing/mineru.py`、`page_index.py` 的口径以其实测为准；`backend/tests/test_page_index.py` 依赖 `output/complex_table`（**未入库**，CI 上必 skip） |
+> | `bridge_web_demo/output.json` | **`backend/scripts/import_to_neo4j.py` 的默认输入**；`backend/tests/test_import_to_neo4j.py`、`test_local_only_boundary.py` 引用（**未入库**） |
+> | `langextract_mvp/` | `backend/app/services/extraction/langextract.py` 对齐其实测口径 |
+> | `langchain_mvp/` | 读 `bridge_web_demo/output.json`（自身产出不再回灌后端） |
+>
+> ⇒ 改动前先确认下游引用；**不要因为"看着像 MVP 遗留"就删**。
+> 判据是 grep 出的事实，不是目录名给人的印象——这正是本项目反复踩的坑
+> （参见 `changes/Sprint9/integration-log.md` §10 / §11）。
 
 ## 开发约定（摘要）
 
