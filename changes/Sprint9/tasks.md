@@ -74,12 +74,20 @@
 
 ### 交接时的其他欠账（**来自注意力检查，未动手**）
 
-- [ ] **四个 MVP 目录没有"只读"标注**：`bridge_web_demo` / `mineru_mvp` / `langchain_mvp` /
-      `langextract_mvp` 均已转正进 `backend/app/`，但目录里**没有一行说明**（详见
-      `integration-log.md` §11.3 表），容易被误当成活代码改
-- [ ] **根 `tests/` 空壳与根 `README.md:50` 表述冲突**：实际只有 3 个 `.gitkeep`，
-      而 README 宣称它是 unit / integration / e2e 落点；`testpaths` 指向 `backend/tests`
-      ⇒ 永远收集不到。**删空壳或改 README，二选一**
+- [ ] **四个 MVP 目录没有"只读"标注**（**未做，且标注前必须先核实**）：
+      `bridge_web_demo` / `mineru_mvp` / `langchain_mvp` / `langextract_mvp`（另有 `demo/`，
+      是否同批待查）。来源结论是"均已转正进 `backend/app/`"（细则见
+      `integration-log.md` §11.3 表）——**但这是转述，未经本轮核实**。
+      ⚠️ **动手前必须逐个核实**是否真的已转正 / 有无代码仍在读这些目录：
+      核实不实就写"已转正"标注，等于往仓库里添一条**新的假声明**，
+      比不标注更糟（参照下面那条 `tests/` 的教训）。
+- [x] **根 `tests/` 空壳（2026-09-29 已处置，且**推翻了"删"的选项**）**：起初判断是垃圾、
+      打算删——核实后发现 `docs/03-prd.md:249` 与 `specs/_template/tasks.md:15,23`
+      都把它定为**规划落点**，`tests/unit|integration|e2e` 至今仍按此分层下发任务
+      ⇒ 删掉等于隐性违背 PRD。**改法**：`README.md` 表格行改为"规划落点 + 当前空壳 +
+      实际在 `backend/tests/` + 勿删勿放"，并新增 `tests/README.md` 写明
+      `testpaths` 相对 `backend/` 解析 ⇒ 放进去不会被收集。
+      **教训**：这条与上一条都说明——**体检报告的结论要回到源头核实再动手**
 - [ ] **`as_of` 未上 REST**（批次 B 唯一遗留）：按「暂无法匹配的功能先预留空位」铁律，
       不先造没有 UI 的参数
 

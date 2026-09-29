@@ -47,7 +47,7 @@
 | `langextract_mvp/` | LangExtract 抽取 MVP，`output/` 存抽取结果 |
 | `bridge_web_demo/` | Web 桥接演示 |
 | `langchain_mvp/` | LangChain 编排 MVP |
-| `tests/` | 测试：`unit/` 单元、`integration/` 集成、`e2e/` 端到端 |
+| `tests/` | **规划**的分层测试落点（`unit/` 单元、`integration/` 集成、`e2e/` 端到端，`specs/_template/tasks.md` 至今仍按此分层下发任务）——**当前是空壳**（仅 3 个 `.gitkeep`）；测试实际位于 `backend/tests/`（pytest `testpaths` 指向它）。**勿删此目录**：它是 PRD 既定结构，删了就成了隐性违背；也**勿往里放测试**——放进去不会被收集 |
 | `.github/workflows/` | CI 工作流 |
 | `.codebuddy/rules/` | Harness 规则：`always-on/` 常驻、`model-decision/` 模型自主决策、`glob/` 按文件匹配触发 |
 | `.codebuddy/skills/` | 技能库：**13 个 Superpowers 开发流程技能（已启用）** + 6 个 `openspec-*` 技能（**已停用，仅留痕**，见决议 O-1）；`openspec-*` 的 `description` 已标注禁止调用 |

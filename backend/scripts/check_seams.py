@@ -905,8 +905,16 @@ def main(argv: list[str]) -> int:
             "模式："
             + ("--strict（WARN 亦判失败）" if strict else "默认（未到期项记 WARN）")
         )
+        # 这句提示语自己就是一条纪律：它曾写「CI 下自动取 GITHUB_BASE_REF」，
+        # 而那正是假绿的来源——CI 上工作区恒干净，自动取来的基准若退化成 HEAD 就恒过。
+        # 现在基准必须**显式**给定，打印口径同步改成"显式 / 默认"，免得下一个人被旧措辞误导。
         print(
-            f"Prompt 判据基准：{base}（可由 --base 覆盖；CI 下自动取 GITHUB_BASE_REF）"
+            f"Prompt 判据基准：{base}"
+            + (
+                "（显式给定）"
+                if explicit
+                else "（默认值：本地比未提交改动；CI 下不该出现——见判据 5）"
+            )
         )
         current = ""
         for finding in findings:
