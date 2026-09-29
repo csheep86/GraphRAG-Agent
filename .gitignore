@@ -58,6 +58,8 @@ Thumbs.db
 *.db-journal
 # 彩排 / 切片脚本的临时产物与日志（本地证据，不入库）
 backend/reports/
-backend/_uvicorn.*
+# 运行日志：含带端口号的变体（`_uvicorn8000.out` 曾因只写 `_uvicorn.*` 而漏忽略）
+backend/_uvicorn*.out
+backend/_uvicorn.err
 frontend/_next.out
 frontend/_next.err

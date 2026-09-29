@@ -212,3 +212,8 @@ demo `.pill.*`），替掉散落 8 个文件的 `#f87171` / `#facc15`。
 - `/graph` 画布 500 节点投影在 2625 实体的版本里视觉密度高（节点挤在边缘），
   属布局/采样策略问题，**不属本批次**（纯前端观感批次未改图谱逻辑），
   留给 S10 证据链/多跳展示时一并看。
+- ⚠️ **本批次未覆盖、但同红线的一处遗留**：收尾时全量审计了前端调用 ↔ 契约覆盖
+  （19 个 `CONTRACT_COVERED_PATTERNS` vs `api/*.ts` 全部 `request()` 路径），
+  发现**首页之外仍有 3 处**调用落在契约外端点，关 Mock 也静默走 Mock
+  （`/qa/sessions` / `/qa/sessions/{id}` / `POST /documents/{id}/reprocess`）。
+  已登记为 `docs/dev-doc-status.md` **R18**，**处置待用户裁决**——本批次不擅自改。
