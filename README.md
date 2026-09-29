@@ -34,7 +34,7 @@
 
 | 目录 | 用途 |
 |---|---|
-| `frontend/` | Next.js 前端应用（前端开发 A 角色负责） |
+| `frontend/` | Next.js 前端应用（前端开发 A 角色负责）；**UI 设计基准 = `docs/demo.html`**（静态原型，侧栏深色 + 内容区浅色，见 `changes/Sprint9.8/`） |
 | `backend/` | Python 后端应用（后端开发 B 角色负责） |
 | `backend/app/` | 后端应用代码目标布局：`storage/`（存储抽象层）、`tasks/`（异步任务）、`prompts/`（Prompt 加载）。当前 `backend/src/backend/` 为 uv init 生成的初始布局，业务代码将迁移至 `backend/app/` |
 | `docs/` | 项目文档（架构说明、调研笔记、决策记录） |
