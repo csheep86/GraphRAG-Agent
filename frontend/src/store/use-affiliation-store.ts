@@ -67,8 +67,9 @@ type AffiliationStore = {
 /**
  * 轮询定时器句柄（模块级）。
  *
- * 全仓首个真轮询实现——documents 页那套是 `setTimeout` 假推进
- * （`use-document-store.ts` 的 `scheduleProgress`），真实链路不得沿用。
+ * 真轮询实现（documents 页那套 `setTimeout` 假推进已随 **R19 / Sprint 9.10**
+ * 改为 `pollStatus` 真轮询，本注释原先的对比说明已失效，勿再据此认为
+ * `use-document-store` 仍在假推进）。
  * 句柄放模块级是为了 `detect()` 重入时先掐掉上一轮，避免两个轮询叠加。
  */
 let pollTimer: ReturnType<typeof setTimeout> | null = null;

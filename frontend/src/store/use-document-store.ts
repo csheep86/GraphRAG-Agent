@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { listDocuments, uploadDocument } from "@/api/documents";
+import { getDocumentStatus, listDocuments, uploadDocument } from "@/api/documents";
 import { inferFileType } from "@/lib/file";
 import type { DocumentListItem, DocumentStatus } from "@/types/mock";
 
@@ -31,27 +31,40 @@ function nowStamp(): string {
 }
 
 /**
- * Mock 模式下模拟异步链路状态流转：
- * `pending → processing → completed`（M1 硬约束 H1）。
- * 真实后端接入后应改为轮询 `GET /documents/{id}/status`。
+ * 上传后真实轮询 GET /api/v1/documents/{id}/status（契约内）：
+ * 只写回后端返回的 `status`；取不到就停在 `pending`（M1 硬约束 H1）。
+ * R19：原实现用 setTimeout 假推进并编造 entity_count（1024+random），已删除。
  */
-function scheduleProgress(
+function pollStatus(
   get: () => DocumentStore,
   set: (partial: Partial<DocumentStore> | ((state: DocumentStore) => Partial<DocumentStore>)) => void,
   documentId: string,
 ) {
-  const patch = (status: DocumentStatus, entityCount: number | null) =>
+  const patch = (status: DocumentStatus) =>
     set((state) => ({
       items: state.items.map((item) =>
-        item.id === documentId
-          ? { ...item, status, entity_count: entityCount }
-          : item,
+        item.id === documentId ? { ...item, status } : item,
       ),
     }));
 
-  setTimeout(() => patch("processing", null), 1200);
-  setTimeout(() => patch("completed", 1024 + Math.round(Math.random() * 900)), 3000);
-  void get;
+  let attempt = 0;
+  const tick = async () => {
+    try {
+      const res = await getDocumentStatus(documentId);
+      patch(res.status);
+      if (res.status === "completed" || res.status === "failed") {
+        // 终态后回拉列表，用后端真值回填 entity_count（不自算、不猜数）
+        void get().load();
+        return;
+      }
+    } catch {
+      return; // 取不到就保留原状态，不猜
+    }
+    attempt += 1;
+    if (attempt >= 12) return;
+    setTimeout(() => void tick(), attempt < 3 ? 2000 : 10000);
+  };
+  setTimeout(() => void tick(), 2000);
 }
 
 /** 文档管理（p02）数据源 */
@@ -122,7 +135,7 @@ export const useDocumentStore = create<DocumentStore>((set, get) => ({
         uploadOpen: false,
       }));
 
-      scheduleProgress(get, set, item.id);
+      pollStatus(get, set, item.id);
     } catch (error) {
       set({
         uploading: false,
