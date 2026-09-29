@@ -1,84 +1,27 @@
-"use client";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 
-import Link from "next/link";
-import { MoreHorizontal, Download, Trash2 } from "lucide-react";
-
-import { Card, CardAction, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useDashboardStore } from "@/store/use-dashboard-store";
-
+/**
+ * 最近问答历史 —— **契约外，当前不接数据**。
+ *
+ * ⚠️ 原实现消费 `GET /api/v1/qa/history`：该端点**不在契约内**，
+ * `shouldMock()` 对它恒返回 true（`api/client.ts:68-71`），屏上的
+ * 「问题 / 时间 / 引用数」实为 Mock 常量——关掉 Mock 开关也不会变真。
+ *
+ * 按红线（A16「诚实可核」、plan §7.2 零假数据）改为**明示未接入**；
+ * 后端补齐该端点后，这里再换成真实列表。
+ *
+ * 卡片骨架保留：位置留着，是为了让"缺口"可见，而不是让假数据可见。
+ */
 export function RecentQaHistory() {
-  const history = useDashboardStore((state) => state.recentQaHistory);
-  const loading = useDashboardStore((state) => state.loading);
-
   return (
     <Card className="gap-0">
       <CardHeader className="px-5 pt-4 pb-3">
         <CardTitle>最近问答历史</CardTitle>
-        <CardAction>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="更多操作"
-                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
-              >
-                <MoreHorizontal className="size-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem>
-                <Download />
-                导出记录
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Trash2 />
-                清空历史
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </CardAction>
       </CardHeader>
 
-      <div className="flex flex-col">
-        {loading
-          ? Array.from({ length: 3 }).map((_, index) => (
-              <div
-                key={index}
-                className="space-y-1.5 border-t border-border px-5 py-3.5 first:border-t-0"
-              >
-                <Skeleton className="h-3.5 w-full" />
-                <Skeleton className="h-3 w-20" />
-              </div>
-            ))
-          : history.map((item) => (
-              <Link
-                key={item.id}
-                href="/qa"
-                className="block border-t border-border px-5 py-3.5 transition-colors first:border-t-0 hover:bg-white/[0.025]"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] text-foreground">
-                      {item.question}
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {item.asked_at_label}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {item.citation_count} 个引用
-                  </span>
-                </div>
-              </Link>
-            ))}
-      </div>
+      <p className="px-5 py-8 text-center text-[12.5px] text-muted-foreground">
+        未接入：契约缺 GET /api/v1/qa/history
+      </p>
     </Card>
   );
 }

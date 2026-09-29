@@ -69,7 +69,7 @@ export function SessionList() {
                     "rounded-lg px-3 py-2.5 text-left transition-colors",
                     active
                       ? "bg-accent ring-1 ring-primary/25 ring-inset"
-                      : "hover:bg-white/[0.04]",
+                      : "hover:bg-foreground/[0.04]",
                   )}
                 >
                   <p

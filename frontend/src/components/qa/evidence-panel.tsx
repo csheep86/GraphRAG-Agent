@@ -57,7 +57,7 @@ export function EvidencePanel() {
           </div>
         ) : (
           <>
-            <p className="text-[11px] font-medium text-[#a78bfa]">关系路径</p>
+            <p className="text-[11px] font-medium text-[#6d28d9]">关系路径</p>
 
             <div className="mt-2.5 rounded-lg border border-[#7c3aed]/40 bg-[#7c3aed]/[0.07] p-3">
               {relations.length === 0 ? (
@@ -97,7 +97,7 @@ export function EvidencePanel() {
                       type="button"
                       onClick={() => openChunk(citation)}
                       title="查看原文片段"
-                      className="-mx-1.5 flex w-[calc(100%+0.75rem)] gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-white/[0.05]"
+                      className="-mx-1.5 flex w-[calc(100%+0.75rem)] gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-foreground/[0.05]"
                     >
                       <span className="mt-px shrink-0 text-[11px] text-muted-foreground tabular-nums">
                         [{index + 1}]
@@ -132,7 +132,7 @@ export function EvidencePanel() {
               </span>
             </div>
 
-            <div className="mt-2.5 rounded-lg border border-border bg-white/[0.02] p-2.5">
+            <div className="mt-2.5 rounded-lg border border-border bg-foreground/[0.02] p-2.5">
               {nodes.length === 0 ? (
                 <p className="text-[11px] text-muted-foreground">暂无实体</p>
               ) : (
@@ -140,7 +140,7 @@ export function EvidencePanel() {
                   {nodes.map((node) => (
                     <span
                       key={node.id}
-                      className="rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[11px] text-foreground/90"
+                      className="rounded-md bg-foreground/[0.06] px-1.5 py-0.5 text-[11px] text-foreground/90"
                     >
                       {nodeName(node)}
                       {/* 实体类型标签：帮助区分同名不同类的实体 */}

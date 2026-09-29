@@ -1,6 +1,7 @@
 import {
   CalendarDays,
   CircleCheck,
+  Database,
   FileText,
   FlaskConical,
   LayoutGrid,
@@ -11,6 +12,7 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  UserCog,
   Users,
   Wrench,
   type LucideIcon,
@@ -124,6 +126,20 @@ export const systemNav: NavItem[] = [
     breadcrumb: "系统设置",
     href: "/settings",
     icon: Settings,
+    placeholder: true,
+  },
+  {
+    label: "数据源接入",
+    breadcrumb: "数据源接入",
+    href: "/data-sources",
+    icon: Database,
+    placeholder: true,
+  },
+  {
+    label: "权限与角色",
+    breadcrumb: "权限与角色",
+    href: "/roles",
+    icon: UserCog,
     placeholder: true,
   },
   {

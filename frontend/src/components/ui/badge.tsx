@@ -12,12 +12,17 @@ const badgeVariants = cva(
         default: "bg-primary text-primary-foreground",
         secondary: "bg-secondary text-secondary-foreground",
         outline: "border border-border text-muted-foreground",
-        muted: "bg-white/[0.06] text-muted-foreground",
+        muted: "bg-foreground/[0.06] text-muted-foreground",
         /** 文档状态语义色，对齐 p01 / p02 设计稿 */
         pending: "bg-status-pending text-white",
         processing: "bg-status-processing text-white",
         completed: "bg-status-completed text-white",
         failed: "bg-status-failed text-white",
+        /** 域 / 能力状态标签（demo `.tag.*`：浅底 + 深字） */
+        "tag-green": "bg-tag-green-bg text-tag-green-fg",
+        "tag-amber": "bg-tag-amber-bg text-tag-amber-fg",
+        "tag-gray": "bg-tag-gray-bg text-tag-gray-fg",
+        "tag-blue": "bg-tag-blue-bg text-tag-blue-fg",
       },
     },
     defaultVariants: {

@@ -69,7 +69,7 @@ function DropdownMenuItem({
       data-inset={inset}
       className={cn(
         "relative flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-foreground outline-none select-none",
-        "focus:bg-white/[0.06] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "focus:bg-foreground/[0.06] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         "data-[inset=true]:pl-8 [&_svg]:size-3.5 [&_svg]:text-muted-foreground",
         className,
       )}
@@ -89,7 +89,7 @@ function DropdownMenuCheckboxItem({
       data-slot="dropdown-menu-checkbox-item"
       checked={checked}
       className={cn(
-        "relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-8 text-[13px] outline-none select-none focus:bg-white/[0.06] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-8 text-[13px] outline-none select-none focus:bg-foreground/[0.06] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
       {...props}
@@ -124,7 +124,7 @@ function DropdownMenuRadioItem({
     <DropdownMenuPrimitive.RadioItem
       data-slot="dropdown-menu-radio-item"
       className={cn(
-        "relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-8 text-[13px] outline-none select-none focus:bg-white/[0.06] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-8 text-[13px] outline-none select-none focus:bg-foreground/[0.06] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
       {...props}

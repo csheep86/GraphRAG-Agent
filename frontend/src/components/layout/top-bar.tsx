@@ -32,7 +32,7 @@ export function TopBar() {
   const current = breadcrumbFor(pathname);
 
   return (
-    <header className="relative z-40 flex h-[var(--topbar-height)] shrink-0 items-center gap-4 border-b border-border bg-background px-5">
+    <header className="relative z-40 flex h-[var(--topbar-height)] shrink-0 items-center gap-4 border-b border-border bg-card px-5">
       {/* 左：品牌 */}
       <Link
         href="/"
@@ -59,7 +59,7 @@ export function TopBar() {
         <button
           type="button"
           aria-label="通知"
-          className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+          className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <Bell className="size-4" />
         </button>
@@ -68,7 +68,7 @@ export function TopBar() {
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="flex items-center gap-2 rounded-md py-1 pr-1.5 pl-1 text-[13px] text-foreground transition-colors hover:bg-white/[0.06]"
+              className="flex items-center gap-2 rounded-md py-1 pr-1.5 pl-1 text-[13px] text-foreground transition-colors hover:bg-muted"
             >
               <Avatar className="size-6">
                 <AvatarFallback className="bg-gradient-to-br from-[#4f7dff] to-[#3b5bf6] text-[11px] text-white">

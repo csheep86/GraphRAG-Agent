@@ -29,8 +29,8 @@ export function AnomalyCaseList() {
       </div>
 
       {error ? (
-        <div className="mx-4 mb-4 rounded-lg border border-[#f87171]/40 bg-[#f87171]/[0.07] p-2.5">
-          <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#f87171]">
+        <div className="mx-4 mb-4 rounded-lg border border-severity-high/40 bg-severity-high/[0.07] p-2.5">
+          <p className="flex items-center gap-1.5 text-[12px] font-medium text-severity-high">
             <TriangleAlert className="size-3.5" />
             加载失败
           </p>
@@ -59,7 +59,7 @@ export function AnomalyCaseList() {
                   type="button"
                   onClick={() => void select(item)}
                   className={`flex flex-col items-start gap-1 rounded-lg px-2 py-2 text-left transition-colors ${
-                    active ? "bg-accent" : "hover:bg-white/[0.04]"
+                    active ? "bg-accent" : "hover:bg-foreground/[0.04]"
                   }`}
                 >
                   <span className="flex items-center gap-1.5">

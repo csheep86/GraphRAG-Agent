@@ -31,7 +31,7 @@ export function EntityDetailPanel() {
             type="button"
             onClick={closeDetail}
             aria-label="关闭详情"
-            className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+            className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
           >
             <X className="size-4" />
           </button>
@@ -46,7 +46,7 @@ export function EntityDetailPanel() {
             <Skeleton className="h-24 w-full rounded-lg" />
           </div>
         ) : detailError ? (
-          <div className="rounded-lg border border-border bg-white/[0.02] p-4 text-xs text-muted-foreground">
+          <div className="rounded-lg border border-border bg-foreground/[0.02] p-4 text-xs text-muted-foreground">
             {detailError === "ENTITY_NOT_FOUND"
               ? "该实体不存在或不属于当前 active 版本。"
               : detailError === "FORBIDDEN"
@@ -110,9 +110,9 @@ export function EntityDetailPanel() {
                   key={`${relation.relation}-${relation.target_id}`}
                   type="button"
                   onClick={() => select(relation.target_id)}
-                  className="flex w-full items-center gap-2 rounded-lg border border-border bg-white/[0.02] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.05]"
+                  className="flex w-full items-center gap-2 rounded-lg border border-border bg-foreground/[0.02] px-3 py-2.5 text-left transition-colors hover:bg-foreground/[0.05]"
                 >
-                  <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  <span className="shrink-0 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
                     {relation.relation}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-xs text-foreground">

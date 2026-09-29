@@ -49,8 +49,8 @@ export function RiskTable() {
   return (
     <div className="flex flex-col gap-3">
       {error ? (
-        <div className="rounded-lg border border-[#f87171]/40 bg-[#f87171]/[0.07] p-3">
-          <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#f87171]">
+        <div className="rounded-lg border border-severity-high/40 bg-severity-high/[0.07] p-3">
+          <p className="flex items-center gap-1.5 text-[12px] font-medium text-severity-high">
             <TriangleAlert className="size-3.5" />
             扫描未完成
           </p>
@@ -61,8 +61,8 @@ export function RiskTable() {
       ) : null}
 
       {!error && (skipped.length > 0 || unresolved.length > 0) ? (
-        <div className="rounded-lg border border-[#facc15]/35 bg-[#facc15]/[0.07] p-3">
-          <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#facc15]">
+        <div className="rounded-lg border border-severity-mid/35 bg-severity-mid/[0.07] p-3">
+          <p className="flex items-center gap-1.5 text-[12px] font-medium text-severity-mid">
             <TriangleAlert className="size-3.5" />
             有规则没跑，清单不完整（不是「无风险」）
           </p>

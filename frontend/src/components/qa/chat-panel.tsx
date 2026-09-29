@@ -54,7 +54,7 @@ export function ChatPanel() {
               <button
                 type="button"
                 aria-label="会话操作"
-                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
               >
                 <MoreHorizontal className="size-4" />
               </button>

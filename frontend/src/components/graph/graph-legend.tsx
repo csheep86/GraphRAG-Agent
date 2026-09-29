@@ -17,7 +17,7 @@ const LEGEND: { label: string; category: GraphCategory }[] = [
 
 export function GraphLegend() {
   return (
-    <div className="pointer-events-none absolute bottom-4 left-4 flex items-center gap-3.5 rounded-lg border border-border bg-[#14141a]/85 px-3 py-2 backdrop-blur">
+    <div className="pointer-events-none absolute bottom-4 left-4 flex items-center gap-3.5 rounded-lg border border-border bg-card/85 px-3 py-2 backdrop-blur">
       {LEGEND.map((item) => (
         <span
           key={item.category}

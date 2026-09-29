@@ -21,11 +21,12 @@ export function ChatMessageItem({
 }: ChatMessageItemProps) {
   const [expanded, setExpanded] = useState(false);
 
+  // 用户气泡 = demo .msg.user .bubble（#1a73e8 蓝 + 白字），故内部字色反白
   if (message.role === "user") {
     return (
       <div className="rounded-xl bg-bubble-user px-4 py-3">
-        <p className="text-[11px] text-muted-foreground">你</p>
-        <p className="mt-1.5 text-[13px] leading-relaxed whitespace-pre-wrap text-foreground">
+        <p className="text-[11px] text-white/80">你</p>
+        <p className="mt-1.5 text-[13px] leading-relaxed whitespace-pre-wrap text-white">
           {message.content}
         </p>
       </div>
@@ -38,13 +39,14 @@ export function ChatMessageItem({
   const relationCount = message.kg_relations?.length ?? 0;
   const hasEvidence = citations.length > 0 || nodeCount > 0;
 
+  // 助手气泡 = demo .msg.bot .bubble（#f4f7fb 浅灰）
   return (
-    <div className="rounded-xl border border-border bg-white/[0.02] p-4">
+    <div className="rounded-xl border border-border bg-muted p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#6d8dff] to-[#8b5cf6]">
           <Sparkles className="size-3 text-white" />
         </span>
-        <span className="text-xs font-medium text-[#8ab4ff]">GraphRAG AI</span>
+        <span className="text-xs font-medium text-[#1a73e8]">GraphRAG AI</span>
 
         {message.refused ? <Badge variant="muted">未给出结论</Badge> : null}
         {!message.refused && message.confidence === "low" ? (
@@ -83,7 +85,7 @@ export function ChatMessageItem({
                   type="button"
                   onClick={() => onOpenChunk(citation)}
                   title="查看原文片段"
-                  className="-mx-1.5 flex w-[calc(100%+0.75rem)] gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-white/[0.05]"
+                  className="-mx-1.5 flex w-[calc(100%+0.75rem)] gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-foreground/[0.05]"
                 >
                   <span className="mt-px shrink-0 text-[11px] text-muted-foreground tabular-nums">
                     [{index + 1}]

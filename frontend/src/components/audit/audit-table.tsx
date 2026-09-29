@@ -58,8 +58,8 @@ export function AuditTable() {
   return (
     <div className="flex flex-col gap-3">
       {error ? (
-        <div className="rounded-lg border border-[#f87171]/40 bg-[#f87171]/[0.07] p-3">
-          <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#f87171]">
+        <div className="rounded-lg border border-severity-high/40 bg-severity-high/[0.07] p-3">
+          <p className="flex items-center gap-1.5 text-[12px] font-medium text-severity-high">
             <TriangleAlert className="size-3.5" />
             操作未成功
           </p>

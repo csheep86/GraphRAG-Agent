@@ -94,7 +94,7 @@ export function SuspicionDetailSheet() {
                         className="rounded-lg border border-border p-3"
                       >
                         <p className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
-                          <FileText className="size-3 text-[#8ab4ff]" />
+                          <FileText className="size-3 text-[#1a73e8]" />
                           {`第 ${index + 1} 条 · 第 ${evidence.page ?? "?"} 页 · ${evidence.chunk_id}`}
                         </p>
 
@@ -106,8 +106,8 @@ export function SuspicionDetailSheet() {
                               <Skeleton className="h-3 w-[64%]" />
                             </div>
                           ) : error ? (
-                            <div className="rounded-lg border border-[#f87171]/40 bg-[#f87171]/[0.07] p-2.5">
-                              <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#f87171]">
+                            <div className="rounded-lg border border-severity-high/40 bg-severity-high/[0.07] p-2.5">
+                              <p className="flex items-center gap-1.5 text-[12px] font-medium text-severity-high">
                                 <TriangleAlert className="size-3.5" />
                                 原文回查失败
                               </p>

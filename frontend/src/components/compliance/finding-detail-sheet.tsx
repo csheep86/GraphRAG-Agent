@@ -105,7 +105,7 @@ export function FindingDetailSheet() {
                   <Scale className="size-3.5" />
                   计算过程（可手工核算）
                 </h3>
-                <p className="mt-2 rounded-lg bg-white/[0.04] p-3 text-[12px] leading-6 text-foreground/90">
+                <p className="mt-2 rounded-lg bg-foreground/[0.04] p-3 text-[12px] leading-6 text-foreground/90">
                   {detail.calculation}
                 </p>
                 <p className="mt-2 text-[11px] text-muted-foreground">

@@ -35,7 +35,7 @@ export default function SettingsPage() {
 /** 演示环境说明卡：把"演示环境"四个字落成可核的事实清单 */
 function DemoEnvironmentNotice() {
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-white/[0.02] px-4 py-3.5">
+    <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-foreground/[0.02] px-4 py-3.5">
       <p className="text-[13px] font-medium text-foreground">
         演示环境（Demo Environment）
       </p>

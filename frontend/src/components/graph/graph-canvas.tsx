@@ -11,8 +11,12 @@ import { useGraphStore } from "@/store/use-graph-store";
 
 import { CATEGORY_COLOR_VAR, GraphLegend } from "./graph-legend";
 
-const EDGE_IDLE = "#33333f";
-const EDGE_ACTIVE = "#4b7bff";
+/* 画布底色随内容区改为浅色（对齐 demo .graph-card 白底），
+   故边与标签色取 demo SVG 的浅底值：边 #c5d5e5、标签 #1c2b3a / #5a6b7d。 */
+const EDGE_IDLE = "#c5d5e5";
+const EDGE_ACTIVE = "#1a73e8";
+const LABEL_PRIMARY = "#1c2b3a";
+const LABEL_SECONDARY = "#5a6b7d";
 
 export function GraphCanvas() {
   const overview = useGraphStore((state) => state.overview);
@@ -227,7 +231,7 @@ export function GraphCanvas() {
                     <text
                       x={position.x + radius + 10}
                       y={position.y - 1}
-                      fill="#f4f4f6"
+                      fill={LABEL_PRIMARY}
                       fontSize={13}
                       fontWeight={500}
                     >
@@ -236,7 +240,7 @@ export function GraphCanvas() {
                     <text
                       x={position.x + radius + 10}
                       y={position.y + 13}
-                      fill="#8b8b98"
+                      fill={LABEL_SECONDARY}
                       fontSize={10}
                     >
                       {node.type}

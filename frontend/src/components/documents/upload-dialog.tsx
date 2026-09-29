@@ -94,7 +94,7 @@ export function UploadDialog() {
           }}
           className={cn(
             "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border px-6 py-10 text-center transition-colors",
-            dragging ? "border-primary/60 bg-primary/[0.06]" : "hover:bg-white/[0.03]",
+            dragging ? "border-primary/60 bg-primary/[0.06]" : "hover:bg-foreground/[0.03]",
           )}
         >
           <CloudUpload className="size-6 text-muted-foreground" />
@@ -115,7 +115,7 @@ export function UploadDialog() {
         </div>
 
         {file ? (
-          <div className="flex items-center gap-2.5 rounded-lg border border-border bg-white/[0.02] px-3 py-2.5">
+          <div className="flex items-center gap-2.5 rounded-lg border border-border bg-foreground/[0.02] px-3 py-2.5">
             <FileText className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
               {file.name}

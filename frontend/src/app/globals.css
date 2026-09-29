@@ -1,64 +1,114 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
-
 /* ============================================================================
- * GraphRAG Studio · 暗色科技风 Design Tokens
- * 真源：frontend/design_p01.png ~ design_p04.png
- * 说明：界面为暗色单主题，<html class="dark"> 常驻开启。
+ * GraphRAG Studio · Design Tokens
+ *
+ * 形态（对齐 docs/demo.html）：**侧栏深色 + 内容区浅色**，两套底色解耦。
+ *
+ * - 内容区底色 `#eef2f7` / 前景 `#1c2b3a` —— 取自 demo `body`
+ * - 侧栏渐变 `#0d2137 → #132d4a` / 条目字色 `#b8cade` —— 取自 demo `.sidebar`
+ *   / `.nav-item`，走 `--sidebar-*` 独立一组变量，**不再复用 `--background`**
+ *   （Sprint 9.5 之前两者共用一个变量，导致侧栏跟着内容区一起变深）。
+ *
+ * 单主题：全站无 dark 变体（`@custom-variant dark` 已随本批次移除，
+ * 因为没有任何 `dark:` 工具类消费它——留着是死代码）。
  * ========================================================================== */
 :root {
   --radius: 0.75rem;
 
-  /* 布局尺寸（对齐设计稿：顶部栏 60px / 侧栏 200px） */
+  /* 布局尺寸（顶部栏 60px / 侧栏 200px） */
   --topbar-height: 60px;
   --sidebar-width: 200px;
 
-  /* 页面与表面 */
-  --background: #0b0b0f;
-  --foreground: #f4f4f6;
+  /* ---- 页面与表面（浅色，demo body #eef2f7 / #1c2b3a） ---- */
+  --background: #eef2f7;
+  --foreground: #1c2b3a;
 
-  --card: #14141a;
-  --card-foreground: #f4f4f6;
+  --card: #ffffff;
+  --card-foreground: #1c2b3a;
 
-  --popover: #16161d;
-  --popover-foreground: #f4f4f6;
+  --popover: #ffffff;
+  --popover-foreground: #1c2b3a;
 
-  /* 主色：蓝 */
-  --primary: #3b82f6;
+  /* 主色：demo 蓝 #1a73e8 */
+  --primary: #1a73e8;
   --primary-foreground: #ffffff;
 
-  --secondary: #1c1c24;
-  --secondary-foreground: #e8e8ee;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #1c2b3a;
 
-  --muted: #1a1a22;
-  --muted-foreground: #8b8b98;
+  --muted: #f4f7fb;
+  /* 浅底次级字色：demo 用 #8296a8（对比度仅 ~2.9:1，不足），
+     取 demo `.ds-status` 的 #5a6b7d（~5.4:1，达 AA） */
+  --muted-foreground: #5a6b7d;
 
-  --accent: #1f2030;
-  --accent-foreground: #f4f4f6;
+  --accent: #eef5fd;
+  --accent-foreground: #1c2b3a;
 
-  --destructive: #ef4444;
+  --destructive: #c92a2f;
   --destructive-foreground: #ffffff;
 
-  --border: #22222b;
-  --input: #2a2a35;
-  --ring: #3b82f6;
+  /* demo .topbar border #e2e8f0 / .search-box input border #dfe8f2 */
+  --border: #e2e8f0;
+  --input: #dfe8f2;
+  --ring: #1a73e8;
 
-  /* 文档状态标签（p01 / p02：已完成=紫 · 处理中=蓝 · 失败=红 · 待处理=灰） */
-  --status-pending: #6b7280;
-  --status-processing: #3b82f6;
-  --status-completed: #7c3aed;
-  --status-failed: #ef4444;
+  /* ---- 侧栏（深色，与内容区解耦） ---- */
+  --sidebar-from: #0d2137;
+  --sidebar-to: #132d4a;
+  --sidebar-foreground: #b8cade;
+  --sidebar-muted: #5c7896;
+  --sidebar-accent: #1a73e8;
+  --sidebar-active: rgba(26, 115, 232, 0.18);
+  --sidebar-hover: rgba(255, 255, 255, 0.05);
 
-  /* 图谱节点分类色（p04 图例：主题 / 规范·数据 / 组织·人员 / 制度） */
-  --node-topic: #3b82f6;
-  --node-norm: #22d3ee;
-  --node-org: #f59e0b;
-  --node-system: #7c3aed;
+  /* ---- 文档状态标签（已完成=紫 · 处理中=蓝 · 失败=红 · 待处理=灰） ----
+     值为浅底重调：原 #7c3aed / #3b82f6 / #ef4444 是给深底选的，
+     移到浅底做 badge 底色（配白字）对比度不够，统一压深。 */
+  --status-pending: #6b7d8f;
+  --status-processing: #1a73e8;
+  --status-completed: #6d28d9;
+  --status-failed: #c92a2f;
 
-  /* 会话气泡 */
-  --bubble-user: #1b2436;
+  /* ---- 图谱节点分类色（图例：主题 / 规范·数据 / 组织·人员 / 制度） ----
+     原 #22d3ee / #f59e0b 在白底画布上发飘，改为 demo 图例同色系压深值。 */
+  --node-topic: #1a73e8;
+  --node-norm: #00a6a6;
+  --node-org: #e08a00;
+  --node-system: #7c5cd6;
+
+  /* ---- 会话气泡（demo .msg.user .bubble #1a73e8 + 白字） ---- */
+  --bubble-user: #1a73e8;
+
+  /* ---- 严重度（demo .pill.red / .pill.amber / .pill.green 字色） ----
+     原 #f87171 / #facc15 是深底荧光色，白底上不可读（~2.4:1）。 */
+  --severity-high: #c92a2f;
+  --severity-mid: #b26a00;
+  --severity-low: #1e8e4a;
+
+  /* ---- KPI 语义色（demo `.kpi.blue` / `.teal` / `.green` / `.amber` / `.purple`
+         的数值色）---- 只给指标卡数值着色，让一排 KPI 可区分；不参与正文。 */
+  --kpi-blue: #1a73e8;
+  --kpi-teal: #00a6a6;
+  --kpi-green: #22a06b;
+  --kpi-amber: #e08a00;
+  --kpi-purple: #7c5cd6;
+
+  /* ---- 卡片阴影（demo `.card` 常态 / `.domain-card:hover` 悬浮态） ---- */
+  --elevation-card: 0 1px 3px rgba(16, 40, 70, 0.04);
+  --elevation-card-hover: 0 8px 24px rgba(16, 40, 70, 0.1);
+
+  /* ---- 状态标签（demo `.tag.green` / `.amber` / `.gray` / `.blue`：浅底 + 深字） ----
+     与 `--status-*`（实心底白字，用于文档状态）区分：这组用于域 / 能力状态。 */
+  --tag-green-bg: #e9f7ef;
+  --tag-green-fg: #1e8e4a;
+  --tag-amber-bg: #fff4e0;
+  --tag-amber-fg: #b26a00;
+  --tag-gray-bg: #eef2f7;
+  --tag-gray-fg: #6b7d8f;
+  --tag-blue-bg: #e7f0fd;
+  --tag-blue-fg: #12539e;
 }
 
 @theme inline {
@@ -90,6 +140,14 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  --color-sidebar-from: var(--sidebar-from);
+  --color-sidebar-to: var(--sidebar-to);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-hover: var(--sidebar-hover);
+
   --color-status-pending: var(--status-pending);
   --color-status-processing: var(--status-processing);
   --color-status-completed: var(--status-completed);
@@ -101,6 +159,30 @@
   --color-node-system: var(--node-system);
 
   --color-bubble-user: var(--bubble-user);
+
+  --color-severity-high: var(--severity-high);
+  --color-severity-mid: var(--severity-mid);
+  --color-severity-low: var(--severity-low);
+
+  --color-kpi-blue: var(--kpi-blue);
+  --color-kpi-teal: var(--kpi-teal);
+  --color-kpi-green: var(--kpi-green);
+  --color-kpi-amber: var(--kpi-amber);
+  --color-kpi-purple: var(--kpi-purple);
+
+  /* 阴影：`:root` 侧用 `--elevation-*`，避免与 Tailwind `--shadow-*`
+     命名空间同名导致自引用（`@theme inline` 会把两者写进同一个 `:root`）。 */
+  --shadow-card: var(--elevation-card);
+  --shadow-card-hover: var(--elevation-card-hover);
+
+  --color-tag-green-bg: var(--tag-green-bg);
+  --color-tag-green-fg: var(--tag-green-fg);
+  --color-tag-amber-bg: var(--tag-amber-bg);
+  --color-tag-amber-fg: var(--tag-amber-fg);
+  --color-tag-gray-bg: var(--tag-gray-bg);
+  --color-tag-gray-fg: var(--tag-gray-fg);
+  --color-tag-blue-bg: var(--tag-blue-bg);
+  --color-tag-blue-fg: var(--tag-blue-fg);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -127,6 +209,10 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
+    /* 密度对齐 demo `body{font-size:13px}`。Tailwind 的 text-xs/sm 是绝对值，
+       不受影响；这里只改未显式指定字号的裸文字。 */
+    font-size: 13px;
+    line-height: 1.6;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
@@ -136,11 +222,21 @@
   }
 }
 
-/* 暗色滚动条（设计稿中列表区域无显式滚动条，做弱化处理） */
 @layer utilities {
+  /* 侧栏深色渐变（demo .sidebar）。用 background-image 而非 background-color，
+     这样它在浅色内容区旁边是独立一层，不会被 `bg-*` 工具类覆盖。 */
+  .sidebar-surface {
+    background-image: linear-gradient(
+      180deg,
+      var(--sidebar-from) 0%,
+      var(--sidebar-to) 100%
+    );
+  }
+
+  /* 浅色滚动条：原来的 #2c2c38 是深底灰，在浅底列表里看不见 */
   .scrollbar-subtle {
     scrollbar-width: thin;
-    scrollbar-color: #2c2c38 transparent;
+    scrollbar-color: #cbd5e1 transparent;
   }
 
   .scrollbar-subtle::-webkit-scrollbar {
@@ -153,13 +249,13 @@
   }
 
   .scrollbar-subtle::-webkit-scrollbar-thumb {
-    background-color: #2c2c38;
+    background-color: #cbd5e1;
     border-radius: 9999px;
     border: 2px solid transparent;
     background-clip: content-box;
   }
 
   .scrollbar-subtle::-webkit-scrollbar-thumb:hover {
-    background-color: #3a3a48;
+    background-color: #94a3b8;
   }
 }

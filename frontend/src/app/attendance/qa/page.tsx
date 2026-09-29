@@ -50,8 +50,8 @@ export default function AttendanceQaPage() {
                 }}
                 className={`rounded-lg border px-2.5 py-1 text-[11px] transition-colors ${
                   draft === preset
-                    ? "border-primary/50 bg-white/[0.06] text-foreground"
-                    : "border-border text-muted-foreground hover:bg-white/[0.04]"
+                    ? "border-primary/50 bg-foreground/[0.06] text-foreground"
+                    : "border-border text-muted-foreground hover:bg-foreground/[0.04]"
                 }`}
               >
                 {preset}
@@ -73,7 +73,7 @@ export default function AttendanceQaPage() {
               type="button"
               disabled={asking || draft.trim().length === 0}
               onClick={() => void ask(draft.trim())}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[12px] text-foreground transition-colors hover:bg-white/[0.06] disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[12px] text-foreground transition-colors hover:bg-foreground/[0.06] disabled:opacity-50"
             >
               <SendHorizontal className="size-3.5" />
               提问
@@ -82,8 +82,8 @@ export default function AttendanceQaPage() {
         </Card>
 
         {error ? (
-          <div className="rounded-lg border border-[#f87171]/40 bg-[#f87171]/[0.07] p-3">
-            <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#f87171]">
+          <div className="rounded-lg border border-severity-high/40 bg-severity-high/[0.07] p-3">
+            <p className="flex items-center gap-1.5 text-[12px] font-medium text-severity-high">
               <TriangleAlert className="size-3.5" />
               问答未完成
             </p>

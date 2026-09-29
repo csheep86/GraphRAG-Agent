@@ -23,7 +23,7 @@ export function ChatComposer() {
 
   return (
     <div className="border-t border-border px-4 py-3.5">
-      <div className="flex items-end gap-2 rounded-xl border border-border bg-white/[0.02] px-3 py-2 transition-colors focus-within:border-primary/50">
+      <div className="flex items-end gap-2 rounded-xl border border-border bg-foreground/[0.02] px-3 py-2 transition-colors focus-within:border-primary/50">
         <Textarea
           value={value}
           rows={1}

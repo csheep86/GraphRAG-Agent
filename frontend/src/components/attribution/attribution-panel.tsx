@@ -67,8 +67,8 @@ export function AttributionPanel() {
         </div>
       ) : error ? (
         <div className="px-5 py-5">
-          <div className="rounded-lg border border-[#f87171]/40 bg-[#f87171]/[0.07] p-3">
-            <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#f87171]">
+          <div className="rounded-lg border border-severity-high/40 bg-severity-high/[0.07] p-3">
+            <p className="flex items-center gap-1.5 text-[12px] font-medium text-severity-high">
               <ShieldQuestion className="size-3.5" />
               归因未完成
             </p>
@@ -91,7 +91,7 @@ export function AttributionPanel() {
               </span>
             </div>
 
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-foreground/[0.06]">
               <div
                 className={`h-full rounded-full ${CONFIDENCE_TONE_CLASS[confidenceTone(explain.confidence)]}`}
                 style={{ width: `${Math.round(explain.confidence * 100)}%` }}
@@ -158,7 +158,7 @@ export function AttributionPanel() {
               <Scale className="size-3.5" />
               结论与建议动作
             </h3>
-            <p className="mt-2 rounded-lg bg-white/[0.04] p-3 text-[12px] text-foreground/90">
+            <p className="mt-2 rounded-lg bg-foreground/[0.04] p-3 text-[12px] text-foreground/90">
               {explain.conclusion} ⇒ {explain.action}
             </p>
           </section>

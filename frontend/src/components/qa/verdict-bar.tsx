@@ -23,7 +23,7 @@ export function VerdictBar({ result }: { result: AgentQueryResponse }) {
   const hopCount = result.reasoning_path?.length ?? 0;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-white/[0.03] px-3 py-2.5">
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-foreground/[0.03] px-3 py-2.5">
       {result.refused ? (
         <>
           <CircleSlash className="size-4 shrink-0 text-status-failed" />
