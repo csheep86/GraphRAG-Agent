@@ -391,14 +391,25 @@ ON CREATE SET n.canonical_name = e.canonical_name,
               n.entity_type = e.entity_type,
               n.mention = e.mention,
               n.confidence = e.confidence,
+              n.char_start = e.char_start,
+              n.char_end = e.char_end,
               n.org_id = $org_id,
               n.trace_id = $trace_id
 ON MATCH SET n.canonical_name = e.canonical_name,
              n.entity_type = e.entity_type,
              n.mention = e.mention,
              n.confidence = e.confidence,
+             n.char_start = e.char_start,
+             n.char_end = e.char_end,
              n.org_id = $org_id
 """
+
+#: Sprint 10 批次 A（裁决 D-D）：``char_start`` / ``char_end`` 是实体在**文档全文**中的
+#: 字符区间，来自抽取侧 ``ExtractedEntity``（Sprint 6 起就有值，**此前入图时被丢弃**）。
+#: CSV 派生的结构化实体（如考勤域）**天然没有 span** ⇒ ``e.char_start`` 缺失时
+#: Cypher 写入 ``null``（Neo4j 不存 null 属性）⇒ 读侧回退为整段引用——**不造 span**。
+#: 读侧 :meth:`GraphService.fetch_evidence_chunks` 用它把引用从"指到哪一段"
+#: 精确到"指到哪一句"；换算只在 ``agents._to_citation`` 一处（D-B）。
 
 #: stage-3：单批 MATCH-MERGE relations
 _CYPHER_STAGE3_LOAD_RELATIONS = """

@@ -30,6 +30,7 @@ from app.services.agents import (
     _to_citation,
 )
 from app.services.graphs import (
+    EntitySpan,
     EvidenceChunk,
     GraphService,
     GraphUnavailableError,
@@ -316,3 +317,85 @@ def test_ensure_chat_builds_model_without_undefined_name(
 
     # 未打桩 _ensure_chat：命中即证明不再 NameError（否则会冒泡成 500）
     assert AgentService.instance()._ensure_chat() is not None
+
+
+# --------------------------------------------------------------------------- #
+# Sprint 10 批次 A：引用粒度 chunk 级 → span 级（裁决 D-A / D-B / D-C）
+# --------------------------------------------------------------------------- #
+
+
+def _chunk_with_spans(
+    *, char_start: int = 0, spans: tuple[EntitySpan, ...] = ()
+) -> EvidenceChunk:
+    return EvidenceChunk(
+        chunk_id=CHUNK_ID,
+        doc_id=DOC_ID,
+        text="甲方：北京青云科技有限公司（以下简称甲方）……乙方：星辰贸易。",
+        page=3,
+        char_start=char_start,
+        char_end=char_start + 600,
+        entity_spans=spans,
+    )
+
+
+def test_to_citation_falls_back_to_whole_chunk_when_no_span() -> None:
+    """回退档：片段内无带 span 的实体（或条目只给了 chunk id）⇒ 整段高亮，不猜偏移。"""
+    chunk = _chunk_with_spans()
+
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+
+    assert citation is not None
+    assert citation.char_offset == 0
+    assert citation.char_end == len(chunk.text)
+
+
+def test_to_citation_span_level_offset_is_relative_to_chunk() -> None:
+    """主档：偏移 = `实体 char_start − chunk char_start`，是**片段内相对偏移**（D-A / D-B）。
+
+    chunk 起点非 0（全文 600 起），实体落在全文 610~620 ⇒ 片段内 10~20。
+    钉这条是防止有人把**全文**偏移直接塞进 `char_offset`（两者坐标系不同，
+    前端拿全文偏移去高亮片段 text 会整体错位）。
+    """
+    chunk = _chunk_with_spans(
+        char_start=600,
+        spans=(
+            EntitySpan(mention="北京青云科技有限公司", char_start=610, char_end=620),
+        ),
+    )
+
+    citation = _to_citation(f"{CHUNK_ID}#北京青云科技有限公司", _index(chunk))
+
+    assert citation is not None
+    assert citation.char_offset == 10
+    assert citation.char_end == 20
+
+
+def test_to_citation_ignores_fuzzy_mention_and_falls_back() -> None:
+    """「不猜」铁律：提及只是 span 的**一部分**也算不命中 ⇒ 回退整段。
+
+    宁可高亮整段，也不给一个**确定而错误**的偏移（F3 / G5 诚实性）。
+    包含匹配 / 模糊匹配一旦随语料漂移，高亮位置就会静默错掉。
+    """
+    chunk = _chunk_with_spans(
+        spans=(EntitySpan(mention="北京青云科技有限公司", char_start=10, char_end=30),)
+    )
+
+    citation = _to_citation(f"{CHUNK_ID}#北京青云", _index(chunk))
+
+    assert citation is not None
+    assert citation.char_offset == 0
+    assert citation.char_end == len(chunk.text)
+
+
+def test_to_citation_falls_back_when_span_outside_chunk() -> None:
+    """span 与片段**无交集**（数据异常）⇒ 当作未命中，不拿片段外的偏移高亮片段内文字。"""
+    chunk = _chunk_with_spans(
+        char_start=100,
+        spans=(EntitySpan(mention="某实体", char_start=0, char_end=20),),
+    )
+
+    citation = _to_citation(f"{CHUNK_ID}#某实体", _index(chunk))
+
+    assert citation is not None
+    assert citation.char_offset == 0
+    assert citation.char_end == len(chunk.text)

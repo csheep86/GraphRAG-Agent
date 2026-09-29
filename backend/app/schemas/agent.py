@@ -80,8 +80,15 @@ class Citation(BaseModel):
     chunk_id: str
     char_offset: int = Field(
         description=(
-            "引用在 chunk 内的字符偏移。"
-            "批次 B 为 chunk 起点（0）；实体级偏移待 `:Entity` 落 `char_start` 后细化"
+            "引用在**片段内**的字符偏移（相对 `GET /documents/{id}/chunks/{chunk_id}` "
+            "返回的 `text` 起点），由代码按 `实体 char_start − chunk char_start` "
+            "**确定性换算**（偏移不由模型产出）。无实体级 span 命中时回退 0 = 整段引用"
+        )
+    )
+    char_end: int = Field(
+        description=(
+            "引用在片段内的结束偏移（**不含**），与 `char_offset` 构成半开区间 "
+            "`[char_offset, char_end)`，供前端精确定位高亮；回退档 = 片段长度 `len(text)`"
         )
     )
     snippet: str = Field(description="用于 UI 高亮的原文片段（≤ 200 字的 chunk 摘录）")
@@ -154,8 +161,9 @@ class AgentQueryResponse(BaseModel):
                     {
                         "doc_id": "3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11",
                         "page": 3,
-                        "chunk_id": "chunk-12",
+                        "chunk_id": "chunk-581e8912827d",
                         "char_offset": 480,
+                        "char_end": 560,
                         "snippet": "……供应商 C 持有本公司 12% 股权……",
                     }
                 ],

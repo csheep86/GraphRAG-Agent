@@ -72,6 +72,7 @@ export function buildMockAnswer(question: string): ChatMessage {
         page: 4,
         chunk_id: "chunk-0203",
         char_offset: 640,
+        char_end: 720,
         snippet: "……相关职责边界以本手册第 4 章为准……",
       },
     ],

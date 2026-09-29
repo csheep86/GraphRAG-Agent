@@ -57,6 +57,7 @@ from app.schemas.agent import (
 from app.schemas.document import GraphEdge, GraphNode
 from app.services.audit import record_audit_entry
 from app.services.graphs import (
+    EntitySpan,
     EvidenceChunk,
     GraphService,
     GraphUnavailableError,
@@ -94,6 +95,11 @@ _SNIPPET_LIMIT = 200
 #: 真正的闸门是后续的 ``chunk_id`` 索引回查——回查不到即丢弃（F3），
 #: 因此无需在正则层面卡死位数（历史占位 / 契约示例里的短 id 也能正确解析）。
 _CITATION_ID_PATTERN = re.compile(r"chunk-[0-9A-Za-z]{1,64}")
+
+#: Sprint 10 批次 A（裁决 D-C）：证据条目里「chunk id」与「实体提及文本」的分隔符，
+#: 约定形如 ``chunk-<id>#<提及>``（Prompt ``kg_qa_v4``）。
+#: **模型只给文本、不给数字**——偏移由 :func:`_to_citation` 确定性换算（D-B）。
+_MENTION_SEPARATOR = "#"
 
 
 @dataclass(frozen=True, slots=True)
@@ -817,6 +823,17 @@ def _to_citation(item: str, chunks: Mapping[str, EvidenceChunk]) -> Citation | N
     - 未命中（LLM 编造的 id，或该 chunk 未挂 ``:Document``）→ 返回 ``None``，
       由 :func:`_build_citations` 丢弃——F3 严禁不可溯源的引用进入响应。
 
+    **Sprint 10 批次 A（裁决 D-A / D-B / D-C）**：``char_offset`` / ``char_end`` 是
+    **片段内相对偏移**（相对 ``GET /documents/{id}/chunks/{chunk_id}`` 返回的 ``text``），
+    由本函数按 ``实体 char_start − chunk char_start`` **确定性换算**——
+    **偏移不由模型产出**（``langextract`` 实测模型自报偏移 14/20 不符，且违反
+    「数值不出 LLM」）。引用粒度双档：
+
+    - 主档：条目形如 ``chunk-<id>#<实体提及文本>`` ⇒ 回查到实体 span，精确到该提及；
+    - 回退档：无 span 命中（只给了 chunk id / 提及对不上 / span 与片段无交集）
+      ⇒ ``char_offset=0`` + ``char_end=len(text)``（整段），并留 WARNING——
+      **不猜、不编**，宁可高亮整段也不给一个确定而错误的偏移。
+
     :param chunks: ``chunk_id -> EvidenceChunk`` 索引（本轮 :meth:`fetch_evidence_chunks` 结果）
     """
     match = _CITATION_ID_PATTERN.search(item)
@@ -835,13 +852,48 @@ def _to_citation(item: str, chunks: Mapping[str, EvidenceChunk]) -> Citation | N
         logger.bind(chunk_id=chunk_id).warning("agent_citation_chunk_without_document")
         return None
 
+    span = _resolve_citation_span(chunk, item)
+    if span is None:
+        char_offset, char_end = 0, len(chunk.text)
+        logger.bind(chunk_id=chunk_id, evidence=item).warning(
+            "agent_citation_span_fallback"
+        )
+    else:
+        char_offset = max(0, span.char_start - chunk.char_start)
+        char_end = min(len(chunk.text), span.char_end - chunk.char_start)
+
     return Citation(
         doc_id=chunk.doc_id,
         page=chunk.page,
         chunk_id=chunk_id,
-        char_offset=0,
+        char_offset=char_offset,
+        char_end=char_end,
         snippet=_snippet(chunk.text),
     )
+
+
+def _resolve_citation_span(chunk: EvidenceChunk, item: str) -> EntitySpan | None:
+    """把证据条目里的「实体提及文本」回查为该片段内的实体 span（D-C 主档）。
+
+    匹配口径**只有一条**：提及文本与 :attr:`EntitySpan.mention` **相等**
+    （忽略大小写与首尾空白）。刻意**不做**包含匹配 / 模糊匹配 / 编辑距离——
+    那会让"引用指到哪一句"变成随语料漂移的猜测；一旦猜错，高亮位置就是
+    **确定而错误**的，比回退到整段更糟（F3 / G5 诚实性）。
+
+    span 与片段区间**无交集**时同样视为未命中（数据异常时不能拿一个片段外的
+    偏移去高亮片段内的文字）。
+    """
+    mention = item.partition(_MENTION_SEPARATOR)[2].strip()
+    if not mention:
+        return None
+    lowered = mention.casefold()
+    for span in chunk.entity_spans:
+        if span.mention.strip().casefold() != lowered:
+            continue
+        if span.char_end <= chunk.char_start or span.char_start >= chunk.char_end:
+            continue
+        return span
+    return None
 
 
 def _build_citations(

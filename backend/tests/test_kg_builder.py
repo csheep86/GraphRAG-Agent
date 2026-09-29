@@ -130,6 +130,30 @@ def test_stage_order_mirror_then_entities_then_relations() -> None:
     assert "MERGE (a)-[rel:RELATION" in calls[first_index + 1][0]
 
 
+def test_stage2_writes_entity_span_into_graph() -> None:
+    """Sprint 10 批次 A（裁决 D-D）：抽取侧已有的 `char_start` / `char_end` **必须带进图**。
+
+    真机事实（`changes/Sprint10/c0-recon.md` 事实 5）：`:Entity` 上**没有任何**字符区间
+    属性——抽取侧 `ExtractedEntity.char_start/char_end` 一直有值，**是入图时丢的**。
+    本例把"抽取有 ⇒ 入图不丢"钉在单测层，防止再丢一次（丢了引用就只能停在 chunk 级）。
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+    builder = _make_builder(calls)
+    entity = _entity("e1")
+    entity.update(char_start=120, char_end=140)
+
+    builder.build(_request([entity], []))
+
+    entity_calls = [c for c in calls if "MERGE (n:Entity" in c[0]]
+    assert entity_calls, "stage-2 未执行"
+    cypher = entity_calls[0][0]
+    assert "n.char_start = e.char_start" in cypher
+    assert "n.char_end = e.char_end" in cypher
+    # 值随 batch 走（Cypher 侧从 map 取值，缺 key 时写 null ⇒ CSV 派生实体天然无 span）
+    assert entity_calls[0][1]["batch"][0]["char_start"] == 120
+    assert entity_calls[0][1]["batch"][0]["char_end"] == 140
+
+
 def test_build_params_carry_tenant_and_version() -> None:
     calls: list[tuple[str, dict[str, Any]]] = []
     org_id = uuid4()

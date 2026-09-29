@@ -125,6 +125,25 @@ class KgVersion:
 
 
 @dataclass(frozen=True, slots=True)
+class EntitySpan:
+    """**Sprint 10 批次 A**：实体在该片段所属的**文档全文**中的字符区间。
+
+    ``char_start`` / ``char_end`` 是**全文绝对偏移**（与 ``:Chunk.char_start`` 同一坐标系），
+    换算成 ``Citation.char_offset``（片段内相对偏移）的公式由
+    :func:`app.services.agents._to_citation` 独家持有——**换算只此一处**，
+    避免"同一事实两处算法"。
+
+    来源：抽取侧 ``ExtractedEntity.char_start/char_end``（Sprint 6 起就有值，
+    **入图时被丢弃**，本批次补上）。CSV 派生实体天然无 span ⇒ 不进本列表
+    （**不造** span，与零假数据铁律一致）。
+    """
+
+    mention: str
+    char_start: int
+    char_end: int
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceChunk:
     """Sprint 6 批次 B：证据片段（``:Chunk`` 投影）。
 
@@ -143,6 +162,9 @@ class EvidenceChunk:
     page: int | None
     char_start: int
     char_end: int
+    #: Sprint 10 批次 A：本片段内**带 span 的实体**（全文绝对偏移，见 :class:`EntitySpan`）。
+    #: 用途单一：把引用从"指到哪一段"精确到"指到哪一句"。为空 ⇒ 引用回退为整段。
+    entity_spans: tuple[EntitySpan, ...] = ()
 
 
 # --------------------------------------------------------------------------- #
@@ -322,13 +344,20 @@ WHERE e.id IN $entity_ids
 MATCH (c:Chunk {kg_version: $kg_version})-[:MENTIONS]->(e)
 WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
 OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
-RETURN DISTINCT
+OPTIONAL MATCH (c)-[:MENTIONS]->(e2:Entity {kg_version: $kg_version})
+WHERE e2.char_start IS NOT NULL
+WITH DISTINCT c, d,
+     collect(DISTINCT {mention: e2.mention,
+                       char_start: e2.char_start,
+                       char_end: e2.char_end}) AS spans
+RETURN
   c.id AS chunk_id,
   d.id AS doc_id,
   c.text AS text,
   c.page AS page,
   c.char_start AS char_start,
-  c.char_end AS char_end
+  c.char_end AS char_end,
+  [s IN spans WHERE s.mention IS NOT NULL] AS spans
 LIMIT $limit
 """
 
@@ -337,13 +366,20 @@ _QUERY_EVIDENCE_CHUNKS_BY_DOCUMENT = """
 MATCH (d:Document {id: $doc_id, kg_version: $kg_version})
       -[:HAS_CHUNK]->(c:Chunk {kg_version: $kg_version})
 WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
-RETURN DISTINCT
+OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity {kg_version: $kg_version})
+WHERE e.char_start IS NOT NULL
+WITH DISTINCT c, d,
+     collect(DISTINCT {mention: e.mention,
+                       char_start: e.char_start,
+                       char_end: e.char_end}) AS spans
+RETURN
   c.id AS chunk_id,
   d.id AS doc_id,
   c.text AS text,
   c.page AS page,
   c.char_start AS char_start,
-  c.char_end AS char_end
+  c.char_end AS char_end,
+  [s IN spans WHERE s.mention IS NOT NULL] AS spans
 LIMIT $limit
 """
 
@@ -1723,7 +1759,38 @@ def _to_evidence_chunk(record: Any) -> EvidenceChunk:
         page=page,
         char_start=int(record.get("char_start") or 0),
         char_end=int(record.get("char_end") or 0),
+        entity_spans=_to_entity_spans(record.get("spans")),
     )
+
+
+def _to_entity_spans(raw_spans: Any) -> tuple[EntitySpan, ...]:
+    """解析片段内的实体 span（Sprint 10 批次 A）。
+
+    **单条 span 坏掉 ⇒ 跳过该条，不整条 chunk 失败**：span 是"引用精度"
+    的增强信息，缺失只是让引用回退到整段（语义仍正确）；而 ``doc_id`` /
+    ``text`` 坏掉是数据错误，必须抛——两者**不可同等对待**。
+    跳过时留 WARNING，避免"引用永远回退"却无人知晓。
+    """
+    if not raw_spans:
+        return ()
+    spans: list[EntitySpan] = []
+    for raw in raw_spans:
+        if not isinstance(raw, Mapping):
+            continue
+        mention = str(raw.get("mention") or "").strip()
+        try:
+            char_start = int(raw["char_start"])  # type: ignore[index]
+            char_end = int(raw["char_end"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            logger.bind(mention=mention).warning("graph_entity_span_invalid")
+            continue
+        if not mention or char_end < char_start:
+            logger.bind(mention=mention).warning("graph_entity_span_invalid")
+            continue
+        spans.append(
+            EntitySpan(mention=mention, char_start=char_start, char_end=char_end)
+        )
+    return tuple(spans)
 
 
 def _project_nodes(
