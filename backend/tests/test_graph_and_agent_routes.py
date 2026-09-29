@@ -841,7 +841,13 @@ class _FakeNeo4jSession:
     def __exit__(self, *exc_info: object) -> bool:
         return False
 
-    def run(self, *args: object, **kwargs: object) -> SimpleNamespace:
+    def run(self, *args: object, **kwargs: object) -> object:
+        # Sprint 10 批次 C：`fetch_all_subgraph` 拆成两段——第一段是「轻量索引」
+        # （返回**行**，供 Python 侧选节点），第二段才返回单个 payload。
+        # 拿 cypher 里的特征区分，比按调用顺序区分稳（顺序一改就全红）。
+        cypher = str(args[0]) if args else ""
+        if "AS degree" in cypher:
+            return [{"id": "e1", "type": "UNKNOWN", "degree": 0}]
         return SimpleNamespace(single=lambda: self._payload)
 
 

@@ -280,8 +280,18 @@ RETURN count(n) AS leaked
 #: Cypher 查询：**全部**已导入实体子图（不依赖 PG ``document_id``）。
 #: 供 ``bridge_web_demo`` 阶段六产物（``:Entity`` + 实体间关系）查询使用。
 #: ``elementId`` 用于稳定去重，``id`` 属性作为对外节点标识（与边的 source/target 对齐）。
-_QUERY_ALL_ENTITY_SUBGRAPH = (
-    """
+#:
+#: **Sprint 10 批次 C（裁决 D-K）拆成两段**：
+#:
+#: 1. :data:`_QUERY_SUBGRAPH_NODE_INDEX` —— 只回 ``id / type / degree`` 的**轻量索引**，
+#:    选谁由 :func:`select_subgraph_nodes` 在 Python 侧决定；
+#: 2. :data:`_QUERY_SUBGRAPH_BY_IDS` —— 按选中 id 取**完整节点 + 边**。
+#:
+#: 为什么不在 Cypher 里一步做完：选节点要「按类型保底 + 余量按度数补齐」，Cypher
+#: 侧得靠 ``reduce`` 叠加 + ``UNWIND`` 排序，而 **``UNWIND`` 空列表会吞掉整行**
+#: （余量为 0 时整条查询返回空 ⇒ 空图，把"没数据"伪装成正常结果）。纯函数则
+#: 可单测、可读，且索引查询只传三个字段，不比一次全量投影贵。
+_QUERY_SUBGRAPH_NODE_INDEX = """
 MATCH (n:Entity {kg_version: $kg_version})
 // 用 properties(n)['org_id'] 而非 n.org_id：后者在库中尚无该属性键时
 // 会触发 ``01N52 property key does not exist`` 通知（噪声日志）。
@@ -289,12 +299,25 @@ WITH n
 WHERE $org_id IS NULL
    OR properties(n)['org_id'] IS NULL
    OR properties(n)['org_id'] = $org_id
-WITH collect(n) AS all_nodes
-WITH all_nodes[0..$node_limit] AS nodes, size(all_nodes) AS total_nodes
+RETURN n.id AS id,
+       coalesce(n.entity_type, 'UNKNOWN') AS type,
+       size([(n)--() | 1]) AS degree
+ORDER BY degree DESC, id
+"""
+
+_QUERY_SUBGRAPH_BY_IDS = (
+    """
+MATCH (n:Entity {kg_version: $kg_version})
+WHERE n.id IN $ids
+WITH n
+WHERE $org_id IS NULL
+   OR properties(n)['org_id'] IS NULL
+   OR properties(n)['org_id'] = $org_id
+WITH n ORDER BY n.id
+WITH collect(n) AS nodes
 RETURN
   nodes,
-  total_nodes,
-  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes"""
+  [(a)-[r]->(b) WHERE a.id IN $ids AND b.id IN $ids"""
     + _temporal_view("r")
     + """ | {
     id: coalesce(r.id, elementId(r)),
@@ -305,6 +328,62 @@ RETURN
   }] AS edges
 """
 )
+
+
+def select_subgraph_nodes(
+    rows: Sequence[tuple[str, str, int]],
+    limit: int,
+) -> list[str]:
+    """**问答子图该选哪些节点**（Sprint 10 批次 C，裁决 D-I）。
+
+    口径（真机实测得来，见 ``changes/Sprint10.2/proposal.md`` §2）：
+
+    1. 按 ``entity_type`` 分组；
+    2. 每组**保底** ``limit // 类型数`` 个 —— 小类型（``LEAVE`` / ``OVERTIME``）
+       不被大类型（``ATTENDANCE_RECORD`` 占全图 30%）饿死；
+    3. 组内按 **度数降序 + id 升序** 取 —— 保连通性，且同输入必同解；
+    4. 名额没用完的部分按全局度数补齐（不浪费 Prompt 预算）。
+
+    反面教材（都实测过，别再走一遍）：
+
+    - **无序截断**（原实现）：锚点召回 **50%**，12 条问句里 6 条锚点全丢 ⇒
+      就是 R12 事故——LLM 答「资料中没有此人信息」却带着引用；
+    - **全局度数降序**（图谱概览的口径）：``LEAVE`` 掉到 **0**、``OVERTIME`` 只剩 2，
+      问"请假 / 加班"时**制度落点没了**，锚点召回仍是 50%（被挤掉的恰恰是
+      问句里那些具体的员工 / 工单）。
+
+    :param rows: ``(id, entity_type, degree)`` 三元组
+    :param limit: 节点上限（**不放**大——放大即把成本转嫁给 Prompt token）
+    :returns: 选中的节点 id（有序、去重）
+    """
+    if limit <= 0 or not rows:
+        return []
+
+    buckets: dict[str, list[tuple[str, int]]] = {}
+    for node_id, entity_type, degree in rows:
+        buckets.setdefault(entity_type or "UNKNOWN", []).append((node_id, degree))
+    for group in buckets.values():
+        group.sort(key=lambda item: (-item[1], item[0]))
+
+    floor = max(limit // len(buckets), 1)
+    chosen: list[str] = []
+    leftovers: list[tuple[str, int]] = []
+    for entity_type in sorted(buckets):
+        group = buckets[entity_type]
+        chosen.extend(node_id for node_id, _degree in group[:floor])
+        leftovers.extend(group[floor:])
+
+    if len(chosen) > limit:
+        # 类型数 > 名额（极端情形，如 600 种类型 / 上限 500）：保底抬到 1 之后
+        # 就已经超额 ⇒ 按**类型名字典序**截断。字典序是任意的，但确定且可复核；
+        # 换成"按度数挑类型"会重新饿死小类型——那正是本方案要避免的。
+        return chosen[:limit]
+
+    if len(chosen) < limit:
+        leftovers.sort(key=lambda item: (-item[1], item[0]))
+        chosen.extend(node_id for node_id, _degree in leftovers[: limit - len(chosen)])
+    return chosen
+
 
 #: Cypher 查询：单个文档的子图（节点 + 关系），受 doc_id + kg_version 双重约束。
 #: 规模上限 500 节点，超限由 Python 侧裁剪 + ``truncated = true`` 标记。
@@ -547,7 +626,7 @@ LIMIT $limit
 """
 
 #: 批次 C：全局图谱概览的 Cypher（节点轻量投影 + 全部边）。
-#: 与 ``_QUERY_ALL_ENTITY_SUBGRAPH`` 不同：去掉了 ``total_nodes`` 字段（由服务层算），
+#: 与 :data:`_QUERY_SUBGRAPH_BY_IDS`（问答注入用）不同：去掉了 ``total_nodes`` 字段（由服务层算），
 #: 投影阶段只取 ``id`` / ``canonical_name`` / ``type`` / ``category`` 4 个字段。
 #: 节点选取按**度数降序**（连接数多的枢纽优先，平局按 `id` 保证确定性）：
 #: 此前是 `all_nodes[0..$node_limit]` 无序截断——任意前 500 个节点之间几乎没有边
@@ -864,13 +943,26 @@ class GraphService:
             kg_version or self.fetch_active_kg_version(org_id=org_id, db=db).version
         )
 
+        org_param = str(org_id) if org_id else None
         try:
             with self._session() as session:
+                # ① 轻量索引（id / 类型 / 度数）→ ② Python 侧选节点 → ③ 按 id 取节点 + 边
+                index = [
+                    (row["id"], row["type"], int(row["degree"] or 0))
+                    for row in session.run(
+                        _QUERY_SUBGRAPH_NODE_INDEX,
+                        kg_version=version,
+                        org_id=org_param,
+                    )
+                ]
+                selected = select_subgraph_nodes(index, node_limit)
+                if not selected:
+                    return [], [], False
                 result = session.run(
-                    _QUERY_ALL_ENTITY_SUBGRAPH,
+                    _QUERY_SUBGRAPH_BY_IDS,
                     kg_version=version,
-                    org_id=str(org_id) if org_id else None,
-                    node_limit=node_limit,
+                    org_id=org_param,
+                    ids=selected,
                     as_of=validate_as_of(as_of),
                 ).single()
         except GraphUnavailableError:
@@ -883,7 +975,7 @@ class GraphService:
         if result is None:
             return [], [], False
 
-        total_nodes = int(result["total_nodes"] or 0)
+        total_nodes = len(index)
         truncated = total_nodes > node_limit
 
         # 投影段（批次 D1 缺口 5）：Neo4j 原始数据可能与契约不符

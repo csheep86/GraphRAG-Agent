@@ -112,12 +112,16 @@ def ask(question: str) -> dict[str, Any]:
 def diagnose() -> int:
     """**¥0 候选集诊断**：复算问答链路「能看到哪些 chunk」，不调 LLM。
 
-    为什么需要它：问答的候选集是**结构性**的——active 版本全量实体取前 ``_GRAPH_NODE_LIMIT``
-    个（**无 ORDER BY**）→ 按 ``MENTIONS`` 反查 chunk → 再 ``LIMIT _EVIDENCE_CHUNK_LIMIT``
-    （**无排序、无打分**），``question`` 文本**不参与**。于是「某文档 0 条注入」⇒ 关于它的
-    问题**必然拒答**，与问题怎么写无关。换版后若出现非预期拒答，先跑这条命令归因，
+    为什么需要它：问答的候选集是**结构性**的——active 版本全量实体按
+    ``select_subgraph_nodes`` 选前 ``_GRAPH_NODE_LIMIT`` 个（**按 ``entity_type`` 保底 +
+    组内度数降序**，Sprint 10 批次 C 之前是"无 ORDER BY 的扫描序"）→ 按 ``MENTIONS``
+    反查 chunk → 再 ``LIMIT _EVIDENCE_CHUNK_LIMIT``（**无排序、无打分**），
+    ``question`` 文本**不参与**。于是「某文档 0 条注入」⇒ 关于它的问题**必然拒答**，
+    与问题怎么写无关。换版后若出现非预期拒答，先跑这条命令归因，
     别急着改问题集（plan §4.2 纪律：只评估、不调 Prompt）。
     """
+    from uuid import UUID  # noqa: PLC0415
+
     from neo4j import GraphDatabase  # noqa: PLC0415 - 仅诊断模式需要
 
     from app.core.config import get_settings  # noqa: PLC0415
@@ -126,8 +130,8 @@ def diagnose() -> int:
     )
     from app.services.graphs import (  # noqa: PLC0415
         _EVIDENCE_CHUNK_LIMIT,
-        _QUERY_ALL_ENTITY_SUBGRAPH,
         _QUERY_EVIDENCE_CHUNKS_BY_ENTITIES,
+        GraphService,
     )
 
     settings = get_settings()
@@ -145,13 +149,16 @@ def diagnose() -> int:
                 v=QSET_KG_VERSION,
             ).single()["n"]
 
-            row = session.run(
-                _QUERY_ALL_ENTITY_SUBGRAPH,
-                kg_version=QSET_KG_VERSION,
-                org_id=ORG_ID,
-                node_limit=_GRAPH_NODE_LIMIT,
-            ).single()
-            entity_ids = [node["id"] for node in row["nodes"]]
+            # Sprint 10 批次 C：候选集改由**服务层**算（不再在脚本里复刻线上 Cypher——
+            # 复刻就意味着两处逻辑必然漂移，诊断结论也就不可信了）。
+            candidate_nodes, _edges, _truncated = (
+                GraphService.instance().fetch_all_subgraph(
+                    kg_version=QSET_KG_VERSION,
+                    org_id=UUID(ORG_ID),
+                    node_limit=_GRAPH_NODE_LIMIT,
+                )
+            )
+            entity_ids = [node.id for node in candidate_nodes]
 
             reachable = list(
                 session.run(
@@ -186,7 +193,8 @@ def diagnose() -> int:
 
     print(f"kg_version        : {QSET_KG_VERSION}")
     print(
-        f"实体总数 / 窗口    : {row['total_nodes']} / {_GRAPH_NODE_LIMIT}（无 ORDER BY，按扫描序）"
+        f"候选实体 / 窗口    : {len(candidate_nodes)} / {_GRAPH_NODE_LIMIT}"
+        "（按 entity_type 保底 + 组内度数降序）"
     )
     print(f"文档总数          : {total_docs}")
     print(f"chunk 总数        : {total_chunks}")
