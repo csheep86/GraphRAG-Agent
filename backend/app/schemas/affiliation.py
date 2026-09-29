@@ -7,27 +7,38 @@
 `/affiliation/suspicions` 为准（批次 B 决策 **B1**——`plan.md:275` 原写 `suspects`
 已同步为 `suspicions`）。
 
-**类型枚举只列本批次真能产出的两类**（`shared_legal_rep` / `shared_address`）：
-spec §3 验收 3 的 `type` 全集还含 `shared_phone` / `cycle` / `amount_mismatch`，但它们
-需要 `:Phone` / `:Invoice` / `:Voucher` / `:Contract` 节点（**S9 批次 B**）。现在就把这
-三类写进 OpenAPI 枚举等于向调用方**承诺一个不存在的能力**——按根 `CODEBUDDY.md`
-「功能预留原则」，不做的事不进契约（S9 落地时一并扩枚举）。
+**类型枚举只列真能产出的类型**：Sprint 7.2 只有规则型两类；Sprint 9.5 加考勤域
+`missing_check_in`；**Sprint 9.12 批次 C2 补算法型三类** `shared_phone` / `cycle` /
+`amount_mismatch`——它们的输入（`:Phone` / `:Contract` / `:Invoice` / `:Voucher`
+与持股边）到 S9.12 才由摄入器落成节点。此前**刻意不进契约**：把产不出的类型写进
+OpenAPI 枚举等于向调用方**承诺一个不存在的能力**（根 `CODEBUDDY.md` 功能预留原则）。
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-#: 疑点类型——**M4 原有两类照旧**（规则型；`shared_phone` 等三类属 S9）
-#: + **Sprint 9.5 批次 C2 域化新增** `missing_check_in`（考勤域「工作日缺卡」）。
+#: 疑点类型——**只加不改**（金融两类照旧 + 考勤域 `missing_check_in`）
+#: + **Sprint 9.12 批次 C2 算法型三类** `shared_phone` / `cycle` / `amount_mismatch`。
 #:
-#: 域化口径（proposal §5.4：**只加不改**）：金融两类**保留不删**，考勤域新增一类；
+#: 域化口径（proposal §5.4）：金融两类**保留不删**，考勤域新增一类；
 #: 前端按域选择展示哪些类型，不做跨域混用。
-SuspicionType = Literal["shared_address", "shared_legal_rep", "missing_check_in"]
+#:
+#: 算法三类**现在**才进契约（此前一直刻意不进）：它们依赖 `:Phone` / `:Contract` /
+#: `:Invoice` / `:Voucher` 与持股边，语料与摄入器就位（S9.11 / S9.12）后才真能产出；
+#: 提前写进枚举 = 向调用方承诺不存在的能力。
+SuspicionType = Literal[
+    "shared_address",
+    "shared_legal_rep",
+    "missing_check_in",
+    "shared_phone",
+    "cycle",
+    "amount_mismatch",
+]
 #: 疑点严重度（spec §4.3）
 SuspicionSeverity = Literal["high", "medium", "low"]
 #: 疑点复核状态（spec §4.3）；`open` 为初始态
@@ -270,6 +281,19 @@ class AffiliationSuspicionItem(BaseModel):
     )
     evidence: list[AffiliationEvidenceRef] = Field(
         description="原文证据引用列表（非空：无证据的疑点不会落库）"
+    )
+    #: Sprint 9.12（spec §4.7.2 / §3 验收 5）：``amount_mismatch`` 的三方金额明细。
+    #: 其余类型一律 ``null``——**不**用 ``{}`` 冒充「有明细」。
+    #:
+    #: 值类型**不收窄**为 ``float | str``：``cycle`` 的 ``cycle_length`` 是整数，
+    #: 收窄会被 Pydantic 静默转成 ``2.0``（真机实测）——环长度不是金额，
+    #: 无理由被浮点化。
+    details: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "三方金额明细（仅 `amount_mismatch`）：`{trade_ref, contract_amount, "
+            "invoice_amount, voucher_amount, max_diff}`；其余类型为 `null`"
+        ),
     )
     causes: list[AffiliationCauseItem] | None = Field(
         default=None,

@@ -6,10 +6,7 @@ import type {
 } from "@/types/mock";
 
 export type StatusBadgeVariant =
-  | "pending"
-  | "processing"
-  | "completed"
-  | "failed";
+  "pending" | "processing" | "completed" | "failed";
 
 type StatusMeta = {
   label: string;
@@ -28,7 +25,10 @@ export const DOCUMENT_STATUS_META: Record<DocumentStatus, StatusMeta> = {
 };
 
 /** 「全部状态」筛选下拉选项 */
-export const STATUS_FILTER_OPTIONS: { value: DocumentStatus | "all"; label: string }[] = [
+export const STATUS_FILTER_OPTIONS: {
+  value: DocumentStatus | "all";
+  label: string;
+}[] = [
   { value: "all", label: "全部状态" },
   { value: "pending", label: "待处理" },
   { value: "processing", label: "处理中" },
@@ -42,12 +42,7 @@ export const STATUS_FILTER_OPTIONS: { value: DocumentStatus | "all"; label: stri
  * ------------------------------------------------------------------------ */
 
 export type SuspicionBadgeVariant =
-  | "pending"
-  | "processing"
-  | "completed"
-  | "failed"
-  | "muted"
-  | "outline";
+  "pending" | "processing" | "completed" | "failed" | "muted" | "outline";
 
 type SuspicionMeta = { label: string; variant: SuspicionBadgeVariant };
 
@@ -55,7 +50,9 @@ type SuspicionMeta = { label: string; variant: SuspicionBadgeVariant };
  * 疑点类型（契约 `suspicion_type`）
  *
  * `missing_check_in` 为 **Sprint 9.5 批次 C2 域化新增**（考勤域「工作日缺卡」）；
- * 金融域两类保留不动 —— 契约是「只加不改」，前端按域各显示各的，不做跨域混用。
+ * `shared_phone` / `cycle` / `amount_mismatch` 为 **Sprint 9.12 批次 C2 新增**
+ * （三类图算法 + 三方金额不一致，判据冻结在 `specs/m4` §4.7.2）。
+ * 金融域各类保留不动 —— 契约是「只加不改」，前端按域各显示各的，不做跨域混用。
  */
 export const SUSPICION_TYPE_META: Record<
   AffiliationSuspicionType,
@@ -64,6 +61,9 @@ export const SUSPICION_TYPE_META: Record<
   shared_legal_rep: { label: "共享法定代表人", variant: "outline" },
   shared_address: { label: "共享注册地址", variant: "outline" },
   missing_check_in: { label: "工作日缺卡", variant: "outline" },
+  shared_phone: { label: "共享联系电话", variant: "outline" },
+  cycle: { label: "循环持股", variant: "outline" },
+  amount_mismatch: { label: "三方金额不一致", variant: "outline" },
 };
 
 /** 严重度：高=红 · 中=蓝 · 低=灰 */
@@ -86,6 +86,10 @@ export const SUSPICION_STATUS_META: Record<
   dismissed: { label: "已驳回", variant: "muted" },
 };
 
+/**
+ * 类型筛选下拉（**金融域视图**）：只列金融域类型，`missing_check_in` 属考勤域，
+ * 按「不做跨域混用」不进本列表（它仍可经 `SUSPICION_TYPE_META` 正确渲染）。
+ */
 export const SUSPICION_TYPE_OPTIONS: {
   value: AffiliationSuspicionType | "all";
   label: string;
@@ -93,6 +97,9 @@ export const SUSPICION_TYPE_OPTIONS: {
   { value: "all", label: "全部类型" },
   { value: "shared_legal_rep", label: "共享法定代表人" },
   { value: "shared_address", label: "共享注册地址" },
+  { value: "shared_phone", label: "共享联系电话" },
+  { value: "cycle", label: "循环持股" },
+  { value: "amount_mismatch", label: "三方金额不一致" },
 ];
 
 export const SUSPICION_STATUS_OPTIONS: {

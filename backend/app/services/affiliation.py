@@ -249,6 +249,8 @@ def persist_detection_result(
                 entities=[str(item) for item in payload["entities"]],
                 entity_names=[str(item) for item in payload["entity_names"]],
                 evidence=list(payload["evidence"]),
+                # Sprint 9.12：``amount_mismatch`` 的三方金额明细；其余类型 ``None``
+                details=payload.get("details"),
                 kg_version=kg_version,
                 status="open",
                 trace_id=trace_uuid,

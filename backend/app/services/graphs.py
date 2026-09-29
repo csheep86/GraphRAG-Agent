@@ -405,14 +405,92 @@ LIMIT $limit
 """
 )
 
+#: Sprint 9.12 批次 C2（spec §4.7.2）：**共享电话** —— 与共享法人 / 地址同构
+#: （``s1.id < s2.id`` 对称去重 + ``org_id`` 租户过滤，两处偏离的理由见上）。
+_QUERY_SHARED_PHONE = """
+MATCH (s1:Subject)-[:CONTACT_PHONE]->(p:Phone)<-[:CONTACT_PHONE]-(s2:Subject)
+WHERE s1.id < s2.id
+  AND s1.kg_version = $kg_version
+  AND s2.kg_version = $kg_version
+  AND p.kg_version = $kg_version
+  AND ($org_id IS NULL OR properties(s1)['org_id'] IS NULL
+       OR properties(s1)['org_id'] = $org_id)
+  AND ($org_id IS NULL OR properties(s2)['org_id'] IS NULL
+       OR properties(s2)['org_id'] = $org_id)
+RETURN s1.id AS subject_a_id, s1.canonical_name AS subject_a_name,
+       s2.id AS subject_b_id, s2.canonical_name AS subject_b_name,
+       p.id AS shared_id, p.canonical_name AS shared_name
+ORDER BY subject_a_id, subject_b_id
+LIMIT $limit
+"""
+
+#: Sprint 9.12 批次 C2（spec §4.7.2）：**持股环** —— ``SHARES_HOLDER`` 有向环，
+#: 长度 **2..4**（2 = 交叉持股，必须算；> 4 路径爆炸且审计难解释，判据里已定）。
+#:
+#: 去重：同一个环会被环上每个节点各遍历一次 ⇒ 只保留「**起点 = 环上最小 id**」的那次
+#: （``reduce`` 求最小值，不用 apoc——社区版不一定装 APOC，且这里不需要）。
+_QUERY_SHAREHOLDER_CYCLE = """
+MATCH p = (s:Subject {kg_version: $kg_version})-[:SHARES_HOLDER*2..4]->(s)
+WHERE ALL(n IN nodes(p) WHERE n.kg_version = $kg_version
+      AND ($org_id IS NULL OR properties(n)['org_id'] IS NULL
+           OR properties(n)['org_id'] = $org_id))
+WITH p, s, [n IN nodes(p) | n.id] AS ids,
+     [n IN nodes(p) | coalesce(n.canonical_name, n.id)] AS names
+WITH p, s, ids, names,
+     reduce(m = ids[0], x IN ids | CASE WHEN x < m THEN x ELSE m END) AS min_id
+WHERE s.id = min_id
+RETURN DISTINCT ids[0..size(ids) - 1] AS cycle_ids,
+       names[0..size(names) - 1] AS cycle_names,
+       length(p) AS cycle_length
+ORDER BY cycle_length, cycle_ids
+LIMIT $limit
+"""
+
+#: Sprint 9.12 批次 C2（spec §4.7.2）：**三方金额不一致** —— 同一 ``trade_ref`` 上
+#: 合同 / 发票 / 凭证金额**不全相等**。
+#:
+#: **三方必须齐**：任一方缺失 ⇒ 该 trade_ref 直接不匹配（spec 明写「三方」，
+#: 不拿两方不等冒充三方不一致）。``<`` 严格不等号避免 (A,B,A) 这类组合重复。
+_QUERY_AMOUNT_MISMATCH = """
+MATCH (c:Contract {kg_version: $kg_version}),
+      (i:Invoice {kg_version: $kg_version}),
+      (v:Voucher {kg_version: $kg_version})
+WHERE c.trade_ref IS NOT NULL
+  AND c.trade_ref = i.trade_ref
+  AND i.trade_ref = v.trade_ref
+  AND NOT (c.amount = i.amount AND i.amount = v.amount)
+  AND ($org_id IS NULL OR properties(c)['org_id'] IS NULL
+       OR properties(c)['org_id'] = $org_id)
+  AND ($org_id IS NULL OR properties(i)['org_id'] IS NULL
+       OR properties(i)['org_id'] = $org_id)
+  AND ($org_id IS NULL OR properties(v)['org_id'] IS NULL
+       OR properties(v)['org_id'] = $org_id)
+RETURN c.trade_ref AS trade_ref,
+       c.id AS contract_id, i.id AS invoice_id, v.id AS voucher_id,
+       c.amount AS contract_amount, i.amount AS invoice_amount,
+       v.amount AS voucher_amount,
+       c.canonical_name AS contract_name,
+       i.canonical_name AS invoice_name,
+       v.canonical_name AS voucher_name
+ORDER BY trade_ref
+LIMIT $limit
+"""
+
 #: Sprint 7.1 批次 A：疑点证据 —— 由主体层节点（``:Subject`` / ``:LegalPerson`` /
 #: ``:Address``）经 ``source_entity_ids`` 溯源到 M2 ``:Entity``，再走 S6 的
 #: ``(:Chunk)-[:MENTIONS]->(:Entity)`` 反查原文片段（tasks §2.3 明确要求复用 :Chunk）。
 #: **不**回退到「按名字模糊匹配 Entity」——那等于在两层之间偷偷搭了一座文本桥。
+#:
+#: **Sprint 9.12 扩白名单（理由必须写明）**：新增 ``:Phone`` / ``:Invoice`` /
+#: ``:Voucher`` / ``:Contract``。spec §3 验收 4 要求每条疑点都能回溯到**具体合同 /
+#: 发票 / 凭证**；而 ``amount_mismatch`` 的三个端点正是 ``:Contract`` / ``:Invoice`` /
+#: ``:Voucher``（§4.7.2）——白名单不含它们 ⇒ 该类疑点**必然**取不到证据 ⇒ 被
+#: 「无证据不产疑点」规则整类丢弃（**沉默的零产出**，比报错更难查）。
 _QUERY_AFFILIATION_EVIDENCE = """
 MATCH (n {kg_version: $kg_version})
 WHERE n.id IN $node_ids
-  AND (n:Subject OR n:LegalPerson OR n:Address)
+  AND (n:Subject OR n:LegalPerson OR n:Address OR n:Phone
+       OR n:Invoice OR n:Voucher OR n:Contract)
   AND ($org_id IS NULL OR properties(n)['org_id'] IS NULL
        OR properties(n)['org_id'] = $org_id)
 UNWIND coalesce(n.source_entity_ids, []) AS eid
@@ -977,6 +1055,105 @@ class GraphService:
                 ) from exc
             for row in rows:
                 records.append({"suspicion_type": suspicion_type, **dict(row)})
+        return records
+
+    def fetch_algorithm_suspicions(
+        self,
+        *,
+        kg_version: str,
+        org_id: UUID | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Sprint 9.12 批次 C2：**三类图算法 + 三方金额不一致**（spec §4.7.2）。
+
+        与 :meth:`fetch_shared_affiliations`（规则型两跳）分开暴露，是因为**形状不同**：
+        规则型固定是「主体A + 主体B + 共享节点」，而算法型是「N 个主体」/「三方单据」。
+        硬塞进同一个返回结构会让上层靠字段名猜类型——那正是要避免的。
+
+        :returns: ``[{"suspicion_type", "entities": [...], "entity_names": [...],
+            "details": {...}|None}, ...]``（``shared_phone`` 走共享节点的三元形状，
+            故也归一成 ``entities`` 列表）。
+        :raises GraphUnavailableError: Neo4j 不可用（**不**静默返回 []）。
+        """
+        records: list[dict[str, Any]] = []
+
+        def _run(query: str, **params: Any) -> list[Any]:
+            try:
+                with self._session() as session:
+                    return list(session.run(query, **params))
+            except GraphUnavailableError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 统一包装
+                raise GraphUnavailableError(
+                    f"查询算法疑点失败: kg_version={kg_version}: {exc}"
+                ) from exc
+
+        org = str(org_id) if org_id else None
+
+        for row in _run(
+            _QUERY_SHARED_PHONE, kg_version=kg_version, org_id=org, limit=limit
+        ):
+            records.append(
+                {
+                    "suspicion_type": "shared_phone",
+                    "entities": [
+                        str(row["subject_a_id"]),
+                        str(row["subject_b_id"]),
+                        str(row["shared_id"]),
+                    ],
+                    "entity_names": [
+                        str(row["subject_a_name"]),
+                        str(row["subject_b_name"]),
+                        str(row["shared_name"]),
+                    ],
+                    "details": None,
+                }
+            )
+
+        for row in _run(
+            _QUERY_SHAREHOLDER_CYCLE, kg_version=kg_version, org_id=org, limit=limit
+        ):
+            cycle_ids = [str(item) for item in row["cycle_ids"]]
+            records.append(
+                {
+                    "suspicion_type": "cycle",
+                    "entities": cycle_ids,
+                    "entity_names": [str(item) for item in row["cycle_names"]],
+                    "details": {"cycle_length": int(row["cycle_length"])},
+                }
+            )
+
+        for row in _run(
+            _QUERY_AMOUNT_MISMATCH, kg_version=kg_version, org_id=org, limit=limit
+        ):
+            amounts = [
+                float(row["contract_amount"]),
+                float(row["invoice_amount"]),
+                float(row["voucher_amount"]),
+            ]
+            records.append(
+                {
+                    "suspicion_type": "amount_mismatch",
+                    "entities": [
+                        str(row["contract_id"]),
+                        str(row["invoice_id"]),
+                        str(row["voucher_id"]),
+                    ],
+                    "entity_names": [
+                        str(row["contract_name"]),
+                        str(row["invoice_name"]),
+                        str(row["voucher_name"]),
+                    ],
+                    # spec §3 验收 5：必须给出「差额 + 三方各自金额」的明细
+                    "details": {
+                        "trade_ref": str(row["trade_ref"]),
+                        "contract_amount": amounts[0],
+                        "invoice_amount": amounts[1],
+                        "voucher_amount": amounts[2],
+                        "max_diff": round(max(amounts) - min(amounts), 2),
+                    },
+                }
+            )
         return records
 
     def fetch_affiliation_evidence(

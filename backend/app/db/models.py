@@ -39,6 +39,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     Index,
     Integer,
     String,
@@ -256,21 +257,30 @@ AFFILIATION_TASK_STATUS_VALUES = ("pending", "processing", "completed", "failed"
 SUSPICION_STATUS_VALUES = ("open", "dismissed", "confirmed")
 """`affiliation_suspicions.status` 合法值（spec §4.3）。"""
 
-SUSPICION_TYPE_VALUES = ("shared_legal_rep", "shared_address", "missing_check_in")
-"""能产出的疑点类型（spec §3 验收 3 的最小集 + Sprint 9.5 批次 C2 域化新增）。
+SUSPICION_TYPE_VALUES = (
+    "shared_legal_rep",
+    "shared_address",
+    "missing_check_in",
+    # ---- Sprint 9.12 批次 C2：算法型三类（spec §4.7.2 判据已冻结）----
+    "shared_phone",
+    "cycle",
+    "amount_mismatch",
+)
+"""能产出的疑点类型（spec §3 验收 3 的最小集 + 两批域化 / 算法化新增）。
 
 - 前两类是 **M4 金融域**（``shared_legal_rep`` / ``shared_address``），**保留不删**；
-- ``missing_check_in`` 是 **考勤域**「工作日缺卡」（``attribution.ANOMALY_MISSING_CHECK_IN``）。
+- ``missing_check_in`` 是 **考勤域**「工作日缺卡」（``attribution.ANOMALY_MISSING_CHECK_IN``）；
+- ``shared_phone`` / ``cycle`` / ``amount_mismatch`` 是 **Sprint 9.12** 补的三类算法
+  与三方金额不一致（判据见 `specs/m4-affiliation-detection.md` §4.7.2）。
 
-spec 全集还含 ``shared_phone`` / ``cycle`` / ``amount_mismatch``，但它们依赖
-``:Phone`` / ``:Invoice`` / ``:Voucher`` / ``:Contract`` 节点（**Sprint 9 批次 B**）。
-**不提前把产不出的数据写进允许集合**——那等于向调用方承诺不存在的能力；
-S9 落地时同步扩本常量 + CheckConstraint + 契约枚举。
+**为什么现在才扩**：这三类依赖 ``:Phone`` / ``:Contract`` / ``:Invoice`` / ``:Voucher``
+与 ``SHARES_HOLDER`` 持股边——**数据没有就是没有**，把它们提前写进允许集合等于
+向调用方承诺不存在的能力。语料与摄入器就位（S9.11 / S9.12）后才扩。
 
-**改这里必须同步**：
+**改这里必须同步（四处 + 契约）**：
 ``ck_affiliation_suspicions_type`` CheckConstraint（本文件）+ 契约枚举
-（``app/schemas/affiliation.py::SuspicionType``）+ 迁移脚本
-``scripts/migrate_add_suspicion_causes.py``（**无 Alembic**，`create_all` 不会改已存在的表）。
+（``app/schemas/affiliation.py::SuspicionType``）+ Alembic 迁移
+（``create_all`` **不会**改已存在的表）+ `npm run gen:api`（CI 有契约零漂移校验）。
 """
 
 SUSPICION_SEVERITY_VALUES = ("high", "medium", "low")
@@ -348,7 +358,7 @@ class AffiliationSuspicion(Base):
         ),
         CheckConstraint(
             "suspicion_type IN ('shared_legal_rep', 'shared_address', "
-            "'missing_check_in')",
+            "'missing_check_in', 'shared_phone', 'cycle', 'amount_mismatch')",
             name="ck_affiliation_suspicions_type",
         ),
         CheckConstraint(
@@ -380,6 +390,11 @@ class AffiliationSuspicion(Base):
     #: 用 ``None`` 表示「未归因」，**不**用空列表冒充「归过因、零命中」——
     #: 二者语义相反（后者等于说证据全没对上）。
     causes: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    #: **Sprint 9.12 新增**：``amount_mismatch`` 的三方金额明细
+    #: （``{trade_ref, contract_amount, invoice_amount, voucher_amount, max_diff}``，
+    #: spec §3 验收 5 要求「差额 + 三方各自金额」）。其余类型一律 ``None``——
+    #: **不**为了字段非空而塞空对象（``{}`` 等于宣称"有明细但内容为空"）。
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     kg_version: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     #: 复核人（`X-Actor-Id`；M5 落地后改为 token 主体）
@@ -396,10 +411,17 @@ class AffiliationSuspicion(Base):
 class UnalignedSubject(Base):
     """`unaligned_subjects` 表（M4 §4.5：未对齐主体）。
 
-    **本批次只建表不写**（批次 B 决策 **B5**）：四源主体对齐属 **Sprint 9 批次 D**，
-    spec §3 验收 1 的「对齐成功率 ≥ 0.95」同样在那里才可能判定。现在写只能靠凑——
-    与其塞假数据，不如诚实留空，并把「空表」登记到
-    `backend/CODEBUDDY.md` §4（避免变成无人知晓的死表）。
+    **写入方（Sprint 9.11 批次 C1 已偿还 S7.2-1）**：
+    `backend/scripts/ingest_affiliation_sources.py`——四源 CSV 摄入后走
+    「税号 → 规范化名称 → 规范化地址」三级对齐（口径见 `specs/m4` §4.6），
+    三级都未命中或命中多个 canonical 主体的行落本表，带 `reason`
+    （`tax_id_missing` / `name_mismatch` / `multiple_candidates`）。
+
+    **本表无读端点**（S9.11 裁决 **D-B**）：不进契约、前端不消费，
+    缺口登记在 `specs/m4` §6 **S9.11-1**——写进去没人读，但不假装它已闭环。
+
+    2026-09-24 建表时曾**刻意留空**（批次 B 决策 B5，避免塞假数据），
+    原因是当时四源对齐还没做；写入方就位后该理由失效，故更新本注释。
     """
 
     __tablename__ = "unaligned_subjects"
@@ -422,6 +444,54 @@ class UnalignedSubject(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
+
+
+class EntityMergeCandidate(Base):
+    """`entity_merge_candidates` 表（M2 §4.5：实体消解候选，Sprint 9.13 批次 C3）。
+
+    **判据**冻结在 `specs/m2-extract-kg.md` **§4.5.1**（先冻结、后写代码）：
+    相似度 = 名称相似度 + 结构加分，三条否决（N1 税号冲突 / N2 多候选 / N3 同税号），
+    三档处置（≥0.90 `auto_merged` / 0.70–0.90 `human_review` / <0.70 **不落表**）。
+
+    两条**必须写进注释**的事实，免得后来者误判：
+
+    1. `left_entity_id` / `right_entity_id` 是 **TEXT 而非 spec 起草时的 UUID**
+       （偏离登记 **S9.13-1**，理由见 spec §4.5 表下注脚）：图谱侧实体 id 是稳定字符串
+       （主体层 `SUBJECT:<税号>`、未对齐行 `RAW:<file>:<key>`），**没有 UUID 可存**；
+    2. `status` 的 `applied` 是 **M6 前向预留值**（spec §4.5 注脚 + S9.11 裁决 D-C）：
+       枚举里**有**、运行时**不写**、契约侧**零改动**——不为"走出 diff"而造端点。
+       `pending` / `rejected` 同理：本阶段无写入方（<0.70 的候选根本不落表）。
+    """
+
+    __tablename__ = "entity_merge_candidates"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'auto_merged', 'human_review', 'rejected', "
+            "'applied')",
+            name="ck_entity_merge_candidates_status",
+        ),
+        CheckConstraint(
+            "similarity >= 0.0 AND similarity <= 1.0",
+            name="ck_entity_merge_candidates_similarity",
+        ),
+        Index("ix_entity_merge_candidates_org_id_status", "org_id", "status"),
+        Index("ix_entity_merge_candidates_org_id_created_at", "org_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 图侧实体 id（**字符串**，见 §偏离 S9.13-1）
+    left_entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    right_entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    similarity: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    #: 判分依据（``{name_sim, struct_bonus, tax_conflict, multi_candidate?}``）——
+    #: 审计要能回答"为什么是这一档"，只有分数不够
+    signals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
 
 
 class ExternalRef(Base):

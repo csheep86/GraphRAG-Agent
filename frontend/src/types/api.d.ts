@@ -15,7 +15,7 @@ export interface paths {
         put?: never;
         /**
          * 提交一次关联交易检测（异步，202）
-         * @description 对 `doc_ids` 覆盖的文档集合跑 M4 规则型算法（**当前只做两类**：「同一法人跨公司」/「同一地址跨公司」），检出结果写 `affiliation_suspicions`。
+         * @description 对 `doc_ids` 覆盖的文档集合跑 **M4 五类算法**（Sprint 9.12 起）：规则型两类（「同一法人跨公司」/「同一地址跨公司」）+ 算法型三类（「共享联系电话」/「循环持股」/「三方金额不一致」），判据冻结在 `specs/m4-affiliation-detection.md` §4.7.2；检出结果写 `affiliation_suspicions`。
          *
          *     **异步语义**：请求只保证任务落库为 `pending` 并已投递，随即返回 **202** （`task_id` + `status`）；真值在 PG `affiliation_tasks` 表里，请用 `GET /affiliation/tasks/{task_id}` 轮询。
          *
@@ -713,6 +713,13 @@ export interface components {
              */
             created_at: string;
             /**
+             * Details
+             * @description 三方金额明细（仅 `amount_mismatch`）：`{trade_ref, contract_amount, invoice_amount, voucher_amount, max_diff}`；其余类型为 `null`
+             */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+            /**
              * Entities
              * @description 涉及节点 id：[主体A, 主体B, 共享节点]
              */
@@ -765,7 +772,7 @@ export interface components {
              * @description 疑点类型
              * @enum {string}
              */
-            suspicion_type: "shared_address" | "shared_legal_rep" | "missing_check_in";
+            suspicion_type: "shared_address" | "shared_legal_rep" | "missing_check_in" | "shared_phone" | "cycle" | "amount_mismatch";
             /**
              * Task Id
              * Format: uuid

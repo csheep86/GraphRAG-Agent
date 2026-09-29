@@ -1,5 +1,14 @@
 # Sprint 9 任务卡
 
+> **✅ 2026-09-29 收尾**：批次 **A / B1 / B2 / C1 / C2 / C3 全部完成** ⇒ Sprint 9 **功能达标**
+> （较计划区间 11-11→12-01 提前 43 天）。release notes **[`docs/release-notes/v1.5.0.md`](../../docs/release-notes/v1.5.0.md)**；
+> `sprint-calendar.md` §5 S9 行转 ✅（`dev-doc-status.md` 已登记）。
+> **仍显式未做（不伪装）**：① `as_of` **未上 REST**（批次 B 唯一遗留，等 UI 入口）；
+> ② **M4 验收 6 场景准入**未过 → **S13**；③ 通用 `[:RELATION]` 层无跨文档仲裁 → **S9.13-2**。
+> **收尾动作留口**：bump `app_version` 1.4.2 → 1.5.0 与 tag `v1.5.0` **待用户确认**（不可逆）。
+>
+> 批次 C1 / C2 / C3 的过程记录分别在 `changes/archive/2026-09-29-Sprint9.11` / `Sprint9.12` / `Sprint9.13`。
+
 ## 批次 A（✅ 2026-09-28 完成）
 
 - [x] **CP-T1 schema 冻结**：四字段 + `document_date` + 有效期策略表定义，登记于 `proposal.md` §1
@@ -36,41 +45,62 @@
 
 ### C0 勘察（**先别写代码**）
 
-- [ ] `specs/m4-affiliation-detection.md` §4.3–4.5：三张表 + 四源主体对齐口径
-- [ ] CSV 摄入链入口：已确证存在 `backend/scripts/ingest_attendance_csv.py`（考勤域）；
-      **四源（发票 / 凭证 / 供应商主数据 / 合同）是否另有入口，待查**——别假设同一个文件
-- [ ] `unaligned_subjects`：**已建表且零写入**（`backend/app/db/models.py:397`，
-      迁移 `00f44b912817`），承接见 `specs/m4-affiliation-detection.md:204` 与
-      `backend/CODEBUDDY.md:82`（登记号 **S7.2-1**，两边都已登记，不用再找）
-- [ ] `entity_merge_candidates`：**表不存在**（migrations 全库检索无命中）；
-      定义见 `specs/m2-extract-kg.md` §4.5，消解阈值 **≥0.90 自动合并 / 0.70–0.90 人工队列 / <0.70 独立**（§3 验收 3）；承接登记号 **S6.2-2**（同文件 `:252`）
-- [ ] **待裁决口径（别猜）**：`specs/m2-extract-kg.md` §4.5 注脚写「`applied` 是 M6 前向预留值，
-      **Sprint 9 不落该值**」；而 `docs/v2.0.0-ship-backward-plan.md` §5 的 S9 行写
-      「已决议 **O-2**：S9 建表当日**一并改 Pydantic 枚举** + `export_openapi.py` + `npm run gen:api`」。
-      调和的可能解释是：**"加枚举到代码并同步契约" ≠ "运行时写该值"**——但必须由
-      开工者写明裁决，不能默认。
+> **✅ 2026-09-29 已做（只读）**：结论落 [`c0-recon.md`](./c0-recon.md)——五条待办全部核实，
+> 另记 4 条新发现（D-1 演示域≠四源域 / D-2 疑点类型常量 / D-3 三类算法判据须先定 / D-4 待真机核实 `:Subject` 节点数）
+> 与 3 项 ⚠️ 待裁决（税号真源 / `unaligned_subjects` 读端点 / `applied` 契约侧空转）。**开工前先读它，别重跑下面的检索。**
+
+- [x] `specs/m4-affiliation-detection.md` §4.3–4.5：三张表 + 四源主体对齐口径
+- [x] CSV 摄入链入口：四源**原本没有入口**（唯一 CSV 摄入是考勤域的
+      `ingest_attendance_csv.py`）⇒ 已在 **S9.11 批次 C1** 新建 `scripts/ingest_affiliation_sources.py`
+- [x] `unaligned_subjects`：原「已建表且零写入」**已偿还（S9.11）**——写入方就位、
+      真机落 4 行（见 `../archive/2026-09-29-Sprint9.11/integration-log.md`）。登记号 **S7.2-1** 在
+      `backend/CODEBUDDY.md` 与 `specs/m4` §6 两处均已标"已偿还"
+- [x] `entity_merge_candidates`：**表不存在**已核实（仍归 **C3**）；
+      定义见 `specs/m2-extract-kg.md` §4.5，阈值 **≥0.90 自动合并 / 0.70–0.90 人工队列 / <0.70 独立**；登记号 **S6.2-2**
+- [x] **待裁决口径已裁决（S9.11 proposal §2 D-C）**：`applied` = **C3 建表当日加 Pydantic 枚举、
+      运行时不写该值、契约侧零改动**。理由（C0 实测）：`contracts/openapi.yaml` 里 `merge` 零命中 ⇒
+      该表无契约落点，`export_openapi.py --check` 本来就**应该**无 diff；不为"走出 diff"而造端点。
 
 ### C1 R14：CSV 四源字段 schema 冻结（**纪律：冻结后才写算法**）
 
 > 出处 `docs/v1.1.0-demo-mvp-plan.md` §20 **R14**：四源列名 / 必填 / 校验规则**先冻结并落契约**，
 > 字段缺失走 `unaligned_subjects` 记录，**不得静默丢弃**。
 
-- [ ] 列名 / 必填 / 校验规则的冻结清单（落 `specs/m4-affiliation-detection.md` 或新提案 §1）
-- [ ] 落契约：`uv run python scripts/export_openapi.py` 重导 → 提交生成物 →
-      `cd frontend && npm run gen:api`（CI 有契约零漂移校验，漏拍即红）
+> ✅ **2026-09-29 已完成（S9.11 批次 C1）**：冻结清单落 `specs/m4-affiliation-detection.md` **§4.6**
+> （三张 CSV 的列名 / 必填 / 校验 / 三级对齐口径 / `reason` 三值 / 图模型落点）。
+> 契约**零改动**（本批次不新增端点与字段），故后两条落契约动作**不适用**——
+> 不是漏做，是"没有要落的契约变更"；`export_openapi.py --check` 实测无 diff。
+
+- [x] 列名 / 必填 / 校验规则的冻结清单 ⇒ `specs/m4-affiliation-detection.md` **§4.6**
+- [x] 落契约：本批次**无契约变更**（`--check` 无 diff；前端 `gen:api` 无 diff）
 
 ### C2 四源对齐 + 三类图算法（承接 M4）
 
-- [ ] 四源主体对齐（写 `unaligned_subjects`，对应 S7.2-1）
-- [ ] 三类算法：**连通分量 / 共享邻居 / 环路检测** + **三方金额不一致**
-      （`v1.1.0-demo-mvp-plan` §15.2 映射表：Sprint 7 只做 1 类，S9 补满）
-- [ ] 每写一张表 / 加一列 ⇒ **必须带 Alembic 迁移**（`test_migrations_baseline.py` 会把忘写变 CI 红）
+- [x] 四源主体对齐（写 `unaligned_subjects`，对应 S7.2-1）——**S9.11 已做**，
+      对齐率 86/90 = 0.9556（≥ 0.95）；真机 4 行未对齐带 `reason`
+- [x] 三类算法：**共享电话 / 环路检测（2..4）** + **三方金额不一致** —— **S9.12 已做**
+      （判据先冻结于 spec **§4.7**，真机产出 **9 条**：法人 1 / 地址 1 / 电话 1 / 环 3 / 金额 3，
+      与植入 9 组一一对应、误报 0；证据见 `../archive/2026-09-29-Sprint9.12/integration-log.md`）
+- [x] 每写一张表 / 加一列 ⇒ **必须带 Alembic 迁移**（`test_migrations_baseline.py` 会把忘写变 CI 红）
+      —— 本次：`9c1b7d2ae4f3`（`affiliation_suspicions.details` 列 + 类型约束放宽到 6 类）
 
 ### C3 实体消解（`entity_merge_candidates`）
 
-- [ ] 建表 + 迁移（逐字段对齐 `m2 spec` §4.5）
-- [ ] 相似度算法与阈值按 §3 验收 3；这是**关键路径上的"一堵全堵"节点**
-      （`v2.0.0-ship-backward-plan` §4 / §8：S9 实体消解是 **S12** 的前置）
+> ✅ **2026-09-29 完成（S9.13）**。判据**先冻结**于 `specs/m2-extract-kg.md` **§4.5.1**
+> （范围 / blocking / 信号 / 三条否决 / 三档 / 真机判据），冻结后才写代码——
+> 与 C1 / C2 同一条纪律。证据：`../archive/2026-09-29-Sprint9.13/integration-log.md`。
+
+- [x] 判据冻结（§4.5.1）+ 八条裁决 D-A ~ D-H（`../archive/2026-09-29-Sprint9.13/proposal.md` §2）
+- [x] 建表 + 迁移（逐字段对齐 `m2 spec` §4.5；迁移 `b3e5a1c70d42`）
+      —— **偏离登记 S9.13-1**：`left/right_entity_id` 为 **TEXT** 而非 UUID
+      （图侧实体 id 是稳定字符串，**没有 UUID 可存**；理由写在 spec §4.5 表下）
+- [x] 相似度算法与阈值按 §3 验收 3（纯函数 `app/services/kg/entity_resolution.py`，零 LLM）：
+      真机 **5 条候选** = `auto_merged` 1 / `human_review` 4，**误并 0**，终态对齐率 **87/90**
+- [x] 偿还 **S6.2-2**（`specs/m2` §6）；剩余两项显式登记为 **S9.13-2**：
+      ① `human_review` **无读端点**（同 S9.11 裁决 D-B）；② `:Entity` **通用层消解未做**
+      （id = `ent_<uuid>` 每次抽取都变 ⇒ 无从配对，需先解决跨文档 id 稳定性）
+- [x] 关键路径节点已解除（`v2.0.0-ship-backward-plan` §4 / §8：S9 实体消解是 **S12** 的前置）
+      —— **S12 开工的硬闸门不再是"消解没做"，而是 M6 校正 GUI 是否接得上候选表**
 
 ### 交接时的其他欠账（**来自注意力检查，未动手**）
 

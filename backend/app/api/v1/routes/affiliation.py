@@ -54,8 +54,10 @@ router = APIRouter(prefix="/affiliation", tags=["affiliation"])
     operation_id="detectAffiliation",
     summary="提交一次关联交易检测（异步，202）",
     description=(
-        "对 `doc_ids` 覆盖的文档集合跑 M4 规则型算法（**当前只做两类**："
-        "「同一法人跨公司」/「同一地址跨公司」），检出结果写 `affiliation_suspicions`。\n\n"
+        "对 `doc_ids` 覆盖的文档集合跑 **M4 五类算法**（Sprint 9.12 起）：规则型两类"
+        "（「同一法人跨公司」/「同一地址跨公司」）+ 算法型三类"
+        "（「共享联系电话」/「循环持股」/「三方金额不一致」），判据冻结在 "
+        "`specs/m4-affiliation-detection.md` §4.7.2；检出结果写 `affiliation_suspicions`。\n\n"
         "**异步语义**：请求只保证任务落库为 `pending` 并已投递，随即返回 **202** "
         "（`task_id` + `status`）；真值在 PG `affiliation_tasks` 表里，请用 "
         "`GET /affiliation/tasks/{task_id}` 轮询。\n\n"
@@ -194,6 +196,8 @@ async def list_affiliation_suspicions(
             evidence=[
                 AffiliationEvidenceRef.model_validate(item) for item in row.evidence
             ],
+            # Sprint 9.12：三方金额明细（仅 amount_mismatch 有值，其余为 None）
+            details=row.details,
             kg_version=row.kg_version,
             status=row.status,  # type: ignore[arg-type]
             reviewed_by=row.reviewed_by,

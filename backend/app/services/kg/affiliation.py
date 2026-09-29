@@ -1,9 +1,12 @@
 """M4 关联交易疑点检出（Sprint 7.1 批次 A，``specs/m4-affiliation-detection.md``）。
 
-只做 spec §3 验收 3 里的**两类**规则疑点：``shared_legal_rep`` / ``shared_address``
-（同法人 / 同地址）。三类算法里的「环路」与「金额不一致」需要 ``SHARES_HOLDER`` /
-``:Invoice`` / ``:Voucher`` / ``:Contract``——本批次语料（分销与年报材料）里
-**没有**持股与三方金额数据，故**不做**（不做就是不做，不拿别的信号冒充）。
+Sprint 7.1 只做 spec §3 验收 3 里的**两类**规则疑点：``shared_legal_rep`` /
+``shared_address``（同法人 / 同地址）。三类算法里的「环路」与「金额不一致」需要
+``SHARES_HOLDER`` / ``:Invoice`` / ``:Voucher`` / ``:Contract``——当时语料（分销与
+年报材料）里**没有**持股与三方金额数据，故**不做**（不做就是不做，不拿别的信号冒充）。
+
+**Sprint 9.12 批次 C2 已填补该缺口**：语料增补电话 / 法人 / 持股 / 合同（§4.6.6），
+摄入器落成节点后五类**全部**产出（真机实测 9 条，与植入 9 组一一对应）。
 
 两条硬纪律（对应 tasks §2.3）：
 
@@ -13,9 +16,14 @@
    ``:Chunk`` 证据的命中**直接丢弃**并打 ``affiliation_suspicion_dropped_no_evidence``
    WARNING——**不**留一条「启发式但无原文」的疑点（G5 诚实性）。
 
-严重度（``severity``）**固定** ``medium``：spec 只对 ``amount_mismatch`` 规定了
-``high``，其余未规定；本批次**不引入任何可调阈值**（阈值调参 = 给"凑够 3 条疑点"
+严重度（``severity``）**按类型固定**：``amount_mismatch`` = ``high``（spec §3 验收 5
+明定），其余 = ``medium``；本批次**不引入任何可调阈值**（阈值调参 = 给"凑够 3 条疑点"
 留后门，tasks §2.3 D6 前置卡口明令禁止）。
+
+**Sprint 9.12 批次 C2**：补三类算法 + 三方金额不一致（spec §4.7.2 判据已冻结）。
+与规则型两跳（``shared_legal_rep`` / ``shared_address``）**合并**输出；``details``
+只在 ``amount_mismatch`` 上有值（三方金额明细，spec §3 验收 5 要求），其余为 ``None``
+——**不**为了字段非空而塞空对象。
 """
 
 from __future__ import annotations
@@ -34,6 +42,8 @@ _DEFAULT_MAX_EVIDENCE: int = 6
 _SNIPPET_LENGTH: int = 200
 #: 疑点严重度：本批次固定档（**无**阈值可调，见模块 docstring）
 _SEVERITY: str = "medium"
+#: 按类型定档（spec §4.7.2）：只有 ``amount_mismatch`` 被 spec 明定为 ``high``
+_SEVERITY_BY_TYPE: dict[str, str] = {"amount_mismatch": "high"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +91,8 @@ class Suspicion:
     entities: tuple[str, ...]
     entity_names: tuple[str, ...]
     evidence: tuple[SuspicionEvidence, ...]
+    #: Sprint 9.12：``amount_mismatch`` 的三方金额明细（§3 验收 5）；其余类型 ``None``
+    details: dict[str, Any] | None = None
 
     def to_dict(self, *, snippet: bool = False) -> dict[str, Any]:
         return {
@@ -89,6 +101,7 @@ class Suspicion:
             "entities": list(self.entities),
             "entity_names": list(self.entity_names),
             "evidence": [item.to_dict(snippet=snippet) for item in self.evidence],
+            "details": self.details,
         }
 
 
@@ -127,19 +140,50 @@ class AffiliationService:
         trace_id: uuid.UUID | str | None = None,
         limit: int = 100,
     ) -> list[Suspicion]:
-        """跑两类两跳规则；返回**带证据**的疑点列表（无证据的命中被丢弃）。"""
+        """跑规则型两跳 + 三类算法；返回**带证据**的疑点列表（无证据的命中被丢弃）。
+
+        Sprint 9.12：两类查询的返回形状不同（规则型是「主体A + 主体B + 共享节点」，
+        算法型是「N 个主体」/「三方单据」），这里**归一**成
+        ``(type, entities, entity_names, details)`` 再统一取证据 / 定档。
+        """
         hits = self._graph.fetch_shared_affiliations(
             kg_version=kg_version, org_id=org_id, limit=limit
         )
+        algorithm_hits = self._graph.fetch_algorithm_suspicions(
+            kg_version=kg_version, org_id=org_id, limit=limit
+        )
+
+        normalized: list[tuple[str, list[str], list[str], dict[str, Any] | None]] = []
+        for hit in hits:
+            normalized.append(
+                (
+                    str(hit["suspicion_type"]),
+                    [
+                        str(hit["subject_a_id"]),
+                        str(hit["subject_b_id"]),
+                        str(hit["shared_id"]),
+                    ],
+                    [
+                        str(hit["subject_a_name"]),
+                        str(hit["subject_b_name"]),
+                        str(hit["shared_name"]),
+                    ],
+                    None,
+                )
+            )
+        for hit in algorithm_hits:
+            normalized.append(
+                (
+                    str(hit["suspicion_type"]),
+                    [str(item) for item in hit["entities"]],
+                    [str(item) for item in hit["entity_names"]],
+                    hit.get("details"),
+                )
+            )
 
         suspicions: list[Suspicion] = []
         dropped = 0
-        for hit in hits:
-            node_ids = [
-                str(hit["subject_a_id"]),
-                str(hit["subject_b_id"]),
-                str(hit["shared_id"]),
-            ]
+        for suspicion_type, node_ids, entity_names, details in normalized:
             rows = self._graph.fetch_affiliation_evidence(
                 kg_version=kg_version,
                 node_ids=node_ids,
@@ -152,21 +196,18 @@ class AffiliationService:
                 logger.bind(
                     trace_id=str(trace_id) if trace_id else None,
                     kg_version=kg_version,
-                    suspicion_type=hit["suspicion_type"],
+                    suspicion_type=suspicion_type,
                     node_ids=node_ids,
                 ).warning("affiliation_suspicion_dropped_no_evidence")
                 continue
 
             suspicions.append(
                 Suspicion(
-                    suspicion_type=str(hit["suspicion_type"]),
-                    severity=_SEVERITY,
+                    suspicion_type=suspicion_type,
+                    severity=_SEVERITY_BY_TYPE.get(suspicion_type, _SEVERITY),
                     entities=tuple(node_ids),
-                    entity_names=(
-                        str(hit["subject_a_name"]),
-                        str(hit["subject_b_name"]),
-                        str(hit["shared_name"]),
-                    ),
+                    entity_names=tuple(entity_names),
+                    details=details,
                     evidence=tuple(
                         SuspicionEvidence(
                             node_id=str(row["node_id"]),

@@ -58,9 +58,12 @@ class _GraphStub:
         self,
         hits: list[dict[str, Any]] | None = None,
         evidence: dict[str, list[dict[str, Any]]] | None = None,
+        algorithm_hits: list[dict[str, Any]] | None = None,
     ) -> None:
         self._hits = hits or []
         self._evidence = evidence or {}
+        # Sprint 9.12：算法型三类（形状与规则型不同，见服务层 docstring）
+        self._algorithm_hits = algorithm_hits or []
         self.evidence_calls: list[list[str]] = []
 
     def fetch_shared_affiliations(
@@ -68,6 +71,12 @@ class _GraphStub:
     ) -> list[dict[str, Any]]:
         assert kg_version == _KG
         return self._hits
+
+    def fetch_algorithm_suspicions(
+        self, *, kg_version: str, org_id: Any = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        assert kg_version == _KG
+        return self._algorithm_hits
 
     def fetch_affiliation_evidence(
         self,
@@ -181,9 +190,133 @@ def test_to_dict_shape_matches_spec_acceptance() -> None:
 
     payload = _service(graph).detect(kg_version=_KG, org_id=_ORG_ID)[0].to_dict()
 
-    assert set(payload) == {"type", "severity", "entities", "entity_names", "evidence"}
+    assert set(payload) == {
+        "type",
+        "severity",
+        "entities",
+        "entity_names",
+        "evidence",
+        "details",
+    }
     assert payload["type"] == "shared_address"
     assert payload["evidence"][0]["chunk_id"] == "chunk-1"
+    # 规则型疑点**没有**三方金额明细：None，不是 {}（{} 等于宣称"有明细但为空"）
+    assert payload["details"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Sprint 9.12 批次 C2：算法型三类 + 三方金额不一致（spec §4.7.2）
+# --------------------------------------------------------------------------- #
+def _algorithm_hit(
+    suspicion_type: str, entities: list[str], names: list[str], details: Any = None
+) -> dict[str, Any]:
+    return {
+        "suspicion_type": suspicion_type,
+        "entities": entities,
+        "entity_names": names,
+        "details": details,
+    }
+
+
+def test_amount_mismatch_is_high_and_carries_details() -> None:
+    """spec §3 验收 5：``amount_mismatch`` 严重度 ``high`` + 三方金额明细。"""
+    details = {
+        "trade_ref": "TR-0002",
+        "contract_amount": 96_000.00,
+        "invoice_amount": 96_000.00,
+        "voucher_amount": 91_500.00,
+        "max_diff": 4_500.00,
+    }
+    graph = _GraphStub(
+        algorithm_hits=[
+            _algorithm_hit(
+                "amount_mismatch",
+                ["CONTRACT:HT-1", "INVOICE:FP-1", "VOUCHER:PZ-1"],
+                ["合同 HT-1", "发票 FP-1", "凭证 PZ-1"],
+                details,
+            )
+        ],
+        evidence={"CONTRACT:HT-1": [_evidence("CONTRACT:HT-1", "chunk-c1")]},
+    )
+
+    suspicion = _service(graph).detect(kg_version=_KG, org_id=_ORG_ID)[0]
+
+    assert suspicion.suspicion_type == "amount_mismatch"
+    assert suspicion.severity == "high", "spec §3 验收 5 明定 high"
+    assert suspicion.details == details
+    assert suspicion.entities == ("CONTRACT:HT-1", "INVOICE:FP-1", "VOUCHER:PZ-1")
+
+
+def test_cycle_entities_are_all_ring_members() -> None:
+    """``cycle`` 不是「两主体 + 共享节点」——环上有几个主体就有几个 entity。"""
+    graph = _GraphStub(
+        algorithm_hits=[
+            _algorithm_hit(
+                "cycle",
+                ["SUBJECT:A", "SUBJECT:B", "SUBJECT:C"],
+                ["甲公司", "乙公司", "丙公司"],
+                {"cycle_length": 3},
+            )
+        ],
+        evidence={"SUBJECT:A": [_evidence("SUBJECT:A", "chunk-a")]},
+    )
+
+    suspicion = _service(graph).detect(kg_version=_KG, org_id=_ORG_ID)[0]
+
+    assert suspicion.suspicion_type == "cycle"
+    assert suspicion.severity == "medium"
+    assert suspicion.entities == ("SUBJECT:A", "SUBJECT:B", "SUBJECT:C")
+    assert suspicion.details == {"cycle_length": 3}
+
+
+def test_shared_phone_follows_shared_node_shape() -> None:
+    graph = _GraphStub(
+        algorithm_hits=[
+            _algorithm_hit(
+                "shared_phone",
+                ["SUBJECT:A", "SUBJECT:B", "PHONE:abc"],
+                ["甲公司", "乙公司", "联系电话"],
+            )
+        ],
+        evidence={"PHONE:abc": [_evidence("PHONE:abc", "chunk-p")]},
+    )
+
+    suspicion = _service(graph).detect(kg_version=_KG, org_id=_ORG_ID)[0]
+
+    assert suspicion.suspicion_type == "shared_phone"
+    assert suspicion.severity == "medium"
+    assert suspicion.details is None
+
+
+def test_algorithm_hit_without_evidence_is_dropped_too() -> None:
+    """「无证据不产疑点」对算法型**同样**适用——不因为它是图算法就网开一面。"""
+    graph = _GraphStub(
+        algorithm_hits=[
+            _algorithm_hit("cycle", ["SUBJECT:A", "SUBJECT:B"], ["甲", "乙"], None)
+        ],
+        evidence={},
+    )
+
+    assert _service(graph).detect(kg_version=_KG, org_id=_ORG_ID) == []
+
+
+def test_rule_and_algorithm_hits_are_merged() -> None:
+    graph = _GraphStub(
+        hits=[_hit("shared_address")],
+        algorithm_hits=[
+            _algorithm_hit("cycle", ["SUBJECT:A", "SUBJECT:B"], ["甲", "乙"], None)
+        ],
+        evidence={
+            "sub-a1": [_evidence("sub-a1", "chunk-1")],
+            "SUBJECT:A": [_evidence("SUBJECT:A", "chunk-2")],
+        },
+    )
+
+    types = [
+        s.suspicion_type for s in _service(graph).detect(kg_version=_KG, org_id=_ORG_ID)
+    ]
+
+    assert types == ["shared_address", "cycle"]
 
 
 # --------------------------------------------------------------------------- #

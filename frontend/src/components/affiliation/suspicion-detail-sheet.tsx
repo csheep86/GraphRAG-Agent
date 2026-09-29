@@ -1,5 +1,7 @@
 "use client";
 
+import { Fragment } from "react";
+
 import { Check, FileText, TriangleAlert, X } from "lucide-react";
 
 import {
@@ -13,6 +15,49 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime } from "@/lib/format";
 import { splitHighlight } from "@/lib/highlight";
 import { useAffiliationStore } from "@/store/use-affiliation-store";
+
+/**
+ * 金额明细键的展示顺序与中文名（Sprint 9.12）。
+ *
+ * 契约里 `details` 是「开放字典」（`{ [key: string]: number | string }`），
+ * 前端**只渲染认得的键**——不认识的键宁可不显示，也不把裸键名丢给用户看。
+ */
+const AMOUNT_DETAIL_KEYS = [
+  "trade_ref",
+  "contract_amount",
+  "invoice_amount",
+  "voucher_amount",
+  "max_diff",
+] as const;
+
+const AMOUNT_DETAIL_LABELS: Record<
+  (typeof AMOUNT_DETAIL_KEYS)[number],
+  string
+> = {
+  trade_ref: "交易号",
+  contract_amount: "合同金额",
+  invoice_amount: "发票金额",
+  voucher_amount: "凭证金额",
+  max_diff: "最大差额",
+};
+
+/**
+ * 金额按千分位 + 两位小数；非数值（如交易号）原样输出，**不**猜测其单位。
+ *
+ * 入参是 `unknown`：契约里 `details` 是开放字典（值类型未收窄），
+ * 前端**不假设**它一定是数值——收到数组 / 对象时 `JSON.stringify` 原样呈现，
+ * 而不是崩在渲染里。
+ */
+function formatDetailValue(value: unknown): string {
+  if (typeof value === "number") {
+    return new Intl.NumberFormat("zh-CN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
 
 /**
  * 疑点证据抽屉（Sprint 7.3 批次 C）。
@@ -77,6 +122,30 @@ export function SuspicionDetailSheet() {
                   ))}
                 </ul>
               </section>
+
+              {/* Sprint 9.12：三方金额明细（spec §3 验收 5 要求「差额 + 三方各自金额」）。
+                  仅 `amount_mismatch` 有值，其余类型为 null ⇒ 不渲染，**不**显示空区块。 */}
+              {detail.details ? (
+                <section className="mt-5">
+                  <h3 className="text-[12px] font-medium text-muted-foreground">
+                    金额明细
+                  </h3>
+                  <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px]">
+                    {AMOUNT_DETAIL_KEYS.filter(
+                      (key) => key in detail.details!,
+                    ).map((key) => (
+                      <Fragment key={key}>
+                        <dt className="text-muted-foreground">
+                          {AMOUNT_DETAIL_LABELS[key]}
+                        </dt>
+                        <dd className="font-mono text-foreground">
+                          {formatDetailValue(detail.details![key])}
+                        </dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                </section>
+              ) : null}
 
               <section className="mt-5">
                 <h3 className="text-[12px] font-medium text-muted-foreground">

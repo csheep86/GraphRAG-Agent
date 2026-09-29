@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m4
 > **版本**：v1.0
-> **状态**：MVP 规格（v1.0.0 已交付；**2026-09-24 S7 收尾刷新实现态**——**部分实现**：两类规则算法 + 三张 PG 表 + 四个对外端点 + 前端疑点页 + `domain_events` 事件出口已落地（`v1.3.0`）；**四源对齐、三类图算法、金额不一致、场景准入指标均未做** → S9 / S13。逐条对账见 `docs/acceptance-traceability-matrix.md` §3.3；完整实现态与缺口见 `backend/CODEBUDDY.md` §4 与 `docs/release-notes/v1.3.0.md` §6）
+> **状态**：MVP 规格（v1.0.0 已交付；**2026-09-29 S9.12 收尾刷新实现态**——**部分实现**：五类算法（规则型两类 + 算法型三类）+ 四源对齐 + 三张 PG 表 + 四个对外端点 + 前端疑点页 + `domain_events` 事件出口已落地（`v1.3.0`）；**仅场景准入指标（§3 验收 6：200 合同 / 500 发票 / 100 凭证 / 20 组植入）未做** —— 语料规模远不足，维持登记 **S13**。判据见 **§4.7**，真机产出见 **§6**。逐条对账见 `docs/acceptance-traceability-matrix.md` §3.3；完整实现态与缺口见 `backend/CODEBUDDY.md` §4 与 `docs/release-notes/v1.3.0.md` §6）
 > **上游依据**：`docs/02-product-outline.md` §3.2 M4
 > **关联 Prompts**：`prompts/entity_relation_extract_v1.md`（场景适配模式）、`prompts/kg_qa_v1.md`
 > **关联研究结论**：`01-research.md` §1.4 P3 详解、§1.5 图谱化必要性、§3.3 C1–C2
@@ -135,6 +135,141 @@
 | `status` | TEXT | 是 | `pending / aligned / ignored` |
 | `created_at` | TIMESTAMP | 是 | - |
 
+### 4.6 四源 CSV schema（**Sprint 9.11 冻结**）
+
+> **冻结纪律（plan §20 R14）**：列名 / 必填 / 校验先冻结，**冻结后才写算法**。
+> 本批次（S9.11）只冻结**三张结构化 CSV**；合同 PDF 走 M2 抽取链路，
+> `:Contract` 节点与三方金额比对属 **批次 C2**，此处只登记不实现。
+
+#### 4.6.1 `suppliers.csv`（供应商主数据 = **canonical 主体**）
+
+| 列名 | 必填 | 校验 | 说明 |
+|---|---|---|---|
+| `supplier_id` | 是 | 非空、表内唯一 | 主数据主键 |
+| `tax_id` | 是 | 18 位 + 字符集 `0-9A-HJ-NPQRTUWXY`（GB32100-2015，去易混淆字符） | **对齐第一优先级**；唯一真源（抽取侧拿不到税号，`kg/builder.py` 恒写 `None`） |
+| `name` | 是 | 非空 | **对齐第二优先级** |
+| `address` | 是 | 非空 | **对齐第三优先级** |
+
+> **已知限制（登记，不掩饰）**：`tax_id` **只做格式校验，不做 GB32100 校验位**。
+> 校验位算法会让合成语料为"看起来合法"而凑数——与其造假，不如诚实声明只验格式。
+
+#### 4.6.2 `invoices.csv` / `vouchers.csv`（待对齐源）
+
+| 列名 | 必填 | 校验 | 说明 |
+|---|---|---|---|
+| `invoice_no` / `voucher_no` | 是 | 非空、表内唯一 | 业务主键 ⇒ 节点 id |
+| `counterparty_tax_id` | **否（可缺失）** | 非空时须合 §4.6.1 的 `tax_id` 格式 | 对齐第一优先级 |
+
+> **「必填」是列级，「可缺失」是值级**：`counterparty_tax_id` 列**必须存在**，但值
+> **允许为空**——「发票抬头没写税号」是真实业务情形，正是 §4.5 未对齐原因之一
+> （此时退到名称 / 地址级）。**有值却格式非法 = 语料错误**（不是"缺失"），必须报出。
+| `counterparty_name` | 是 | 非空 | 对齐第二优先级（发票抬头原文，可含别名写法） |
+| `counterparty_address` | 是 | 非空 | 对齐第三优先级 |
+| `amount` | 是 | 数值 > 0 | C2 的 `amount_mismatch` 三方比对用；本批次只落库不比对 |
+| `issue_date` / `posting_date` | 是 | `YYYY-MM-DD` | 同上 |
+
+> **必填列缺失 = 语料错误，不是对齐问题**：逐条报出并**终止**（不静默跳过，
+> 与接缝 8 `external_data/schema.py` 同一条诚实性纪律）。
+
+#### 4.6.3 对齐口径（**三级递减，先命中者胜**）
+
+1. **税号**：`tax_id` 精确相等；
+2. **规范化名称**：去空白 + 全角转半角 + 去后缀（`有限责任公司` / `有限公司` / `股份` / `公司`）；
+3. **规范化地址**：去空白 + 全角转半角 + 去标点。
+
+- **多候选**（任一级命中 > 1 个 canonical 主体）**不自动合并**——宁可留人工，不猜；
+- **成功率** = 对齐成功行数 / 待对齐总行数（发票 + 凭证），判据 **≥ 0.95**（§3 验收 1）。
+
+#### 4.6.4 `unaligned_subjects.reason` 取值（逐字照 §4.5）
+
+| 取值 | 触发条件 |
+|---|---|
+| `tax_id_missing` | 税号缺失 / 格式非法 **且** 名称与地址都未命中 |
+| `name_mismatch` | 税号已存在（或有值）但三级都未命中 |
+| `multiple_candidates` | 任一级命中 > 1 个 canonical 主体 |
+
+#### 4.6.5 图模型落点（**双标签，理由必须写明**）
+
+本批次落 `:Entity:Subject` / `:Entity:Invoice` / `:Entity:Voucher`，关系
+`(:Subject)-[:ISSUED]->(:Invoice)`、`(:Voucher)-[:POSTED_IN]->(:Subject)`
+（逐字照 §4.2）。**为什么打 `:Entity` 双标签**：
+
+- `:Subject` / `:Invoice` / `:Voucher` 是 §4.1 的语义标签，**M4 算法 Cypher 只认它**；
+- 但真机读侧（`graphs.py`、`/graph/overview`）**只读 `:Entity`**，且 §4.5 的疑点证据
+  回溯路径要求 `(:Subject).source_entity_ids[]` 指向被 `:Chunk-[:MENTIONS]->(:Entity)`
+  引用的节点（`_QUERY_AFFILIATION_EVIDENCE`）；
+- ⇒ 只打 `:Subject` 会重演 `demo/attendance/mapping.yaml:11-26` 记下的老伤
+  （进得了库、查不出来）。双标签同时满足两侧，**不**是权宜之计。
+
+`:Subject` 额外带 `address` / `tax_id` 属性（§4.1 未列 `address`，此处为三级对齐的可核留痕）；
+`:Address` 节点与 `REGISTERED_AT` 关系属 **C2**（`shared_address` 一并做）。
+
+#### 4.6.6 语料增补（**Sprint 9.12 增补，S9.11 的 §4.6.1–4.6.2 不被推翻**）
+
+算法需要输入；S9.11 冻结的三张表**没有**电话 / 持股 / 合同三方金额 ⇒
+三类算法与 `amount_mismatch` **无输入可算**。故增补（**只加列 / 加表，不改既有列语义**）：
+
+| 目标 | 增补 | 说明 |
+|---|---|---|
+| `shared_phone` | `suppliers.csv` 加列 `phone` | 落 `:Phone{number_hash}` + `CONTACT_PHONE`；**只存哈希**（§4.1） |
+| `shared_legal_rep` | `suppliers.csv` 加列 `legal_rep_name` + `legal_rep_id` | 落 `:LegalPerson{id_hash}` + `LEGAL_REP`；身份证号**只存哈希** |
+| `shared_address` | `suppliers.csv` 已有 `address` | 落 `:Address` + `REGISTERED_AT`（§4.6.5 登记的 C2 项） |
+| `cycle` | 新增 `shareholders.csv`：`holder_tax_id, held_tax_id, share_pct, since` | 落 `(:Subject)-[:SHARES_HOLDER]->(:Subject)` |
+| `amount_mismatch` | `invoices.csv` / `vouchers.csv` 加列 `trade_ref`；新增 `contracts.csv` | 三方按 `trade_ref` 配对 |
+
+**⚠️ 已知偏离（登记，不掩饰）**：spec §1.1 的合同是 **PDF**（走 M2 抽取链路）。
+合成语料阶段用 `contracts.csv` 作为**三方金额的等价替身**——本批次验证的是
+「算法判据与三方比对」，**不是** PDF 抽取。真机合同仍须走 M2；
+替身与抽取产物的汇合点 = `:Contract` 节点属性，两者形状一致。
+
+`contracts.csv` 列：`contract_no, trade_ref, party_a_tax_id, party_a_name, party_a_address,
+party_b_tax_id, party_b_name, party_b_address, amount, signed_date`（两方各走三级对齐，
+`PARTY_TO` 带 `role = A | B`）。
+
+---
+
+## 4.7 三类算法与金额不一致判据（**Sprint 9.12 冻结**）
+
+> 出处：§1.1 第 3 / 4 点、§3 验收 3 / 5。**纪律（plan §20 R14 + C0 的 D-3）**：
+> 判据先冻结，冻结后才写算法。**判据里没写的信号，不许进代码。**
+
+### 4.7.1 通用判据（五类共用）
+
+1. **无证据不产疑点**：任一命中取不到 ≥ 1 条 `:Chunk` 证据 ⇒ **丢弃**并打
+   `affiliation_suspicion_dropped_no_evidence`（§3 验收 4 引用覆盖率 = 100%）；
+2. **对称去重**：无向共享类用 `s1.id < s2.id`；环用「环上 id 排序后的 key」；
+3. **租户 + 版本过滤**：`org_id` 与 `kg_version` 双重（ADR-0003；
+   `kg_version` 不等于租户边界）；
+4. **无阈值可调**：本批次**不引入任何可调参数**（tasks §2.3 D6：阈值调参 =
+   给「凑够 N 条疑点」留后门）。严重度**按类型固定**（见 4.7.2）。
+
+### 4.7.2 逐类判据
+
+| `type` | 命中条件 | `severity` | `entities` | 备注 |
+|---|---|---|---|---|
+| `shared_address` | 两 `:Subject` 经 `REGISTERED_AT` 指向同一 `:Address` | medium | `[A, B, address]` | S7.1 已实现，本批次补数据 |
+| `shared_legal_rep` | 两 `:Subject` 经 `LEGAL_REP` 指向同一 `:LegalPerson` | medium | `[A, B, legal_person]` | 同上 |
+| `shared_phone` | 两 `:Subject` 经 `CONTACT_PHONE` 指向同一 `:Phone` | medium | `[A, B, phone]` | 本批次新增 |
+| `cycle` | `SHARES_HOLDER` 有向环，**长度 2..4** | medium | 环上主体 id（**遍历顺序**） | 本批次新增 |
+| `amount_mismatch` | 同一 `trade_ref` 上合同 / 发票 / 凭证金额**不全相等** | **high**（§3 验收 5 明定） | `[contract, invoice, voucher]` | 本批次新增 |
+
+- **`cycle` 长度下限 2**：A→B→A 即交叉持股（最常见的隐性关联），**必须**算环；
+  **上限 4**：超过 4 跳的路径爆炸且审计可解释性差（登记为判据，非性能妥协）。
+  同一环会被多个起点各遍历一次 ⇒ 用「环上 id 排序后拼接」的 key 去重，只留一条。
+- **`amount_mismatch` 三方必须齐**：`trade_ref` 下合同 / 发票 / 凭证**缺任一方 ⇒ 不产出**
+  （spec 明写「三方金额不一致」，两方不等不是同一件事——**不拿两方冒充三方**）。
+- **明细**：`amount_mismatch` 须给出「差额 + 三方各自金额 + 关联主体」（§3 验收 5）。
+  落 `affiliation_suspicions.details`（**新列，JSONB，可空**），
+  `{trade_ref, contract_amount, invoice_amount, voucher_amount, max_diff}`；
+  其余类型该列为 `null`（**不**为了字段非空而塞空对象）。
+
+### 4.7.3 本批次**不**做的事（防自我欺骗）
+
+- 不调阈值、不加权重、不做「相似度打分」——命中即产出，判定全靠结构；
+- 不做 §3 验收 6 的场景准入（200 合同 / 500 发票 / 100 凭证 / 20 组植入 ⇒ 召回 ≥ 0.80、
+  误报 ≤ 0.15）：语料规模**远不足**，该判据**维持未做**（登记 S13）；
+- `missing_check_in`（考勤域）不在本批次范围，常量保留不动。
+
 ---
 
 ## 5. 模块间依赖关系
@@ -201,7 +336,10 @@ RETURN c, i, v, c.amount, i.amount, v.amount
 
 | # | 缺口 | 现状 | 承接 |
 |---|---|---|---|
-| **S7.2-1** | `unaligned_subjects`（§4.5）**只建表不写** | 表已建，无人写入——四源主体对齐属 S9 批次 D，现在写只能靠凑。**刻意留空**而非塞假数据 | **S9 批次 D**（与 `entity_merge_candidates` 一并做） |
+| **S7.2-1**（✅ 已偿还） | `unaligned_subjects`（§4.5）**只建表不写** | **S9.11 批次 C1 已偿还**：四源 schema 冻结（§4.6）+ 确定性摄入器 + 三级对齐器就位，未对齐主体真机落表并带 `reason`（对齐率判据见 `changes/archive/2026-09-29-Sprint9.11/integration-log.md`） | — |
+| **算法三类 + 金额比对**（✅ 已偿还） | `shared_phone` / `cycle` / `amount_mismatch` **未实现**（无输入数据） | **S9.12 批次 C2 已偿还**：语料增补（§4.6.6）+ 摄入器落 `:Phone` / `:LegalPerson` / `:Address` / `:Contract` 与 `SHARES_HOLDER` / `PARTY_TO`，判据先冻结（§4.7）后写算法；**真机产出 9 条**（`shared_legal_rep` 1 / `shared_address` 1 / `shared_phone` 1 / `cycle` 3 / `amount_mismatch` 3），与植入的 9 组**一一对应、误报 0**；`amount_mismatch` 落 `severity=high` + `details` 三方金额明细 | — |
+| **S9.12-1** | 语料是**合成 CSV**（`contracts.csv` 是 PDF 合同的替身，见 §4.6.6 偏离登记） | 真机合同仍须走 M2 抽取链路；替身与抽取产物的汇合点 = `:Contract` 节点属性（形状一致） | **M2 接入合同后回归** |
+| **S9.11-1** | `unaligned_subjects` **无读端点** | 本批次裁决 **D-B**：只写不读，不新增端点、不动契约（§5.5 四端点未含它，新增 = 范围变更）；对齐率由**测试断言**给出，不靠 UI | 待定（C4 或 M6 校正 GUI 一并做） |
 | **S7.2-2** | `TaskManager.list_in_flight_task_ids()` **只扫 `documents`** | `recover_orphan_tasks()` 已扩到扫 `affiliation_tasks`（ADR-0001 硬要求，**不受影响**），但该函数仍只查 `documents`，对账 `affiliation_tasks` 时查不到在途任务 | **S8**（与跨阶段投递 S7.1-5 一并收） |
 | **S7.1-7**（已关闭） | M4「两层并存」（`:Entity` + `:Subject`） | ✅ **已偿还**：作为**已知限制**写入 `docs/release-notes/v1.3.0.md` §6.9（决策 D1：不建桥接边，仅以 `source_entity_ids` 维系联系）；统一工作仍归 **S9 批次 D 实体消解**（plan 第 582 行） | S9（统一） |
 | **证据粒度** | `evidence.text` 为**整段 chunk**，非实体提及片段 | 真机 10/10 条 `ev_len == chunk_len`；前端改**淡底 + 标注**，**未伪造**片段级高亮；提及级定位（`char_offset` 恒 0）见 release notes §6.1 / §6.2 | **S10** |
