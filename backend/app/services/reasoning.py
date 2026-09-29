@@ -123,6 +123,53 @@ _TERMINAL_RANK: dict[str, int] = {
     entity_type: index for index, entity_type in enumerate(TERMINAL_EVIDENCE_ORDER)
 }
 
+# --------------------------------------------------------------------------- #
+# Sprint 10 批次 B（裁决 D-F）：终点类型的**域注册表**
+# --------------------------------------------------------------------------- #
+#: **关联方域**（M4 `affiliation-demo-v1`）的合法终点：主体与凭证。
+#:
+#: 为什么要有第二套：真机实测（`changes/Sprint10.1/proposal.md` §1）——
+#: `affiliation-demo-v1` 的 176 个实体**一个都不在**考勤白名单里 ⇒ 该域的多跳链
+#: **恒为空**，而"公司 → 股东 → 另一家公司的法人"正是 M4 疑点的核心推理形态。
+#:
+#: **刻意排除 `PHONE`**：电话号码是可核查节点，但没有解释力（落点落在电话上，
+#: 答案无从说起）——与考勤域把 `ACCESS_RECORD` 排在最末同源，只是这里干脆不收。
+AFFILIATION_TERMINAL_TYPES: tuple[str, ...] = (
+    "SUBJECT",
+    "LEGAL_PERSON",
+    "CONTRACT",
+    "INVOICE",
+    "VOUCHER",
+    "ADDRESS",
+)
+
+#: 关联方域里**没有**"人人相连"的枢纽 ⇒ hub 为 ``None``（Cypher 侧
+#: ``n.entity_type = $hub`` 对 null 恒不成立 ⇒ 该约束自动失效，**不需要**分支代码）。
+AFFILIATION_PRIORITY_TYPE = "LEGAL_PERSON"
+
+
+#: 登记过的**全部**合法终点类型 = 各域白名单的并集（去重保序）。
+#:
+#: **为什么是并集，而不是"先判域、再选该域白名单"**：域判定若看**本轮子图**的
+#: 类型分布，就会被子图采样带偏——与 R12 真机事故同源（500 截断会把粒度粗的
+#: 类型挤出子图 ⇒ 判成"未知域" ⇒ 明明有链却交白卷）。而 Cypher 侧本就按
+#: ``kg_version`` + ``org_id`` 隔离：考勤图里没有 ``SUBJECT``、关联方图里没有
+#: ``EMPLOYEE`` ⇒ 并集**不会**跨域连出链，却能让两个域都出链。
+#:
+#: **未登记的类型（``POSITION`` / ``DEPARTMENT`` / ``RELATED`` / ``PHONE`` …）
+#: 依旧不是合法落点** ⇒ 新业务域没登记时，链自然取不到（``[]``），
+#: 而不是"随便走两跳"——这正是纪律 1「零假数据」要的效果。
+ALL_TERMINAL_TYPES: tuple[str, ...] = tuple(
+    dict.fromkeys(TERMINAL_ENTITY_TYPES + AFFILIATION_TERMINAL_TYPES)
+)
+
+#: 各域"最有解释力"的终点（并集）：终点命中其一 ⇒ 排序优先。
+#: 考勤 = 制度条款；关联方 = 共享法人（疑点的核心落点）。
+PRIORITY_TERMINAL_TYPES: tuple[str, ...] = (
+    TERMINAL_PRIORITY_TYPE,
+    AFFILIATION_PRIORITY_TYPE,
+)
+
 _CYPHER_ANCHOR_CANDIDATES = """
 MATCH (e:Entity {kg_version: $kg, org_id: $org})
 WHERE e.canonical_name IS NOT NULL
@@ -132,19 +179,33 @@ RETURN e.id AS id, e.canonical_name AS name
 LIMIT $limit
 """
 
+#: **边类型刻意不限定**（Sprint 10 批次 B）：考勤域的边是 ``:RELATION``
+#: （抽取关系），而关联方域（M4 主体层）的边是 ``LEGAL_REP`` / ``SHARES_HOLDER``
+#: / ``REGISTERED_AT`` …——真机实测它们**都带** ``kg_version`` / ``org_id``，
+#: 靠下面 ``ALL(r IN rels WHERE ...)`` 做版本 / 租户隔离即可，写死 ``:RELATION``
+#: 会让关联方域一条链都取不到（`probe_b1_multihop_affiliation.py` 实测 0 行）。
+#:
+#: 代價是**中间节点不再天然是 Entity**（变长路径的中间节点本就没有标签约束），
+#: 故补 ``ALL(n IN nodes(p) WHERE n:Entity)``——否则会出现
+#: ``(Entity)-(Chunk)-(Entity)`` 这种"经过片段"的伪链。
+#:
+#: 关系名用 ``coalesce(r.relation_type, type(r))``：抽取边有 ``relation_type``
+#: 属性，主体层边只有**类型名**；取不到属性就退回类型令牌（L7 同族口径），
+#: **不**兜底成 ``MENTIONS`` 这种"看起来有关系"的假名。
 _CYPHER_PATHS = f"""
 MATCH p = (a:Entity {{kg_version: $kg, org_id: $org}})
-          -[rels:RELATION*1..{_MAX_HOPS}]-
+          -[rels*1..{_MAX_HOPS}]-
           (b:Entity {{kg_version: $kg, org_id: $org}})
 WHERE a.id IN $anchor_ids
   AND b.entity_type IN $terminal_types
+  AND ALL(n IN nodes(p) WHERE n:Entity)
   AND ALL(r IN rels WHERE r.kg_version = $kg AND r.org_id = $org)
   AND none(n IN nodes(p)[1..-1] WHERE n.entity_type = $hub)
 RETURN [n IN nodes(p) | n.id] AS ids,
        [n IN nodes(p) | n.canonical_name] AS names,
        [n IN nodes(p) | n.entity_type] AS types,
-       [r IN relationships(p) | r.relation_type] AS rels
-ORDER BY (CASE WHEN types[-1] = $prio_type THEN 0 ELSE 1 END),
+       [r IN relationships(p) | coalesce(r.relation_type, type(r))] AS rels
+ORDER BY (CASE WHEN types[-1] IN $prio_types THEN 0 ELSE 1 END),
          size(rels),
          ids[-1]
 LIMIT $limit
@@ -290,9 +351,9 @@ def build_reasoning_path(
             kg=kg_version,
             org=str(org_id),
             anchor_ids=list(anchors),
-            terminal_types=list(TERMINAL_ENTITY_TYPES),
+            terminal_types=list(ALL_TERMINAL_TYPES),
             hub=HUB_EMPLOYEE_TYPE,
-            prio_type=TERMINAL_PRIORITY_TYPE,
+            prio_types=list(PRIORITY_TERMINAL_TYPES),
             limit=_PATH_CANDIDATE_LIMIT,
         )
     )
