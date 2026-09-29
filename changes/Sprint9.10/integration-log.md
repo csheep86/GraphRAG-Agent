@@ -32,7 +32,8 @@
 | 状态端点真值 | `GET /api/v1/documents/2b721483…/status` | `{"task_id":"2b721483…","status":"completed","progress":1.0,"error":null}` |
 | 反证编造数 | 同上响应体 | **无 `entity_count` 字段** ⇒ 旧实现那个数是凭空生成的 |
 | 列表真值 | `GET /api/v1/documents` 首条 | `entity_count: 2625`（与首页 KPI 实体数同源），证明实体数**只能**由后端给 |
-| 前端页面可访问 | `GET http://127.0.0.1:3000/documents` | 200（dev server 正常） |
+| 前端页面可访问 | `GET http://127.0.0.1:3000/documents` / `/` / `/qa` | 均 **200**，dev server 编译无错 |
+| 确为真机模式 | dev server 启动日志 `- Environments: .env.local, .env.development` | `.env.local` 的 `NEXT_PUBLIC_USE_MOCK=false` **优先于** `.env.development` 的 `=true` 生效 ⇒ 本次点验确实关了 Mock（否则证据不成立） |
 
 ### 3.1 真实上传端到端（用户 2026-09-29 裁决「上传并提交」，已执行）
 
