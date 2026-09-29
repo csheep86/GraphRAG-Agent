@@ -12,27 +12,47 @@ export type HighlightSegments = { before: string; hit: string; after: string };
  * 命中率高于问答引用的 `_snippet`；但同一套「命中就用、不命中就退回、都不成立
  * 就不高亮」的口径对两者都成立，故共用一份实现——**绝不伪造位置**。
  *
- * 故本处两步走：
- * 1. 去掉尾部省略号，用 `indexOf` 在全文里定位摘录**实际位置**——命中即用它；
- * 2. 找不到（摘录被 LLM 改写等）才回退到契约口径 `char_offset` 起点；
- * 3. 两者都不成立 → 返回纯文本（**不高亮**，绝不伪造位置）。
+ * **Sprint 10 批次 A（裁决 D-A / D-B）**：契约新增 `char_end`，与 `char_offset`
+ * 构成半开区间 `[offset, end)`，由后端按「实体 char_start − chunk char_start」
+ * **确定性换算**（偏移**不是**模型编的）。故优先级反转：
+ * 1. **先用区间**：`end` 有效（0 ≤ start < end ≤ len）⇒ 直接按区间切——
+ *    回退档是 `[0, len(text)]`，即**整段高亮**（"指到哪一段"的诚实表达，不是空白）；
+ * 2. 区间不可用（旧契约 / 数据异常）才退回上面的 `indexOf` 摘录定位；
+ * 3. 都不成立 → 返回纯文本（**不高亮**，绝不伪造位置）。
+ *
+ * 疑点页只传前两个参数（无 `end`）⇒ 行为与改造前**完全一致**。
  */
 export function splitHighlight(
   text: string,
   offset: number | null | undefined,
   snippet: string,
+  end?: number | null,
 ): HighlightSegments | string {
+  const start = offset ?? -1;
+  if (
+    typeof end === "number" &&
+    start >= 0 &&
+    end > start &&
+    end <= text.length
+  ) {
+    return {
+      before: text.slice(0, start),
+      hit: text.slice(start, end),
+      after: text.slice(end),
+    };
+  }
+
   const base = snippet.endsWith("…") ? snippet.slice(0, -1) : snippet;
   if (base.length === 0) return text;
 
   const exact = text.indexOf(base);
-  const start = exact >= 0 ? exact : (offset ?? -1);
-  if (start < 0 || start >= text.length) return text;
+  const fallbackStart = exact >= 0 ? exact : start;
+  if (fallbackStart < 0 || fallbackStart >= text.length) return text;
 
-  const end = Math.min(start + base.length, text.length);
+  const fallbackEnd = Math.min(fallbackStart + base.length, text.length);
   return {
-    before: text.slice(0, start),
-    hit: text.slice(start, end),
-    after: text.slice(end),
+    before: text.slice(0, fallbackStart),
+    hit: text.slice(fallbackStart, fallbackEnd),
+    after: text.slice(fallbackEnd),
   };
 }

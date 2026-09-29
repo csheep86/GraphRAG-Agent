@@ -23,17 +23,20 @@
 ### A3 后端：引用换算
 - [x] `graphs.py`：`EvidenceChunk` 新增 `entity_spans`，两条证据查询带出片段内实体 span
 - [x] `agents.py:_to_citation`：`char_offset` / `char_end` 由 `entity.char_start − chunk.char_start` 确定性算；无 span 命中回退 `0` + `len(text)` + WARNING 日志
-- [ ] Prompt `kg_qa_v4.md`（**新增，不覆盖 v3**）：evidence 条带**实体提及文本**（非数字）；加载器切 v4
+- [x] Prompt `kg_qa_v4.md`（**新增，不覆盖 v3**）：evidence 条带**实体提及文本**（非数字）；`load_prompt` 取最大版本 ⇒ 自动生效
 - [x] 单测：换算函数（span 命中 / 提及模糊 ⇒ 回退 / span 与片段无交集 ⇒ 回退 / 无 span ⇒ 整段）
 
 ### A4 前端：高亮
-- [ ] 引用组件按 `[char_offset, char_end)` 在 `GET /documents/{id}/chunks/{chunk_id}` 返回的 `text` 内高亮
-- [ ] 回退档（`char_offset=0` 且 `char_end=len(text)`）高亮整段，不闪空白
+- [x] 引用组件按 `[char_offset, char_end)` 在 `GET /documents/{id}/chunks/{chunk_id}` 返回的 `text` 内高亮（`splitHighlight` 区间优先，疑点页两参调用行为不变）
+- [x] 回退档（`char_offset=0` 且 `char_end=len(text)`）高亮整段，不闪空白
 
 ### A5 真机验收
-- [ ] 真机问答：`citations` 的 `char_offset` 不再恒 0（≥1 条 span 级命中）
-- [ ] 截图 + 探针输出进 `integration-log.md`
-- [ ] 门禁：pytest / ruff / `check_seams` / `export_openapi --check` / 前端 tsc+lint 全绿
+- [x] 写读闭环真机（**不依赖 PG**）：`:Entity` 17/17 落 span；证据回查带出 17 个 span；换算得 `[87,95)` / `[437,439)` —— 探针输出进 `integration-log.md`
+- [x] 门禁：pytest 616 passed / ruff / `check_seams` OK 10 / `export_openapi --check` / 前端 tsc+lint 全绿
+- [ ] **端到端问答真机**（`citations[].char_offset` 非 0）：需 **PG + 真实 LLM**，本机 PG 不可用 ⇒ 待 PG 就绪或批次 F 联调时补
+- [ ] `kg_qa_v4` 是否真让模型输出 `#提及`：**未证前不得宣称"引用已精确到句"**（不遵循 ⇒ 回退整段，行为与改造前一致）
+- [ ] 前端高亮真机截图
+- [ ] `:Entity.confidence` 覆盖率 4.7% 的分层口径登记进 `dev-doc-status.md`（D-E）
 
 ---
 
