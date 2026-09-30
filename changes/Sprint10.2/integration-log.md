@@ -105,3 +105,34 @@ golden 锚点 = 全量集上机械反查（`anchor_ids_for_question`），**不�
 
 **不宣称**：本批只证到"候选集里该有的实体在了" + "真实问答能出 3 跳路径"；
 **没有**证明答案质量提升（答对率要人工判分）。
+
+---
+
+## 8. 批次 D：docx 真机解析（`probe_d_docx_parse.py`，真 MinerU 云）
+
+**任务卡写的「`_do_parse` 现状 `return None` + 依赖引入」已过期**：Sprint 9.5 批次 B2
+就把真实实现落好了（`app/tasks/registry.py::_do_parse`，`_PARSE_MIME_TO_SUFFIX` 已含
+docx 的 mime）⇒ 本批次真正缺的只是**真机证据**。
+
+链路走服务层（跳过 HTTP，避免把"端口没起"当成"解析不通"）：
+`documents` 行 → 源文件 put 进存储层 → `_do_parse` → 读回产物。
+
+| 样本 | 结果 |
+|---|---|
+| `attendance-policy-2026.docx`（2139 B） | `full.md` **799 字符** / `content_list` 1 项 |
+| `fieldwork-attendance-rules.docx`（2191 B） | `full.md` **1090 字符** |
+
+markdown 内容正确（标题、文件编号 HR-ATD-2026-001、生效日期、条款正文都在）⇒
+**docx 解析链路真机通**，无需再写代码。
+
+踩到的三个坑（都记在这，避免重复踩）：
+
+1. `alembic upgrade head` 撞 `table entity_merge_candidates already exists` ——
+   `dev.db` 里 13 张表**早就建好了**，只是 `alembic_version` 落后 ⇒ 用
+   **`alembic stamp head`**（不是 upgrade）；
+2. 直接 `from app.tasks.registry import _do_parse` 会撞循环导入
+   （`app.tasks.manager` ↔ `app.services.documents`）⇒ 先 `import app.main`；
+3. `documents.trace_id` 是 **Uuid 且 NOT NULL**，给字符串会报
+   `'str' object has no attribute 'hex'`。
+
+**未做**：docx → 建图 → 问答（抽取 + 建图这一段没跑）、HTTP 上传端到端。
