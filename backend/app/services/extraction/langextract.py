@@ -45,7 +45,7 @@ import json
 import re
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any, Final
 
@@ -895,6 +895,7 @@ class LangextractClient:
         relations = _clamp_relations(
             all_relations, entities, self._max_relations_per_doc
         )
+        entities, relations = _stabilize_ids(entities, relations, document_id)
 
         logger.bind(
             trace_id=str(trace_id),
@@ -952,6 +953,59 @@ class LangextractClient:
 # ------------------------------------------------------------------------------
 # 内部辅助
 # ------------------------------------------------------------------------------
+
+
+def _stabilize_ids(
+    entities: list[ExtractedEntity],
+    relations: list[ExtractedRelation],
+    document_id: uuid.UUID,
+) -> tuple[list[ExtractedEntity], list[ExtractedRelation]]:
+    """把抽取侧随机生成的实体 / 关系 id 换成**确定性** id（重跑幂等）。
+
+    Sprint 10 批次 E：chunk id 已改确定性（见 :func:`_new_chunk_id`），实体 / 关系是
+    **同一族问题**——id 由 ``uuid4()`` 生成 ⇒ 写侧 ``MERGE`` 按 id 去重失效 ⇒
+    每重跑一次 ingest，图上实体就多一套（``probe_e8_strict_dup.py`` 实测
+    ``attendance-demo-v1`` 有重跑重复实体；注意**同名 ≠ 重复**——CSV 里
+    「2026-10-19 正常班」可以是 37 个员工各自的排班，按名字清理会误删真数据）。
+
+    为什么放在**出口统一换**，而不是改各引擎的生成处：llm 档与 mock 档各有自己的
+    生成点，且工厂函数（``_build_llm_extractor``）里拿不到 ``document_id``；
+    在这里换**一处覆盖两档**，且天然把关系的端点引用一起重映射。
+
+    同一 (document, name, type, 起止偏移) 的实体会得到同一 id ⇒ **顺带合并**了
+    同一次抽取里的重复提及（原本是两条独立实体）。
+    """
+    new_ids: dict[str, str] = {}
+    stabilized: dict[str, ExtractedEntity] = {}
+    for entity in entities:
+        new_id = (
+            "ent_"
+            + hashlib.sha256(
+                f"{document_id}|{entity.canonical_name}|{entity.entity_type}"
+                f"|{entity.char_start}|{entity.char_end}".encode()
+            ).hexdigest()[:12]
+        )
+        new_ids[entity.id] = new_id
+        stabilized.setdefault(new_id, replace(entity, id=new_id))
+
+    stabilized_relations: dict[str, ExtractedRelation] = {}
+    for relation in relations:
+        source = new_ids.get(relation.source_entity_id, relation.source_entity_id)
+        target = new_ids.get(relation.target_entity_id, relation.target_entity_id)
+        rel_id = (
+            "rel_"
+            + hashlib.sha256(
+                f"{source}|{relation.relation_type}|{target}".encode()
+            ).hexdigest()[:12]
+        )
+        stabilized_relations.setdefault(
+            rel_id,
+            replace(
+                relation, id=rel_id, source_entity_id=source, target_entity_id=target
+            ),
+        )
+
+    return list(stabilized.values()), list(stabilized_relations.values())
 
 
 def _new_chunk_id(*, document_id: uuid.UUID, char_start: int, text: str) -> str:

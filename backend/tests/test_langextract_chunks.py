@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.services.extraction.langextract import LangextractClient
 
@@ -83,6 +83,34 @@ def test_chunk_id_is_deterministic_so_reingest_is_idempotent() -> None:
         "同文档重跑 chunk_id 变了 ⇒ 重跑 ingest 会再生成一套重复 :Chunk"
     )
     assert [c.id for c in first.chunks] != [c.id for c in other.chunks]
+
+
+def test_entity_and_relation_ids_are_deterministic() -> None:
+    """实体 / 关系 id 也必须**重跑不变**（与 chunk id 同族，Sprint 10 批次 E）。
+
+    id 若仍随机，写侧 ``MERGE`` 按 id 去重就失效 ⇒ 每重跑一次 ingest，图上实体
+    多一套。注意判据用**严格口径**（名 + 类型 + 起止偏移），不能按名字判重——
+    CSV 里「2026-10-19 正常班」可以是 37 个员工各自的排班，同名不等于重复。
+    """
+    document_id = uuid4()
+    text = "甲方：北京青云科技有限公司。乙方：上海远洋物流有限公司。"
+
+    def run(doc: UUID) -> list[tuple[str, str, str]]:
+        result = _client().extract_entities_relations(
+            document_id=doc, full_md_text=text, trace_id=uuid4()
+        )
+        return [
+            (e.id, r.id, f"{r.source_entity_id}->{r.target_entity_id}")
+            for e in result.entities
+            for r in result.relations
+        ]
+
+    first = run(document_id)
+    second = run(document_id)
+    other = run(uuid4())
+
+    assert first == second, "同文档重跑实体/关系 id 变了 ⇒ 重跑 ingest 会重复入库"
+    assert first != other, "换文档后 id 未变 ⇒ 会把不同文档的实体并成一个"
 
 
 def test_chunks_serialized_with_full_field_set() -> None:
