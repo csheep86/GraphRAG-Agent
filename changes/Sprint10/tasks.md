@@ -34,7 +34,8 @@
 - [x] 写读闭环真机（**不依赖 PG**）：`:Entity` 17/17 落 span；证据回查带出 17 个 span；换算得 `[87,95)` / `[437,439)` —— 探针输出进 `integration-log.md`
 - [x] 门禁：pytest 616 passed / ruff / `check_seams` OK 10 / `export_openapi --check` / 前端 tsc+lint 全绿
 - [x] 端到端真机（DeepSeek）：active 域（CSV 派生，无 span）⇒ 引用恒为**回退整段** `[0, len)`，与改造前一致（符合裁决 D-D）
-- [ ] **span 级引用的端到端**：未证。active 版本是 CSV 派生域，本就没有 span；要看 span 级命中，需让**有抽取产物的文档**成为 active 版本（属演示数据切换，不在本批次）
+- [x] **span 落库在真实链路生效**：用新代码重跑一份 docx 后，active 版本带 span 的实体 **0 → 31**（此前 139 个抽取实体的属性键里根本没有 `char_start`——S9.5 老数据）
+- [ ] **span 级引用的端到端：仍未达成**（新发现，见 `Sprint10.2/integration-log.md` §9）：span 落了，但问答没走到这些实体——候选集 500 里同类型按度数取，新入图的实体度数低 ⇒ 被老实体压掉 ⇒ 引回 CSV chunk
 - [ ] `kg_qa_v4` 的 `#提及` 是否真被模型遵循：**仍未证**（要抓 LLM 原始输出看）——**不得宣称"引用已精确到句"**
 - [ ] 前端高亮真机截图
 - [ ] `:Entity.confidence` 覆盖率 4.7% 的分层口径登记进 `dev-doc-status.md`（D-E）
@@ -63,8 +64,9 @@
 - [x] 任务卡描述**已过期**：`_do_parse` 在 Sprint 9.5 批次 B2 就已真实实现（MinerU 云链路；docx 靠 `_PARSE_MIME_TO_SUFFIX` 映射后缀，与 PDF 同链路）⇒ 不需要再实现、也不需要再引依赖
 - [x] 真机：**docx 上传 → 解析**通过（`probe_d_docx_parse.py`）：2 个样本 → `full.md` 799 / 1090 字符，产物落盘，内容正确
 - [x] 环境：`dev.db` 表已存在（13 张），只是 alembic 版本号落后 ⇒ `alembic stamp head` 对齐（**不要** upgrade，会撞 `already exists`）
-- [ ] 真机：docx **→ 建图 → 问答**（解析已通；抽取 + 建图这一段未跑）
+- [x] 真机：**docx → 解析 → 抽取 → 建图 → 问答** 跑穿（`worktime-system-rules.docx`：full.md 1478 字符 → 实体 31 / 关系 16 → 建图后版本实体 2764→2795 → 问答非拒答）
 - [ ] HTTP 上传链路端到端（本次走服务层，未起后端服务）
+- [ ] 自检误报：`--only` 只跑 1 份时必报「条款数一致 [FAIL]」（自检拿"本次文档条款数"比"全版本节点数"，多文档共存下恒不符——与 2026-09-28 那条修正同族）
 
 ## 批次 E：时效 L2 + `as_of` 上 REST
 - [ ] REST 层 `as_of` 参数（契约先行）+ 前端问答页时间入口（**一起做**，不造无入口参数）
