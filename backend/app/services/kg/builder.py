@@ -412,6 +412,19 @@ ON MATCH SET n.canonical_name = e.canonical_name,
 #: 精确到"指到哪一句"；换算只在 ``agents._to_citation`` 一处（D-B）。
 
 #: stage-3：单批 MATCH-MERGE relations
+#:
+#: Sprint 10.4 批次 A（ADR-0005 §4 事实维落到通用层）：这段 Cypher **原先只写**
+#: ``relation_type`` / ``evidence`` / ``confidence``——抽取侧（``langextract`` v3）
+#: 早就产出了 ``valid_from`` / ``valid_to``，到这里被**整段丢掉**（Neo4j 侧实测：
+#: 占绝大多数的通用层关系时序覆盖 0%，而 M4 主体层两条 typed 边有值）。现在补上。
+#:
+#: **只写事实维，不写摄入维**（``created_at`` / ``expired_at``）：本层的端点 id 是
+#: ``ent_<uuid>``，跨文档不可对齐 ⇒ R1–R3 仲裁对通用层不适用（判据见
+#: :meth:`ThreeStageKgBuilder._arbitrate_affiliation_edges` 的 docstring）。写一个
+#: 永远不会被推进的 ``expired_at`` = 无消费者的预留字段，故不写。
+#:
+#: 缺失即写 ``null``（Neo4j 不存 null 属性）⇒ 读侧 :func:`app.services.graphs.
+#: _temporal_view` 的谓词对这些边恒真，语义正是「未纳入时效治理 ⇒ 视为当前有效」。
 _CYPHER_STAGE3_LOAD_RELATIONS = """
 UNWIND $batch AS r
 MATCH (a:Entity {id: r.source_entity_id, kg_version: $kg_version})
@@ -420,8 +433,12 @@ MERGE (a)-[rel:RELATION {id: r.id, kg_version: $kg_version}]->(b)
 ON CREATE SET rel.relation_type = r.relation_type,
               rel.evidence = r.evidence,
               rel.confidence = r.confidence,
+              rel.valid_from = r.valid_from,
+              rel.valid_to = r.valid_to,
               rel.org_id = $org_id,
               rel.trace_id = $trace_id
+ON MATCH SET rel.valid_from = coalesce(rel.valid_from, r.valid_from),
+             rel.valid_to = coalesce(rel.valid_to, r.valid_to)
 """
 
 

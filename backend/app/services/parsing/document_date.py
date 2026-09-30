@@ -26,6 +26,24 @@
 
 后两条是**约定**而非事实，因此必须由人工指定覆盖——这也是上传接口那个
 可选字段存在的理由之一。
+
+--------------------------------------------------------------------------
+2026-09-30 追加（Sprint 10.4 批次 A）：**后置锚点**——制度类文档的第二类写法
+--------------------------------------------------------------------------
+上一版只认「关键词在前、日期在后」（``披露日期：2025-06-30``）。实测演示语料
+``demo/attendance/policies/*.md`` **4/4 认不出**，但四份文档**都有日期**，写法是
+**日期在前**：``第十三条 本制度自 2026 年 1 月 1 日起施行。``
+⇒ 词表再多也救不了形式不对——这是实证，不是猜测。
+
+因此新增**后置锚点**（``日期 + 间隔 + 关键词``）与它配套的词表：
+
+- 认：``施行`` / ``实施`` / ``生效`` / ``发布`` / ``颁布`` / ``印发`` / ``通过`` / ``修订``；
+- **不认** ``废止``：「《某规定（2025 版）》同时废止」说的是**另一份文档**
+  什么时候结束，**不是本文档**的日期；把它认领过来等于给本文档编一个日期。
+
+优先级保持「前置锚点 → 后置锚点」：已有行为**不变**，只补原来漏掉的一类。
+两种形式共用同一条间隔纪律（``_GAP`` / ``_TAIL_GAP``）：关键词与日期之间
+只允许极少量语气字符，禁止跨句认领。
 """
 
 from __future__ import annotations
@@ -58,6 +76,26 @@ _DATE_KEYWORDS = (
 #: 关键词与日期之间只允许这些字符（防止跨句 / 跨段把别人的日期认领过来）
 _GAP = r"[：:\s，,、（(]{0,6}"
 
+#: 后置锚点的日期与关键词之间只允许这些语气字符——同样是为了不跨句认领。
+#: 典型形态：``2026 年 1 月 1 日起施行``（``起``）、``2025 年 6 月 30 日公布``（无）。
+#: **句号 / 分号不在其列**：``……2026年1月1日。本办法自发布之日起施行`` 因此不被认领。
+_TAIL_GAP = r"[起之\s，,、]{0,4}"
+
+#: 后置锚点词表（**日期在前、关键词在后**）。
+#: 只收「该日期就是本文档日期」的强信号词：施行 / 实施 / 生效 = 文档开始适用；
+#: 发布 / 颁布 / 印发 = 文档对外发出的日子；通过 / 修订 = 审议动作落在本文档上。
+#: **不含** ``废止``：那句话描述的是**另一份**旧文档何时结束（见模块 docstring）。
+_TAIL_KEYWORDS = (
+    "施行",
+    "实施",
+    "生效",
+    "发布",
+    "颁布",
+    "印发",
+    "通过",
+    "修订",
+)
+
 #: 三类粒度，按精度从高到低；**先匹配到的先采用**
 _YMD = r"(?P<y>\d{4})\s*[年\-/.]\s*(?P<m>\d{1,2})\s*[月\-/.]\s*(?P<d>\d{1,2})\s*日?"
 _YM = r"(?P<y>\d{4})\s*[年\-/.]\s*(?P<m>\d{1,2})\s*月(?!\s*\d)"
@@ -70,7 +108,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 #: 关键词 + 间隔 + 日期 的组合模式（逐个关键词生成，避免一条巨型正则难维护）
-_ANCHORED = tuple(
+_HEAD_ANCHORED = tuple(
     (
         source,
         re.compile(f"{re.escape(keyword)}{_GAP}(?:{pattern.pattern})"),
@@ -78,6 +116,20 @@ _ANCHORED = tuple(
     for source, pattern in _PATTERNS
     for keyword in _DATE_KEYWORDS
 )
+
+#: 日期 + 间隔 + 关键词（后置锚点）。``source`` 加 ``_tail`` 后缀 ⇒ 日志能区分
+#: 这个日期是"关键词带出来的"还是"句子句尾的施行日"。
+_TAIL_ANCHORED = tuple(
+    (
+        f"{source}_tail",
+        re.compile(f"(?:{pattern.pattern}){_TAIL_GAP}{re.escape(keyword)}"),
+    )
+    for source, pattern in _PATTERNS
+    for keyword in _TAIL_KEYWORDS
+)
+
+#: 先前置、后后置：既有语料的行为**逐字不变**，只在原来漏掉的那类文档上新增命中。
+_ANCHORED = _HEAD_ANCHORED + _TAIL_ANCHORED
 
 #: 年份的可信区间下限（早于此视为解析噪声，如"成立于 1899 年"）
 _MIN_YEAR = 1900
@@ -95,15 +147,17 @@ def _last_day_of_month(year: int, month: int) -> int:
 
 def _build(source: str, match: re.Match[str], *, max_year: int) -> date | None:
     """把正则匹配构造成 ``date``；**构造不出来返回 None**（如 2025-02-30）。"""
+    # 后置锚点的 source 带 ``_tail`` 后缀，粒度判定看去掉后缀后的部分
+    granularity = source.removesuffix("_tail")
     year = int(match.group("y"))
     if not _MIN_YEAR <= year <= max_year:
         return None
-    if source == "text:year":
+    if granularity == "text:year":
         return date(year, 12, 31)
     month = int(match.group("m"))
     if not 1 <= month <= 12:
         return None
-    if source == "text:ym":
+    if granularity == "text:ym":
         return date(year, month, _last_day_of_month(year, month))
     try:
         return date(year, month, int(match.group("d")))

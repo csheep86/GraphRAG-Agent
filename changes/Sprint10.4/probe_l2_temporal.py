@@ -28,6 +28,12 @@ from neo4j import GraphDatabase  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 
+# Windows 控制台默认 GBK，输出里的 ``↔`` / ``→`` 会抛 UnicodeEncodeError
+# （脚本跑到一半崩 ⇒ 结论只剩一半，比不能跑更糟）。统一按 UTF-8 输出。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 settings = get_settings()
 
 VERSIONS = ["attendance-demo-v1", "affiliation-demo-v1"]

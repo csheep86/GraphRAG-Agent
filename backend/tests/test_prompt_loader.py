@@ -48,6 +48,37 @@ def test_render_replaces_every_placeholder() -> None:
     assert "{{" not in rendered and "}}" not in rendered
 
 
+def test_latest_kg_qa_accepts_empty_as_of_date() -> None:
+    """Sprint 10.4（``kg_qa_v5``）：日期不可得 ⇒ 调用方喂**空串**，模板负责整句不出现。
+
+    真机来源（2026-09-30）：演示库 17 份文档 ``document_date`` 全为 NULL，而调用方
+    此前喂的是字面量 ``unknown`` ⇒ 答案里出现「依据截至 **unknown** 的披露文件」。
+    本例钉住"空值必须被接受"：**渲染层不许因为空值报错**，也不许把它渲染成占位符字面量。
+    """
+    template = load_prompt("kg_qa")
+    assert "as_of_date" in template.placeholders
+
+    rendered = template.render(**{**KG_QA_VARS, "as_of_date": ""})
+
+    assert "{{" not in rendered and "}}" not in rendered
+    # 日期那一栏必须是**空的**（后面什么都不跟），而不是被填成 "unknown"
+    lines = [line for line in rendered.splitlines() if "(as-of date):" in line]
+    assert len(lines) == 1
+    assert lines[0].rstrip().endswith("(as-of date):")
+
+
+def test_kg_qa_v4_is_left_untouched() -> None:
+    """版本规范（H9）：升到 v5 时 **v4 文件一个字都不能改**。
+
+    v4 的 as-of 降级口径（"明确说日期未知"）正是 v5 要修的那一条——若有人图省事
+    原地改 v4，这条用例会红，而不是等到真机答案里再次冒出 ``unknown``。
+    """
+    v4 = load_prompt("kg_qa", version=4)
+    assert set(v4.placeholders) == set(KG_QA_VARS)
+    # v4 的原文要求模型"明确说截至日期不可用" ⇒ 该措辞必须还在 v4 里
+    assert "unavailable" in v4.raw
+
+
 def test_missing_variable_raises() -> None:
     partial = {key: value for key, value in KG_QA_VARS.items() if key != "question"}
 

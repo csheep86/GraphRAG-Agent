@@ -154,6 +154,38 @@ def test_stage2_writes_entity_span_into_graph() -> None:
     assert entity_calls[0][1]["batch"][0]["char_end"] == 140
 
 
+def test_stage3_writes_temporal_fields_into_relation() -> None:
+    """Sprint 10.4 批次 A：`valid_from` / `valid_to` **必须随关系进图**。
+
+    真机事实（`changes/Sprint10.4/00-recon.md`、`probe_l2_temporal.py` 可复算）：
+    抽取侧 v3 Prompt 一直产出这两个字段，**是 stage-3 的 Cypher 丢的**——它只写了
+    relation_type / evidence / confidence，于是通用层 `:RELATION` 的时序覆盖恒为
+    0%，上层「路径时序一致性」没有可判的日期。
+
+    同时钉住**只写事实维**：`created_at` / `expired_at` 属摄入维，通用层端点 id 是
+    `ent_<uuid>`（跨文档不可对齐）⇒ R1–R3 仲裁对它不适用，写了就是没人消费的预留字段。
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+    builder = _make_builder(calls)
+    relation = _relation("r1", "e1", "e1")
+    relation.update(valid_from="2026-01-01", valid_to=None)
+
+    builder.build(_request([_entity("e1")], [relation]))
+
+    rel_calls = [c for c in calls if "MERGE (a)-[rel:RELATION" in c[0]]
+    assert rel_calls, "stage-3 未执行"
+    cypher = rel_calls[0][0]
+    assert "rel.valid_from = r.valid_from" in cypher
+    assert "rel.valid_to = r.valid_to" in cypher
+    assert "created_at" not in cypher
+    assert "expired_at" not in cypher
+    # 幂等语义：重跑不清空已有值（ON MATCH 用 coalesce 而不是覆盖）
+    assert "coalesce(rel.valid_from, r.valid_from)" in cypher
+    # 值随 batch 走；缺 key 的行写到图上是 null（CSV 派生关系天然无日期）
+    assert rel_calls[0][1]["batch"][0]["valid_from"] == "2026-01-01"
+    assert rel_calls[0][1]["batch"][0]["valid_to"] is None
+
+
 def test_build_params_carry_tenant_and_version() -> None:
     calls: list[tuple[str, dict[str, Any]]] = []
     org_id = uuid4()

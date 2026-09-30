@@ -29,16 +29,29 @@
   否则 span 会被算进实际计数（恒报自检失败），失败补偿还会**连带删掉** span
   （重跑抽取要重烧 MinerU + LLM）；
 - ``--purge-csv`` 只清本 mapping 派生前缀（``<ENTITY_TYPE>:``），``--purge`` 清整个版本。
+
+**知识时效（2026-09-30 Sprint 10.4 批次 A 追加，ADR-0005 §4）**：
+关系写入 ``valid_from``，取值 = ``mapping.yaml`` 里该关系声明的 ``valid_from_column``
+（源行自带的日期列：排班 ``date``、请假 ``start_date``、工单 ``dispatched_at`` …）。
+三点纪律：
+
+1. **只写事实维的 ``valid_from``**，不写 ``valid_to`` / ``expired_at``——CSV 里
+   **没有**任何"这条记录何时失效"的字段，写它们就得编；缺失 ⇒ 该属性不存在，
+   读侧 ``_temporal_view`` 的谓词对此恒真，语义正是"未纳入失效治理"；
+2. **列未声明 / 取不到 ⇒ None**：不做默认值兜底（R4 不猜值）；
+3. 这是演示语料里**唯一真实存在**的时间源：确定性旁路、零 LLM、可复算——
+   比"事后给语料补一个假日期"可靠得多。
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -211,6 +224,29 @@ def build_nodes(mapping: dict[str, Any]) -> tuple[list[dict[str, Any]], set[str]
 # --------------------------------------------------------------------------- #
 # 构建关系
 # --------------------------------------------------------------------------- #
+#: ``YYYY-MM-DD``（可选跟随 `` HH:MM``——``dispatched_at`` 就是这种）
+_DATE_VALUE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[\sT].*)?$")
+
+
+def _fact_date(row: Mapping[str, str], spec: Mapping[str, Any]) -> str | None:
+    """取本行自身的事实日期；取不到就 ``None``（R4 不猜值）。
+
+    ``valid_from`` 的取值口径：**源记录里明写的那一天**（排班的 ``date``、考勤的
+    ``date``、请假的 ``start_date``、工单的 ``dispatched_at``…），由 ``mapping.yaml``
+    的 ``valid_from_column`` 逐关系声明 ⇒ **不是代码猜的**，也不是默认值补齐。
+    列不存在 / 值为空 ⇒ ``None``（该关系未纳入时效判定，读侧谓词对恒真）。
+    """
+    column = spec.get("valid_from_column")
+    if not column:
+        return None
+    value = str(row.get(str(column)) or "").strip()
+    if not value:
+        return None
+    matched = _DATE_VALUE.match(value)
+    # 认不出就 None——不改写、不"就近修正"（同一条纪律：编日期比没日期危险）
+    return matched.group(1) if matched else None
+
+
 def _index_rows(
     file_name: str, keys: list[str]
 ) -> dict[tuple[str, ...], list[dict[str, str]]]:
@@ -269,6 +305,7 @@ def build_relations(
                         "relation_type": rtype,
                         "head": head_id,
                         "tail": tail_id,
+                        "valid_from": _fact_date(raw, spec),
                     }
                 )
             continue
@@ -313,6 +350,12 @@ def build_relations(
                         "relation_type": rtype,
                         "head": head_id,
                         "tail": tail_id,
+                        # 跨表关系的事实落在哪一侧由 mapping 声明（``valid_from_from``）；
+                        # 缺省取 head 行。TRIP_FOR_ORDER 取 tail（工单）侧的派单日。
+                        "valid_from": _fact_date(
+                            cand if spec.get("valid_from_from") == "tail" else raw,
+                            spec,
+                        ),
                     }
                 )
 
@@ -361,6 +404,7 @@ MATCH (a:Entity {id: row.head, kg_version: $kg_version})
 MATCH (b:Entity {id: row.tail, kg_version: $kg_version})
 MERGE (a)-[r:RELATION {id: row.id, kg_version: $kg_version}]->(b)
 SET r.relation_type = row.relation_type,
+    r.valid_from = coalesce(r.valid_from, row.valid_from),
     r.org_id = $org_id,
     r.trace_id = $trace_id
 RETURN count(r) AS merged

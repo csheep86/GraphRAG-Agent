@@ -39,6 +39,71 @@ def test_recognizes_documented_date(text: str, expected: date, source: str) -> N
     assert resolve(text) == (expected, source)
 
 
+# --------------------------------------------------------------------------- #
+# Sprint 10.4 批次 A：后置锚点（制度类文档写成「自 X 起施行」）
+#
+# 以上三句均**逐字取自** ``demo/attendance/policies/*.md``——这批用例的存在理由
+# 是实测：改之前它们全部返回 ``None``（演示库 17 份文档无一有日期的根因之一）。
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("text", "expected", "source"),
+    [
+        (
+            "第十三条 本制度自 2026 年 1 月 1 日起施行。《员工考勤管理制度（2025 版）》同时废止。",
+            date(2026, 1, 1),
+            "text:ymd_tail",
+        ),
+        (
+            "第十一条 本规定由人力资源部负责解释，自 2026 年 1 月 1 日起施行。",
+            date(2026, 1, 1),
+            "text:ymd_tail",
+        ),
+        (
+            "本办法自 2026-01-01 起实施。",
+            date(2026, 1, 1),
+            "text:ymd_tail",
+        ),
+        (
+            "本细则于 2026 年 1 月 1 日发布。",
+            date(2026, 1, 1),
+            "text:ymd_tail",
+        ),
+        (
+            "本规定自 2026 年 1 月起施行。",
+            date(2026, 1, 31),
+            "text:ym_tail",
+        ),
+    ],
+)
+def test_tail_anchor_recognizes_policy_effective_date(
+    text: str, expected: date, source: str
+) -> None:
+    assert resolve(text) == (expected, source)
+
+
+def test_head_anchor_still_wins_over_tail() -> None:
+    """优先级不变：前置锚点先于后置锚点，避免新形式改写既有语料的结论。"""
+    text = "第十三条 报告期：2025年6月30日；本制度自 2026 年 1 月 1 日起施行。"
+    assert resolve(text) == (date(2025, 6, 30), "text:ymd")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 废止说的是**另一份**旧文档何时结束，不是本文档的日期
+        "《外勤与出差考勤补充规定（2025 版）》第五条规定……同时废止。",
+        # 后置锚点同样不许跨句：日期与关键词之间隔着句号
+        "统计截止日为 2026 年 1 月 1 日。本制度自发布之日起施行。",
+        # 只有日期、没有后置关键词：仍是无出处的日期
+        "公司成立于 2018 年 3 月，本制度另行发布。",
+    ],
+)
+def test_tail_anchor_returns_none_when_not_confident(text: str) -> None:
+    assert resolve(text) == (None, SOURCE_NONE)
+
+
 def test_explicit_wins_over_text() -> None:
     """人工指定优先：正文再像也不覆盖人给的值。"""
     given = date(2024, 1, 1)

@@ -423,7 +423,11 @@ class AgentService:
             }
             declared = set(template.placeholders)
             if "as_of_date" in declared:
-                values["as_of_date"] = as_of_date or _AS_OF_UNKNOWN
+                # Sprint 10.4（kg_qa_v5）：日期不可得 ⇒ **喂空串**，让模板整句不出现。
+                # v4 及以前喂的是字面量 "unknown"，真机实测它会被模型照抄进答案
+                # ——客户看到「依据截至 unknown 的披露文件」（17 份演示文档全无日期）。
+                # 降级从"说不知道"改成"不说"，信息不少（引用仍可追溯）、错误不再。
+                values["as_of_date"] = as_of_date or ""
             if "as_of_source" in declared:
                 values["as_of_source"] = as_of_doc_id or _AS_OF_UNKNOWN
             system_prompt = template.render(**values)
@@ -999,7 +1003,12 @@ def _snippet(text: str) -> str:
     return f"{stripped[:_SNIPPET_LIMIT]}…"
 
 
-#: Prompt 里截至日期的兜底字面量：日期**不可得**时就照实说，不替 LLM 编一个
+#: Prompt 里截至日期的兜底字面量。
+#:
+#: **只用于 ``as_of_source``**（文档 id 那一路）——``as_of_date`` 自 Sprint 10.4
+#: 起（Prompt ``kg_qa_v5``）改喂**空串**：真机实测这个字面量会被模型照抄进答案，
+#: 变成「依据截至 unknown 的披露文件」。降级口径因此从"照实说不知道"
+#: 改成"整句不出现"，本常量只为还没适配的旧占位符保留。
 _AS_OF_UNKNOWN = "unknown"
 
 

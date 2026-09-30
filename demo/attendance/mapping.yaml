@@ -99,6 +99,21 @@ nodes:
 
 # -- 关系 -------------------------------------------------------------------
 # 全部落成 `:RELATION`，语义存 `relation_type`
+#
+# **知识时效（2026-09-30 Sprint 10.4 追加，ADR-0005 §4 事实维）**
+#
+# 可选字段 `valid_from_column`：这条关系的 `valid_from` 取**源行自己的哪一列**。
+# 口径三条：
+#   1. 只声明**源记录里明写的那一天**（排班的班日、考勤的打卡日、请假的起始日、
+#      工单的派单日…）——它是行数据自带的，不是代码推断的；
+#   2. **不敢声明的就不声明**（⇒ None）：`BELONGS_TO` / `HAS_POSITION` /
+#      `APPLIES_WORK_TIME` 挂在 employees.csv 上，那张表没有"这条关系从哪天成立"
+#      的列（`hire_date` 是入职日，拿来当"归属部门生效日"是推断）；
+#   3. 跨表关系用 `valid_from_from: tail` 声明取哪一侧的行，缺省取 head 行
+#      （`TRIP_FOR_ORDER` 的事实是"这次出差覆盖了这笔工单"，成立时刻取工单派单日）。
+#
+# 未声明 ⇒ 该边没有 `valid_from` 属性 ⇒ 读侧 `_temporal_view` 的谓词对恒真
+# （当作当前有效），与「未纳入时效治理」的语义一致。
 relationships:
   - relation_type: BELONGS_TO
     from: {entity_type: EMPLOYEE, file: employees.csv, key: employee_id}
@@ -115,46 +130,58 @@ relationships:
   - relation_type: HAS_SHIFT
     from: {entity_type: EMPLOYEE, file: shifts.csv, key: employee_id}
     to: {entity_type: SHIFT, file: shifts.csv, key: shift_id}
+    valid_from_column: date
 
   - relation_type: HAS_ATTENDANCE
     from: {entity_type: EMPLOYEE, file: attendance_records.csv, key: employee_id}
     to: {entity_type: ATTENDANCE_RECORD, file: attendance_records.csv, key: record_id}
+    valid_from_column: date
 
   - relation_type: ON_BUSINESS_TRIP
     from: {entity_type: EMPLOYEE, file: business_trips.csv, key: employee_id}
     to: {entity_type: BUSINESS_TRIP, file: business_trips.csv, key: trip_id}
+    valid_from_column: start_date
 
   - relation_type: HANDLED_ORDER
     from: {entity_type: EMPLOYEE, file: work_orders.csv, key: employee_id}
     to: {entity_type: WORK_ORDER, file: work_orders.csv, key: order_id}
+    valid_from_column: dispatched_at
 
   - relation_type: LOCATED_AT
     from: {entity_type: EMPLOYEE, file: location_records.csv, key: employee_id}
     to: {entity_type: LOCATION_RECORD, file: location_records.csv, key: loc_id}
+    valid_from_column: date
 
   - relation_type: SWIPED_AT
     from: {entity_type: EMPLOYEE, file: access_records.csv, key: employee_id}
     to: {entity_type: ACCESS_RECORD, file: access_records.csv, key: access_id}
+    valid_from_column: date
 
   - relation_type: SUBMITTED_LEAVE
     from: {entity_type: EMPLOYEE, file: leave_requests.csv, key: employee_id}
     to: {entity_type: LEAVE, file: leave_requests.csv, key: leave_id}
+    valid_from_column: start_date
 
   - relation_type: ACCUMULATED_OVERTIME
     from: {entity_type: EMPLOYEE, file: overtime_records.csv, key: employee_id}
     to: {entity_type: OVERTIME, file: overtime_records.csv, key: overtime_id}
+    valid_from_column: date
 
   # 跨域：出差 ↔ 售后工单（按 员工 + 日期窗口 匹配，非外键）
   - relation_type: TRIP_FOR_ORDER
     from: {entity_type: BUSINESS_TRIP, file: business_trips.csv, key: trip_id}
     to: {entity_type: WORK_ORDER, file: work_orders.csv, key: order_id}
     match: {by: [employee_id], where: "order.closed_at 落在 trip.start_date ~ trip.end_date 内"}
+    # 事实成立时刻 = 工单被派出的那天 ⇒ 取 tail（work_orders.csv）侧
+    valid_from_column: dispatched_at
+    valid_from_from: tail
 
   # 考勤记录 ↔ 其所对应的排班（同 员工 + 同日期）
   - relation_type: OCCURRED_ON
     from: {entity_type: ATTENDANCE_RECORD, file: attendance_records.csv, key: record_id}
     to: {entity_type: SHIFT, file: shifts.csv, key: shift_id}
     match: {by: [employee_id, date]}
+    valid_from_column: date
 
 # -- 不由 CSV 建立、需与 M2 抽取结果汇合（批次 B3）--------------------------
 #

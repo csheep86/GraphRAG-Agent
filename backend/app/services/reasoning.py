@@ -204,7 +204,9 @@ WHERE a.id IN $anchor_ids
 RETURN [n IN nodes(p) | n.id] AS ids,
        [n IN nodes(p) | n.canonical_name] AS names,
        [n IN nodes(p) | n.entity_type] AS types,
-       [r IN relationships(p) | coalesce(r.relation_type, type(r))] AS rels
+       [r IN relationships(p) | coalesce(r.relation_type, type(r))] AS rels,
+       [r IN relationships(p) | toString(properties(r)['valid_from'])] AS valid_froms,
+       [r IN relationships(p) | toString(properties(r)['valid_to'])] AS valid_tos
 ORDER BY (CASE WHEN types[-1] IN $prio_types THEN 0 ELSE 1 END),
          size(rels),
          ids[-1]
@@ -454,6 +456,53 @@ def _fallback_anchors(
     return result
 
 
+#: 路径时序裁决的名次（小的优先）——见 :func:`_temporal_verdict` 的三值语义
+_TEMPORAL_RANK = {"consistent": 0, "unknown": 1, "inconsistent": 2}
+
+
+def _row_temporal_verdict(row: Any) -> str:  # noqa: ANN401
+    """从一行候选路径里取时序裁决；**该行没有时态列 ⇒ unknown**（不猜）。
+
+    时态列缺失是合法的：``_CYPHER_PATHS`` 之前不返回它们，单测的行也可能不带
+    ——此时结论必须是「不可判定」，而不能默认成自洽（那等于说"没日期 = 永远有效"）。
+    """
+    keys = row.keys() if hasattr(row, "keys") else ()
+    if "valid_froms" not in keys:
+        return "unknown"
+    return _temporal_verdict(row["valid_froms"] or [], row["valid_tos"] or [])
+
+
+def _temporal_verdict(valid_froms: Sequence[Any], valid_tos: Sequence[Any]) -> str:
+    """ADR-0005 §6 L2「路径时序一致性」：**这条链能不能在同一时点同时成立**。
+
+    判定是**纯字符串比较**（``YYYY-MM-DD`` 字典序 == 日期序），不需要任何领域模型，
+    也不需要 LLM——与 §5 的 R1–R4 同族：能靠受控 schema 确定性判的，不交给模型。
+
+    三值语义（**没有第四种**）：
+
+    - ``consistent``：每一跳都有 ``valid_from``，且存在一个时点让**所有**跳同时有效
+      （``max(valid_from) <= min(valid_to)``；``valid_to`` 空 = 未失效 = ``+∞``）；
+    - ``inconsistent``：最晚开始的事实晚于最早失效的事实 ⇒ 这些 hop **不可能**
+      同时成立，是一条把不同时点的事实硬串起来的链（事件顺序被倒置了）；
+    - ``unknown``：至少一跳没有 ``valid_from``（未纳入时效治理，如 employees.csv
+      派生的 ``BELONGS_TO``）⇒ **不可判定**。这里是全域最容易自欺的地方：
+      把它当 ``consistent`` 等于默认"没写日期 = 永远有效"，那正是 D-3 要避免的
+      （R4 不猜值）。故单独成一档，**不并入**任何一边。
+
+    :returns: ``consistent`` / ``inconsistent`` / ``unknown``
+    """
+    froms = [str(item) for item in valid_froms if item is not None]
+    if not valid_froms or len(froms) != len(valid_froms):
+        # 缺日期 ⇒ 不可判定（不猜）
+        return "unknown"
+
+    tos = [str(item) for item in valid_tos if item is not None]
+    if not tos:
+        # 全部未失效 ⇒ 区间右端全是 +∞ ⇒ 必然存在共同成立时点
+        return "consistent"
+    return "consistent" if max(froms) <= min(tos) else "inconsistent"
+
+
 def _select_shortest_path(
     rows: Sequence[Any],
 ) -> tuple[list[str], list[Any], list[Any], list[str]] | None:
@@ -496,11 +545,16 @@ def _select_shortest_path(
         if any(item == HUB_EMPLOYEE_TYPE for item in middle_types):
             continue
         terminal = str(types[-1]) if types[-1] else ""
+        # Sprint 10.4（ADR-0005 L2）：同等档位下**优先选时序自洽的链**——
+        # 它排在 ids 字典序之前、跳数之后 ⇒ 只在"同样短、同样有解释力"的候选之间
+        # 起作用，**不会**为了自洽去挑一条更长的链。
+        verdict = _row_temporal_verdict(row)
         candidates.append(
             (
                 0 if terminal == TERMINAL_PRIORITY_TYPE else 1,
                 _TERMINAL_RANK.get(terminal, len(_TERMINAL_RANK)),
                 len(rels),
+                _TEMPORAL_RANK[verdict],
                 tuple(ids),
                 position,
                 row,
@@ -510,8 +564,17 @@ def _select_shortest_path(
     if not candidates:
         return None
 
-    candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
-    row = candidates[0][5]
+    candidates.sort(
+        key=lambda item: (item[0], item[1], item[2], item[3], item[4], item[5])
+    )
+    row = candidates[0][6]
+    # 必须可观测（日志与可观测性规范）：选中的链在时序上到底算哪档、候选里几成自洽。
+    # 只看"选出了一条链"无法回答"这条链是不是把不同时点的事实串起来了"。
+    logger.bind(
+        candidates=len(candidates),
+        verdict=_row_temporal_verdict(row),
+        temporal_ranks=sorted({item[3] for item in candidates}),
+    ).info("reasoning_path_temporal_verdict")
     return (
         [str(item) for item in (row["ids"] or [])],
         list(row["names"] or []),
