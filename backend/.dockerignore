@@ -1,0 +1,21 @@
+# 密钥禁入镜像（deployment-spec §3）
+.env
+.env.*
+# 本机运行产物，不得 baked 进镜像
+.venv/
+venv/
+dev.db
+*.db
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+# 开发期资产：镜像只承载运行时
+tests/
+scripts/
+*.log
+logs/
+.git/
+.github/
+.codebuddy/
