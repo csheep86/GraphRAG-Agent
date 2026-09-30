@@ -57,6 +57,7 @@ from app.schemas.agent import (
 from app.schemas.document import GraphEdge, GraphNode
 from app.services.audit import record_audit_entry
 from app.services.graphs import (
+    EntitySpan,
     EvidenceChunk,
     GraphService,
     GraphUnavailableError,
@@ -94,6 +95,11 @@ _SNIPPET_LIMIT = 200
 #: 真正的闸门是后续的 ``chunk_id`` 索引回查——回查不到即丢弃（F3），
 #: 因此无需在正则层面卡死位数（历史占位 / 契约示例里的短 id 也能正确解析）。
 _CITATION_ID_PATTERN = re.compile(r"chunk-[0-9A-Za-z]{1,64}")
+
+#: Sprint 10 批次 A（裁决 D-C）：证据条目里「chunk id」与「实体提及文本」的分隔符，
+#: 约定形如 ``chunk-<id>#<提及>``（Prompt ``kg_qa_v4``）。
+#: **模型只给文本、不给数字**——偏移由 :func:`_to_citation` 确定性换算（D-B）。
+_MENTION_SEPARATOR = "#"
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,6 +466,10 @@ class AgentService:
         #    批次 B：`_to_citation` 回查本轮注入的证据片段，
         #    回查不到的条目（LLM 编造 / 未注入的 chunk id）直接丢弃——不得进入 citations。
         citations = _build_citations(parsed.evidence, chunk_index)
+        # 6b) 归因闸门（Sprint 10 批次 E）：chunk_id 合法 ≠ 依据在这条 chunk 里。
+        #     撑不住答案的引用一律丢弃；全丢 ⇒ 下面按 no_grounded_evidence 拒答。
+        if settings.qa_citation_gate_enabled:
+            citations = _grounded_citations(parsed.answer, citations, chunk_index)
         # 注意：`QueryRoute` / `QueryConfidence` / `RefusalReason` 是 `Literal` **类型别名**
         # 而非 Enum，**禁止**属性访问——`QueryRoute.M3_GRAPHQA` 会经
         # `typing._BaseGenericAlias.__getattr__` 转发到 `typing.Literal` 而抛
@@ -817,6 +827,17 @@ def _to_citation(item: str, chunks: Mapping[str, EvidenceChunk]) -> Citation | N
     - 未命中（LLM 编造的 id，或该 chunk 未挂 ``:Document``）→ 返回 ``None``，
       由 :func:`_build_citations` 丢弃——F3 严禁不可溯源的引用进入响应。
 
+    **Sprint 10 批次 A（裁决 D-A / D-B / D-C）**：``char_offset`` / ``char_end`` 是
+    **片段内相对偏移**（相对 ``GET /documents/{id}/chunks/{chunk_id}`` 返回的 ``text``），
+    由本函数按 ``实体 char_start − chunk char_start`` **确定性换算**——
+    **偏移不由模型产出**（``langextract`` 实测模型自报偏移 14/20 不符，且违反
+    「数值不出 LLM」）。引用粒度双档：
+
+    - 主档：条目形如 ``chunk-<id>#<实体提及文本>`` ⇒ 回查到实体 span，精确到该提及；
+    - 回退档：无 span 命中（只给了 chunk id / 提及对不上 / span 与片段无交集）
+      ⇒ ``char_offset=0`` + ``char_end=len(text)``（整段），并留 WARNING——
+      **不猜、不编**，宁可高亮整段也不给一个确定而错误的偏移。
+
     :param chunks: ``chunk_id -> EvidenceChunk`` 索引（本轮 :meth:`fetch_evidence_chunks` 结果）
     """
     match = _CITATION_ID_PATTERN.search(item)
@@ -835,13 +856,48 @@ def _to_citation(item: str, chunks: Mapping[str, EvidenceChunk]) -> Citation | N
         logger.bind(chunk_id=chunk_id).warning("agent_citation_chunk_without_document")
         return None
 
+    span = _resolve_citation_span(chunk, item)
+    if span is None:
+        char_offset, char_end = 0, len(chunk.text)
+        logger.bind(chunk_id=chunk_id, evidence=item).warning(
+            "agent_citation_span_fallback"
+        )
+    else:
+        char_offset = max(0, span.char_start - chunk.char_start)
+        char_end = min(len(chunk.text), span.char_end - chunk.char_start)
+
     return Citation(
         doc_id=chunk.doc_id,
         page=chunk.page,
         chunk_id=chunk_id,
-        char_offset=0,
+        char_offset=char_offset,
+        char_end=char_end,
         snippet=_snippet(chunk.text),
     )
+
+
+def _resolve_citation_span(chunk: EvidenceChunk, item: str) -> EntitySpan | None:
+    """把证据条目里的「实体提及文本」回查为该片段内的实体 span（D-C 主档）。
+
+    匹配口径**只有一条**：提及文本与 :attr:`EntitySpan.mention` **相等**
+    （忽略大小写与首尾空白）。刻意**不做**包含匹配 / 模糊匹配 / 编辑距离——
+    那会让"引用指到哪一句"变成随语料漂移的猜测；一旦猜错，高亮位置就是
+    **确定而错误**的，比回退到整段更糟（F3 / G5 诚实性）。
+
+    span 与片段区间**无交集**时同样视为未命中（数据异常时不能拿一个片段外的
+    偏移去高亮片段内的文字）。
+    """
+    mention = item.partition(_MENTION_SEPARATOR)[2].strip()
+    if not mention:
+        return None
+    lowered = mention.casefold()
+    for span in chunk.entity_spans:
+        if span.mention.strip().casefold() != lowered:
+            continue
+        if span.char_end <= chunk.char_start or span.char_start >= chunk.char_end:
+            continue
+        return span
+    return None
 
 
 def _build_citations(
@@ -856,6 +912,79 @@ def _build_citations(
         if citation is not None:
             citations.append(citation)
     return citations
+
+
+#: 答案正文里的 ``[source: <chunk_id>]`` 标记（引用覆盖率统计依赖它，正文格式不变）
+_ANSWER_SOURCE_MARK_RE = re.compile(r"\[source:[^\]]*\]")
+
+#: 答案里**可机械比对**的凭据：单号 / 工号 / 日期 / 带量纲数字。
+#: 只比对这类"硬凭据"与实体提及，**不**拿整句做包含判断——答案换个说法是正常的，
+#: 那会把"措辞不同"误判成"依据不存在"（误杀比漏判更伤：会白白吃掉正确答案）。
+_SUPPORT_TOKEN_RE = re.compile(
+    r"[A-Za-z]{1,4}-?\d[\w./:-]*"  # SO-2026-0912 / LV0001 / E001 / 10:00
+    r"|\d+(?:\.\d+)?\s*(?:小时|天|次|分钟|%)"  # 36 小时 / 3 次 / 30 分钟
+)
+
+
+def _answer_fragments(answer: str, chunks: Mapping[str, EvidenceChunk]) -> set[str]:
+    """抽出答案里能与 chunk 原文逐字比对的凭据集合。
+
+    两类来源：
+    1. 单号 / 数字（:data:`_SUPPORT_TOKEN_RE`）——「武汉光谷希尔顿酒店」不是图上实体，
+       但它旁边的 ``SO-2026-0912`` 是硬凭据；只按实体名判会漏掉这类题（实测 Q12）；
+    2. 本轮注入片段里的**实体提及**（``EvidenceChunk.entity_spans``）——与
+       :func:`_resolve_citation_span` 同源，不需要再查库。
+
+    取不到任何凭据 ⇒ 返回空集，闸门**放行**（没有判据就不判，绝不猜）。
+    """
+    cleaned = _ANSWER_SOURCE_MARK_RE.sub("", answer or "")
+    fragments = {m.group(0).strip() for m in _SUPPORT_TOKEN_RE.finditer(cleaned)}
+    for chunk in chunks.values():
+        for span in chunk.entity_spans:
+            mention = span.mention.strip()
+            if len(mention) >= 2 and mention in cleaned:
+                fragments.add(mention)
+    return {f for f in fragments if len(f) >= 2}
+
+
+def _grounded_citations(
+    answer: str,
+    citations: Sequence[Citation],
+    chunks: Mapping[str, EvidenceChunk],
+) -> list[Citation]:
+    """归因闸门：丢掉「撑不住答案」的引用（Sprint 10 批次 E，用户决策 A）。
+
+    判据：答案里的凭据（见 :func:`_answer_fragments`）**至少有一条**逐字出现在被引
+    chunk 的原文里。一条都没有 ⇒ 这条引用与答案无关，属归因错。
+
+    为什么必须丢：模型在 ``kg_qa_v4`` 下被要求"每个事实句都要带 ``[source: ...]``"，
+    而依据有时**只存在于 ``graph_subgraph``**（图实体由 CSV 抽取）不在注入片段里 ⇒
+    它会挂一条**不相关但合法**的 chunk 充数。客户端点开引用看到的是另一段话，
+    比拒答更伤信任。
+
+    **全丢 ⇒ 返回空列表**，由调用方走 ``no_grounded_evidence`` 拒答（语义一致：
+    没有可溯源证据）。这与 F3 同口径——宁可拒答，也不给出撑不住的引用。
+
+    注意：凭据取不到时**原样放行**（``fragments`` 为空），不做"没凭据 = 不可信"的推定。
+    """
+    fragments = _answer_fragments(answer, chunks)
+    if not fragments:
+        return list(citations)
+
+    kept: list[Citation] = []
+    for citation in citations:
+        chunk = chunks.get(citation.chunk_id)
+        if chunk is None:
+            continue
+        if any(fragment in (chunk.text or "") for fragment in fragments):
+            kept.append(citation)
+    if len(kept) != len(citations):
+        logger.bind(
+            kept=len(kept),
+            dropped=len(citations) - len(kept),
+            fragments=sorted(fragments)[:5],
+        ).warning("agent_citation_ungrounded_dropped")
+    return kept
 
 
 def _snippet(text: str) -> str:

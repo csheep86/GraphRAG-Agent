@@ -76,7 +76,30 @@ if TYPE_CHECKING:  # 仅类型检查：运行时走函数内延迟导入，避�
 
 #: Sprint 6 批次 B：单次问答注入 Prompt 的证据片段上限。
 #: 与 ``_GRAPH_NODE_LIMIT`` 同源思路——片段是**全文**，过量会直接撑爆 Prompt token。
-_EVIDENCE_CHUNK_LIMIT = 20
+#:
+#: **20 → 32（Sprint 10 批次 E 收尾，实测而非拍脑袋）**：
+#:
+#: 真正的修复在**组内并列排序键**（见 :func:`select_evidence_chunks`），不在条数——
+#: 只抬条数治不了（Q09「张伟」在 40 条的组内排第 19，靠抬保底要注入到 204 条 /
+#: 13 万字符）。改排序键后，12 题依据的全覆盖成本大幅下降。
+#:
+#: 32 这个数也是**实测选的，不是取整**：保底 = ``limit // 文档数``（13 篇），
+#: 余量 = limit − 保底实得。**26 恰好是最差档**——floor=2 ⇒ 13×2=26 ⇒ **余量归零**，
+#: 制度文档（3 条片段）只拿到 2 条 ⇒ Q05/Q06/Q07/Q08 依据全丢（实测覆盖掉到 8/12）；
+#: 20（floor=1 + 余量 7）与 32（floor=2 + 余量 6）都是 12/12。
+#: 取 32 而非更省的 20：20 靠 7 条余量侥幸覆盖制度文档，32 是「保底 2 条 + 仍有余量」，
+#: 换语料时更不易塌。字符 9.6k（20）→ 15.0k（32），远低于 52 条的 30.0k。
+#:
+#: 反面教材（别再改回去）：本架构下 ``question`` **不参与检索**（候选集是结构性
+#: 窗口），依据进不来就**没有任何补救路径**。换语料后文档数会变
+#: （保底 = limit // 文档数），须重跑 ``eval_controlled_qset.py --diagnose`` 与
+#: ``changes/Sprint10.2/probe_e16_doc_order.py`` 复核，别把 32 当普适值。
+_EVIDENCE_CHUNK_LIMIT = 32
+
+#: Sprint 10 批次 C 残留缺口：选片段前先取**轻量索引**（chunk_id / doc_id / mentions / spans，
+#: **不含** ``text``）的上限。与 ``_GRAPH_NODE_LIMIT`` 同思路——索引行很便宜，
+#: 取满可达集合才能"按文档保底"；真正贵的是 :data:`_EVIDENCE_CHUNK_LIMIT` 条全文。
+_EVIDENCE_CHUNK_INDEX_LIMIT = 1000
 
 
 class GraphUnavailableError(Exception):
@@ -125,6 +148,25 @@ class KgVersion:
 
 
 @dataclass(frozen=True, slots=True)
+class EntitySpan:
+    """**Sprint 10 批次 A**：实体在该片段所属的**文档全文**中的字符区间。
+
+    ``char_start`` / ``char_end`` 是**全文绝对偏移**（与 ``:Chunk.char_start`` 同一坐标系），
+    换算成 ``Citation.char_offset``（片段内相对偏移）的公式由
+    :func:`app.services.agents._to_citation` 独家持有——**换算只此一处**，
+    避免"同一事实两处算法"。
+
+    来源：抽取侧 ``ExtractedEntity.char_start/char_end``（Sprint 6 起就有值，
+    **入图时被丢弃**，本批次补上）。CSV 派生实体天然无 span ⇒ 不进本列表
+    （**不造** span，与零假数据铁律一致）。
+    """
+
+    mention: str
+    char_start: int
+    char_end: int
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceChunk:
     """Sprint 6 批次 B：证据片段（``:Chunk`` 投影）。
 
@@ -143,6 +185,9 @@ class EvidenceChunk:
     page: int | None
     char_start: int
     char_end: int
+    #: Sprint 10 批次 A：本片段内**带 span 的实体**（全文绝对偏移，见 :class:`EntitySpan`）。
+    #: 用途单一：把引用从"指到哪一段"精确到"指到哪一句"。为空 ⇒ 引用回退为整段。
+    entity_spans: tuple[EntitySpan, ...] = ()
 
 
 # --------------------------------------------------------------------------- #
@@ -258,8 +303,18 @@ RETURN count(n) AS leaked
 #: Cypher 查询：**全部**已导入实体子图（不依赖 PG ``document_id``）。
 #: 供 ``bridge_web_demo`` 阶段六产物（``:Entity`` + 实体间关系）查询使用。
 #: ``elementId`` 用于稳定去重，``id`` 属性作为对外节点标识（与边的 source/target 对齐）。
-_QUERY_ALL_ENTITY_SUBGRAPH = (
-    """
+#:
+#: **Sprint 10 批次 C（裁决 D-K）拆成两段**：
+#:
+#: 1. :data:`_QUERY_SUBGRAPH_NODE_INDEX` —— 只回 ``id / type / degree`` 的**轻量索引**，
+#:    选谁由 :func:`select_subgraph_nodes` 在 Python 侧决定；
+#: 2. :data:`_QUERY_SUBGRAPH_BY_IDS` —— 按选中 id 取**完整节点 + 边**。
+#:
+#: 为什么不在 Cypher 里一步做完：选节点要「按类型保底 + 余量按度数补齐」，Cypher
+#: 侧得靠 ``reduce`` 叠加 + ``UNWIND`` 排序，而 **``UNWIND`` 空列表会吞掉整行**
+#: （余量为 0 时整条查询返回空 ⇒ 空图，把"没数据"伪装成正常结果）。纯函数则
+#: 可单测、可读，且索引查询只传三个字段，不比一次全量投影贵。
+_QUERY_SUBGRAPH_NODE_INDEX = """
 MATCH (n:Entity {kg_version: $kg_version})
 // 用 properties(n)['org_id'] 而非 n.org_id：后者在库中尚无该属性键时
 // 会触发 ``01N52 property key does not exist`` 通知（噪声日志）。
@@ -267,12 +322,25 @@ WITH n
 WHERE $org_id IS NULL
    OR properties(n)['org_id'] IS NULL
    OR properties(n)['org_id'] = $org_id
-WITH collect(n) AS all_nodes
-WITH all_nodes[0..$node_limit] AS nodes, size(all_nodes) AS total_nodes
+RETURN n.id AS id,
+       coalesce(n.entity_type, 'UNKNOWN') AS type,
+       size([(n)--() | 1]) AS degree
+ORDER BY degree DESC, id
+"""
+
+_QUERY_SUBGRAPH_BY_IDS = (
+    """
+MATCH (n:Entity {kg_version: $kg_version})
+WHERE n.id IN $ids
+WITH n
+WHERE $org_id IS NULL
+   OR properties(n)['org_id'] IS NULL
+   OR properties(n)['org_id'] = $org_id
+WITH n ORDER BY n.id
+WITH collect(n) AS nodes
 RETURN
   nodes,
-  total_nodes,
-  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes"""
+  [(a)-[r]->(b) WHERE a.id IN $ids AND b.id IN $ids"""
     + _temporal_view("r")
     + """ | {
     id: coalesce(r.id, elementId(r)),
@@ -283,6 +351,62 @@ RETURN
   }] AS edges
 """
 )
+
+
+def select_subgraph_nodes(
+    rows: Sequence[tuple[str, str, int]],
+    limit: int,
+) -> list[str]:
+    """**问答子图该选哪些节点**（Sprint 10 批次 C，裁决 D-I）。
+
+    口径（真机实测得来，见 ``changes/Sprint10.2/proposal.md`` §2）：
+
+    1. 按 ``entity_type`` 分组；
+    2. 每组**保底** ``limit // 类型数`` 个 —— 小类型（``LEAVE`` / ``OVERTIME``）
+       不被大类型（``ATTENDANCE_RECORD`` 占全图 30%）饿死；
+    3. 组内按 **度数降序 + id 升序** 取 —— 保连通性，且同输入必同解；
+    4. 名额没用完的部分按全局度数补齐（不浪费 Prompt 预算）。
+
+    反面教材（都实测过，别再走一遍）：
+
+    - **无序截断**（原实现）：锚点召回 **50%**，12 条问句里 6 条锚点全丢 ⇒
+      就是 R12 事故——LLM 答「资料中没有此人信息」却带着引用；
+    - **全局度数降序**（图谱概览的口径）：``LEAVE`` 掉到 **0**、``OVERTIME`` 只剩 2，
+      问"请假 / 加班"时**制度落点没了**，锚点召回仍是 50%（被挤掉的恰恰是
+      问句里那些具体的员工 / 工单）。
+
+    :param rows: ``(id, entity_type, degree)`` 三元组
+    :param limit: 节点上限（**不放**大——放大即把成本转嫁给 Prompt token）
+    :returns: 选中的节点 id（有序、去重）
+    """
+    if limit <= 0 or not rows:
+        return []
+
+    buckets: dict[str, list[tuple[str, int]]] = {}
+    for node_id, entity_type, degree in rows:
+        buckets.setdefault(entity_type or "UNKNOWN", []).append((node_id, degree))
+    for group in buckets.values():
+        group.sort(key=lambda item: (-item[1], item[0]))
+
+    floor = max(limit // len(buckets), 1)
+    chosen: list[str] = []
+    leftovers: list[tuple[str, int]] = []
+    for entity_type in sorted(buckets):
+        group = buckets[entity_type]
+        chosen.extend(node_id for node_id, _degree in group[:floor])
+        leftovers.extend(group[floor:])
+
+    if len(chosen) > limit:
+        # 类型数 > 名额（极端情形，如 600 种类型 / 上限 500）：保底抬到 1 之后
+        # 就已经超额 ⇒ 按**类型名字典序**截断。字典序是任意的，但确定且可复核；
+        # 换成"按度数挑类型"会重新饿死小类型——那正是本方案要避免的。
+        return chosen[:limit]
+
+    if len(chosen) < limit:
+        leftovers.sort(key=lambda item: (-item[1], item[0]))
+        chosen.extend(node_id for node_id, _degree in leftovers[: limit - len(chosen)])
+    return chosen
+
 
 #: Cypher 查询：单个文档的子图（节点 + 关系），受 doc_id + kg_version 双重约束。
 #: 规模上限 500 节点，超限由 Python 侧裁剪 + ``truncated = true`` 标记。
@@ -315,35 +439,160 @@ RETURN
 #: 注入 ``kg_qa`` Prompt 的 ``text_chunks``——批次 B「子图注入时携带 chunk 文本」的落点。
 #: ``OPTIONAL MATCH`` 取 ``:Document``：chunk 未挂文档时 ``doc_id`` 为 ``null``，
 #: 由服务层投影为 ``None``（**不**伪造 UUID）。
-_QUERY_EVIDENCE_CHUNKS_BY_ENTITIES = """
+#: Sprint 10 批次 C 残留缺口：**证据片段也拆两段**（与 :data:`_QUERY_SUBGRAPH_NODE_INDEX`
+#: 同套路）。原来是一条 ``LIMIT 20`` 且**无 ORDER BY** 的查询 ⇒ 谁进 Prompt 全凭扫描序。
+#: 真机实测（``changes/Sprint10.2/probe_c4_chunk_quota.py``）：注入的 20 条里
+#: **CSV 18 / 制度 docx 0 / 带 span 0** —— 问"制度"必然答不到制度内容。
+#:
+#: 拆成：
+#: 1. :data:`_QUERY_EVIDENCE_CHUNK_INDEX` —— 只回 ``chunk_id / doc_id / mentions / spans``
+#:    的**轻量索引**（**不带** ``text``：全文是最大字段，全量回传纯属浪费）；
+#: 2. :func:`select_evidence_chunks` —— Python 侧按「每文档保底 + 余量 span 优先」选；
+#: 3. :data:`_QUERY_EVIDENCE_CHUNKS_BY_IDS` —— 只按选中的 id 取**全文**。
+_QUERY_EVIDENCE_CHUNK_INDEX = """
 MATCH (e:Entity {kg_version: $kg_version})
 WHERE e.id IN $entity_ids
   AND ($org_id IS NULL OR e.org_id IS NULL OR e.org_id = $org_id)
 MATCH (c:Chunk {kg_version: $kg_version})-[:MENTIONS]->(e)
 WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
 OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
-RETURN DISTINCT
+WITH DISTINCT c, d
+RETURN
+  c.id AS chunk_id,
+  d.id AS doc_id,
+  size([(c)-[:MENTIONS]->(:Entity {kg_version: $kg_version}) | 1]) AS mentions,
+  size([(c)-[:MENTIONS]->(e2:Entity {kg_version: $kg_version})
+        WHERE e2.char_start IS NOT NULL | 1]) AS spans,
+  coalesce(c.char_start, 0) AS char_start
+LIMIT $index_limit
+"""
+
+_QUERY_EVIDENCE_CHUNKS_BY_IDS = """
+MATCH (c:Chunk {kg_version: $kg_version})
+WHERE c.id IN $chunk_ids
+OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
+OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity {kg_version: $kg_version})
+WHERE e.char_start IS NOT NULL
+WITH c, d,
+     collect(DISTINCT {mention: e.mention,
+                       char_start: e.char_start,
+                       char_end: e.char_end}) AS spans
+RETURN
   c.id AS chunk_id,
   d.id AS doc_id,
   c.text AS text,
   c.page AS page,
   c.char_start AS char_start,
-  c.char_end AS char_end
-LIMIT $limit
+  c.char_end AS char_end,
+  [s IN spans WHERE s.mention IS NOT NULL] AS spans
+ORDER BY chunk_id
 """
+
+
+def select_evidence_chunks(
+    rows: Sequence[tuple[str, str | None, int, int, int]],
+    limit: int,
+) -> list[str]:
+    """**问答该注入哪些证据片段**（Sprint 10 批次 C 残留缺口，五方案实测定案）。
+
+    口径（真机实测得来，见 ``changes/Sprint10.2/probe_c4_chunk_quota.py``）：
+
+    1. 按 ``doc_id`` 分组，**每篇文档保底** ``limit // 文档数`` 条 —— 不让某一份
+       大表（CSV 派生 chunk 占全图 77%）吃满名额；
+    2. 组内按 **MENTIONS 数降序 + char_start 升序 + chunk_id 升序** ——
+       信息量大的先上；**并列时按文档原始顺序**（Sprint 10 批次 E 定案，
+       见下方"并列退化"）；chunk_id 只作最后一道确定性兜底；
+       3. 保底没用满的名额，优先给**带 span** 的片段（引用能被精确定位到句），
+          其余按 MENTIONS 热度补齐。
+
+    **并列退化（批次 E 实测，这次修的就是它）**：CSV 派生文档的片段
+    ``MENTIONS`` **大量并列**（demo 语料 employees 表 40 条片段全是 1）⇒
+    原先的 ``(-mentions, chunk_id)`` 退化成 **chunk_id 字典序**，等价于**随机抽样**。
+    后果：受控题集 Q09「张伟」的依据恰好是 employees 表首行，却在组内排到第
+    **19/40** ⇒ 想靠抬保底捞它，得把 ``limit`` 抬到 204（全量注入、13 万字符）。
+    改成并列按 ``char_start``（文档原始顺序）后，"每组前 N 条"= 文档开头
+    ⇒ 首行必然在场，26 条即可覆盖 Q09 / Q11 / Q12 三题依据
+    （``probe_e16_doc_order.py`` 离线验证）。
+
+    ``doc_id`` 为 ``None`` 的片段（``HAS_CHUNK`` 缺失）**不参与保底**：契约层
+    ``Citation`` 要求 ``doc_id`` 是合法 UUID，这类片段本来就会被上层丢弃；
+    但余量阶段仍可能选到它（不额外偏爱，也不刻意排斥）。
+
+    反面教材（实测，别再走）：
+
+    - **无序 ``LIMIT``**（原实现）：docx 制度 **0 条** / 带 span **0 条**；
+    - **纯按 MENTIONS 热度**：docx 13 / span 3 尚可，但只覆盖 9 篇文档，
+      热度高的大表会霸榜 ⇒ 保底才是对冲；
+    - **每文档固定保底 2 条**：覆盖 11 篇但 docx 只剩 8、span 掉到 0（保底太薄）。
+
+    :param rows: ``(chunk_id, doc_id, mentions, spans, char_start)`` 五元组
+    :param limit: 片段上限（**不放**大——全文进 Prompt，放大即撑爆 token）
+    :returns: 选中的 chunk_id（有序、去重）
+    """
+    if limit <= 0 or not rows:
+        return []
+
+    buckets: dict[str, list[tuple[str, int, int, int]]] = {}
+    for chunk_id, doc_id, mentions, spans, char_start in rows:
+        if doc_id is None:
+            continue
+        buckets.setdefault(str(doc_id), []).append(
+            (chunk_id, mentions, spans, char_start)
+        )
+    for group in buckets.values():
+        # 并列（mentions 相同）时按 char_start —— 见 docstring「并列退化」
+        group.sort(key=lambda item: (-item[1], item[3], item[0]))
+
+    floor = max(limit // len(buckets), 1) if buckets else limit
+    chosen: list[tuple[str, int, int, int]] = []
+    for _doc in sorted(buckets):
+        chosen.extend(buckets[_doc][:floor])
+
+    if len(chosen) > limit:
+        # 文档数 > 名额（极端情形）：按**热度**截断，宁可少覆盖一篇也别让
+        # 每篇只进半条——片段是整段注入的，切半没有意义。
+        chosen.sort(key=lambda item: (-item[1], item[3], item[0]))
+        return [item[0] for item in chosen[:limit]]
+
+    chosen.sort(key=lambda item: (-item[1], item[3], item[0]))
+    if len(chosen) < limit:
+        taken = {item[0] for item in chosen}
+        filler = sorted(
+            (r for r in rows if r[0] not in taken),
+            key=lambda r: (
+                0 if r[3] > 0 else 1,  # 带 span 的片段优先（引用可精确定位）
+                -r[2],
+                r[4],  # 并列时同样按文档原始顺序
+                r[0],
+            ),
+        )
+        for chunk_id, _doc, mentions, spans, char_start in filler:
+            if len(chosen) >= limit:
+                break
+            chosen.append((chunk_id, mentions, spans, char_start))
+            taken.add(chunk_id)
+    return [item[0] for item in chosen]
+
 
 #: 同上，“scope = single_doc” 分支：直接从 ``:Document`` 出发取全部 chunk（不看实体）。
 _QUERY_EVIDENCE_CHUNKS_BY_DOCUMENT = """
 MATCH (d:Document {id: $doc_id, kg_version: $kg_version})
       -[:HAS_CHUNK]->(c:Chunk {kg_version: $kg_version})
 WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
-RETURN DISTINCT
+OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity {kg_version: $kg_version})
+WHERE e.char_start IS NOT NULL
+WITH DISTINCT c, d,
+     collect(DISTINCT {mention: e.mention,
+                       char_start: e.char_start,
+                       char_end: e.char_end}) AS spans
+RETURN
   c.id AS chunk_id,
   d.id AS doc_id,
   c.text AS text,
   c.page AS page,
   c.char_start AS char_start,
-  c.char_end AS char_end
+  c.char_end AS char_end,
+  [s IN spans WHERE s.mention IS NOT NULL] AS spans
 LIMIT $limit
 """
 
@@ -511,7 +760,7 @@ LIMIT $limit
 """
 
 #: 批次 C：全局图谱概览的 Cypher（节点轻量投影 + 全部边）。
-#: 与 ``_QUERY_ALL_ENTITY_SUBGRAPH`` 不同：去掉了 ``total_nodes`` 字段（由服务层算），
+#: 与 :data:`_QUERY_SUBGRAPH_BY_IDS`（问答注入用）不同：去掉了 ``total_nodes`` 字段（由服务层算），
 #: 投影阶段只取 ``id`` / ``canonical_name`` / ``type`` / ``category`` 4 个字段。
 #: 节点选取按**度数降序**（连接数多的枢纽优先，平局按 `id` 保证确定性）：
 #: 此前是 `all_nodes[0..$node_limit]` 无序截断——任意前 500 个节点之间几乎没有边
@@ -828,13 +1077,26 @@ class GraphService:
             kg_version or self.fetch_active_kg_version(org_id=org_id, db=db).version
         )
 
+        org_param = str(org_id) if org_id else None
         try:
             with self._session() as session:
+                # ① 轻量索引（id / 类型 / 度数）→ ② Python 侧选节点 → ③ 按 id 取节点 + 边
+                index = [
+                    (row["id"], row["type"], int(row["degree"] or 0))
+                    for row in session.run(
+                        _QUERY_SUBGRAPH_NODE_INDEX,
+                        kg_version=version,
+                        org_id=org_param,
+                    )
+                ]
+                selected = select_subgraph_nodes(index, node_limit)
+                if not selected:
+                    return [], [], False
                 result = session.run(
-                    _QUERY_ALL_ENTITY_SUBGRAPH,
+                    _QUERY_SUBGRAPH_BY_IDS,
                     kg_version=version,
-                    org_id=str(org_id) if org_id else None,
-                    node_limit=node_limit,
+                    org_id=org_param,
+                    ids=selected,
                     as_of=validate_as_of(as_of),
                 ).single()
         except GraphUnavailableError:
@@ -847,7 +1109,7 @@ class GraphService:
         if result is None:
             return [], [], False
 
-        total_nodes = int(result["total_nodes"] or 0)
+        total_nodes = len(index)
         truncated = total_nodes > node_limit
 
         # 投影段（批次 D1 缺口 5）：Neo4j 原始数据可能与契约不符
@@ -968,13 +1230,46 @@ class GraphService:
                 "limit": limit,
             }
         elif entity_ids:
-            query = _QUERY_EVIDENCE_CHUNKS_BY_ENTITIES
-            params = {
-                "kg_version": kg_version,
-                "org_id": str(org_id) if org_id else None,
-                "entity_ids": list(entity_ids),
-                "limit": limit,
-            }
+            # ① 轻量索引 → ② Python 侧按「每文档保底 + 余量 span 优先」选 → ③ 只取选中全文
+            org_param = str(org_id) if org_id else None
+            try:
+                with self._session() as session:
+                    index = [
+                        (
+                            str(row["chunk_id"]),
+                            str(row["doc_id"]) if row["doc_id"] else None,
+                            int(row["mentions"] or 0),
+                            int(row["spans"] or 0),
+                            int(row["char_start"] or 0),
+                        )
+                        for row in session.run(
+                            _QUERY_EVIDENCE_CHUNK_INDEX,
+                            kg_version=kg_version,
+                            org_id=org_param,
+                            entity_ids=list(entity_ids),
+                            index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT,
+                        )
+                    ]
+                    selected = select_evidence_chunks(index, limit)
+                    if not selected:
+                        return []
+                    records = list(
+                        session.run(
+                            _QUERY_EVIDENCE_CHUNKS_BY_IDS,
+                            kg_version=kg_version,
+                            chunk_ids=selected,
+                        )
+                    )
+            except GraphUnavailableError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 统一包装
+                raise GraphUnavailableError(
+                    f"查询证据片段失败: kg_version={kg_version}: {exc}"
+                ) from exc
+
+            projection_context = f"fetch_evidence_chunks kg_version={kg_version}"
+            return self._project_chunks(records, projection_context)
+
         else:
             return []
 
@@ -988,7 +1283,18 @@ class GraphService:
                 f"查询证据片段失败: kg_version={kg_version}: {exc}"
             ) from exc
 
-        projection_context = f"fetch_evidence_chunks kg_version={kg_version}"
+        return self._project_chunks(
+            records, f"fetch_evidence_chunks kg_version={kg_version}"
+        )
+
+    def _project_chunks(
+        self, records: Sequence[Any], projection_context: str
+    ) -> list[EvidenceChunk]:
+        """把 Neo4j record 投影为 :class:`EvidenceChunk`（两条取数路径共用）。
+
+        投影失败**抛**而不兜底：空片段会让上层误判为「图谱里没有证据」而拒答，
+        比显式报错危险得多（沿用设计要点 5）。
+        """
         chunks: list[EvidenceChunk] = []
         for index, record in enumerate(records):
             try:
@@ -1723,7 +2029,38 @@ def _to_evidence_chunk(record: Any) -> EvidenceChunk:
         page=page,
         char_start=int(record.get("char_start") or 0),
         char_end=int(record.get("char_end") or 0),
+        entity_spans=_to_entity_spans(record.get("spans")),
     )
+
+
+def _to_entity_spans(raw_spans: Any) -> tuple[EntitySpan, ...]:
+    """解析片段内的实体 span（Sprint 10 批次 A）。
+
+    **单条 span 坏掉 ⇒ 跳过该条，不整条 chunk 失败**：span 是"引用精度"
+    的增强信息，缺失只是让引用回退到整段（语义仍正确）；而 ``doc_id`` /
+    ``text`` 坏掉是数据错误，必须抛——两者**不可同等对待**。
+    跳过时留 WARNING，避免"引用永远回退"却无人知晓。
+    """
+    if not raw_spans:
+        return ()
+    spans: list[EntitySpan] = []
+    for raw in raw_spans:
+        if not isinstance(raw, Mapping):
+            continue
+        mention = str(raw.get("mention") or "").strip()
+        try:
+            char_start = int(raw["char_start"])  # type: ignore[index]
+            char_end = int(raw["char_end"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            logger.bind(mention=mention).warning("graph_entity_span_invalid")
+            continue
+        if not mention or char_end < char_start:
+            logger.bind(mention=mention).warning("graph_entity_span_invalid")
+            continue
+        spans.append(
+            EntitySpan(mention=mention, char_start=char_start, char_end=char_end)
+        )
+    return tuple(spans)
 
 
 def _project_nodes(

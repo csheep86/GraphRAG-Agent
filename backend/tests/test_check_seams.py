@@ -291,6 +291,21 @@ def _stub_git(monkeypatch, output: str, code: int = 0) -> None:
     monkeypatch.setattr(gate, "_git_prompt_name_status", lambda base: (code, output))
 
 
+def _max_prompt_version(name: str) -> int:
+    """磁盘上 ``prompts/<name>_v*.md`` 的**最大**版本号（与门禁同一口径）。
+
+    刻意**不写死**：Sprint 10 新增 ``kg_qa_v4.md`` 后，断言里写死的 ``v4``
+    会让这条用例红——而门禁本身并没错（它本来就该随磁盘版本增长）。
+    写死版本号等于把"现状"钉进用例，新增版本时必然误报。
+    """
+    versions: list[int] = []
+    for path in (gate.REPO_ROOT / gate.PROMPTS_REL).glob(f"{name}_v*.md"):
+        tail = path.stem.rsplit("_v", 1)[-1]
+        if tail.isdigit():
+            versions.append(int(tail))
+    return max(versions)
+
+
 def test_inplace_prompt_edit_is_error(monkeypatch) -> None:
     """原地改历史版本 ⇒ ERROR：这才是本判据存在的全部理由。"""
     _stub_git(monkeypatch, "M\tprompts/kg_qa_v2.md")
@@ -300,10 +315,11 @@ def test_inplace_prompt_edit_is_error(monkeypatch) -> None:
 
     assert _levels(findings) == ["ERROR"]
     assert "被原地修改" in _messages(findings)
-    # 提示必须跳过**已存在**的版本：kg_qa 现有 v1/v2/v3 ⇒ 该加 v4。
+    # 提示必须跳过**已存在**的版本：kg_qa 现有 v1/v2/… ⇒ 该加"最大版本 +1"。
     # 若机械 +1 会把人引向"再去覆盖 v3"，提示本身就成了误导。
-    assert "kg_qa_v4.md" in _messages(findings)
-    assert "kg_qa_v3.md" not in _messages(findings)
+    latest = _max_prompt_version("kg_qa")
+    assert f"kg_qa_v{latest + 1}.md" in _messages(findings)
+    assert f"kg_qa_v{latest}.md" not in _messages(findings)
 
 
 def test_prompt_deletion_is_error(monkeypatch) -> None:

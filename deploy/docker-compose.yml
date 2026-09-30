@@ -1,0 +1,107 @@
+# D-1 容器化（Sprint 10.3 / CP-D0）— 单机交付的**唯一安装入口**
+#
+# 规格出处：`docs/deployment-spec.md` §1.1（编排文件 = 唯一入口）、§2（组件清单）、§2 注（PG / Neo4j 端口不对外）
+#
+# **裁决 D-L（不引入 PG 容器）**：CP-D0 字面要求「起全套 Neo4j / PG / backend / frontend」，
+# 但当前后端实际连的是 **SQLite**（`backend/.env`：DATABASE_URL=sqlite:///./dev.db；PG 切换在 S11）。
+# 起一个**没有任何组件连接**的 PG 就是**假组件**，违反 PRD §7.2 零假数据 + A16 诚实可核。
+# ⇒ 本 compose 起 3/4，PG 位显式留空待 S11：**不凑满容器数冒充"全套"**。
+#
+# 使用：`cp .env.example .env` → 填 NEO4J_PASSWORD → `docker compose up -d`
+# （详见同目录 README.md）
+
+name: graphrag-agent
+
+services:
+  neo4j:
+    # tag 固定（D-N）：`:latest` 是不可复现的同义词——本机曾靠它占了 1.14GB 却没人在用
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD 必填，见 .env.example}
+    # §2「PG / Neo4j 禁止暴露到业务网络」⇒ 只绑回环
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - neo4j_data:/data
+      # 镜像还声明了 `/logs`；不显式挂 ⇒ Docker 自建**匿名卷**（排障时不知道是谁的、
+      # 备份也漏项）。规格 §6.1「备份对象缺一不可复现」⇒ 一律显式命名
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"${NEO4J_PASSWORD}\" 'RETURN 1'"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+
+  backend:
+    build:
+      # context 用 backend/ 自身（不是仓库根）：COPY 路径即 Dockerfile 内所写，`.dockerignore` 也生效
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      # SQLite 落 named volume（D-L）；四斜杠 = 绝对路径
+      DATABASE_URL: sqlite:////data/dev.db
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_password: ${NEO4J_PASSWORD}
+      CORS_ALLOW_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000"]'
+      # §3 生产默认值：私域禁外发，生产不得为 false
+      PRIVATE_DEPLOY_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - sqlite_data:/data
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      # 契约路径是 `/api/v1/health`（不是 /health）：backend/app/api/v1/routes/health.py
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health').status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        # R18 红线：`NEXT_PUBLIC_USE_MOCK` 默认 true ⇒ 不置 false 则容器化前端静默走 Mock
+        NEXT_PUBLIC_USE_MOCK: "false"
+        NEXT_PUBLIC_APP_ENV: production
+        NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  sqlite_data:
+  # PG 位（S11 切 PG 时加入）：
+  # pg_data:

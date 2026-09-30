@@ -25,11 +25,13 @@ from app.services.agents import (
     AgentService,
     AgentUnavailableError,
     _build_citations,
+    _grounded_citations,
     _serialize_chunks,
     _snippet,
     _to_citation,
 )
 from app.services.graphs import (
+    EntitySpan,
     EvidenceChunk,
     GraphService,
     GraphUnavailableError,
@@ -316,3 +318,166 @@ def test_ensure_chat_builds_model_without_undefined_name(
 
     # 未打桩 _ensure_chat：命中即证明不再 NameError（否则会冒泡成 500）
     assert AgentService.instance()._ensure_chat() is not None
+
+
+# --------------------------------------------------------------------------- #
+# Sprint 10 批次 A：引用粒度 chunk 级 → span 级（裁决 D-A / D-B / D-C）
+# --------------------------------------------------------------------------- #
+
+
+def _chunk_with_spans(
+    *, char_start: int = 0, spans: tuple[EntitySpan, ...] = ()
+) -> EvidenceChunk:
+    return EvidenceChunk(
+        chunk_id=CHUNK_ID,
+        doc_id=DOC_ID,
+        text="甲方：北京青云科技有限公司（以下简称甲方）……乙方：星辰贸易。",
+        page=3,
+        char_start=char_start,
+        char_end=char_start + 600,
+        entity_spans=spans,
+    )
+
+
+def test_to_citation_falls_back_to_whole_chunk_when_no_span() -> None:
+    """回退档：片段内无带 span 的实体（或条目只给了 chunk id）⇒ 整段高亮，不猜偏移。"""
+    chunk = _chunk_with_spans()
+
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+
+    assert citation is not None
+    assert citation.char_offset == 0
+    assert citation.char_end == len(chunk.text)
+
+
+def test_to_citation_span_level_offset_is_relative_to_chunk() -> None:
+    """主档：偏移 = `实体 char_start − chunk char_start`，是**片段内相对偏移**（D-A / D-B）。
+
+    chunk 起点非 0（全文 600 起），实体落在全文 610~620 ⇒ 片段内 10~20。
+    钉这条是防止有人把**全文**偏移直接塞进 `char_offset`（两者坐标系不同，
+    前端拿全文偏移去高亮片段 text 会整体错位）。
+    """
+    chunk = _chunk_with_spans(
+        char_start=600,
+        spans=(
+            EntitySpan(mention="北京青云科技有限公司", char_start=610, char_end=620),
+        ),
+    )
+
+    citation = _to_citation(f"{CHUNK_ID}#北京青云科技有限公司", _index(chunk))
+
+    assert citation is not None
+    assert citation.char_offset == 10
+    assert citation.char_end == 20
+
+
+def _chunk_with_text(text: str, *, spans: tuple[EntitySpan, ...] = ()) -> EvidenceChunk:
+    """构造带指定正文的片段（闸门判据全靠正文，故单独立一个 helper）。"""
+    return EvidenceChunk(
+        chunk_id=CHUNK_ID,
+        doc_id=DOC_ID,
+        text=text,
+        page=1,
+        char_start=0,
+        char_end=len(text),
+        entity_spans=spans,
+    )
+
+
+def test_grounded_citations_drops_chunk_that_cannot_carry_answer() -> None:
+    """闸门核心：chunk_id 合法，但正文里**没有**答案凭据 ⇒ 丢（Sprint 10 批次 E 决策 A）。
+
+    真机原型：答案说「LV0001 病假」，却挂了一条门禁刷卡记录片段。客户端点开引用
+    看到的是另一段话 ⇒ 比拒答更伤信任。丢空后由调用方走 ``no_grounded_evidence``。
+    """
+    chunk = _chunk_with_text("AC000353,E017,2026-10-01,08:33,18:17,厂区东门")
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+    assert citation is not None
+
+    kept = _grounded_citations(
+        "E004 请的是病假（LV0001）[source: chunk-581e8912827d]",
+        [citation],
+        _index(chunk),
+    )
+
+    assert kept == []
+
+
+def test_grounded_citations_keeps_chunk_carrying_the_answer() -> None:
+    """凭据（单号 / 带量纲数字）逐字出现在正文 ⇒ 保留。"""
+    chunk = _chunk_with_text("LV0001,E004,病假,2026-10-25,2026-10-27,3,approved")
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+    assert citation is not None
+
+    kept = _grounded_citations(
+        "E004 请的是病假（LV0001）[source: chunk-581e8912827d]",
+        [citation],
+        _index(chunk),
+    )
+
+    assert len(kept) == 1
+
+
+def test_grounded_citations_uses_entity_mention_as_fragment() -> None:
+    """凭据不只单号：**实体提及**（``entity_spans``）同样算——只按单号判会漏题。"""
+    chunk = _chunk_with_text(
+        "北京青云科技有限公司的法定代表人为李四。",
+        spans=(EntitySpan(mention="北京青云科技有限公司", char_start=0, char_end=11),),
+    )
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+    assert citation is not None
+
+    kept = _grounded_citations(
+        "法定代表人是李四 [source: chunk-581e8912827d]",
+        [citation],
+        _index(chunk),
+    )
+
+    assert len(kept) == 1
+
+
+def test_grounded_citations_passes_when_no_fragment_to_judge() -> None:
+    """**没有判据就不判**：答案里取不到任何可比对凭据 ⇒ 原样放行。
+
+    反向推定（"没凭据 = 不可信"）会把大量正常答案误杀成拒答，那比漏判更伤。
+    """
+    chunk = _chunk_with_text("这是一段没有任何编号与数字的政策说明。")
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+    assert citation is not None
+
+    kept = _grounded_citations(
+        "本制度适用于全体员工 [source: chunk-581e8912827d]", [citation], _index(chunk)
+    )
+
+    assert len(kept) == 1
+
+
+def test_to_citation_ignores_fuzzy_mention_and_falls_back() -> None:
+    """「不猜」铁律：提及只是 span 的**一部分**也算不命中 ⇒ 回退整段。
+
+    宁可高亮整段，也不给一个**确定而错误**的偏移（F3 / G5 诚实性）。
+    包含匹配 / 模糊匹配一旦随语料漂移，高亮位置就会静默错掉。
+    """
+    chunk = _chunk_with_spans(
+        spans=(EntitySpan(mention="北京青云科技有限公司", char_start=10, char_end=30),)
+    )
+
+    citation = _to_citation(f"{CHUNK_ID}#北京青云", _index(chunk))
+
+    assert citation is not None
+    assert citation.char_offset == 0
+    assert citation.char_end == len(chunk.text)
+
+
+def test_to_citation_falls_back_when_span_outside_chunk() -> None:
+    """span 与片段**无交集**（数据异常）⇒ 当作未命中，不拿片段外的偏移高亮片段内文字。"""
+    chunk = _chunk_with_spans(
+        char_start=100,
+        spans=(EntitySpan(mention="某实体", char_start=0, char_end=20),),
+    )
+
+    citation = _to_citation(f"{CHUNK_ID}#某实体", _index(chunk))
+
+    assert citation is not None
+    assert citation.char_offset == 0
+    assert citation.char_end == len(chunk.text)

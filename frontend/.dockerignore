@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.git/
+.github/
+*.log
+.env
+.env.*
+# 生成物：api.d.ts 已入库（contracts/ 生成），不需容器里重跑 gen:api
+coverage/

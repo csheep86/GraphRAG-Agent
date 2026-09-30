@@ -40,11 +40,12 @@ Sprint 9 批次 A（**ADR-0005 §4 / §6 L0**，知识时效）：
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any, Final
 
@@ -845,7 +846,9 @@ class LangextractClient:
         raw_chunks = _split_into_chunks(full_md_text, self._max_chars_per_chunk)
         chunks = [
             ExtractedChunk(
-                id=_new_chunk_id(),
+                id=_new_chunk_id(
+                    document_id=document_id, char_start=chunk_start, text=chunk_text
+                ),
                 char_start=chunk_start,
                 char_end=chunk_start + len(chunk_text),
                 text=chunk_text,
@@ -892,6 +895,7 @@ class LangextractClient:
         relations = _clamp_relations(
             all_relations, entities, self._max_relations_per_doc
         )
+        entities, relations = _stabilize_ids(entities, relations, document_id)
 
         logger.bind(
             trace_id=str(trace_id),
@@ -951,12 +955,77 @@ class LangextractClient:
 # ------------------------------------------------------------------------------
 
 
-def _new_chunk_id() -> str:
-    """生成 ``chunk-<hex12>`` 形式的 ``chunk_id``。
+def _stabilize_ids(
+    entities: list[ExtractedEntity],
+    relations: list[ExtractedRelation],
+    document_id: uuid.UUID,
+) -> tuple[list[ExtractedEntity], list[ExtractedRelation]]:
+    """把抽取侧随机生成的实体 / 关系 id 换成**确定性** id（重跑幂等）。
 
-    前缀 ``chunk-`` 与 ``agents.py`` 的引用前缀校验对齐（``doc-`` 为文档级降级档）。
+    Sprint 10 批次 E：chunk id 已改确定性（见 :func:`_new_chunk_id`），实体 / 关系是
+    **同一族问题**——id 由 ``uuid4()`` 生成 ⇒ 写侧 ``MERGE`` 按 id 去重失效 ⇒
+    每重跑一次 ingest，图上实体就多一套（``probe_e8_strict_dup.py`` 实测
+    ``attendance-demo-v1`` 有重跑重复实体；注意**同名 ≠ 重复**——CSV 里
+    「2026-10-19 正常班」可以是 37 个员工各自的排班，按名字清理会误删真数据）。
+
+    为什么放在**出口统一换**，而不是改各引擎的生成处：llm 档与 mock 档各有自己的
+    生成点，且工厂函数（``_build_llm_extractor``）里拿不到 ``document_id``；
+    在这里换**一处覆盖两档**，且天然把关系的端点引用一起重映射。
+
+    同一 (document, name, type, 起止偏移) 的实体会得到同一 id ⇒ **顺带合并**了
+    同一次抽取里的重复提及（原本是两条独立实体）。
     """
-    return f"chunk-{uuid.uuid4().hex[:12]}"
+    new_ids: dict[str, str] = {}
+    stabilized: dict[str, ExtractedEntity] = {}
+    for entity in entities:
+        new_id = (
+            "ent_"
+            + hashlib.sha256(
+                f"{document_id}|{entity.canonical_name}|{entity.entity_type}"
+                f"|{entity.char_start}|{entity.char_end}".encode()
+            ).hexdigest()[:12]
+        )
+        new_ids[entity.id] = new_id
+        stabilized.setdefault(new_id, replace(entity, id=new_id))
+
+    stabilized_relations: dict[str, ExtractedRelation] = {}
+    for relation in relations:
+        source = new_ids.get(relation.source_entity_id, relation.source_entity_id)
+        target = new_ids.get(relation.target_entity_id, relation.target_entity_id)
+        rel_id = (
+            "rel_"
+            + hashlib.sha256(
+                f"{source}|{relation.relation_type}|{target}".encode()
+            ).hexdigest()[:12]
+        )
+        stabilized_relations.setdefault(
+            rel_id,
+            replace(
+                relation, id=rel_id, source_entity_id=source, target_entity_id=target
+            ),
+        )
+
+    return list(stabilized.values()), list(stabilized_relations.values())
+
+
+def _new_chunk_id(*, document_id: uuid.UUID, char_start: int, text: str) -> str:
+    """生成 **确定性**的 ``chunk-<hex12>`` 形式 ``chunk_id``。
+
+    Sprint 10 批次 E 实测（``probe_e3_dup.py``）：原实现用 ``uuid4()`` 随机生成 ⇒
+    同一份文档**每重跑一次 ingest 就多一套 chunk 节点**（写侧 ``MERGE`` 按
+    ``Chunk {id, kg_version}``，id 每次都新 ⇒ 去重失效）。实测制度文档 36 chunks
+    **去重后只剩 11**，重复 25 条，同一段最多写了 4 次 ⇒ 证据注入的 20 个名额
+    被重复正文白白占掉（``probe_e5_q11.py``：20 条里 2 条正文重复）。
+
+    改为按 ``(document_id, char_start, text)`` 取 sha256 前 12 位：
+    同一文档同一段重跑 ⇒ **同一 id** ⇒ 写侧 MERGE 天然幂等。
+    前缀 ``chunk-`` 与 ``agents.py`` 的引用前缀校验对齐（``doc-`` 为文档级降级档）；
+    仍为 12 位 hex，落在 ``_CITATION_ID_PATTERN``（``chunk-[0-9A-Za-z]{1,64}``）内。
+    """
+    digest = hashlib.sha256(f"{document_id}|{char_start}|{text}".encode()).hexdigest()[
+        :12
+    ]
+    return f"chunk-{digest}"
 
 
 def _prompt_version_number(prompt_version: str) -> int:

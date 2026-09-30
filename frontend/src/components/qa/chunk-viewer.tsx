@@ -28,9 +28,16 @@ export function ChunkViewer() {
   const error = useChatStore((state) => state.chunkError);
   const closeChunk = useChatStore((state) => state.closeChunk);
 
+  // Sprint 10 批次 A：第四参 `char_end` 与 `char_offset` 成半开区间，由后端确定性
+  // 换算 ⇒ 精确到实体位置；无 span 命中时后端给 `[0, len(text)]` ⇒ 整段高亮（不空白）。
   const segments =
     chunk && citation
-      ? splitHighlight(chunk.text, citation.char_offset, citation.snippet)
+      ? splitHighlight(
+          chunk.text,
+          citation.char_offset,
+          citation.snippet,
+          citation.char_end,
+        )
       : null;
 
   return (

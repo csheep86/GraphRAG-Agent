@@ -47,7 +47,13 @@ def test_questions_non_empty_and_unique() -> None:
 
 
 def test_qset_version_and_frozen_corpus_registered() -> None:
-    """换版必须同步改版本常量与冻结的 `kg_version`——否则实测结论无法归因到语料。"""
-    assert QSET.QSET_VERSION.startswith("v")
-    assert QSET.QSET_KG_VERSION.startswith("v-")
-    assert QSET.QSET_KG_VERSION == "v-s71a-fe1c4dc3"
+    """换版必须同步改版本常量与冻结的 `kg_version`——否则实测结论无法归因到语料。
+
+    v3（2026-09-30 换版）：v2 冻结的 ``v-s71a-fe1c4dc3`` **在 Neo4j 上已无 chunk**
+    （仅剩 SQLite 一行 ``ready``），题集与其不同源 ⇒ 换到当前 active 语料
+    ``attendance-demo-v1``（换版依据见 ``eval_controlled_qset.py`` docstring）。
+    注意：active 版本名是**语义名**（``attendance-demo-v1``）而非 ``v-`` 前缀，
+    故这里钉「== 冻结值」，**不**再钉 ``v-`` 前缀——钉前缀会把合法换版误判为破坏。
+    """
+    assert QSET.QSET_VERSION == "v3-2026-09-30"
+    assert QSET.QSET_KG_VERSION == "attendance-demo-v1"

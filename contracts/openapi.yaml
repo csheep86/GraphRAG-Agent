@@ -607,8 +607,9 @@ components:
       example:
         answer: '是。示例子公司 A 的供应商 C 同时持有 B 公司 12% 股权 [source: doc-9/page-3/chunk-12]'
         citations:
-        - char_offset: 480
-          chunk_id: chunk-12
+        - char_end: 560
+          char_offset: 480
+          chunk_id: chunk-581e8912827d
           doc_id: 3f1a9c2e-7b45-4d8a-9e01-2c4f6a8b0d11
           page: 3
           snippet: ……供应商 C 持有本公司 12% 股权……
@@ -1104,8 +1105,12 @@ components:
 
         **对齐失配时必须给 ``null``，严禁兜底伪造 1**。'
       properties:
+        char_end:
+          description: 引用在片段内的结束偏移（**不含**），与 `char_offset` 构成半开区间 `[char_offset, char_end)`，供前端精确定位高亮；回退档 = 片段长度 `len(text)`
+          title: Char End
+          type: integer
         char_offset:
-          description: 引用在 chunk 内的字符偏移。批次 B 为 chunk 起点（0）；实体级偏移待 `:Entity` 落 `char_start` 后细化
+          description: 引用在**片段内**的字符偏移（相对 `GET /documents/{id}/chunks/{chunk_id}` 返回的 `text` 起点），由代码按 `实体 char_start − chunk char_start` **确定性换算**（偏移不由模型产出）。无实体级 span 命中时回退 0 = 整段引用
           title: Char Offset
           type: integer
         chunk_id:
@@ -1129,6 +1134,7 @@ components:
       - doc_id
       - chunk_id
       - char_offset
+      - char_end
       - snippet
       title: Citation
       type: object

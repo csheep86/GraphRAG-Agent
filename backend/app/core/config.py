@@ -109,6 +109,17 @@ class Settings(BaseSettings):
     # -- Prompt 目录（CODEBUDDY.md「Prompt 版本管理规范」）--
     prompts_dir: Path = REPO_ROOT / "prompts"
 
+    # -- 问答引用闸门（Sprint 10 批次 E，用户决策 A）--
+    #: 引用**归因**闸门：答案里的凭据（实体提及 / 单号 / 数字）必须能在被引 chunk 的
+    #: 原文里逐字找到，找不到的引用一律丢弃；全丢 ⇒ 按 ``no_grounded_evidence`` 拒答。
+    #:
+    #: 为什么需要：实测「引用覆盖率 100%」抓不到归因错——chunk_id 合法、前缀也对，
+    #: 但那条 chunk 里根本没有答案依据（Q11 答「LV0001 病假」却挂了一条门禁刷卡记录）。
+    #: 这是 F3「引用可溯源」的核心，覆盖率只是它的弱代理指标。
+    #:
+    #: 关掉即回到「chunk_id 合法就放行」的旧口径——**只用于 A/B 对照**，不是常态档位。
+    qa_citation_gate_enabled: bool = True
+
     # -- 实体 / 关系抽取（Sprint 5 批次 B：LangExtract 接入；接缝 3 内部档位）--
     # 与 MineruClient 同模式：单实现 + 切换键，不抽接口；
     # `extraction_provider` 默认 'langextract'，未实现别档显式报错（与 llm_provider 同策略）。

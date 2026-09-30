@@ -11,11 +11,13 @@
 
 ## 0. 当前缺口（写在最前，不粉饰）
 
-2026-09-27 实测：**当前仓库不具备私有化交付能力**，两处硬缺口必须在 S11 补上：
+2026-09-27 实测：**当前仓库不具备私有化交付能力**，两处硬缺口必须补上。
+**进展（2026-09-30）**：**D-2 迁移基线已在 Sprint 9.7 兑现**；**D-1 拆两半**——「compose 起全套」**已在 Sprint 10.3 兑现**（backend / frontend / Neo4j 三服务 `up` 全 `healthy`，PG 位留 S11），**离线镜像包仍留 S11**。
+⇒ 判据不变：**在 D-1 的镜像包补齐前，对外仍不得承诺"可私有化交付"**（不能拿"能起来"冒充"能交付"）。
 
 | # | 缺口 | 实测证据 | 后果 |
 |---|---|---|---|
-| **D-1** | **无容器化产物**：全仓无 `Dockerfile`、无 `docker-compose.yml` | `search_file *ockerfile*` = 0 命中 | 客户现场只能手工装 Python / Node / Neo4j / PG，**不可交付** |
+| **D-1** | **无容器化产物**：全仓无 `Dockerfile`、无 `docker-compose.yml` | `search_file *ockerfile*` = 0 命中 | 客户现场只能手工装 Python / Node / Neo4j / PG，**不可交付**。🔀 **部分兑现（2026-09-30，Sprint 10.3）**：`backend/Dockerfile` + `frontend/Dockerfile` + `deploy/docker-compose.yml` 就位，**三服务 `up` 实测全 `healthy`**（`/api/v1/health`=200、前端 200）；**离线镜像包未做**（⏳ S11）；**PG 位留空**（当前后端连 SQLite，S11 切 PG 时补——不起没人连的空容器冒充"全套"） |
 | **D-2** | **无数据库迁移**：全仓无 Alembic，建表靠启动时 `create_all` | `backend/app/db/models.py:17`「**无 Alembic**：建表靠启动时的 `create_all`」；`main.py:33` 的"Sprint 3 接入 Alembic 后移除"注释**至今未兑现** | `create_all` **只建新表、不 ALTER 旧表** ⇒ 客户现场升级后旧库缺列，**运行时才炸**，且无法回滚 |
 
 > 这两条是 PRD §1.2「大型企业私域部署优先」与 H6「数据不出内网」的**兑现前提**。在 D-1 / D-2 补齐前，**对外不得承诺"可私有化交付"**。
@@ -289,7 +291,8 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 | 项 | 时点 | 状态 |
 |---|---|---|
 | 本文档定稿 | 2026-09-27 | ✅ |
-| **D-1** 容器化（Dockerfile + compose + 离线镜像包） | **S11** | ⏳ |
+| **D-1a** 容器化：Dockerfile + compose **起全套** | **S10.3** | ✅ **已兑现**（2026-09-30：backend / frontend / Neo4j 三服务 `up` 全 `healthy`；**PG 位留空待 S11**，不凑数） |
+| **D-1b** 离线镜像包（`docker save`）/ 私有 registry | **S11** | ⏳ |
 | **D-2** 数据库迁移（Alembic 引入 + 首版迁移脚本） | **S11** | 🔀 **基线已完成**（2026-09-28，Sprint 9.7：alembic 主依赖 + 基线迁移 `00f44b912817` 十表 + 等价性测试钉死「加表必写迁移」）；**PG 实测与升级演练留 S11**（compose 就绪后） |
 | 备份 / 恢复脚本 | **S11** | ⏳ |
 | 安装验收清单脚本化 | **S11** | ⏳ |

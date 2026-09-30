@@ -30,6 +30,9 @@ from app.services.graphs import (
     KgVersion,
 )
 from app.services.reasoning import (
+    ALL_TERMINAL_TYPES,
+    HUB_EMPLOYEE_TYPE,
+    PRIORITY_TERMINAL_TYPES,
     TERMINAL_ENTITY_TYPES,
     anchor_ids_for_question,
     build_reasoning_path,
@@ -181,7 +184,9 @@ def test_query_is_parameterized_by_kg_version_and_org() -> None:
     params = session.params[0]
     assert params["kg"] == "v-test"
     assert params["org"] == "org-1"
-    assert set(params["terminal_types"]) == set(TERMINAL_ENTITY_TYPES)
+    # Sprint 10 批次 B：终点类型由「考勤一套」扩为「已登记域的并集」
+    assert set(params["terminal_types"]) == set(ALL_TERMINAL_TYPES)
+    assert set(params["terminal_types"]) >= set(TERMINAL_ENTITY_TYPES)
     assert "EMPLOYEE:E001" in params["anchor_ids"]
     # 关系也要逐个约束租户 / 版本（只过滤端点会放进跨租户边）
     assert "ALL(r IN rels" in session.queries[0]
@@ -471,3 +476,56 @@ def test_reasoning_path_failure_is_501_not_silent_empty(
                 trace_id="t-d1-boom",
             )
         )
+
+
+# --------------------------------------------------------------------------- #
+# Sprint 10 批次 B（裁决 D-F）：终点类型按**域**登记，不再写死考勤本体
+# --------------------------------------------------------------------------- #
+
+
+def test_terminal_types_cover_both_registered_domains() -> None:
+    """两个已登记域的落点都在白名单里。
+
+    真机缺口（`changes/Sprint10.1/proposal.md` §1）：改之前 `affiliation-demo-v1`
+    的 176 个实体**一个都不在**考勤白名单里 ⇒ 该域的多跳链恒为空。
+    """
+    assert "POLICY_CLAUSE" in ALL_TERMINAL_TYPES  # 考勤
+    assert "SUBJECT" in ALL_TERMINAL_TYPES  # 关联方
+    assert "LEGAL_PERSON" in ALL_TERMINAL_TYPES
+
+
+def test_terminal_types_exclude_unregistered_types() -> None:
+    """未登记的类型**不是**合法落点。
+
+    这条是纪律 1「零假数据」的守卫：新业务域没登记时，链自然取不到（空列表），
+    而不是"放宽成任意类型、随便走两跳"——那叫编链。
+    """
+    for unregistered in ("POSITION", "DEPARTMENT", "RELATED", "PHONE"):
+        assert unregistered not in ALL_TERMINAL_TYPES
+
+
+def test_build_path_queries_with_union_terminal_types() -> None:
+    """取链时下发的是**并集**白名单 + 两域各自的最优落点（不再写死考勤一套）。
+
+    刻意用"关联方子图"当输入：改之前这套输入会命中不了任何考勤终点。
+    """
+    session = _FakeSession(rows=[PATH_ROW])
+
+    build_reasoning_path(
+        session=session,  # type: ignore[arg-type]
+        kg_version="v-test",
+        org_id="org-1",
+        question="甲公司与乙公司是否由同一人代表？",
+        nodes=[
+            _node("SUBJECT:S1", "甲公司", "SUBJECT"),
+            _node("EMPLOYEE:E001", "张伟", "EMPLOYEE"),
+        ],
+    )
+
+    assert session.queries, "未发起路径查询"
+    sent = session.params[-1]
+    assert "SUBJECT" in sent["terminal_types"]
+    assert "POLICY_CLAUSE" in sent["terminal_types"]
+    assert set(sent["prio_types"]) == set(PRIORITY_TERMINAL_TYPES)
+    # hub 约束保留：中途禁止穿员工（考勤域实测：不禁会每条都出"员工→员工"废链）
+    assert sent["hub"] == HUB_EMPLOYEE_TYPE

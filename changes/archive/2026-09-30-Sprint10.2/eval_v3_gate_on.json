@@ -1,0 +1,320 @@
+[
+  {
+    "index": 1,
+    "question": "每名员工每月的补卡次数上限是多少？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "high",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "dbafd407-0bbc-58d2-8355-e7c10c730525",
+        "page": 1,
+        "chunk_id": "chunk-5dc9152ecc79",
+        "char_offset": 0,
+        "char_end": 521,
+        "snippet": "**员工考勤管理制度（2026 版）**\n\n文件编号：HR-ATD-2026-001\n\n生效日期：2026-01-01\n\n适用范围：恩仕卫浴有限公司全体在册员工\n\n**第一章 总则**\n\n第一条 为规范考勤管理，保障员工休息休假权利，依据《中华人民共和国劳动法》《国务院关于职工工作时间的规定》及公司实际，制定本制度。\n\n第二条 本制度适用于全体在册员工。适用不定时工作制的岗位，其考勤要求另行规定。…"
+      }
+    ],
+    "answer": "每名员工每月补卡次数不超过 3 次，超出部分按事假处理 [source: chunk-5dc9152ecc79]。"
+  },
+  {
+    "index": 2,
+    "question": "迟到是怎么认定的？超过 30 分钟怎么算？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "high",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "dbafd407-0bbc-58d2-8355-e7c10c730525",
+        "page": 1,
+        "chunk_id": "chunk-5dc9152ecc79",
+        "char_offset": 0,
+        "char_end": 521,
+        "snippet": "**员工考勤管理制度（2026 版）**\n\n文件编号：HR-ATD-2026-001\n\n生效日期：2026-01-01\n\n适用范围：恩仕卫浴有限公司全体在册员工\n\n**第一章 总则**\n\n第一条 为规范考勤管理，保障员工休息休假权利，依据《中华人民共和国劳动法》《国务院关于职工工作时间的规定》及公司实际，制定本制度。\n\n第二条 本制度适用于全体在册员工。适用不定时工作制的岗位，其考勤要求另行规定。…"
+      },
+      {
+        "doc_id": "dbafd407-0bbc-58d2-8355-e7c10c730525",
+        "page": 1,
+        "chunk_id": "chunk-5dc9152ecc79",
+        "char_offset": 0,
+        "char_end": 521,
+        "snippet": "**员工考勤管理制度（2026 版）**\n\n文件编号：HR-ATD-2026-001\n\n生效日期：2026-01-01\n\n适用范围：恩仕卫浴有限公司全体在册员工\n\n**第一章 总则**\n\n第一条 为规范考勤管理，保障员工休息休假权利，依据《中华人民共和国劳动法》《国务院关于职工工作时间的规定》及公司实际，制定本制度。\n\n第二条 本制度适用于全体在册员工。适用不定时工作制的岗位，其考勤要求另行规定。…"
+      }
+    ],
+    "answer": "依据截至 unknown 的披露文件（本知识库未提供 as-of 日期），迟到与早退的认定标准为：实际到岗时间晚于排班上班时间 30 分钟以内的，记为迟到；超过 30 分钟的，按事假半天处理；早退的认定标准与迟到相同 [source: chunk-5dc9152ecc79]。"
+  },
+  {
+    "index": 3,
+    "question": "外勤与出差考勤补充规定适用于哪些员工？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "high",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "da0d101c-ae2b-556b-bc11-3cd2542fb2d4",
+        "page": 1,
+        "chunk_id": "chunk-6916cf1e0c85",
+        "char_offset": 0,
+        "char_end": 600,
+        "snippet": "**外勤与出差考勤补充规定**\n\n文件编号：HR-FWA-2026-004\n\n生效日期：2026-01-01\n\n**第一章 适用范围**\n\n第一条 本规定适用于因公外出（外勤）或出差期间无法按常规方式打卡的员工。\n\n**第二章 出勤依据**\n\n第二条 外勤及出差期间，打卡记录不作为认定出勤的唯一依据。\n\n第三条 门禁刷卡记录仅覆盖公司自有场所，外勤地点无门禁设备，故不得以无门禁记录为由否定出勤。\n…"
+      }
+    ],
+    "answer": "《外勤与出差考勤补充规定》（文件编号 HR-FWA-2026-004）适用于因公外出（外勤）或出差期间无法按常规方式打卡的员工 [source: chunk-6916cf1e0c85]。该规定是《员工考勤管理制度（2026 版）》中关于外勤及出差人员打卡要求的特别规定，后者明确外勤及出差人员的打卡要求适用本规定 [source: chunk-5dc9152ecc79]。"
+  },
+  {
+    "index": 4,
+    "question": "能不能因为没有门禁刷卡记录就认定外勤员工未出勤？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "high",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "da0d101c-ae2b-556b-bc11-3cd2542fb2d4",
+        "page": 1,
+        "chunk_id": "chunk-6916cf1e0c85",
+        "char_offset": 0,
+        "char_end": 600,
+        "snippet": "**外勤与出差考勤补充规定**\n\n文件编号：HR-FWA-2026-004\n\n生效日期：2026-01-01\n\n**第一章 适用范围**\n\n第一条 本规定适用于因公外出（外勤）或出差期间无法按常规方式打卡的员工。\n\n**第二章 出勤依据**\n\n第二条 外勤及出差期间，打卡记录不作为认定出勤的唯一依据。\n\n第三条 门禁刷卡记录仅覆盖公司自有场所，外勤地点无门禁设备，故不得以无门禁记录为由否定出勤。\n…"
+      },
+      {
+        "doc_id": "da0d101c-ae2b-556b-bc11-3cd2542fb2d4",
+        "page": 1,
+        "chunk_id": "chunk-6916cf1e0c85",
+        "char_offset": 0,
+        "char_end": 600,
+        "snippet": "**外勤与出差考勤补充规定**\n\n文件编号：HR-FWA-2026-004\n\n生效日期：2026-01-01\n\n**第一章 适用范围**\n\n第一条 本规定适用于因公外出（外勤）或出差期间无法按常规方式打卡的员工。\n\n**第二章 出勤依据**\n\n第二条 外勤及出差期间，打卡记录不作为认定出勤的唯一依据。\n\n第三条 门禁刷卡记录仅覆盖公司自有场所，外勤地点无门禁设备，故不得以无门禁记录为由否定出勤。\n…"
+      },
+      {
+        "doc_id": "da0d101c-ae2b-556b-bc11-3cd2542fb2d4",
+        "page": 1,
+        "chunk_id": "chunk-6916cf1e0c85",
+        "char_offset": 0,
+        "char_end": 600,
+        "snippet": "**外勤与出差考勤补充规定**\n\n文件编号：HR-FWA-2026-004\n\n生效日期：2026-01-01\n\n**第一章 适用范围**\n\n第一条 本规定适用于因公外出（外勤）或出差期间无法按常规方式打卡的员工。\n\n**第二章 出勤依据**\n\n第二条 外勤及出差期间，打卡记录不作为认定出勤的唯一依据。\n\n第三条 门禁刷卡记录仅覆盖公司自有场所，外勤地点无门禁设备，故不得以无门禁记录为由否定出勤。\n…"
+      },
+      {
+        "doc_id": "da0d101c-ae2b-556b-bc11-3cd2542fb2d4",
+        "page": 1,
+        "chunk_id": "chunk-04b6ffd82b0c",
+        "char_offset": 0,
+        "char_end": 490,
+        "snippet": "<p>门禁刷卡记录</p></td><td><p>仅适用于公司场所内</p></td></tr></table>\n\n第五条 同时满足第 2 项与第 3 项的，或同时满足第 1、2、3 项的，认定为外勤出勤成立。\n\n**第三章 缺卡处理**\n\n第六条 员工在外勤或出差期间产生缺卡的，由系统按本规定第四条自动取证并完成补卡。\n\n第七条 （2026 版修订） 自动补卡不占用《员工考勤管理制度》第八条规定…"
+      },
+      {
+        "doc_id": "da0d101c-ae2b-556b-bc11-3cd2542fb2d4",
+        "page": 1,
+        "chunk_id": "chunk-04b6ffd82b0c",
+        "char_offset": 0,
+        "char_end": 490,
+        "snippet": "<p>门禁刷卡记录</p></td><td><p>仅适用于公司场所内</p></td></tr></table>\n\n第五条 同时满足第 2 项与第 3 项的，或同时满足第 1、2、3 项的，认定为外勤出勤成立。\n\n**第三章 缺卡处理**\n\n第六条 员工在外勤或出差期间产生缺卡的，由系统按本规定第四条自动取证并完成补卡。\n\n第七条 （2026 版修订） 自动补卡不占用《员工考勤管理制度》第八条规定…"
+      }
+    ],
+    "answer": "不能。门禁刷卡记录仅覆盖公司自有场所，外勤地点无门禁设备，故不得以无门禁记录为由否定出勤 [source: chunk-6916cf1e0c85]。同时，外勤及出差期间，打卡记录不作为认定出勤的唯一依据 [source: chunk-6916cf1e0c85]。外勤出勤的认定依据是第四条所列证据及其优先级：1 出差审批单（事前审批，含起止日期与目的地）、2 工单或任务闭环记录（含到场时间与处理结果）、3 移动应用定位轨迹（需与出差目的地一致）等 [source: chunk-6916cf1e0c85]；并且同时满足第 2 项与第 3 项的，或同时满足第 1、2、3 项的，认定为外勤出勤成立 [source: chunk-04b6ffd82b0c]。此外，员工在外勤或出差期间产生缺卡的，由系统按该规定第四条自动取证并完成补卡，员工无需手工提交申请 [source: chunk-04b6ffd82b0c]。"
+  },
+  {
+    "index": 5,
+    "question": "每月加班时间不得超过多少小时？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "high",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "58f16d89-2da0-5d41-ad81-98ce1430d293",
+        "page": 1,
+        "chunk_id": "chunk-4cbbcd101d17",
+        "char_offset": 0,
+        "char_end": 432,
+        "snippet": "**加班与调休管理办法**\n\n文件编号：HR-OTC-2026-003\n\n生效日期：2026-01-01\n\n**第一章 加班的认定**\n\n第一条 加班指用人单位安排员工在法定标准工作时间以外提供劳动的情形。\n\n第二条 员工自愿延长在岗时间、未经审批的，不认定为加班。\n\n第三条 加班须事前提交加班申请并经审批。因紧急情况未能事前审批的，须在加班发生后 3 个工作日内补办审批。\n\n**第二章 加班时长…"
+      }
+    ],
+    "answer": "每月加班时间不得超过 36 小时，依据为《中华人民共和国劳动法》第四十一条 [source: chunk-4cbbcd101d17]。该办法同时规定，综合计算工时制岗位的加班上限按周期核算 [source: chunk-4cbbcd101d17]。"
+  },
+  {
+    "index": 6,
+    "question": "员工自愿延长在岗时间、未经审批的，算加班吗？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "high",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "58f16d89-2da0-5d41-ad81-98ce1430d293",
+        "page": 1,
+        "chunk_id": "chunk-4cbbcd101d17",
+        "char_offset": 0,
+        "char_end": 432,
+        "snippet": "**加班与调休管理办法**\n\n文件编号：HR-OTC-2026-003\n\n生效日期：2026-01-01\n\n**第一章 加班的认定**\n\n第一条 加班指用人单位安排员工在法定标准工作时间以外提供劳动的情形。\n\n第二条 员工自愿延长在岗时间、未经审批的，不认定为加班。\n\n第三条 加班须事前提交加班申请并经审批。因紧急情况未能事前审批的，须在加班发生后 3 个工作日内补办审批。\n\n**第二章 加班时长…"
+      },
+      {
+        "doc_id": "58f16d89-2da0-5d41-ad81-98ce1430d293",
+        "page": 1,
+        "chunk_id": "chunk-4cbbcd101d17",
+        "char_offset": 0,
+        "char_end": 432,
+        "snippet": "**加班与调休管理办法**\n\n文件编号：HR-OTC-2026-003\n\n生效日期：2026-01-01\n\n**第一章 加班的认定**\n\n第一条 加班指用人单位安排员工在法定标准工作时间以外提供劳动的情形。\n\n第二条 员工自愿延长在岗时间、未经审批的，不认定为加班。\n\n第三条 加班须事前提交加班申请并经审批。因紧急情况未能事前审批的，须在加班发生后 3 个工作日内补办审批。\n\n**第二章 加班时长…"
+      }
+    ],
+    "answer": "不算。加班须事前提交加班申请并经审批；员工自愿延长在岗时间、未经审批的，不认定为加班 [source: chunk-4cbbcd101d17]。加班被定义为用人单位安排员工在法定标准工作时间以外提供劳动的情形 [source: chunk-4cbbcd101d17]。"
+  },
+  {
+    "index": 7,
+    "question": "销售经理适用哪种工时制？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "high",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "2b721483-e306-5fea-8965-72c2a70c2332",
+        "page": 1,
+        "chunk_id": "chunk-2c828d0a15b9",
+        "char_offset": 0,
+        "char_end": 600,
+        "snippet": "第九条 不定时工作制不适用本细则关于加班的规定，但公司须保障员工休息休假权利。\n\n第十条 不定时工作制须经劳动行政部门审批后方可实施。\n\n**第三章 岗位适用表**\n\n<table><tr><td><p><strong>岗位</strong></p></td><td><p><strong>适用工时制</strong></p></td><td><p><strong>说明</strong></p></…"
+      },
+      {
+        "doc_id": "2b721483-e306-5fea-8965-72c2a70c2332",
+        "page": 1,
+        "chunk_id": "chunk-27d22a6f6de4",
+        "char_offset": 0,
+        "char_end": 304,
+        "snippet": ">销售经理</p></td><td><p>不定时工作制</p></td><td><p>已履行审批</p></td></tr></table>\n\n**第四章 弹性时段（仅适用于标准工时制岗位）**\n\n第十一条 适用标准工时制且所在部门批准的岗位，可实行弹性时段：员工在 08:00 至 20:00 之间自选 8 小时工作时段。\n\n第十二条 核心在岗时段为 10:00 至 16:00，员工须在此时段内在…"
+      }
+    ],
+    "answer": "销售经理适用不定时工作制 [source: chunk-2c828d0a15b9][source: chunk-27d22a6f6de4]。"
+  },
+  {
+    "index": 8,
+    "question": "标准工时制岗位的核心在岗时段是什么时候？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "high",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "2b721483-e306-5fea-8965-72c2a70c2332",
+        "page": 1,
+        "chunk_id": "chunk-27d22a6f6de4",
+        "char_offset": 0,
+        "char_end": 304,
+        "snippet": ">销售经理</p></td><td><p>不定时工作制</p></td><td><p>已履行审批</p></td></tr></table>\n\n**第四章 弹性时段（仅适用于标准工时制岗位）**\n\n第十一条 适用标准工时制且所在部门批准的岗位，可实行弹性时段：员工在 08:00 至 20:00 之间自选 8 小时工作时段。\n\n第十二条 核心在岗时段为 10:00 至 16:00，员工须在此时段内在…"
+      }
+    ],
+    "answer": "核心在岗时段为 10:00 至 16:00，员工须在此时段内在岗，该弹性时段安排仅适用于标准工时制岗位 [source: chunk-27d22a6f6de4]。"
+  },
+  {
+    "index": 9,
+    "question": "张伟在哪个部门、担任什么岗位？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "medium",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "b9c988ac-6f83-5637-8e95-0d80040cd141",
+        "page": null,
+        "chunk_id": "chunk-1d9ec98da373",
+        "char_offset": 0,
+        "char_end": 74,
+        "snippet": "BT-2026-0017,E001,武汉,武汉光谷,2026-10-16,2026-10-18,客户现场设备故障排查与售后工单处理,approved"
+      },
+      {
+        "doc_id": "2b721483-e306-5fea-8965-72c2a70c2332",
+        "page": 1,
+        "chunk_id": "chunk-2c828d0a15b9",
+        "char_offset": 305,
+        "char_end": 310,
+        "snippet": "第九条 不定时工作制不适用本细则关于加班的规定，但公司须保障员工休息休假权利。\n\n第十条 不定时工作制须经劳动行政部门审批后方可实施。\n\n**第三章 岗位适用表**\n\n<table><tr><td><p><strong>岗位</strong></p></td><td><p><strong>适用工时制</strong></p></td><td><p><strong>说明</strong></p></…"
+      }
+    ],
+    "answer": "张伟（员工编号 E001）隶属于售后部 [source: chunk-1d9ec98da373]，担任售后工程师岗位 [source: chunk-2c828d0a15b9]。"
+  },
+  {
+    "index": 10,
+    "question": "张伟适用哪种工时制？",
+    "should_refuse": false,
+    "refused": false,
+    "confidence": "medium",
+    "kg_version": "attendance-demo-v1",
+    "citations": [
+      {
+        "doc_id": "2b721483-e306-5fea-8965-72c2a70c2332",
+        "page": 1,
+        "chunk_id": "chunk-2c828d0a15b9",
+        "char_offset": 305,
+        "char_end": 310,
+        "snippet": "第九条 不定时工作制不适用本细则关于加班的规定，但公司须保障员工休息休假权利。\n\n第十条 不定时工作制须经劳动行政部门审批后方可实施。\n\n**第三章 岗位适用表**\n\n<table><tr><td><p><strong>岗位</strong></p></td><td><p><strong>适用工时制</strong></p></td><td><p><strong>说明</strong></p></…"
+      },
+      {
+        "doc_id": "2b721483-e306-5fea-8965-72c2a70c2332",
+        "page": 1,
+        "chunk_id": "chunk-2c828d0a15b9",
+        "char_offset": 241,
+        "char_end": 248,
+        "snippet": "第九条 不定时工作制不适用本细则关于加班的规定，但公司须保障员工休息休假权利。\n\n第十条 不定时工作制须经劳动行政部门审批后方可实施。\n\n**第三章 岗位适用表**\n\n<table><tr><td><p><strong>岗位</strong></p></td><td><p><strong>适用工时制</strong></p></td><td><p><strong>说明</strong></p></…"
+      },
+      {
+        "doc_id": "2b721483-e306-5fea-8965-72c2a70c2332",
+        "page": 1,
+        "chunk_id": "chunk-2c828d0a15b9",
+        "char_offset": 0,
+        "char_end": 600,
+        "snippet": "第九条 不定时工作制不适用本细则关于加班的规定，但公司须保障员工休息休假权利。\n\n第十条 不定时工作制须经劳动行政部门审批后方可实施。\n\n**第三章 岗位适用表**\n\n<table><tr><td><p><strong>岗位</strong></p></td><td><p><strong>适用工时制</strong></p></td><td><p><strong>说明</strong></p></…"
+      },
+      {
+        "doc_id": "2b721483-e306-5fea-8965-72c2a70c2332",
+        "page": 1,
+        "chunk_id": "chunk-314f52bb71b4",
+        "char_offset": 0,
+        "char_end": 574,
+        "snippet": "**工时制实施细则**\n\n文件编号：HR-WTS-2026-002\n\n生效日期：2026-01-01\n\n**第一章 工时制分类**\n\n第一条 公司实行三种工时制度：标准工时制、综合计算工时制、不定时工作制。\n\n第二条 各岗位适用何种工时制，由本细则第三章的岗位适用表确定，不得由部门自行变更。\n\n**第二章 各工时制的具体标准**\n\n**第一节 标准工时制**\n\n第三条 标准工时制下，员工每日工作 …"
+      }
+    ],
+    "answer": "张伟（员工编号 E001）所在岗位为售后工程师，所属部门为售后部 [source: chunk-2c828d0a15b9]。依据《工时制实施细则》第三章的岗位适用表，售后工程师适用综合计算工时制（说明：外勤频繁，作息不固定）[source: chunk-2c828d0a15b9]。因此张伟适用综合计算工时制。需要说明的是，检索到的图谱与文本片段中未直接出现\"E001→适用工时制\"的显式关系边，上述结论由\"张伟任售后工程师\"与\"售后工程师＝综合计算工时制\"两步推出 [source: chunk-314f52bb71b4]。"
+  },
+  {
+    "index": 11,
+    "question": "E004 在 2026 年 10 月 25 日请的是什么假，共几天？",
+    "should_refuse": false,
+    "refused": true,
+    "confidence": "low",
+    "kg_version": "attendance-demo-v1",
+    "citations": [],
+    "answer": "无法回答"
+  },
+  {
+    "index": 12,
+    "question": "工单 SO-2026-0912 的处理地点在哪里？",
+    "should_refuse": false,
+    "refused": true,
+    "confidence": "low",
+    "kg_version": "attendance-demo-v1",
+    "citations": [],
+    "answer": "无法回答"
+  },
+  {
+    "index": 13,
+    "question": "比亚迪 2025 年新能源汽车销量是多少？",
+    "should_refuse": true,
+    "refused": true,
+    "confidence": "low",
+    "kg_version": "attendance-demo-v1",
+    "citations": [],
+    "answer": "无法回答"
+  },
+  {
+    "index": 14,
+    "question": "《红楼梦》中贾宝玉的妻子是谁？",
+    "should_refuse": true,
+    "refused": true,
+    "confidence": "low",
+    "kg_version": "attendance-demo-v1",
+    "citations": [],
+    "answer": "无法回答"
+  }
+]

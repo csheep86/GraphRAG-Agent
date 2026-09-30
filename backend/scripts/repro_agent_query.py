@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -49,9 +50,12 @@ from app.services.graphs import GraphService  # noqa: E402
 QUESTION = "智能制造有哪些财务指标？"
 SCOPE = "cross_doc"
 
-#: 阶段 1 假输出 A：合法 JSON + 形似 citation 的 evidence → 走「非拒答」分支
+#: 阶段 1 假输出 A：合法 JSON + 形似 citation 的 evidence → 走「非拒答」分支。
+#: Sprint 10 批次 C 修正：``chunk_id`` 必须是**图上真实存在**的片段——引用构造会校验
+#: 片段是否真被注入过，编一个 ``chunk-1`` 会被判"无据"而拒答（这是**正确**行为，
+#: 不是 bug；拿假 id 验"非拒答分支"等于让用例必然红）。
 STUB_JSON_WITH_CITATION = (
-    '{"answer": "示例答案 [source: chunk-1]", "evidence": ["chunk-1"],'
+    '{"answer": "示例答案 [source: {chunk_id}]", "evidence": ["{chunk_id}"],'
     ' "confidence": "high"}'
 )
 #: 阶段 1 假输出 B：无 citation → 走「拒答」分支
@@ -185,8 +189,20 @@ async def run_query(
 
         async def _fake_invoke(
             _self: AgentService, *, system_prompt: str, question: str, trace_id: str
-        ) -> str:
-            return stub_answer
+        ) -> tuple[str, object]:
+            # 与 ``_invoke_chat_with_retry`` 同形：``(answer_text, token_usage)``。
+            # 桩写死返回单个字符串时，调用方解包会抛
+            # ``ValueError: too many values to unpack (expected 2)``，
+            # 被 tenacity 重试 3 次后伪装成「LLM 调用失败」——诊断脚本因此一直在报假故障。
+            #
+            # citation 的 chunk_id 必须**来自本次注入的证据**（引用构造会校验片段是否
+            # 真在注入集内 —— 防幻觉引用的正确行为）。注入证据就在 ``system_prompt``
+            # 里 ⇒ 从里面抓一个真实 chunk id，别编、也别拿图上任意 chunk。
+            match = re.search(r"chunk-[0-9A-Za-z]+", system_prompt)
+            answer = stub_answer.replace(
+                "{chunk_id}", match.group(0) if match else "chunk-1"
+            )
+            return answer, None
 
         def _fake_ensure(_self: AgentService) -> object:
             return object()
