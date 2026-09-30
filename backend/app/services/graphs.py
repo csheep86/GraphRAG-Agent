@@ -78,6 +78,11 @@ if TYPE_CHECKING:  # 仅类型检查：运行时走函数内延迟导入，避�
 #: 与 ``_GRAPH_NODE_LIMIT`` 同源思路——片段是**全文**，过量会直接撑爆 Prompt token。
 _EVIDENCE_CHUNK_LIMIT = 20
 
+#: Sprint 10 批次 C 残留缺口：选片段前先取**轻量索引**（chunk_id / doc_id / mentions / spans，
+#: **不含** ``text``）的上限。与 ``_GRAPH_NODE_LIMIT`` 同思路——索引行很便宜，
+#: 取满可达集合才能"按文档保底"；真正贵的是 :data:`_EVIDENCE_CHUNK_LIMIT` 条全文。
+_EVIDENCE_CHUNK_INDEX_LIMIT = 1000
+
 
 class GraphUnavailableError(Exception):
     """Neo4j 不可用（连接失败 / 查询超时 / 凭据错误等）。
@@ -416,19 +421,43 @@ RETURN
 #: 注入 ``kg_qa`` Prompt 的 ``text_chunks``——批次 B「子图注入时携带 chunk 文本」的落点。
 #: ``OPTIONAL MATCH`` 取 ``:Document``：chunk 未挂文档时 ``doc_id`` 为 ``null``，
 #: 由服务层投影为 ``None``（**不**伪造 UUID）。
-_QUERY_EVIDENCE_CHUNKS_BY_ENTITIES = """
+#: Sprint 10 批次 C 残留缺口：**证据片段也拆两段**（与 :data:`_QUERY_SUBGRAPH_NODE_INDEX`
+#: 同套路）。原来是一条 ``LIMIT 20`` 且**无 ORDER BY** 的查询 ⇒ 谁进 Prompt 全凭扫描序。
+#: 真机实测（``changes/Sprint10.2/probe_c4_chunk_quota.py``）：注入的 20 条里
+#: **CSV 18 / 制度 docx 0 / 带 span 0** —— 问"制度"必然答不到制度内容。
+#:
+#: 拆成：
+#: 1. :data:`_QUERY_EVIDENCE_CHUNK_INDEX` —— 只回 ``chunk_id / doc_id / mentions / spans``
+#:    的**轻量索引**（**不带** ``text``：全文是最大字段，全量回传纯属浪费）；
+#: 2. :func:`select_evidence_chunks` —— Python 侧按「每文档保底 + 余量 span 优先」选；
+#: 3. :data:`_QUERY_EVIDENCE_CHUNKS_BY_IDS` —— 只按选中的 id 取**全文**。
+_QUERY_EVIDENCE_CHUNK_INDEX = """
 MATCH (e:Entity {kg_version: $kg_version})
 WHERE e.id IN $entity_ids
   AND ($org_id IS NULL OR e.org_id IS NULL OR e.org_id = $org_id)
 MATCH (c:Chunk {kg_version: $kg_version})-[:MENTIONS]->(e)
 WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
 OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
-OPTIONAL MATCH (c)-[:MENTIONS]->(e2:Entity {kg_version: $kg_version})
-WHERE e2.char_start IS NOT NULL
-WITH DISTINCT c, d,
-     collect(DISTINCT {mention: e2.mention,
-                       char_start: e2.char_start,
-                       char_end: e2.char_end}) AS spans
+WITH DISTINCT c, d
+RETURN
+  c.id AS chunk_id,
+  d.id AS doc_id,
+  size([(c)-[:MENTIONS]->(:Entity {kg_version: $kg_version}) | 1]) AS mentions,
+  size([(c)-[:MENTIONS]->(e2:Entity {kg_version: $kg_version})
+        WHERE e2.char_start IS NOT NULL | 1]) AS spans
+LIMIT $index_limit
+"""
+
+_QUERY_EVIDENCE_CHUNKS_BY_IDS = """
+MATCH (c:Chunk {kg_version: $kg_version})
+WHERE c.id IN $chunk_ids
+OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
+OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity {kg_version: $kg_version})
+WHERE e.char_start IS NOT NULL
+WITH c, d,
+     collect(DISTINCT {mention: e.mention,
+                       char_start: e.char_start,
+                       char_end: e.char_end}) AS spans
 RETURN
   c.id AS chunk_id,
   d.id AS doc_id,
@@ -437,8 +466,79 @@ RETURN
   c.char_start AS char_start,
   c.char_end AS char_end,
   [s IN spans WHERE s.mention IS NOT NULL] AS spans
-LIMIT $limit
+ORDER BY chunk_id
 """
+
+
+def select_evidence_chunks(
+    rows: Sequence[tuple[str, str | None, int, int]],
+    limit: int,
+) -> list[str]:
+    """**问答该注入哪些证据片段**（Sprint 10 批次 C 残留缺口，五方案实测定案）。
+
+    口径（真机实测得来，见 ``changes/Sprint10.2/probe_c4_chunk_quota.py``）：
+
+    1. 按 ``doc_id`` 分组，**每篇文档保底** ``limit // 文档数`` 条 —— 不让某一份
+       大表（CSV 派生 chunk 占全图 77%）吃满名额；
+    2. 组内按 **MENTIONS 数降序 + chunk_id 升序** —— 信息量大的先上，同输入必同解；
+    3. 保底没用满的名额，优先给**带 span** 的片段（引用能被精确定位到句），
+       其余按 MENTIONS 热度补齐。
+
+    ``doc_id`` 为 ``None`` 的片段（``HAS_CHUNK`` 缺失）**不参与保底**：契约层
+    ``Citation`` 要求 ``doc_id`` 是合法 UUID，这类片段本来就会被上层丢弃；
+    但余量阶段仍可能选到它（不额外偏爱，也不刻意排斥）。
+
+    反面教材（实测，别再走）：
+
+    - **无序 ``LIMIT``**（原实现）：docx 制度 **0 条** / 带 span **0 条**；
+    - **纯按 MENTIONS 热度**：docx 13 / span 3 尚可，但只覆盖 9 篇文档，
+      热度高的大表会霸榜 ⇒ 保底才是对冲；
+    - **每文档固定保底 2 条**：覆盖 11 篇但 docx 只剩 8、span 掉到 0（保底太薄）。
+
+    :param rows: ``(chunk_id, doc_id, mentions, spans)`` 四元组
+    :param limit: 片段上限（**不放**大——全文进 Prompt，放大即撑爆 token）
+    :returns: 选中的 chunk_id（有序、去重）
+    """
+    if limit <= 0 or not rows:
+        return []
+
+    buckets: dict[str, list[tuple[str, int, int]]] = {}
+    for chunk_id, doc_id, mentions, spans in rows:
+        if doc_id is None:
+            continue
+        buckets.setdefault(str(doc_id), []).append((chunk_id, mentions, spans))
+    for group in buckets.values():
+        group.sort(key=lambda item: (-item[1], item[0]))
+
+    floor = max(limit // len(buckets), 1) if buckets else limit
+    chosen: list[tuple[str, int, int]] = []
+    for _doc in sorted(buckets):
+        chosen.extend(buckets[_doc][:floor])
+
+    if len(chosen) > limit:
+        # 文档数 > 名额（极端情形）：按**热度**截断，宁可少覆盖一篇也别让
+        # 每篇只进半条——片段是整段注入的，切半没有意义。
+        chosen.sort(key=lambda item: (-item[1], item[0]))
+        return [item[0] for item in chosen[:limit]]
+
+    chosen.sort(key=lambda item: (-item[1], item[0]))
+    if len(chosen) < limit:
+        taken = {item[0] for item in chosen}
+        filler = sorted(
+            (r for r in rows if r[0] not in taken),
+            key=lambda r: (
+                0 if r[3] > 0 else 1,  # 带 span 的片段优先（引用可精确定位）
+                -r[2],
+                r[0],
+            ),
+        )
+        for chunk_id, _doc, mentions, spans in filler:
+            if len(chosen) >= limit:
+                break
+            chosen.append((chunk_id, mentions, spans))
+            taken.add(chunk_id)
+    return [item[0] for item in chosen]
+
 
 #: 同上，“scope = single_doc” 分支：直接从 ``:Document`` 出发取全部 chunk（不看实体）。
 _QUERY_EVIDENCE_CHUNKS_BY_DOCUMENT = """
@@ -1096,13 +1196,45 @@ class GraphService:
                 "limit": limit,
             }
         elif entity_ids:
-            query = _QUERY_EVIDENCE_CHUNKS_BY_ENTITIES
-            params = {
-                "kg_version": kg_version,
-                "org_id": str(org_id) if org_id else None,
-                "entity_ids": list(entity_ids),
-                "limit": limit,
-            }
+            # ① 轻量索引 → ② Python 侧按「每文档保底 + 余量 span 优先」选 → ③ 只取选中全文
+            org_param = str(org_id) if org_id else None
+            try:
+                with self._session() as session:
+                    index = [
+                        (
+                            str(row["chunk_id"]),
+                            str(row["doc_id"]) if row["doc_id"] else None,
+                            int(row["mentions"] or 0),
+                            int(row["spans"] or 0),
+                        )
+                        for row in session.run(
+                            _QUERY_EVIDENCE_CHUNK_INDEX,
+                            kg_version=kg_version,
+                            org_id=org_param,
+                            entity_ids=list(entity_ids),
+                            index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT,
+                        )
+                    ]
+                    selected = select_evidence_chunks(index, limit)
+                    if not selected:
+                        return []
+                    records = list(
+                        session.run(
+                            _QUERY_EVIDENCE_CHUNKS_BY_IDS,
+                            kg_version=kg_version,
+                            chunk_ids=selected,
+                        )
+                    )
+            except GraphUnavailableError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 统一包装
+                raise GraphUnavailableError(
+                    f"查询证据片段失败: kg_version={kg_version}: {exc}"
+                ) from exc
+
+            projection_context = f"fetch_evidence_chunks kg_version={kg_version}"
+            return self._project_chunks(records, projection_context)
+
         else:
             return []
 
@@ -1116,7 +1248,18 @@ class GraphService:
                 f"查询证据片段失败: kg_version={kg_version}: {exc}"
             ) from exc
 
-        projection_context = f"fetch_evidence_chunks kg_version={kg_version}"
+        return self._project_chunks(
+            records, f"fetch_evidence_chunks kg_version={kg_version}"
+        )
+
+    def _project_chunks(
+        self, records: Sequence[Any], projection_context: str
+    ) -> list[EvidenceChunk]:
+        """把 Neo4j record 投影为 :class:`EvidenceChunk`（两条取数路径共用）。
+
+        投影失败**抛**而不兜底：空片段会让上层误判为「图谱里没有证据」而拒答，
+        比显式报错危险得多（沿用设计要点 5）。
+        """
         chunks: list[EvidenceChunk] = []
         for index, record in enumerate(records):
             try:

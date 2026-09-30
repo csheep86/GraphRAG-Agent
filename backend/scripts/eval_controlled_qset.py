@@ -130,7 +130,6 @@ def diagnose() -> int:
     )
     from app.services.graphs import (  # noqa: PLC0415
         _EVIDENCE_CHUNK_LIMIT,
-        _QUERY_EVIDENCE_CHUNKS_BY_ENTITIES,
         GraphService,
     )
 
@@ -160,35 +159,41 @@ def diagnose() -> int:
             )
             entity_ids = [node.id for node in candidate_nodes]
 
-            reachable = list(
-                session.run(
-                    _QUERY_EVIDENCE_CHUNKS_BY_ENTITIES,
-                    kg_version=QSET_KG_VERSION,
-                    entity_ids=entity_ids,
-                    org_id=ORG_ID,
-                    limit=10**6,  # 不截断：看窗口内**总共**能到多少 chunk
-                )
-            )
-            injected = list(
-                session.run(
-                    _QUERY_EVIDENCE_CHUNKS_BY_ENTITIES,
-                    kg_version=QSET_KG_VERSION,
-                    entity_ids=entity_ids,
-                    org_id=ORG_ID,
-                    limit=_EVIDENCE_CHUNK_LIMIT,
-                )
+            # Sprint 10 批次 C 残留缺口：注入的 20 条同样改由**服务层**算
+            # （原先这里复刻线上 Cypher 的 ``LIMIT 20`` 无序语义；线上改成
+            # 「每文档保底 + 余量 span 优先」后，复刻版给出的诊断就是错的）。
+            # 可达数只做 **count**（不复刻投影逻辑，避免第二处漂移）。
+            reachable_n = session.run(
+                "MATCH (c:Chunk {kg_version:$v})-[:MENTIONS]->"
+                "(e:Entity {kg_version:$v}) WHERE e.id IN $ids "
+                "RETURN count(DISTINCT c) AS n",
+                v=QSET_KG_VERSION,
+                ids=entity_ids,
+            ).single()["n"]
+            reachable_docs = session.run(
+                "MATCH (c:Chunk {kg_version:$v})-[:MENTIONS]->"
+                "(e:Entity {kg_version:$v}) WHERE e.id IN $ids "
+                "OPTIONAL MATCH (d:Document {kg_version:$v})-[:HAS_CHUNK]->(c) "
+                "RETURN count(DISTINCT d) AS n",
+                v=QSET_KG_VERSION,
+                ids=entity_ids,
+            ).single()["n"]
+            injected = GraphService.instance().fetch_evidence_chunks(
+                kg_version=QSET_KG_VERSION,
+                org_id=UUID(ORG_ID),
+                entity_ids=entity_ids,
+                limit=_EVIDENCE_CHUNK_LIMIT,
             )
     finally:
         driver.close()
 
-    def tally(rows: list[Any]) -> dict[str, int]:
+    def tally(chunks: list[Any]) -> dict[str, int]:
         counts: dict[str, int] = {}
-        for item in rows:
-            key = str(item["doc_id"])[:8] if item["doc_id"] else "(未挂文档)"
+        for chunk in chunks:
+            key = str(chunk.doc_id)[:8] if chunk.doc_id else "(未挂文档)"
             counts[key] = counts.get(key, 0) + 1
         return counts
 
-    reachable_counts = tally(reachable)
     injected_counts = tally(injected)
 
     print(f"kg_version        : {QSET_KG_VERSION}")
@@ -199,19 +204,18 @@ def diagnose() -> int:
     print(f"文档总数          : {total_docs}")
     print(f"chunk 总数        : {total_chunks}")
     print(
-        f"窗口内可达 chunk  : {len(reachable)}  "
-        f"(覆盖 {len(reachable) / total_chunks * 100:.1f}% of chunks；"
-        f"仅 {len(reachable_counts)}/{total_docs} 篇文档可达)"
+        f"窗口内可达 chunk  : {reachable_n}  "
+        f"(覆盖 {reachable_n / total_chunks * 100:.1f}% of chunks；"
+        f"仅 {reachable_docs}/{total_docs} 篇文档可达)"
     )
     print(
-        f"实际注入 Prompt   : {len(injected)}  (LIMIT {_EVIDENCE_CHUNK_LIMIT}，无排序/无打分)\n"
+        f"实际注入 Prompt   : {len(injected)}  (LIMIT {_EVIDENCE_CHUNK_LIMIT}，"
+        "每文档保底 + 余量 span 优先——Sprint 10 批次 C 残留缺口)\n"
     )
-    print("按文档（doc_id 前 8 位）：")
-    for doc in sorted(reachable_counts, key=lambda k: -reachable_counts[k]):
-        print(
-            f"  {doc}  可达={reachable_counts[doc]:<5} 注入={injected_counts.get(doc, 0)}"
-        )
-    uncovered = total_docs - len(reachable_counts)
+    print("按文档（doc_id 前 8 位，注入条数）：")
+    for doc in sorted(injected_counts, key=lambda k: -injected_counts[k]):
+        print(f"  {doc}  注入={injected_counts[doc]}")
+    uncovered = total_docs - reachable_docs
     print(
         "\n结论："
         + (
