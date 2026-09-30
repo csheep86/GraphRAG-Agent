@@ -76,7 +76,25 @@ if TYPE_CHECKING:  # 仅类型检查：运行时走函数内延迟导入，避�
 
 #: Sprint 6 批次 B：单次问答注入 Prompt 的证据片段上限。
 #: 与 ``_GRAPH_NODE_LIMIT`` 同源思路——片段是**全文**，过量会直接撑爆 Prompt token。
-_EVIDENCE_CHUNK_LIMIT = 20
+#:
+#: **20 → 32（Sprint 10 批次 E 收尾，实测而非拍脑袋）**：
+#:
+#: 真正的修复在**组内并列排序键**（见 :func:`select_evidence_chunks`），不在条数——
+#: 只抬条数治不了（Q09「张伟」在 40 条的组内排第 19，靠抬保底要注入到 204 条 /
+#: 13 万字符）。改排序键后，12 题依据的全覆盖成本大幅下降。
+#:
+#: 32 这个数也是**实测选的，不是取整**：保底 = ``limit // 文档数``（13 篇），
+#: 余量 = limit − 保底实得。**26 恰好是最差档**——floor=2 ⇒ 13×2=26 ⇒ **余量归零**，
+#: 制度文档（3 条片段）只拿到 2 条 ⇒ Q05/Q06/Q07/Q08 依据全丢（实测覆盖掉到 8/12）；
+#: 20（floor=1 + 余量 7）与 32（floor=2 + 余量 6）都是 12/12。
+#: 取 32 而非更省的 20：20 靠 7 条余量侥幸覆盖制度文档，32 是「保底 2 条 + 仍有余量」，
+#: 换语料时更不易塌。字符 9.6k（20）→ 15.0k（32），远低于 52 条的 30.0k。
+#:
+#: 反面教材（别再改回去）：本架构下 ``question`` **不参与检索**（候选集是结构性
+#: 窗口），依据进不来就**没有任何补救路径**。换语料后文档数会变
+#: （保底 = limit // 文档数），须重跑 ``eval_controlled_qset.py --diagnose`` 与
+#: ``changes/Sprint10.2/probe_e16_doc_order.py`` 复核，别把 32 当普适值。
+_EVIDENCE_CHUNK_LIMIT = 32
 
 #: Sprint 10 批次 C 残留缺口：选片段前先取**轻量索引**（chunk_id / doc_id / mentions / spans，
 #: **不含** ``text``）的上限。与 ``_GRAPH_NODE_LIMIT`` 同思路——索引行很便宜，
@@ -444,7 +462,8 @@ RETURN
   d.id AS doc_id,
   size([(c)-[:MENTIONS]->(:Entity {kg_version: $kg_version}) | 1]) AS mentions,
   size([(c)-[:MENTIONS]->(e2:Entity {kg_version: $kg_version})
-        WHERE e2.char_start IS NOT NULL | 1]) AS spans
+        WHERE e2.char_start IS NOT NULL | 1]) AS spans,
+  coalesce(c.char_start, 0) AS char_start
 LIMIT $index_limit
 """
 
@@ -471,7 +490,7 @@ ORDER BY chunk_id
 
 
 def select_evidence_chunks(
-    rows: Sequence[tuple[str, str | None, int, int]],
+    rows: Sequence[tuple[str, str | None, int, int, int]],
     limit: int,
 ) -> list[str]:
     """**问答该注入哪些证据片段**（Sprint 10 批次 C 残留缺口，五方案实测定案）。
@@ -480,9 +499,20 @@ def select_evidence_chunks(
 
     1. 按 ``doc_id`` 分组，**每篇文档保底** ``limit // 文档数`` 条 —— 不让某一份
        大表（CSV 派生 chunk 占全图 77%）吃满名额；
-    2. 组内按 **MENTIONS 数降序 + chunk_id 升序** —— 信息量大的先上，同输入必同解；
-    3. 保底没用满的名额，优先给**带 span** 的片段（引用能被精确定位到句），
-       其余按 MENTIONS 热度补齐。
+    2. 组内按 **MENTIONS 数降序 + char_start 升序 + chunk_id 升序** ——
+       信息量大的先上；**并列时按文档原始顺序**（Sprint 10 批次 E 定案，
+       见下方"并列退化"）；chunk_id 只作最后一道确定性兜底；
+       3. 保底没用满的名额，优先给**带 span** 的片段（引用能被精确定位到句），
+          其余按 MENTIONS 热度补齐。
+
+    **并列退化（批次 E 实测，这次修的就是它）**：CSV 派生文档的片段
+    ``MENTIONS`` **大量并列**（demo 语料 employees 表 40 条片段全是 1）⇒
+    原先的 ``(-mentions, chunk_id)`` 退化成 **chunk_id 字典序**，等价于**随机抽样**。
+    后果：受控题集 Q09「张伟」的依据恰好是 employees 表首行，却在组内排到第
+    **19/40** ⇒ 想靠抬保底捞它，得把 ``limit`` 抬到 204（全量注入、13 万字符）。
+    改成并列按 ``char_start``（文档原始顺序）后，"每组前 N 条"= 文档开头
+    ⇒ 首行必然在场，26 条即可覆盖 Q09 / Q11 / Q12 三题依据
+    （``probe_e16_doc_order.py`` 离线验证）。
 
     ``doc_id`` 为 ``None`` 的片段（``HAS_CHUNK`` 缺失）**不参与保底**：契约层
     ``Citation`` 要求 ``doc_id`` 是合法 UUID，这类片段本来就会被上层丢弃；
@@ -495,33 +525,36 @@ def select_evidence_chunks(
       热度高的大表会霸榜 ⇒ 保底才是对冲；
     - **每文档固定保底 2 条**：覆盖 11 篇但 docx 只剩 8、span 掉到 0（保底太薄）。
 
-    :param rows: ``(chunk_id, doc_id, mentions, spans)`` 四元组
+    :param rows: ``(chunk_id, doc_id, mentions, spans, char_start)`` 五元组
     :param limit: 片段上限（**不放**大——全文进 Prompt，放大即撑爆 token）
     :returns: 选中的 chunk_id（有序、去重）
     """
     if limit <= 0 or not rows:
         return []
 
-    buckets: dict[str, list[tuple[str, int, int]]] = {}
-    for chunk_id, doc_id, mentions, spans in rows:
+    buckets: dict[str, list[tuple[str, int, int, int]]] = {}
+    for chunk_id, doc_id, mentions, spans, char_start in rows:
         if doc_id is None:
             continue
-        buckets.setdefault(str(doc_id), []).append((chunk_id, mentions, spans))
+        buckets.setdefault(str(doc_id), []).append(
+            (chunk_id, mentions, spans, char_start)
+        )
     for group in buckets.values():
-        group.sort(key=lambda item: (-item[1], item[0]))
+        # 并列（mentions 相同）时按 char_start —— 见 docstring「并列退化」
+        group.sort(key=lambda item: (-item[1], item[3], item[0]))
 
     floor = max(limit // len(buckets), 1) if buckets else limit
-    chosen: list[tuple[str, int, int]] = []
+    chosen: list[tuple[str, int, int, int]] = []
     for _doc in sorted(buckets):
         chosen.extend(buckets[_doc][:floor])
 
     if len(chosen) > limit:
         # 文档数 > 名额（极端情形）：按**热度**截断，宁可少覆盖一篇也别让
         # 每篇只进半条——片段是整段注入的，切半没有意义。
-        chosen.sort(key=lambda item: (-item[1], item[0]))
+        chosen.sort(key=lambda item: (-item[1], item[3], item[0]))
         return [item[0] for item in chosen[:limit]]
 
-    chosen.sort(key=lambda item: (-item[1], item[0]))
+    chosen.sort(key=lambda item: (-item[1], item[3], item[0]))
     if len(chosen) < limit:
         taken = {item[0] for item in chosen}
         filler = sorted(
@@ -529,13 +562,14 @@ def select_evidence_chunks(
             key=lambda r: (
                 0 if r[3] > 0 else 1,  # 带 span 的片段优先（引用可精确定位）
                 -r[2],
+                r[4],  # 并列时同样按文档原始顺序
                 r[0],
             ),
         )
-        for chunk_id, _doc, mentions, spans in filler:
+        for chunk_id, _doc, mentions, spans, char_start in filler:
             if len(chosen) >= limit:
                 break
-            chosen.append((chunk_id, mentions, spans))
+            chosen.append((chunk_id, mentions, spans, char_start))
             taken.add(chunk_id)
     return [item[0] for item in chosen]
 
@@ -1206,6 +1240,7 @@ class GraphService:
                             str(row["doc_id"]) if row["doc_id"] else None,
                             int(row["mentions"] or 0),
                             int(row["spans"] or 0),
+                            int(row["char_start"] or 0),
                         )
                         for row in session.run(
                             _QUERY_EVIDENCE_CHUNK_INDEX,

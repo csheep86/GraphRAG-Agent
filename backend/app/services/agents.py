@@ -926,9 +926,7 @@ _SUPPORT_TOKEN_RE = re.compile(
 )
 
 
-def _answer_fragments(
-    answer: str, chunks: Mapping[str, EvidenceChunk]
-) -> set[str]:
+def _answer_fragments(answer: str, chunks: Mapping[str, EvidenceChunk]) -> set[str]:
     """抽出答案里能与 chunk 原文逐字比对的凭据集合。
 
     两类来源：
