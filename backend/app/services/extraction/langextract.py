@@ -40,6 +40,7 @@ Sprint 9 批次 A（**ADR-0005 §4 / §6 L0**，知识时效）：
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -845,7 +846,9 @@ class LangextractClient:
         raw_chunks = _split_into_chunks(full_md_text, self._max_chars_per_chunk)
         chunks = [
             ExtractedChunk(
-                id=_new_chunk_id(),
+                id=_new_chunk_id(
+                    document_id=document_id, char_start=chunk_start, text=chunk_text
+                ),
                 char_start=chunk_start,
                 char_end=chunk_start + len(chunk_text),
                 text=chunk_text,
@@ -951,12 +954,24 @@ class LangextractClient:
 # ------------------------------------------------------------------------------
 
 
-def _new_chunk_id() -> str:
-    """生成 ``chunk-<hex12>`` 形式的 ``chunk_id``。
+def _new_chunk_id(*, document_id: uuid.UUID, char_start: int, text: str) -> str:
+    """生成 **确定性**的 ``chunk-<hex12>`` 形式 ``chunk_id``。
 
-    前缀 ``chunk-`` 与 ``agents.py`` 的引用前缀校验对齐（``doc-`` 为文档级降级档）。
+    Sprint 10 批次 E 实测（``probe_e3_dup.py``）：原实现用 ``uuid4()`` 随机生成 ⇒
+    同一份文档**每重跑一次 ingest 就多一套 chunk 节点**（写侧 ``MERGE`` 按
+    ``Chunk {id, kg_version}``，id 每次都新 ⇒ 去重失效）。实测制度文档 36 chunks
+    **去重后只剩 11**，重复 25 条，同一段最多写了 4 次 ⇒ 证据注入的 20 个名额
+    被重复正文白白占掉（``probe_e5_q11.py``：20 条里 2 条正文重复）。
+
+    改为按 ``(document_id, char_start, text)`` 取 sha256 前 12 位：
+    同一文档同一段重跑 ⇒ **同一 id** ⇒ 写侧 MERGE 天然幂等。
+    前缀 ``chunk-`` 与 ``agents.py`` 的引用前缀校验对齐（``doc-`` 为文档级降级档）；
+    仍为 12 位 hex，落在 ``_CITATION_ID_PATTERN``（``chunk-[0-9A-Za-z]{1,64}``）内。
     """
-    return f"chunk-{uuid.uuid4().hex[:12]}"
+    digest = hashlib.sha256(f"{document_id}|{char_start}|{text}".encode()).hexdigest()[
+        :12
+    ]
+    return f"chunk-{digest}"
 
 
 def _prompt_version_number(prompt_version: str) -> int:

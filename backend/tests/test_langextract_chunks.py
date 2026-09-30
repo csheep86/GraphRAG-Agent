@@ -57,6 +57,34 @@ def test_chunk_ids_use_contract_prefix_and_are_unique() -> None:
     assert len({chunk.id for chunk in result.chunks}) == len(result.chunks)
 
 
+def test_chunk_id_is_deterministic_so_reingest_is_idempotent() -> None:
+    """同一文档同一段**重跑必须得到同一 chunk_id**（Sprint 10 批次 E）。
+
+    真机教训：id 曾由 ``uuid4()`` 随机生成 ⇒ 同一份制度文档每 ingest 一次就多一套
+    ``:Chunk``（写侧 ``MERGE`` 按 id，去重失效）。实测 230 chunks → 去重后 205，
+    同一段最多写了 4 次，白白吃掉证据注入名额（``probe_e3_dup.py`` / ``probe_e5_q11.py``）。
+    这里把「重跑幂等」钉死：同 (document_id, char_start, text) ⇒ 同 id；
+    换文档 ⇒ 换 id（避免把不同文档的同文段落并成一个节点）。
+    """
+    document_id = uuid4()
+    text = "同一段制度正文。" * 30
+
+    first = _client(max_chars=100).extract_entities_relations(
+        document_id=document_id, full_md_text=text, trace_id=uuid4()
+    )
+    second = _client(max_chars=100).extract_entities_relations(
+        document_id=document_id, full_md_text=text, trace_id=uuid4()
+    )
+    other = _client(max_chars=100).extract_entities_relations(
+        document_id=uuid4(), full_md_text=text, trace_id=uuid4()
+    )
+
+    assert [c.id for c in first.chunks] == [c.id for c in second.chunks], (
+        "同文档重跑 chunk_id 变了 ⇒ 重跑 ingest 会再生成一套重复 :Chunk"
+    )
+    assert [c.id for c in first.chunks] != [c.id for c in other.chunks]
+
+
 def test_chunks_serialized_with_full_field_set() -> None:
     """``chunks.json`` 字段齐全；``page`` 由 A-2 回填前为 ``None``（不伪造 1）。"""
     text = "甲方：北京青云科技有限公司。"

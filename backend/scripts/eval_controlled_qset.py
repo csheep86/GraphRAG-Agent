@@ -10,6 +10,14 @@
 （12 库内 + 2 库外），每题在注释里登记**出处文档与期望答案要点**，便于后续复核。
 冻结口径：`kg_version = v-s71a-fe1c4dc3`（换版基准，语料再变即作废需重出）。
 
+**问题集换版（2026-09-30，v3）**：v2 冻结的 `v-s71a-fe1c4dc3` **在 Neo4j 上已无 chunk**
+（`probe_e0_active.py` 实测：图上只剩 `attendance-demo-v1` 230 chunks 与
+`affiliation-demo-v1` 128 chunks；该版本仅剩 SQLite 一行 `ready` 记录）。
+⇒ v2 题集**全部不同源，直接跑必然全拒答**，会得出「召回坏了」的**假结论**
+（与 v1→v2 同族）。故按当前 active 语料重出 14 题：4 份考勤制度 docx + 9 张考勤 CSV，
+出处均经 `:Chunk` 正文核对（2026-09-30 实测）。
+冻结口径：`kg_version = attendance-demo-v1`。
+
 用法::
 
     uv run python scripts/eval_controlled_qset.py            # 默认 http://127.0.0.1:8002
@@ -49,8 +57,8 @@ ORG_ID = "00000000-0000-4000-8000-000000000001"
 ACTOR_ID = "00000000-0000-4000-8000-0000000000aa"
 
 #: 问题集版本与冻结口径（换版依据见模块 docstring）。
-QSET_VERSION = "v2-2026-09-26"
-QSET_KG_VERSION = "v-s71a-fe1c4dc3"
+QSET_VERSION = "v3-2026-09-30"
+QSET_KG_VERSION = "attendance-demo-v1"
 
 #: (问题, 是否预期拒答)。
 #:
@@ -59,34 +67,39 @@ QSET_KG_VERSION = "v-s71a-fe1c4dc3"
 #: 库外 2 题：验证拒答出口不被误伤（F3 的反面：不该答的别答）——**刻意选语料里完全不存在的
 #: 主体**（库外问若仍带「招商轮船 + 营业收入」这类库内高词频词，会被误召回 ⇒ 拒答判据失真）。
 QUESTIONS: list[tuple[str, bool]] = [
-    # ---- 招商公路：2024 年第一期科技创新公司债募集说明书 ----
-    # 出处：封面要素表 → 期望「不超过人民币 20 亿元（含 20 亿元）」
-    ("招商公路本期债券的发行金额上限是多少？", False),
-    # 出处：封面要素表 → 期望「不超过人民币 50 亿元（含 50 亿元）」
-    ("招商公路本次债券的注册金额是多少？", False),
-    # 出处：封面要素表「增信情况」→ 期望「无（无增信安排）」
-    ("招商公路本期债券是否有增信安排？", False),
-    # 出处：封面要素表「信用评级机构」→ 期望「中诚信国际信用评级有限责任公司」
-    ("招商公路本期债券的信用评级机构是哪家？", False),
-    # 出处：第三节「上市情况」→ 期望「深圳证券交易所」
-    ("招商公路本期债券发行结束后拟申请在哪里上市交易？", False),
-    # ---- 招商蛇口：2024 年第一期公司债募集说明书 ----
-    # 出处：封面要素表「牵头主承销商」→ 期望「招商证券股份有限公司」
-    ("招商蛇口本期债券的牵头主承销商是哪家机构？", False),
-    # 出处：封面要素表「受托管理人」→ 期望「中信证券股份有限公司」
-    ("招商蛇口本期债券的受托管理人是谁？", False),
-    # 出处：封面要素表 → 期望「不超过人民币 50 亿元（含）」
-    ("招商蛇口本期债券的发行金额上限是多少？", False),
-    # 出处：封面要素表 → 期望「主体评级 AAA、债券评级 AAA，评级机构联合资信评估股份有限公司」
-    ("招商蛇口本期债券的主体信用评级结果及评级机构是什么？", False),
-    # 出处：封面要素表「增信措施情况」→ 期望「本期债券无担保」
-    ("招商蛇口本期债券是否提供担保？", False),
-    # ---- 招商轮船：2025 年年度报告 ----
-    # 出处：年报首页「公司代码」→ 期望「601872」
-    ("招商轮船的股票代码是多少？", False),
-    # 出处：重要提示第三条 → 期望「毕马威华振会计师事务所（特殊普通合伙），标准无保留意见」
-    ("招商轮船 2025 年年度报告由哪家会计师事务所审计，出具了什么意见？", False),
+    # ---- 制度 1：《员工考勤管理制度（2026 版）》HR-ATD-2026-001 ----
+    # 出处：第三章 第八条 → 期望「每名员工每月补卡不超过 3 次，超出按事假处理」
+    ("每名员工每月的补卡次数上限是多少？", False),
+    # 出处：第二章 第六条 → 期望「晚于排班上班时间 30 分钟以内记迟到；超过 30 分钟按事假半天」
+    ("迟到是怎么认定的？超过 30 分钟怎么算？", False),
+    # ---- 制度 2：《外勤与出差考勤补充规定》HR-FWA-2026-004 ----
+    # 出处：第一章 第一条 → 期望「因公外出（外勤）或出差期间无法按常规方式打卡的员工」
+    ("外勤与出差考勤补充规定适用于哪些员工？", False),
+    # 出处：第二章 第三条 → 期望「不能；门禁仅覆盖公司自有场所，不得以无门禁记录否定出勤」
+    ("能不能因为没有门禁刷卡记录就认定外勤员工未出勤？", False),
+    # ---- 制度 3：《加班与调休管理办法》HR-OTC-2026-003 ----
+    # 出处：第二章 第四条 → 期望「每月不得超过 36 小时（依据劳动法第四十一条）」
+    ("每月加班时间不得超过多少小时？", False),
+    # 出处：第一章 第二条 → 期望「不认定为加班（须经审批）」
+    ("员工自愿延长在岗时间、未经审批的，算加班吗？", False),
+    # ---- 制度 4：《工时制实施细则》HR-WTS-2026-002 ----
+    # 出处：第三章 岗位适用表 → 期望「不定时工作制（已履行审批）」
+    ("销售经理适用哪种工时制？", False),
+    # 出处：第四章 第十二条 → 期望「核心在岗时段 10:00 至 16:00」
+    ("标准工时制岗位的核心在岗时段是什么时候？", False),
+    # ---- CSV：employees.csv（首行 E001,张伟,售后部,售后工程师,综合计算工时制）----
+    # 出处：employees.csv → 期望「售后部 / 售后工程师」
+    ("张伟在哪个部门、担任什么岗位？", False),
+    # 出处：employees.csv → 期望「综合计算工时制」
+    ("张伟适用哪种工时制？", False),
+    # ---- CSV：leave_requests.csv（首行 LV0001,E004,病假,2026-10-25,2026-10-27,3）----
+    # 出处：leave_requests.csv → 期望「病假，3 天」
+    ("E004 在 2026 年 10 月 25 日请的是什么假，共几天？", False),
+    # ---- CSV：work_orders.csv（首行 SO-2026-0912,E001,武汉光谷希尔顿酒店,武汉光谷）----
+    # 出处：work_orders.csv → 期望「武汉光谷希尔顿酒店（武汉光谷）」
+    ("工单 SO-2026-0912 的处理地点在哪里？", False),
     # ---- 库外问题：预期拒答（refused=true）----
+    # 库外问刻意选语料里**完全不存在**的主体（比亚迪 / 红楼梦）
     ("比亚迪 2025 年新能源汽车销量是多少？", True),
     ("《红楼梦》中贾宝玉的妻子是谁？", True),
 ]
@@ -235,6 +248,11 @@ def main() -> int:
         action="store_true",
         help="只做 ¥0 候选集诊断（复算问答能看到哪些 chunk），不调 LLM",
     )
+    parser.add_argument(
+        "--out",
+        help="把每题完整响应（answer / citations / kg_version）落盘为 JSON，"
+        "供**人工判分**——答对率只能人读，脚本不做关键词判分（会假达标）",
+    )
     args = parser.parse_args()
     if args.diagnose:
         return diagnose()
@@ -243,6 +261,7 @@ def main() -> int:
     cited = 0
     mismatches: list[str] = []
     failures: list[str] = []
+    results: list[dict[str, Any]] = []
 
     print(
         f"base_url={BASE_URL}  questions={len(QUESTIONS)}  "
@@ -287,6 +306,19 @@ def main() -> int:
         )
         print(f"       answer: {str(response.get('answer'))[:120]}")
 
+        results.append(
+            {
+                "index": index,
+                "question": question,
+                "should_refuse": should_refuse,
+                "refused": refused,
+                "confidence": response.get("confidence"),
+                "kg_version": kg_version,
+                "citations": citations,
+                "answer": response.get("answer"),
+            }
+        )
+
     coverage = (cited / answered * 100) if answered else 0.0
     print("\n================ 汇总 ================")
     print(f"总题数          : {len(QUESTIONS)}")
@@ -300,8 +332,18 @@ def main() -> int:
     for line in failures:
         print(f"  - {line}")
 
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\n完整响应已落盘: {args.out}（供人工判分答对率）")
+
     ok = coverage >= 100.0 and not mismatches and not failures
     print("\n结论:", "PASS" if ok else "NOT PASS（仅登记，不在本脚本改 Prompt）")
+    print(
+        "注：脚本只判「引用覆盖率 + 拒答口径」；**答对率需人读 --out 的 answer**，"
+        "不做关键词判分（关键词命中会把答非所问读成达标）"
+    )
     return 0 if ok else 1
 
 
