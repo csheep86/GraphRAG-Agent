@@ -48,8 +48,18 @@ EXPECTED: dict[int, list[str]] = {
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--json",
+        default=str(RESULT_JSON),
+        help="要判分的评测结果（默认去重后那轮；闸门开启那轮传 eval_v3_gate_on.json）",
+    )
+    args = parser.parse_args()
+
     settings = get_settings()
-    results = json.loads(RESULT_JSON.read_text(encoding="utf-8"))
+    results = json.loads(Path(args.json).read_text(encoding="utf-8"))
     driver = GraphDatabase.driver(
         settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
     )

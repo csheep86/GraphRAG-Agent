@@ -25,6 +25,7 @@ from app.services.agents import (
     AgentService,
     AgentUnavailableError,
     _build_citations,
+    _grounded_citations,
     _serialize_chunks,
     _snippet,
     _to_citation,
@@ -368,6 +369,87 @@ def test_to_citation_span_level_offset_is_relative_to_chunk() -> None:
     assert citation is not None
     assert citation.char_offset == 10
     assert citation.char_end == 20
+
+
+def _chunk_with_text(text: str, *, spans: tuple[EntitySpan, ...] = ()) -> EvidenceChunk:
+    """构造带指定正文的片段（闸门判据全靠正文，故单独立一个 helper）。"""
+    return EvidenceChunk(
+        chunk_id=CHUNK_ID,
+        doc_id=DOC_ID,
+        text=text,
+        page=1,
+        char_start=0,
+        char_end=len(text),
+        entity_spans=spans,
+    )
+
+
+def test_grounded_citations_drops_chunk_that_cannot_carry_answer() -> None:
+    """闸门核心：chunk_id 合法，但正文里**没有**答案凭据 ⇒ 丢（Sprint 10 批次 E 决策 A）。
+
+    真机原型：答案说「LV0001 病假」，却挂了一条门禁刷卡记录片段。客户端点开引用
+    看到的是另一段话 ⇒ 比拒答更伤信任。丢空后由调用方走 ``no_grounded_evidence``。
+    """
+    chunk = _chunk_with_text("AC000353,E017,2026-10-01,08:33,18:17,厂区东门")
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+    assert citation is not None
+
+    kept = _grounded_citations(
+        "E004 请的是病假（LV0001）[source: chunk-581e8912827d]",
+        [citation],
+        _index(chunk),
+    )
+
+    assert kept == []
+
+
+def test_grounded_citations_keeps_chunk_carrying_the_answer() -> None:
+    """凭据（单号 / 带量纲数字）逐字出现在正文 ⇒ 保留。"""
+    chunk = _chunk_with_text("LV0001,E004,病假,2026-10-25,2026-10-27,3,approved")
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+    assert citation is not None
+
+    kept = _grounded_citations(
+        "E004 请的是病假（LV0001）[source: chunk-581e8912827d]",
+        [citation],
+        _index(chunk),
+    )
+
+    assert len(kept) == 1
+
+
+def test_grounded_citations_uses_entity_mention_as_fragment() -> None:
+    """凭据不只单号：**实体提及**（``entity_spans``）同样算——只按单号判会漏题。"""
+    chunk = _chunk_with_text(
+        "北京青云科技有限公司的法定代表人为李四。",
+        spans=(EntitySpan(mention="北京青云科技有限公司", char_start=0, char_end=11),),
+    )
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+    assert citation is not None
+
+    kept = _grounded_citations(
+        "法定代表人是李四 [source: chunk-581e8912827d]",
+        [citation],
+        _index(chunk),
+    )
+
+    assert len(kept) == 1
+
+
+def test_grounded_citations_passes_when_no_fragment_to_judge() -> None:
+    """**没有判据就不判**：答案里取不到任何可比对凭据 ⇒ 原样放行。
+
+    反向推定（"没凭据 = 不可信"）会把大量正常答案误杀成拒答，那比漏判更伤。
+    """
+    chunk = _chunk_with_text("这是一段没有任何编号与数字的政策说明。")
+    citation = _to_citation(CHUNK_ID, _index(chunk))
+    assert citation is not None
+
+    kept = _grounded_citations(
+        "本制度适用于全体员工 [source: chunk-581e8912827d]", [citation], _index(chunk)
+    )
+
+    assert len(kept) == 1
 
 
 def test_to_citation_ignores_fuzzy_mention_and_falls_back() -> None:
