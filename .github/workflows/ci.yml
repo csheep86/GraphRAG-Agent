@@ -96,10 +96,36 @@ jobs:
           echo "Prompt 判据基准 = ${base:-HEAD}"
           uv run python scripts/check_seams.py --base "${base:-HEAD}"
 
+      # G-15：补丁（版本号第三位）变更 ⇒ contracts/openapi.yaml 必须**零 diff**。
+      # 与契约漂移门禁（job 3）的分工：那边管"契约与 Pydantic 模型是否一致"，
+      # 本条管"补丁期**根本不许改契约**"——改了模型并同步导出契约，那边会通过，
+      # 而客户插件可能因此失效，只有本条拦得住。
+      # 基准计算与 check_seams 同款；取不到基准 / 非 PATCH 变更时脚本自行判为
+      # "不适用"并退 0，不把流水线变成噪音（但会打印原因，不沉默）。
+      - name: 补丁期契约冻结（G-15）
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="${BASE:-}"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git rev-parse --verify --quiet HEAD~1 || true)"
+          fi
+          echo "G-15 基准 = ${base:-HEAD}"
+          uv run python scripts/check_patch_contract_freeze.py --base "${base:-HEAD}"
+
       # `-rs`：把 skip **原因**打进日志。只用 `-q` 时，"本地 3 skip / CI 5 skip"
       # 这种差异在日志里完全无痕——依赖未入库产物的用例会悄悄地一次都没跑过。
       - name: Pytest
         run: uv run pytest -q -rs
+
+      # 护栏状态快照：**只打日志，不做门禁**（它恒退 0，门禁由 pytest 承担）。
+      #
+      # 为什么要多这一步：护栏一大半是 xfail 骨架，**CI 全绿 ≠ 它们在拦**。
+      # 若只在本地看，很容易出现「文档标 ✅ / 实际没在拦」的认知漂移。
+      # 把三档状态写进每次提交的日志，谁想确认都不必回忆。
+      - name: 护栏状态快照（仅报告，非门禁）
+        run: uv run python scripts/check_startup_readiness.py
 
       # 依赖本机产物 / 真机连接的用例在 CI 上必然 skip；单独跑一遍是为了让这件事
       # **写在日志里**而不是留在沉默里。数量变化（不再是全部 skip）说明环境变了。

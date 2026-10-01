@@ -1,0 +1,68 @@
+{
+  "classes": {
+    "app.services.auth.base.AuthProvider": {
+      "authenticate": {
+        "params": [
+          {
+            "annotation": "Settings",
+            "default": null,
+            "kind": "KEYWORD_ONLY",
+            "name": "settings"
+          },
+          {
+            "annotation": "str | None",
+            "default": null,
+            "kind": "KEYWORD_ONLY",
+            "name": "bearer_token"
+          },
+          {
+            "annotation": "str | None",
+            "default": null,
+            "kind": "KEYWORD_ONLY",
+            "name": "org_id_header"
+          },
+          {
+            "annotation": "str | None",
+            "default": null,
+            "kind": "KEYWORD_ONLY",
+            "name": "actor_id_header"
+          }
+        ],
+        "return": "Identity | None"
+      }
+    },
+    "app.services.events.base.EventSink": {
+      "emit": {
+        "params": [
+          {
+            "annotation": "DomainEvent",
+            "default": null,
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "event"
+          }
+        ],
+        "return": "None"
+      }
+    },
+    "app.services.export.base.ExportSink": {
+      "render": {
+        "params": [
+          {
+            "annotation": "ExportPayload",
+            "default": null,
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "payload"
+          },
+          {
+            "annotation": "str",
+            "default": null,
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "fmt"
+          }
+        ],
+        "return": "ExportResult"
+      }
+    }
+  },
+  "version": 1
+}
