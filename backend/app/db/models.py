@@ -25,6 +25,10 @@ Sprint 9.5 批次 A2 新增 `ontology_schemas` 表（M6 §4.1 的**最小子集*
 ``create_all`` 保留为 dev / 测试兜底，两者等价由
 ``tests/test_migrations_baseline.py`` 机械钉死（**加表 / 加列必须生成新迁移**，
 否则该测试必红）。
+
+P2 批次 A（2026-10-01）新增 `users` 表（M5 §4.1 / DR-B13）：它是 SSO（DR-D9）/
+RBAC（DR-B9）/ License 席位（DR-C1）三者的**共同前置**，按 RK-1 裁决前置到 P2 第一步。
+本批**只落表与迁移**：当前**没有任何代码读取它**（接线归 P2-B / P2-C）。
 """
 
 from __future__ import annotations
@@ -51,6 +55,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 DOCUMENT_STATUS_VALUES = ("pending", "processing", "completed", "failed")
 KG_VERSION_STATUS_VALUES = ("pending", "building", "ready", "failed")
+#: `users.status` 的两档（逐字取 `specs/m5-permission-audit.md` §4.1，无第三态）
+USER_STATUS_VALUES = ("active", "disabled")
 
 
 def utcnow() -> datetime:
@@ -732,6 +738,53 @@ class OntologySchema(Base):
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+class User(Base):
+    """`users` 表（M5 §4.1：账号主体）—— DR-B13 / G-18。
+
+    字段**逐字**照 `specs/m5-permission-audit.md` §4.1 的 7 列；
+    类型按本仓惯例收敛（spec 的 TEXT → ``String(n)``、主键 ``Uuid``），
+    与 ADR-0003 §3.1 差异表 **A9**（把 spec 的 ``BIGSERIAL`` 改 Uuid）同源：
+    **先例已裁决过的收敛方式，这里沿用，不再重开讨论**。
+
+    ⚠️ 三条纪律，别因为「终于有 users 了」就顺手破：
+
+    1. **本批 0 消费者** —— 没有登录、没有 RBAC、没有 License 读它。
+       造一个 CRUD / 端点就是「顺手预留」（CODEBUDDY「预留必须有登记」要拦的形态）；
+    2. **`password_hash` 是敏感字段**（M5 §3 验收 3 / §4.5）：**不进**任何日志、
+       **不进** `contracts/openapi.yaml`、不出现在任何 Schema 响应体里；
+    3. **不动 `LocalAuthProvider` 语义** —— 现有 dev token / dev header 是全部测试
+       的身份来源，接线归 P2-C（接缝 1 第二实现）。
+    """
+
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'disabled')",
+            name="ck_users_status",
+        ),
+        # spec §4.1：`username` unique（登录名唯一）
+        UniqueConstraint("username", name="uq_users_username"),
+        # ADR-0003 §3.1：复合索引必须 org_id 打头
+        Index("ix_users_org_id_status", "org_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    #: 登录名（spec §4.1 标 unique）
+    username: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: 口令哈希（bcrypt / argon2）——**敏感**：严禁落日志 / 进契约
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: 租户隔离键（ADR-0003）
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 账号状态（CheckConstraint 限两档）
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
