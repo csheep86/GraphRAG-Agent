@@ -7,8 +7,10 @@
   以及行为围栏——**移除 license 文件 ⇒ 受保护端点 403 `LICENSE_MISSING` 且拒绝落审计**。
 - **G-24**（DR-B9 RBAC 三粒度）：**角色 × 资源 × 操作**矩阵 + 端点强制校验。
 
-> ⚠️ **当前两者均零代码** ⇒ 断言必然失败 ⇒ XFAIL。ADR-0006（License）尚未落地、
-> RBAC 又以前置的 `users` 表（DR-B13 / G-18）为先决条件。
+> ⚠️ **当前两者主体仍零代码** ⇒ 断言必然失败 ⇒ XFAIL。ADR-0006（License）尚未落地、
+> RBAC 的 `roles` / `user_roles` 与端点强制校验均未实现。
+> 📌 **2026-10-01（P2-A）更新**：RBAC 的前置 `users` 表**已建**（DR-B13 / G-18 已转正），
+> 它**不再是**本文件的阻塞项——但"前置解除"不等于"RBAC 开始存在"。
 > 骨架先就位的价值：把**验收判据钉死**，避免开工时把"写了点东西"当成"做完了"。
 """
 
@@ -137,7 +139,10 @@ def test_g23_missing_license_blocks_requests() -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason=("G-24 / DR-B9：RBAC 未落地，且前置的 `users` 表（DR-B13 / G-18）尚未建立"),
+    reason=(
+        "G-24 / DR-B9：RBAC 未落地（缺角色 × 资源 × 操作矩阵 + 端点强制校验）；"
+        "前置 `users` 表已于 P2-A 建好（2026-10-01），本条卡的纯粹是 RBAC 本体"
+    ),
 )
 def test_g24_rbac_three_granularity_matrix() -> None:
     """角色 × 资源 × 操作 三粒度矩阵必须**存在且端点强制校验**。

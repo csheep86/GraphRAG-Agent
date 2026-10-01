@@ -81,6 +81,17 @@ SOURCE_PATHS: dict[str, str] = {
     "G-23": "backend/app/services/license",
 }
 
+#: **范围边界提示**：G 编号 -> 它**不覆盖**的部分。
+#: 为什么要有这张表：护栏转绿只代表"它验的那件事成立"，但护栏名字听起来往往
+#: 比它实际验的更大——G-18 绿灯会被读成"账号体系做完了"，而它只验"表存在且形状对"。
+#: **文档里写了没人翻**，所以把边界塞进这份每次开工都要看的报告里。
+SCOPE_CAVEATS: dict[str, str] = {
+    "G-18": (
+        "⚠️ 只验「users 表存在且形状正确」——它当前 0 消费者；"
+        "SSO / RBAC / License 分属 P2-C / P2-B / P4，不得因本条绿灯宣称完成"
+    ),
+}
+
 
 def _dotted_name(node: ast.expr) -> str:
     """把 `pytest.mark.xfail` 这样的属性链还原成字符串。"""
@@ -364,6 +375,9 @@ def main() -> int:
             if missing and not _exists(missing):
                 tip = f"{warn_} 恒绿失效：{missing}/ 不存在 {imply_} 转正前先看这里"
                 print(f"          {_safe(tip)}")
+            caveat = SCOPE_CAVEATS.get(gid)
+            if caveat:
+                print(f"          {_safe(caveat)}")
             for item in items:
                 # 逐条标状态——「部分生效」那组必须看得出到底哪条在拦、哪条躺平
                 mark = susp_ if item["suspended"] else ok_

@@ -1,8 +1,13 @@
 """护栏测试：G-8 / G-9 / G-10 / G-17 / G-18。
 
 **2026-10-01（P1-C）状态更新**：随测试库切到 PostgreSQL，**G-8 与 G-9（PG 侧 +
-``audit_log`` 部分）已由 xfail 骨架转正常驻门禁**；仍挂起的只剩
-G-10（T2 并发，须先有 RLS，归 P3）与 G-18（``users`` 表，归 P2）。
+``audit_log`` 部分）已由 xfail 骨架转正常驻门禁**。
+
+**2026-10-01（P2-A）再更新**：``users`` 表已建，**G-18 转正常驻门禁**（判据同时
+从「表存在」加强为「列集合 = spec §4.1 + ``org_id`` 打头索引 + ``username`` 唯一」）。
+⚠️ 它**只**解除三条线的**前置阻塞**：本表当前 **0 消费者**，
+RBAC 归 P2-B、SSO 归 P2-C、License 归 P4，**不得**因本条转正宣称账号体系已完成。
+本文件仍挂起的只剩 **G-10**（T2 并发，须先有 RLS，归 P3）。
 真实状态一律以 ``check_startup_readiness.py`` 的输出为准，别只看本文注释。
 
 对应 ``docs/delivery-requirements-and-guardrails.md`` §2.2。
@@ -22,7 +27,9 @@ G-10（T2 并发，须先有 RLS，归 P3）与 G-18（``users`` 表，归 P2）
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,6 +37,10 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from app.core.config import Settings, get_settings
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = BACKEND_ROOT.parent
+APP_ROOT = BACKEND_ROOT / "app"
 
 #: **DR-B2 锁定 PostgreSQL 16.x**。光判「是 PG」不够——CI 哪天被换成 15 / 17
 #: 也照样绿，方言债就是从这种"看起来一样"里重新渗进来的（RK-2 的成因）。
@@ -130,21 +141,130 @@ def test_g17_default_is_fail_closed() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# G-18：users 表前置（P2 开工闸门）
+# G-18：users 表前置 —— ✅ 已转正（2026-10-01，P2-A）
 # --------------------------------------------------------------------------- #
 
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="G-18 / DR-B13：users 表未建，SSO(DR-D9) / RBAC(DR-B9) / License(DR-C1) 三条线全部阻塞",
+#: `specs/m5-permission-audit.md` §4.1 的 7 列（**不多不少**）
+USER_COLUMNS = frozenset(
+    {
+        "id",
+        "username",
+        "password_hash",
+        "org_id",
+        "status",
+        "created_at",
+        "updated_at",
+    }
 )
+
+
 def test_g18_users_table_exists() -> None:
+    """✅ **已转正（2026-10-01，P2-A）**：`users` 表已建，本例由 XPASS 转常驻门禁。
+
+    转正的同时**把判据加强**（与 P1-C 给 G-8 补 16.x 断言同类动作：只摘 xfail 不算
+    转正，判据太弱等于假防御）。原判据只看「有没有一张叫 users 的表」——删掉
+    `org_id`、改名 `username`，它照样绿。现判四条：
+
+    1. 表存在；
+    2. **列集合逐字等于** `specs/m5-permission-audit.md` §4.1 的 7 列（不多不少）；
+    3. 存在 **ADR-0003 §3.1 要求的 `org_id` 打头索引**（RLS 策略的性能前提）；
+    4. `username` 有唯一约束（登录名不允许撞车）。
+
+    ⚠️ **转正 ≠ 账号体系已完成**：本表当前 **0 消费者**（无登录 / 无 RBAC / 无 License），
+    它只是这三条线的**共同前置**。接线分属 P2-B（RBAC）/ P2-C（SSO）/ P4（License）。
+    """
+    from sqlalchemy import UniqueConstraint
+
     from app.db.models import Base
 
     assert "users" in Base.metadata.tables, (
         "users 表不存在。它是 DR-D9(SSO) / DR-B9(RBAC) / DR-C1(License 席位) "
         "三者的共同前置，须前置到 P2 第一步。"
     )
+    users = Base.metadata.tables["users"]
+
+    columns = {column.name for column in users.columns}
+    assert columns == set(USER_COLUMNS), (
+        "users 的列必须逐字等于 specs/m5-permission-audit.md §4.1 的 7 列："
+        f"多 {sorted(columns - set(USER_COLUMNS))}，"
+        f"缺 {sorted(set(USER_COLUMNS) - columns)}"
+    )
+
+    leading_columns = {next(iter(index.columns.keys())) for index in users.indexes}
+    assert "org_id" in leading_columns, (
+        "users 缺少 org_id 打头的索引（ADR-0003 §3.1 第 1 条）："
+        f"现有索引首列为 {sorted(leading_columns)}"
+    )
+
+    uniques = {
+        frozenset(column.name for column in constraint.columns)
+        for constraint in users.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    assert frozenset({"username"}) in uniques, (
+        "users.username 缺少唯一约束（spec §4.1 标注 unique）："
+        f"现有唯一约束为 {sorted(sorted(cols) for cols in uniques)}"
+    )
+
+
+#: `users` 表的**消费者登记**——RK-4「表已建 ≠ 账号体系落地」的机械处置。
+#: **空集合 = 表已建、无人读它**。P2-B（RBAC）/ P2-C（SSO）/ P4（License）接线时，
+#: 把引用 `User` 的模块**登记进来**——登记动作本身就是那批的开工闸门。
+USERS_CONSUMER_MODULES: frozenset[str] = frozenset()
+
+
+def test_g18_users_consumers_are_registered() -> None:
+    """把「G-18 转正 ≠ 账号体系落地」这条边界**钉成机械判据**。
+
+    **为什么不能只写在文档里**：proposal / 基线文档都写了这条边界，但三个月后没人会翻，
+    而 G-18 的绿灯**看起来**就像"用户体系做完了"。所以这里卡一道：
+    `app/` 下任何引用 `User` 模型的地方，都必须**先**登记进
+    :data:`USERS_CONSUMER_MODULES` 才允许存在——和 CODEBUDDY.md
+    「预留必须有登记」是同一条纪律，只是这里拦的是**引用**而不是字段。
+
+    登记时必须**同时**交代四件事，否则不许放行：
+
+    1. 它服务哪条 DR（DR-B9 RBAC / DR-D9 SSO / DR-C1 License 席位）；
+    2. 需要的列（外部身份 / 席位关联）**随该批自己的迁移**补，不在 P2-A 预置；
+    3. 接缝 1 若因此新增实现，先扩写 ADR-0004 §2.1 登记行再改 `get_auth_provider()`；
+    4. 对应护栏（G-24 / 接缝门禁）同步转正——**没转正就仍不得宣称完成**。
+
+    ⚠️ 本条**不**拦"表还没人用"：那正是本批的预期状态（0 消费者）。它拦的是
+    "有人开始用了，却没登记、没交代归属" —— 那才是悄悄把半成品说成完工的路径。
+    """
+    hits = sorted(
+        path.relative_to(APP_ROOT).as_posix()
+        for path in APP_ROOT.rglob("*.py")
+        if path.name != "models.py"  # models.py 是定义处，不是消费者
+        and re.search(r"\bUser\b", path.read_text(encoding="utf-8"))
+    )
+    unregistered = [module for module in hits if module not in USERS_CONSUMER_MODULES]
+    assert not unregistered, (
+        "以下模块引用了 User 模型但**未登记**："
+        f"{unregistered} ⇒ 请登记进 USERS_CONSUMER_MODULES 并同时交代："
+        "① 归属哪条 DR；② 所需列随本批迁移补；③ 接缝 1 是否需扩写 ADR-0004 §2.1；"
+        "④ 对应护栏是否同步转正"
+    )
+    # 反向：登记了却查不到引用 ⇒ 登记成僵尸，同样不许
+    stale = sorted(USERS_CONSUMER_MODULES - set(hits))
+    assert not stale, (
+        f"USERS_CONSUMER_MODULES 里登记了 {stale}，但代码里已无对应引用 ⇒ 登记必须随代码走"
+    )
+
+
+def test_g18_password_hash_is_not_in_public_contract() -> None:
+    """`password_hash` 是敏感字段（M5 §3 验收 3 / §4.5）：**不得**出现在契约里。
+
+    `users` 本批不对外暴露任何端点 ⇒ 契约里既不该有 users schema，也不该出现
+    `password_hash` 字样。这条防的是「日后加 /users 端点时顺手把哈希吐出去」。
+    """
+    from app.db.models import Base
+
+    contract = (REPO_ROOT / "contracts" / "openapi.yaml").read_text(encoding="utf-8")
+    assert "password_hash" not in contract, (
+        "password_hash 出现在 contracts/openapi.yaml —— 敏感字段不得进契约"
+    )
+    assert "users" in Base.metadata.tables  # 本条随 G-18 一起生效，避免表被删后静默恒绿
 
 
 # --------------------------------------------------------------------------- #
