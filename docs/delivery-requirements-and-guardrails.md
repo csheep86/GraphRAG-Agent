@@ -169,9 +169,9 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **G-9** | **T1 跨 org 越权** | DR-B6 / **DR-B11** | A org 查 B org 的 `documents` / `audit_log` / `qa_logs` / `storage_key` → 空或 403；**图谱侧**：跨 org 子图 / Cypher 直读 ⇒ **403 `KG_TENANT_LEAK`** | ✅ **PG 侧（`audit_log`）已转正（2026-10-01，P1-C）**：测试库切到 PG 后本例由 `XPASS(strict)` 转常驻门禁（留在 xfail 里 CI 会一直红）。⚠️ **不许外推**：这**只**证明「**应用层 `org_id` 过滤**在 PG 上拦住了跨 org 读」——即 ADR-0003 §3.7 的**常设防线**；**不代表** RLS 已落地（DR-B4 仍归 P3）。仍待 P3 补齐：`documents` / `qa_logs` / `storage_key` 与**图谱侧**。CI 必过，**禁止**标 `local_only`。骨架内置的 `_require_postgres()` 保留——非 PG 直接 fail，**避免"在 SQLite 上跑通的隔离"被误当成证据**。⚠️ **图谱侧仍为集成测试**：CI 无 Neo4j 服务 ⇒ 图谱侧用例须起 Neo4j 容器才能真实断言；**在 CI 起 Neo4j 之前，该部分不得声称"已由 CI 验证"**，须独立环境留证 |
 | **G-10** | **T2 并发串租户** | DR-B7 / DR-B8 | 多 org 并发请求，每个请求只看到自己 org 的数据；**须覆盖连接池复用路径** | 🟡 **骨架已就位**（2026-10-01，`test_g10_t2_concurrent_requests_do_not_cross_tenants`，xfail 挂起）：**24 请求 / 8 并发**交替租户，逼连接池**真复用**。CI 必过，**禁止**标 `local_only`。**最易产出静默跨租户泄露的组合**——`SET LOCAL` 误写成会话级 `SET` **只有并发才测得出来** |
 | **G-11** | **接缝签名快照** | DR-C2 / PRD H16 / **§7 版本语义** | 提取八个接缝公开接口签名（`module.Class.method` → 参数名 / 默认值 / 注解）存 JSON；**打 PATCH / MINOR ⇒ 快照逐字相同**；仅 bump **MAJOR** 允许改且须注明 `breaking`。**冻结集排除尚未实现的接缝**（如接缝 9 `LicenseProvider` 当前无实现）——实现后并入，避免给一个尚不存在的接口冻结签名 | ✅ **已建**（2026-10-01）：`backend/scripts/extract_seam_signatures.py`（`--check` / `--update`）+ 快照 `backend/tests/snapshots/seam_signatures.json` + `tests/test_seam_signature_snapshot.py`。冻结集 = **三个已存在**的接口（`AuthProvider` / `EventSink` / `ExportSink`）；接缝 2 `IngestionSource`（0 实现）与接缝 9 `LicenseProvider`（未落地）**排除**，实现后并入（并入本身即 MAJOR 级变更）。兑现"**V2.0 才需重做插件**"的商业承诺 |
-| **G-12** | **variant 矩阵构建** | DR-A1 / DR-A3 | 一次基座改动 ⇒ CI 遍历**全部** `deploy/variants/*.yaml` 构建成功 | 🟡 **骨架已就位**（2026-10-01，`tests/test_guardrails_delivery.py::test_g12_variant_matrix_builds`，xfail 挂起）：`deploy/variants/` 当前 **0 个**变体。骨架阶段只判「yaml 可解析 + 顶层是映射」；**真实镜像构建待 deploy 侧构建流程落地后升级**——在那之前**不得**宣称已验证"构建成功"。**启用条件写死**：variant ≥ 2 即必须转常驻门禁 |
+| **G-12** | **variant 矩阵构建** | DR-A1 / DR-A3 | 一次基座改动 ⇒ CI 遍历**全部** `deploy/variants/*.yaml` 构建成功 | 🟡 **骨架已就位**（2026-10-01，`tests/test_guardrails_delivery.py::test_g12_variant_matrix_builds`，xfail 挂起）：`deploy/variants/` 当前 **0 个**变体。骨架阶段只判「yaml 可解析 + 顶层是映射」；**真实镜像构建待 deploy 侧构建流程落地后升级**——在那之前**不得**宣称已验证"构建成功"。**启用条件写死**：variant ≥ 2 即必须转常驻门禁。**🔒 GA 硬门槛（零缺口，2026-10-01）**：不再允许「0 客户 ⇒ 标不适用」，变体来源 = **demo（内部演示）+ default（基线）两个真实部署形态**（**不许**为凑数捏客户、**不许**放宽成 ≥1）；绿灯**只**代表矩阵构建机制可跑，**不代表**多客户交付已验证 |
 | **G-13** | **插件契约片段校验** | DR-A4 | 每个 `contracts/plugins/<id>.yaml` 单独过 `export_openapi.py --check` | ❌ **随 DR-A4 作废（触发式）**——无 B 类插件即无片段可校验 |
-| **G-14** | **基座契约纯净性** | PRD H15 | 断言 `contracts/openapi.yaml` 中**无任何客户专属字段**（不得出现客户名 / 插件 id / 客户定制端点） | 🟡 **部分就位**（2026-10-01，`test_g14_base_contract_has_no_customer_specific_fields`）：断言基座契约不含客户标识（黑名单取自 `deploy/variants/*.yaml`）。⚠️ **当前黑名单为空 ⇒ 该条恒绿**，故**另立** `test_g14_customer_token_source_exists`（xfail 挂起）专守"来源为空"——防止整条退化成"从没生效过"（G-2 同款教训）。变体目录建立后自动生效 |
+| **G-14** | **基座契约纯净性** | PRD H15 | 断言 `contracts/openapi.yaml` 中**无任何客户专属字段**（不得出现客户名 / 插件 id / 客户定制端点） | 🟡 **部分就位**（2026-10-01，`test_g14_base_contract_has_no_customer_specific_fields`）：断言基座契约不含客户标识（黑名单取自 `deploy/variants/*.yaml`）。⚠️ **当前黑名单为空 ⇒ 该条恒绿**，故**另立** `test_g14_customer_token_source_exists`（xfail 挂起）专守"来源为空"——防止整条退化成"从没生效过"（G-2 同款教训）。变体目录建立后自动生效。**🔒 GA 硬门槛（零缺口）**：恒绿失效不得带到正式版 ⇒ **P2.5 由「推迟」改为「GA 必做」**，须先产出第 1 个真插件 |
 | **G-15** | **补丁期契约冻结** | DR-C2 / PRD H16 | 版本号第三位变更的 PR 中，`contracts/openapi.yaml` **零 diff** | ✅ **已建**（2026-10-01）：`scripts/check_patch_contract_freeze.py` + `tests/test_patch_contract_freeze.py`，**已接入 `ci.yml` backend job**。判据：版本只 bump **PATCH** ⇒ `contracts/openapi.yaml` **零 diff**。不适用时（非 PATCH / 取不到基准）退 0 **但打印原因**，不沉默。⚠️ **与 G-4 的分工**：G-4 管"契约与 Pydantic 模型一致"，本条管"**补丁期根本不许改契约**"——改了模型并同步导出契约，G-4 会通过而客户插件已失效，只有本条拦得住 |
 | **G-16** | **文档登记门禁** | 全部 | 新增文档必须登记到 PRD 附录 C.0；新增接缝实现必须先扩写 ADR-0004 §2.1 | 🟡 部分（接缝侧由 G-2 已拦；文档登记侧无机械判据） |
 | **G-17** | 🆕 **fail-open 逃生阀围栏** | **DR-B12** | 断言生产配置 `agent_fail_closed != False`；若客户侧确需置 `False`，须**显式登记 + 告知客户 + 落审计**（与信创降级 DR-B10 同级别处理） | ✅ **已建**（2026-10-01）：`config.py::_guard_agent_fail_open` + `tests/test_guardrails.py` 三条用例 + `.env.example` 登记。**设计要点：拦的是「无声」**——默认禁止；客户侧确需时显式置 `ALLOW_AGENT_FAIL_OPEN=true` 即可破例（破例仍须完成登记/告知/审计三项）。**理由**：`agent_fail_closed=False` 会让隔离降级为 fail-open，这是全系统**唯一一个可配置关闭租户隔离**的开关——没有它，ADR-0003 §3.7「常设防线、不设移除条件」会被一个配置项绕过 |
@@ -179,7 +179,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **G-19** | 🆕 **compose 版本化镜像** | **DR-A6** | 断言 `deploy/docker-compose.yml` 每个服务都声明 `image:` 且 tag **非 `latest`** | 🟡 **骨架已就位**（2026-10-01，`test_g19_compose_uses_versioned_images`，xfail 挂起）。**实测**：`backend` / `frontend` 仍为 `build:` 且**无 `image:`**。**理由**：DR-A6 是 DR-A7 / DR-C2 的**唯一前提**（§5 依赖 1）——没有版本化镜像就没有"补丁包"，而这条此前**零护栏** |
 | **G-20** | 🆕 **PG 就位** | **DR-B1** | 断言 `database_url` **默认值**以 `postgresql` 开头，且 `deploy/docker-compose.yml` 含**固定 tag** 的 PG 服务 | 🟡 **骨架已就位**（2026-10-01，`test_g20_postgres_is_in_place`，xfail 挂起）。**实测**：`config.py` 默认仍 `sqlite:///./dev.db`；compose **无 PG 服务**（仅注释掉的 `pg_data:` 占位） |
 | **G-21** | 🆕 **清除 SQLite 兜底** | **DR-B3** | 四判据：`session.py` 无 `check_same_thread` 方言特判 / `database_url` 默认非 sqlite / `.env.example` 非 sqlite / `app/db/__init__.py` 无"兜底"口径 | 🟡 **骨架已就位**（`test_g21_no_sqlite_fallback_in_code`，xfail 挂起）：**实测命中 4 处**（已逐条列进失败输出，照单清理即可）。另配 `test_g21_production_sqlite_guard_still_present` **反向守卫（始终通过）**——清理时极易把 `_guard_production_sqlite` 当成"SQLite 残留"一并误删，那条是**最后的底线** |
-| **G-22** | 🆕 **插件规范校验** | **DR-A2** | `plugins/<id>/plugin.yaml` 必含最小字段集 `id` / `version` / `entry_point` / `seam` / `base_version` | 🟡 **部分就位**（2026-10-01）：主断言当前**恒绿**（`plugins/` 不存在）⇒ 按 **R-9** 另立 `test_g22_plugin_source_exists` 守卫并挂起。`seam` 是否属八接缝由 **R-1 / `check_seams.py`** 把关，此处不重复实现 |
+| **G-22** | 🆕 **插件规范校验** | **DR-A2** | `plugins/<id>/plugin.yaml` 必含最小字段集 `id` / `version` / `entry_point` / `seam` / `base_version` | 🟡 **部分就位**（2026-10-01）：主断言当前**恒绿**（`plugins/` 不存在）⇒ 按 **R-9** 另立 `test_g22_plugin_source_exists` 守卫并挂起。`seam` 是否属八接缝由 **R-1 / `check_seams.py`** 把关，此处不重复实现。**🔒 GA 硬门槛（零缺口）**：同 G-14 —— `plugins/` 必须有**真插件**（P2.5 由推迟改必做），空壳不算 |
 | **G-23** | 🆕 **License 子系统专项** | **DR-C1** | 静态侧：六项资产齐备（`licenses` 表 / `LicenseProvider` / **纯 ASGI** `LicenseMiddleware` / 6 个 `LICENSE_*` 契约码 / `GET /license/status` / `license-cli fingerprint`）；行为侧：移除 license ⇒ 受保护端点 **403 `LICENSE_MISSING`** 且**拒绝落审计** | 🟡 **骨架已就位**（`test_g23_license_assets_exist` + `test_g23_missing_license_blocks_requests`，均 xfail 挂起）。**实测**：ADR-0006 零代码。"拒绝落审计"是硬要求——否则客户到期打不开系统时，我们拿不出证据区分"License 到期"与"系统故障" |
 | **G-24** | 🆕 **RBAC 三粒度矩阵** | **DR-B9** | **角色 × 资源 × 操作**矩阵存在，且路由层有**强制校验入口**（依赖 / 中间件） | 🟡 **骨架已就位**（`test_g24_rbac_three_granularity_matrix`，xfail 挂起）。**实测**：RBAC 未落地，且前置 `users` 表不存在（DR-B13 / G-18）。**判据要点**：只建角色表不算 RBAC——**端点不强制校验**的话，权限只是数据库里的一列装饰 |
 
@@ -286,6 +286,22 @@ cd backend && uv run python scripts/check_startup_readiness.py
      `users.id` 的外键——演示库已有真实数据，补 FK 属不可逆清洗；待 P2-C 首次真实账号链路一并处理。
 - 📌 **2026-10-01（P2-A）不许外推**：**G-18 转正 ≠ 账号体系落地**。`users` 表当前 **0 消费者**
   （无登录 / 无 RBAC / 无 License），三条线的终端归属仍是 **P2-C（SSO）/ P2-B（RBAC）/ P4（License）**。
+- 📌 **2026-10-01 裁决 · 「零缺口」发布口径（用户拍板：不做带缺口的正式版）**：
+  **正式版（GA）门槛 = `check_startup_readiness.py` 里所有 G 编号进 🟢**，🟠 / 🟡 一条都不放行。
+  原「研发阶段无客户 ⇒ 某些项可标不适用、带缺口发布」的方案**作废**。由此，以下 5 项从
+  「可推迟 / 可留证了事」升格为 **GA 前必须清零**，且**每项都规定了合规的清零方式**
+  （**不许靠凑数把护栏刷绿**——那比留缺口更糟，因为它制造虚假安全感，违反 **R-9**）：
+
+  | 项 | 清零方式（GA 前必做） | 不得怎样 |
+  |---|---|---|
+  | **G-12**（variant ≥ 2） | `deploy/variants/` 落 **demo（内部演示）+ default（基线）** 两个**真实部署形态** | ❌ 为凑数捏造第二个客户；❌ 把启用条件放宽成 ≥1（等于拆护栏） |
+  | **G-14 / G-22**（恒绿失效） | **P2.5 由「推迟」改「GA 必做」**：`plugins/` 产出**第 1 个真插件**（现有能力插件化） | ❌ 为转护栏而造空壳插件 |
+  | **图谱侧隔离**（G-9 含图谱） | **给 `ci.yml` 的 backend job 加 `neo4j` service**（现只有 `postgres`）⇒ 由「独立环境留证」升格为**真 CI 必过** | ❌ 继续以「CI 无 Neo4j」为由停在留证，却宣称已验证 |
+  | **C3 单位成本 + 安装验收签署**（DR-D10 / E2 / E3 / E4） | **内部当「第一个客户」完整跑一遍**：`deployment-spec.md` §10 的 10 项清单（脚本化）+ 恢复演练 + 升级回滚，独立环境留证 | ❌ 事后把**内部演练**当作「已客户现场验收」对外表述 |
+  | **SSO / AD 真机**（DR-D9） | **起自建 IdP 做真机验证**：OIDC 用 Keycloak / Dex；**AD 起 Samba AD DC 容器**做 LDAP 绑定 | ❌ 以 mock 跑通宣称完成（研发阶段无真实 IdP 不是借口） |
+
+  ⚠️ **两条伴随纪律**：① G-12 绿灯**只**代表「矩阵构建机制可跑」，**不代表**多客户交付已验证——
+  该限定必须写进 release notes；② 内部演练的留证文件必须**显式标注「内部演练，非客户现场验收」**。
 
 **必须承认的依赖关系**（影响重排）：
 

@@ -4,7 +4,13 @@
 > 每批收尾都要跑：`uv run python scripts/check_startup_readiness.py`，确认对应护栏**真的从「挂起」变「已生效」**。
 > 只删 xfail、测试没真通过 —— **不算转正**（proposal 所引行动指引第 2 条）。
 
-**状态（2026-10-01）**：**P2-A 进行中**（表 + 迁移 + G-18 转正）；P2-B / P2-C 未开工。
+**状态（2026-10-01）**：**P2-A 已完成**（表 + 迁移 + G-18 转正，已提交 + 已 push）；P2-B / P2-C 未开工。
+
+> 🧭 **执行顺序（2026-10-01 用户确认「研发阶段、无客户」后调整）**：
+> **P2-B（RBAC）→ P2.5（插件形态）→ P3（租户隔离）→ P2-C（SSO/AD）→ P4 → P5 → P6**。
+> 原「签单优先」在无客户阶段失效 ⇒ 改**风险优先**；**P2-C 因此后移到 P3 之后**（它需自建 IdP 真机验证，
+> mock 不算完成）。🔒 另叠加**「零缺口」裁决**：正式版门槛 = `check_startup_readiness.py` 所有 G 进 🟢，
+> 不做带缺口的发布（五项清零方式见 `docs/delivery-requirements-and-guardrails.md` §5 📌）。
 事后实测证据与遗留事项记 [`integration-log.md`](./integration-log.md)
 （本文件是事前计划，两者不可互相替代）。
 

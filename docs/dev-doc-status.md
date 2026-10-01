@@ -141,7 +141,7 @@
 
 | # | 行动 | 状态 | 责任人 | 完成时间 | 备注 |
 |---|---|---|---|---|---|
-| **P3-1** | §15.3 现状列加代码行号引用 + §15 逐行勾选 + §3.2 B 五条对账 + **`acceptance-traceability-matrix.md` §4 / §5 全表终审（48 条 spec 验收 + 12 条 H + C1–C3 / F1–F5）** + `check_seams.py --strict` + 契约零漂移 + 前端 typecheck/lint | ⏳ 未开始 | 架构师 + 后端 B + 前端 FE | — | Sprint 13 收尾统一做（§20.3 DoD） |
+| **P3-1** | §15.3 现状列加代码行号引用 + §15 逐行勾选 + §3.2 B 五条对账 + **`acceptance-traceability-matrix.md` §4 / §5 全表终审（48 条 spec 验收 + 12 条 H + C1–C3 / F1–F5）** + `check_seams.py --strict` + 契约零漂移 + 前端 typecheck/lint + **「零缺口」终审：`check_startup_readiness.py` 里所有 G 进 🟢，🟠 / 🟡 一条不放行**（2026-10-01 用户拍板：不做带缺口的正式版，见需求基线 §5 📌「零缺口」裁决） | ⏳ 未开始 | 架构师 + 后端 B + 前端 FE | — | Sprint 13 收尾统一做（§20.3 DoD） |
 
 ---
 
