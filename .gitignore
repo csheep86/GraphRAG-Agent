@@ -35,6 +35,12 @@ yarn-error.log*
 # 项目特定
 uploads/
 
+# 运行产物：ADR-0005 §4 增补的「条款→文档作用域」共享登记册（R4-b 兜底）。
+# 由 ingest_attendance_policies.py 的 record_document_scope() 累积写入、
+# 由 ingest_attendance_csv.py 读取 ⇒ **每次跑制度入图都会变**，入库只会产生持续 diff。
+# 文件缺失时按空登记册处理、**不报错**（见 backend/scripts/_bridge_window.py 注释）。
+backend/scripts/_clause_doc_scopes.json
+
 # 演示用年报 PDF（本机素材，约 47MB，不入库；来源与 STEP-BY-STEP 用法见 changes/Sprint7.0/demo-docs-checklist.md）
 docs/annualreport/
 **/output/*

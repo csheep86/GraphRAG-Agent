@@ -2,10 +2,21 @@
 #
 # 规格出处：`docs/deployment-spec.md` §1.1（编排文件 = 唯一入口）、§2（组件清单）、§2 注（PG / Neo4j 端口不对外）
 #
-# **裁决 D-L（不引入 PG 容器）**：CP-D0 字面要求「起全套 Neo4j / PG / backend / frontend」，
-# 但当前后端实际连的是 **SQLite**（`backend/.env`：DATABASE_URL=sqlite:///./dev.db；PG 切换在 S11）。
-# 起一个**没有任何组件连接**的 PG 就是**假组件**，违反 PRD §7.2 零假数据 + A16 诚实可核。
-# ⇒ 本 compose 起 3/4，PG 位显式留空待 S11：**不凑满容器数冒充"全套"**。
+# ⚠️ **裁决 D-L 已作废（2026-10-01）**
+#    原文：不引入 PG 容器，理由是「起一个**没有任何组件连接**的 PG 就是假组件」。
+#    该前提已被 **DR-B1** 推翻——裁决（2026-10-01）：**开发 / 测试 / 生产一律
+#    PostgreSQL 16.x，不再用 SQLite 作替身**（见需求基线 DR-B1 / DR-B3）。
+#    ⇒ 本文件里的 SQLite 是**待替换的过渡态**，**不是**被批准的方案。
+#    ⇒ 切换动作归 **P1**（DR-B1 / DR-B3 / G-8 / G-20），排期见 `docs/delivery-plan.md`。
+#    ⇒ **不要在 P1 完成前先把这里改成 PG**：那会得到一个没应用连的 PG 服务，
+#      恰恰就是当初 D-L 要防的"假组件"。**正确顺序**：先让 backend 默认连 PG
+#      （`config.py` + `.env.example` 实测通过），**再**改本文件。
+#
+# ⚠️ **尚未满足 G-19（DR-A6 版本化镜像）**
+#    backend / frontend 目前只有 `build:`、**没有 `image:`** ⇒ 现场无法 pull 升级、
+#    也无法改 tag 回滚 ⇒ 离线包（DR-A7）与补丁流程（DR-C2）**都还不存在**。
+#    护栏：`backend/tests/test_guardrails_delivery.py::test_g19_compose_uses_versioned_images`
+#    （当前 xfail；开工状态一律以 `check_startup_readiness.py` 的输出为准，别看本文注释）。
 #
 # 使用：`cp .env.example .env` → 填 NEO4J_PASSWORD → `docker compose up -d`
 # （详见同目录 README.md）
@@ -41,11 +52,14 @@ services:
       context: ../backend
       dockerfile: Dockerfile
     environment:
-      # SQLite 落 named volume（D-L）；四斜杠 = 绝对路径
+      # ⚠️ 过渡态（DR-B1 已裁决弃用 SQLite）：P1 切 PG 时，本项与 `sqlite_data` 卷一并替换。
+      # 详见文件头「裁决 D-L 已作废」。四斜杠 = named volume 内的绝对路径。
       DATABASE_URL: sqlite:////data/dev.db
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_password: ${NEO4J_PASSWORD}
+      # 必须全大写：`case_sensitive=False` 让小写写法（`NEO4J_password`）侥幸可用，
+      # 但一旦收紧大小写就**静默连不上**（症状是图谱功能全废、healthcheck 却仍绿）。
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
       CORS_ALLOW_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000"]'
       # §3 生产默认值：私域禁外发，生产不得为 false
       PRIVATE_DEPLOY_ENABLED: "true"
@@ -102,6 +116,7 @@ services:
 volumes:
   neo4j_data:
   neo4j_logs:
+  # ⚠️ 过渡态卷：DR-B1 裁决后失去意义，P1 切 PG 时随 SQLite 一并删除
   sqlite_data:
-  # PG 位（S11 切 PG 时加入）：
+  # PG 位（**P1** 切 PG / DR-B1 时启用，届时替代 sqlite_data）：
   # pg_data:
