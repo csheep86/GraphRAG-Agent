@@ -121,3 +121,96 @@ def test_temporal_does_not_outrank_hop_count() -> None:
     selected = _select_shortest_path([long_consistent, short_inconsistent])
     assert selected is not None
     assert selected[0] == ["EMPLOYEE:E001", "WORK_ORDER:D"]
+
+
+# --------------------------------------------------------------------------- #
+# R5（ADR-0005 §5）：as-of 视图的**证据位次**
+#
+# 这一组为什么存在：2026-09-30 实测发现 ``as_of='2025-06-01'`` 下的 12 条候选，
+# 「终点优先 ⇒ 终点名次 ⇒ 跳数 ⇒ 时序裁决」四项**全部打平**，胜出者由 ``ids``
+# 字典序决定 ⇒ 答案事实上随机。故每条用例都刻意让前四维打平、并让胜出者的 id
+# 字典序**更靠后**——只有第五维真的生效它才会赢，否则考不出这一位。
+# --------------------------------------------------------------------------- #
+_AS_OF = "2025-06-01"
+
+#: 两跳链；**首跳刻意不带日期** ⇒ 整链裁决落在 ``unknown`` ⇒ 第 4 维两边相等
+_TYPES_2HOP = ["EMPLOYEE", "POSITION", "POLICY_CLAUSE"]
+
+
+def _row_undated_tail() -> dict[str, Any]:
+    return _row(
+        ["EMPLOYEE:E001", "POSITION:P1", "POLICY_CLAUSE:A"],
+        _TYPES_2HOP,
+        valid_froms=[None, None],
+        valid_tos=[None, None],
+    )
+
+
+def _row_dated_tail(
+    valid_from: str = "2025-01-01",
+    valid_to: str | None = "2025-12-31",
+) -> dict[str, Any]:
+    """字典序刻意用 ``Z``（比 ``A`` 靠后）；**首跳无日期**促成 verdict 打平。"""
+    return _row(
+        ["EMPLOYEE:E001", "POSITION:P1", "POLICY_CLAUSE:Z"],
+        _TYPES_2HOP,
+        valid_froms=[None, valid_from],
+        valid_tos=[None, valid_to],
+    )
+
+
+def test_as_of_confirmed_beats_undecidable_when_dims_tie() -> None:
+    """四维全平 ⇒ 该时点**被证实**的那条出场（尽管它字典序更靠后）。"""
+    selected = _select_shortest_path(
+        [_row_undated_tail(), _row_dated_tail()], as_of=_AS_OF
+    )
+    assert selected is not None
+    assert selected[0][-1] == "POLICY_CLAUSE:Z"
+
+
+def test_as_of_none_keeps_lexicographic_order() -> None:
+    """``as_of=None`` ⇒ 该维度恒 0 ⇒ 结果回到字典序，**缺省零变化**（硬要求）。"""
+    selected = _select_shortest_path(
+        [_row_undated_tail(), _row_dated_tail()], as_of=None
+    )
+    assert selected is not None
+    assert selected[0][-1] == "POLICY_CLAUSE:A"
+
+
+def test_as_of_does_not_outrank_hop_count() -> None:
+    """evidence 位次排在跳数**之后** ⇒ 一条更短的无日期链仍然赢。"""
+    short_undated = _row(
+        ["EMPLOYEE:E001", "POLICY_CLAUSE:A"],
+        ["EMPLOYEE", "POLICY_CLAUSE"],
+        valid_froms=[None],
+        valid_tos=[None],
+    )
+    selected = _select_shortest_path([short_undated, _row_dated_tail()], as_of=_AS_OF)
+    assert selected is not None
+    assert selected[0][-1] == "POLICY_CLAUSE:A"
+
+
+def test_as_of_on_effective_day_is_confirmed() -> None:
+    """施行日当天算成立（Cypher 谓词用 ``valid_from <= as_of``，两侧必须一致）。"""
+    selected = _select_shortest_path(
+        [_row_undated_tail(), _row_dated_tail(valid_from="2025-06-01")],
+        as_of=_AS_OF,
+    )
+    assert selected is not None
+    assert selected[0][-1] == "POLICY_CLAUSE:Z"
+
+
+def test_as_of_on_expiry_day_is_not_confirmed() -> None:
+    """失效日当天**不**算成立（``valid_to > as_of``，当天已失效）⇒ 让位给字典序。"""
+    selected = _select_shortest_path(
+        [_row_undated_tail(), _row_dated_tail(valid_to=_AS_OF)], as_of=_AS_OF
+    )
+    assert selected is not None
+    assert selected[0][-1] == "POLICY_CLAUSE:A"
+
+
+def test_as_of_ignores_undated_rows_only() -> None:
+    """只有无日期候选时 ⇒ 照旧选中（**让位 ≠ 剔除**，R4：不知道 ≠ 删掉）。"""
+    selected = _select_shortest_path([_row_undated_tail()], as_of=_AS_OF)
+    assert selected is not None
+    assert selected[0][-1] == "POLICY_CLAUSE:A"

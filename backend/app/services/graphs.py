@@ -1756,12 +1756,17 @@ class GraphService:
         nodes: Sequence[GraphNode],
         edges: Sequence[GraphEdge] = (),
         chunks: Sequence[EvidenceChunk] = (),
+        as_of: str | None = None,
     ) -> list[ReasoningPathHop]:
         """M3 多跳推理路径（``reasoning_path`` 的服务层入口）。
 
         **会话只由本类开**（与 :meth:`scan_attendance_compliance` 同口径）：
         调用方拿不到"私自开连接"的口子，``kg_version`` 由上游
         :meth:`fetch_active_kg_version` 给定，杜绝绕过版本真源。
+
+        :param as_of: 全生命周期 as-of 日期（``YYYY-MM-DD``）；``None`` = 当前视图。
+            **格式校验在上游契约层做**（``AgentQueryRequest`` 的字段校验复用
+            :func:`validate_as_of`）⇒ 非法值到这里之前已被挡成 422。
 
         **延迟导入** :mod:`app.services.reasoning`：本模块被 ``agents`` 依赖，
         模块级牵上会加长依赖链（且 ``reasoning`` 只依赖 schema，无循环风险）。
@@ -1782,6 +1787,7 @@ class GraphService:
                     nodes=nodes,
                     edges=edges,
                     chunks=chunks,
+                    as_of=as_of,
                 )
         except GraphUnavailableError:
             raise

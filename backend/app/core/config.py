@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     # -- Agent fail-closed（ADR-0003 强化：跨租户子图必须由 PG documents 兜底校验）--
     #: True = 跨 org_id 即抛 KG_TENANT_LEAK（路由层转 403）；False 仅日志告警
     agent_fail_closed: bool = True
+    #: G-17 / DR-B12 逃生阀围栏：``agent_fail_closed=False`` 会让跨租户隔离
+    #: **降级为 fail-open**（仅告警放行），这是全系统**唯一一个可配置关闭租户
+    #: 隔离**的开关。默认**禁止**；客户侧确需时必须显式置
+    #: ``ALLOW_AGENT_FAIL_OPEN=true``，并同时完成「显式登记 + 告知客户 + 落审计」
+    #: 三项（与信创降级 DR-B10 同级别处理）。
+    allow_agent_fail_open: bool = False
 
     # -- CORS（阶段 3.2 前端联调）--
     cors_allow_origins: list[str] = Field(
@@ -195,6 +201,26 @@ class Settings(BaseSettings):
                 "请按 ADR-0003 §3.6 切换为 PostgreSQL 并启用行级安全。"
             )
         return self
+
+    @model_validator(mode="after")
+    def _guard_agent_fail_open(self) -> Settings:
+        """G-17：禁止**无声**关闭跨租户隔离（ADR-0003 §3.7）。
+
+        ``agent_fail_closed=False`` 会让泄漏从「403 阻断」退化成「仅告警放行」。
+        ADR-0003 §3.7 定的是「应用层过滤升格为常设防线、**不设移除条件**」——
+        若允许一个配置项无声关掉它，那条裁决就被架空了。
+
+        因此本守卫只拦「无声」：客户侧确需时，显式置 ``ALLOW_AGENT_FAIL_OPEN=true``
+        即可破例，但破例须同时完成登记 / 告知 / 审计三项。
+        """
+        if self.agent_fail_closed or self.allow_agent_fail_open:
+            return self
+        raise ValueError(
+            "agent_fail_closed=False 会让跨租户隔离降级为 fail-open（仅告警放行），"
+            "违反 ADR-0003 §3.7「常设防线、不设移除条件」。"
+            "客户侧确需时必须同时置 ALLOW_AGENT_FAIL_OPEN=true，"
+            "并完成「显式登记 + 告知客户 + 落审计」三项（与信创降级 DR-B10 同级）。"
+        )
 
     @property
     def is_production(self) -> bool:

@@ -565,6 +565,15 @@ components:
         question: A 公司的子公司的供应商是否同时是 B 公司的股东？
         scope: cross_doc
       properties:
+        as_of:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: '**全生命周期 as-of**（``YYYY-MM-DD``，ADR-0005 §6 L2-③）：把推理链倒回该日，只保留在那天成立的跳。缺省为 **None = 当前**视图（即改此字段前的既有行为，缺省必须零变化）。
+
+
+            口径：① 只剔除**被日期证伪**的跳（那天还没生效 / 那天已失效）；② **缺日期的跳照旧保留**——不知道就说不知道（三值语义），不因为某个日期过滤就把未纳入时效治理的事实也一并抹掉；③ 日期格式非法 ⇒ 400（见 :func:`graphs.validate_as_of`，**不**静默当作查当前）。④ 整个链在该日不成立 ⇒ ``reasoning_path`` 为空列表，不是报错——“图上那天没有这条链”本身就是一个合法结论。'
+          title: As Of
         doc_id:
           anyOf:
           - format: uuid
@@ -2266,6 +2275,18 @@ components:
         target:
           $ref: '#/components/schemas/ReasoningPathNode'
           description: 终点实体
+        valid_from:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 该跳的生效日（``valid_from``，``YYYY-MM-DD``）；图上没写则为 ``null``（**不**猜日期——读侧判据见 ADR-0005 §6：``null`` 属不可判定，与“永远有效”是两回事）。供前端把**已失效**的跳画成虚线
+          title: Valid From
+        valid_to:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 该跳的失效日（``valid_to``）；``null`` = **未失效**（不是“明天失效”）。非空 ⇒ 前端应画虚线表示这条事实已经过期
+          title: Valid To
       required:
       - source
       - relation

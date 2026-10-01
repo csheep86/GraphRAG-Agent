@@ -179,6 +179,7 @@ RETURN e.id AS id, e.canonical_name AS name
 LIMIT $limit
 """
 
+
 #: **边类型刻意不限定**（Sprint 10 批次 B）：考勤域的边是 ``:RELATION``
 #: （抽取关系），而关联方域（M4 主体层）的边是 ``LEGAL_REP`` / ``SHARES_HOLDER``
 #: / ``REGISTERED_AT`` …——真机实测它们**都带** ``kg_version`` / ``org_id``，
@@ -192,7 +193,23 @@ LIMIT $limit
 #: 关系名用 ``coalesce(r.relation_type, type(r))``：抽取边有 ``relation_type``
 #: 属性，主体层边只有**类型名**；取不到属性就退回类型令牌（L7 同族口径），
 #: **不**兜底成 ``MENTIONS`` 这种"看起来有关系"的假名。
-_CYPHER_PATHS = f"""
+def _cypher_paths() -> str:
+    """候选路径的 Cypher。
+
+    **为什么它是函数而不是模块级常量**：``as_of`` 的过滤谓词必须**逐字符复用**
+    :func:`app.services.graphs._temporal_view`，而本模块被 ``graphs`` 反向依赖
+    （``graphs`` 自己在本模块里做延迟导入），牵到模块顶层就成环 ⇒ 谓词只能在
+    函数体内延迟导入后再拼装。字符串每次重拼，代价可忽略。
+
+    为什么要复用而不是在本模块另写一份同样的过滤：子图视图（``graphs`` 侧）与
+    推理链视图共用同一段判据，"图上看到的当前态"与"链上走出来的当前态"才不可能
+    口径漂移——``_temporal_view`` 的 docstring 里记着初版写错导致「两条当前法定
+    代表人」的真机事故，那正是把同一判断散写成多份的典型代价。
+    """
+    from app.services.graphs import _temporal_view  # 延迟导入（见上文）
+
+    return (
+        f"""
 MATCH p = (a:Entity {{kg_version: $kg, org_id: $org}})
           -[rels*1..{_MAX_HOPS}]-
           (b:Entity {{kg_version: $kg, org_id: $org}})
@@ -201,6 +218,12 @@ WHERE a.id IN $anchor_ids
   AND ALL(n IN nodes(p) WHERE n:Entity)
   AND ALL(r IN rels WHERE r.kg_version = $kg AND r.org_id = $org)
   AND none(n IN nodes(p)[1..-1] WHERE n.entity_type = $hub)
+  // as-of 视图（Sprint 10.5 / L2-③）：``$as_of`` 为 NULL ⇒ **不过滤**
+  // （缺省行为必须零变化）；给定日期 ⇒ 要求**每一跳**在那日成立。
+  // 缺日期的跳由谓词的 NULL 分支放行：只剔除**被日期证伪**的跳，不猜未知。
+  AND ($as_of IS NULL OR ALL(r IN rels WHERE TRUE"""
+        + _temporal_view("r")
+        + """))
 RETURN [n IN nodes(p) | n.id] AS ids,
        [n IN nodes(p) | n.canonical_name] AS names,
        [n IN nodes(p) | n.entity_type] AS types,
@@ -212,6 +235,7 @@ ORDER BY (CASE WHEN types[-1] IN $prio_types THEN 0 ELSE 1 END),
          ids[-1]
 LIMIT $limit
 """
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -317,6 +341,11 @@ def resolve_anchors(
 # --------------------------------------------------------------------------- #
 # 第二 / 三步：沿关系跳转 → 命中条款 / 事实 → 逐跳标注来源
 # --------------------------------------------------------------------------- #
+def _date_text(value: Any) -> str | None:
+    """把 Cypher 回的时间值转成 ``YYYY-MM-DD``；无值 ⇒ ``None``（**不**猜日期）。"""
+    return None if value is None else str(value)
+
+
 def build_reasoning_path(
     *,
     session: Any,
@@ -326,6 +355,7 @@ def build_reasoning_path(
     nodes: Sequence[GraphNode],
     edges: Sequence[GraphEdge] = (),
     chunks: Sequence[EvidenceChunk] = (),
+    as_of: str | None = None,
 ) -> list[ReasoningPathHop]:
     """取出本次问答的多跳推理路径（一跳一个 :class:`ReasoningPathHop`）。
 
@@ -334,6 +364,9 @@ def build_reasoning_path(
     :param nodes: 本轮**已检索子图**的节点（锚点来源）。
     :param edges: 本轮已检索子图的边（判定 ``origin = graph`` 用）。
     :param chunks: 本轮**注入 Prompt 的证据片段**（判定 ``origin = document`` 用）。
+    :param as_of: 全生命周期 as-of 日期（``YYYY-MM-DD``）；``None`` = 当前视图
+        （缺省必须零变化）。它只**剔除被日期证伪**的跳，缺日期的跳照旧保留
+        （三值语义：不知道 ≠ 有效），详情见 :func:`_cypher_paths`。
     :returns: 逐跳链（首尾相接）；**零命中返回空列表**（不是 ``None``——
         ``None`` 的语义是「未产出」，留给拒答分支，见契约字段说明）。
     """
@@ -349,7 +382,7 @@ def build_reasoning_path(
 
     rows = list(
         session.run(
-            _CYPHER_PATHS,
+            _cypher_paths(),
             kg=kg_version,
             org=str(org_id),
             anchor_ids=list(anchors),
@@ -357,16 +390,19 @@ def build_reasoning_path(
             hub=HUB_EMPLOYEE_TYPE,
             prio_types=list(PRIORITY_TERMINAL_TYPES),
             limit=_PATH_CANDIDATE_LIMIT,
+            as_of=as_of,
         )
     )
-    selected = _select_shortest_path(rows)
+    selected = _select_shortest_path(rows, as_of=as_of)
     if selected is None:
-        logger.bind(kg_version=kg_version, anchors=list(anchors)).info(
+        # as_of 非空时"那天没有这条链"是合法结论 ⇒ 日志里必须带上 as_of，
+        # 否则无法区分"图上没有"与"那天还没成立"。
+        logger.bind(kg_version=kg_version, anchors=list(anchors), as_of=as_of).info(
             "reasoning_path_no_path"
         )
         return []
 
-    ids, names, types, rels = selected
+    ids, names, types, rels, valid_froms, valid_tos = selected
     edge_pairs = _edge_pairs(edges)
     hops: list[ReasoningPathHop] = []
     for index, relation in enumerate(rels):
@@ -377,6 +413,8 @@ def build_reasoning_path(
             edge_pairs=edge_pairs,
             chunks=chunks,
         )
+        # 时间字段跟着跳一起出（供前端把已失效的跳画成虚线）；
+        # 列缺/比 Expect 短 ⇒ 该跳为 None，不补齐、不猜（读侧三值语义）。
         hops.append(
             ReasoningPathHop(
                 source=_path_node(ids[index], names[index], types[index]),
@@ -384,12 +422,19 @@ def build_reasoning_path(
                 target=target,
                 origin=origin,
                 evidence=evidence,
+                valid_from=_date_text(
+                    valid_froms[index] if index < len(valid_froms) else None
+                ),
+                valid_to=_date_text(
+                    valid_tos[index] if index < len(valid_tos) else None
+                ),
             )
         )
     logger.bind(
         kg_version=kg_version,
         hops=len(hops),
         origin=hops[-1].origin if hops else None,
+        as_of=as_of,
     ).info("reasoning_path_built")
     return hops
 
@@ -459,6 +504,48 @@ def _fallback_anchors(
 #: 路径时序裁决的名次（小的优先）——见 :func:`_temporal_verdict` 的三值语义
 _TEMPORAL_RANK = {"consistent": 0, "unknown": 1, "inconsistent": 2}
 
+#: ADR-0005 §5 R5「as-of 证据位次」的名次（小的优先）。
+#: **``unconfirmed`` 同时涵盖两种情形**，它们在这个位次上必须同等待遇：
+#: ① 最后一跳压根没有日期（不可判定）；② 有日期但没被该时点证实（那天尚未成立
+#: 或已经失效）。理由：两者都**不配称"被该时点证实"**，而本维度管的恰恰是这一
+#: 点——"它不成立"与"我不知道它成不成立"在"能不能摆在 as-of 答案里"这件事上
+#: 等价。区分它们由 :func:`_temporal_verdict` 的三值语义负责，不在本维度重复。
+_AS_OF_EVIDENCE_RANK = {"confirmed": 0, "unconfirmed": 1}
+
+
+def _last_hop_as_of_evidence(row: Any, as_of: str | None) -> str:  # noqa: ANN401
+    """ADR-0005 §5 R5：这条链的**最后一跳**是否被 ``as_of`` 证实。
+
+    只看最后一跳：终点也就是答案的落点。把一份在该时点根本不成立的制度条款摆在
+    用户面前，比"中间某一跳有没有日期"更致命。
+
+    比较是**纯字符串比较**（``YYYY-MM-DD`` 字典序 == 日期序），与
+    :func:`_temporal_verdict` 同口径，不需要任何领域模型。
+
+    :param as_of: 给定时点；``None`` ⇒ 恒定返回 ``confirmed``——**缺省视图该维度
+        恒为 0**（ADR-0005 §5 R5 第 1 条硬要求：缺省必须零变化），
+        参与排序时等于不存在这一维。
+    """
+    if as_of is None:
+        return "confirmed"
+    keys = row.keys() if hasattr(row, "keys") else ()
+    if "valid_froms" not in keys or "valid_tos" not in keys:
+        return "unconfirmed"
+    froms = list(row["valid_froms"] or [])
+    tos = list(row["valid_tos"] or [])
+    if not froms or not tos:
+        return "unconfirmed"
+    valid_from = froms[-1]
+    valid_to = tos[-1]
+    if valid_from is None:
+        # 只有失效日没有施行日 ⇒ 无从判断那天是否"已成立"，不猜（R4）
+        return "unconfirmed"
+    if str(valid_from) > as_of:
+        return "unconfirmed"  # 那天还没开始施行
+    if valid_to is not None and str(valid_to) <= as_of:
+        return "unconfirmed"  # 那天已经失效
+    return "confirmed"
+
 
 def _row_temporal_verdict(row: Any) -> str:  # noqa: ANN401
     """从一行候选路径里取时序裁决；**该行没有时态列 ⇒ unknown**（不猜）。
@@ -505,7 +592,18 @@ def _temporal_verdict(valid_froms: Sequence[Any], valid_tos: Sequence[Any]) -> s
 
 def _select_shortest_path(
     rows: Sequence[Any],
-) -> tuple[list[str], list[Any], list[Any], list[str]] | None:
+    as_of: str | None = None,
+) -> (
+    tuple[
+        list[str],
+        list[Any],
+        list[Any],
+        list[str],
+        list[str | None],
+        list[str | None],
+    ]
+    | None
+):
     """从候选路径里挑**唯一**一条：**先比终点的解释力，再比跳数**。
 
     **为什么终点类型优先于跳数**（2026-09-28 真机实测的教训）：纯按跳数最少，
@@ -515,13 +613,24 @@ def _select_shortest_path(
     「命中条款 / 事实」落点。故排序口径：
 
     1. 终点是 ``POLICY_CLAUSE``（制度条款）优先：问句问的通常就是"怎么算"；
-    2. 同档再按**跳数升序 ⇒ 节点 id 字典序**：确定性同解（可被单测钉死）。
+    2. 再按终点类型的次级次序 ``_TERMINAL_RANK``；
+    3. 再按**跳数升序**；
+    4. 再按时序裁决（Sprint 10.4 的整链自洽档）；
+    5. 再按 ADR-0005 §5 R5 的**as-of 证据位次**（仅 ``as_of`` 非空时起作用）；
+    6. 最后才是节点 id 字典序 + 原始位次 ⇒ 确定性同解（可被单测钉死）。
+
+    .. note::
+       第 5 维是 2026-09-30 补上的，**不是为了优化而是补一个空缺**：实测
+       ``as_of='2025-06-01'`` 时 12 条候选的前四维**全部打平**，胜出者实际由
+       第 6 维 id 字典序决定 ⇒ 答案事实随机。这一维必须**排在跳数之后**：
+       只为打平的候选裁决，不许为了时点证据去挑一条更长或解释力更弱的链。
 
     **为什么在 Python 侧排序**：Cypher 不能按 list 排序（``ORDER BY ids`` 非法），
     且把排序规则放在 Python 里可以被单测逐条钉死（同解保证）。
 
-    :returns: ``(ids, names, types, rels)``；无合法候选 ⇒ ``None``
-        （列长对不上的行是脏数据，**整行丢弃**而非截断补全）。
+    :param as_of: ADR-0005 §5 R5 的给定时点；``None`` ⇒ 证据位次恒 0（缺省零变化）。
+    :returns: ``(ids, names, types, rels, valid_froms, valid_tos)``；无合法候选 ⇒
+        ``None``（列长对不上的行是脏数据，**整行丢弃**而非截断补全）。
     """
     candidates: list[tuple[int, int, tuple[str, ...], int, Any]] = []
     for position, row in enumerate(rows):
@@ -555,6 +664,10 @@ def _select_shortest_path(
                 _TERMINAL_RANK.get(terminal, len(_TERMINAL_RANK)),
                 len(rels),
                 _TEMPORAL_RANK[verdict],
+                # ADR-0005 §5 R5：as-of 证据位次。位置是刻意的——**在字典序之前、
+                # 跳数之后** ⇒ 只在前面几维全部打平时接管；as_of 为 None 时恒 0，
+                # 因此缺省视图结果完全不变。
+                _AS_OF_EVIDENCE_RANK[_last_hop_as_of_evidence(row, as_of)],
                 tuple(ids),
                 position,
                 row,
@@ -565,9 +678,20 @@ def _select_shortest_path(
         return None
 
     candidates.sort(
-        key=lambda item: (item[0], item[1], item[2], item[3], item[4], item[5])
+        key=lambda item: (
+            item[0],
+            item[1],
+            item[2],
+            item[3],
+            item[4],
+            item[5],
+            item[6],
+        )
     )
-    row = candidates[0][6]
+    row = candidates[0][7]
+    # 行的形状由调用方（Neo4j / 单测桩）决定，时态列可能**不存在**——
+    # 缺失必须落到"逐跳 None ⇒ 读侧判不可判定"，不能 KeyError。
+    row_keys = row.keys() if hasattr(row, "keys") else ()
     # 必须可观测（日志与可观测性规范）：选中的链在时序上到底算哪档、候选里几成自洽。
     # 只看"选出了一条链"无法回答"这条链是不是把不同时点的事实串起来了"。
     logger.bind(
@@ -580,6 +704,16 @@ def _select_shortest_path(
         list(row["names"] or []),
         list(row["types"] or []),
         [str(item) for item in (row["rels"] or [])],
+        # 时态列跟着带回（供逐跳标注 valid_from/valid_to）。
+        # 旧形状的行（无这两列）⇒ 空列表 ⇒ 逐跳取不到 ⇒ None ⇒ 读侧判不可判定。
+        [
+            None if item is None else str(item)
+            for item in (row["valid_froms"] if "valid_froms" in row_keys else [])
+        ],
+        [
+            None if item is None else str(item)
+            for item in (row["valid_tos"] if "valid_tos" in row_keys else [])
+        ],
     )
 
 

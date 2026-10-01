@@ -134,6 +134,27 @@ def test_write_is_idempotent_by_coalesce() -> None:
 
 
 def test_no_reserved_ingest_dimension_is_written() -> None:
-    """CSV 里没有任何"这条记录何时失效"的字段 ⇒ **不写** valid_to / expired_at。"""
-    assert "valid_to" not in _CYPHER_MERGE_RELATIONS
+    """CSV 里没有任何"这条记录何时失效"的字段 ⇒ **不写** expired_at；valid_to
+    只允许**继承**得来，且写入必须幂等、不得补值。
+
+    **为什么不再断言"Cypher 里不得出现 valid_to"**（2026-09-30 修正，勿改回）：
+    口径 11（``changes/Sprint10.5/11-derived-window-inheritance.md``，已核准）规定
+    派生桥接边继承所指条款的窗口，**其中包括 valid_to**。原断言是基于"valid_to
+    没有来源 ⇒ 出现即为编造"写的，前提在继承口径生效后不成立。此处换成三条更准的防线，
+    守住原意图（不臆造、不覆盖），不再用"文本是否出现"代替语义判断：
+
+    1. ``expired_at``（摄入维）**仍禁止**：它的来源只能是系统，不是 CSV；
+    2. ``valid_to`` 必须走 ``coalesce`` ⇒ 重跑不清空已继承的值（与 valid_from 同纪律）；
+    3. mapping 事实行**自身**不得产出 valid_to ⇒ 未经继承的行必为 None。
+    """
     assert "expired_at" not in _CYPHER_MERGE_RELATIONS
+    assert "r.valid_to = coalesce(r.valid_to, row.valid_to)" in (
+        _CYPHER_MERGE_RELATIONS
+    )
+    offenders = [
+        str(r["id"])
+        for rows in (_BY_TYPE.get(rtype) or [] for rtype in DATED_TYPES)
+        for r in rows
+        if r.get("valid_to") is not None
+    ]
+    assert offenders == [], f"CSV 事实行使了继承路径之外的 valid_to：{offenders[:3]}"

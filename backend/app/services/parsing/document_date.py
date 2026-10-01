@@ -141,6 +141,34 @@ SOURCE_EXPLICIT = "explicit"
 SOURCE_NONE = "none"
 
 
+#: 文档的**自称主语**：只有写着这些词的行，才可能是"文档在陈述自己的有效期"。
+#: 为什么必须有这一层：交叉引用条款里也会写别的文档的日期
+#: （如「《外勤与出差考勤补充规定（2025 版）》第五条规定……」），不看主语就把
+#: **别人的**失效日认领过来了。宁可 None，也不跨文档认领。
+_DOC_SUBJECTS = ("本规定", "本制度", "本办法", "本细则")
+
+#: 失效日关键词（**前置锚点**：关键词在前、日期在后），只收「这就是本文档有效期
+#: 终点」的强信号。**不收** ``废止``：与模块 docstring 第 41-42 行同口径——
+#: "废止"描述的是**另一份**旧文档何时结束，把它认领过来等于给本文档编日期。
+_EXPIRY_KEYWORDS = (
+    "有效期至",
+    "有效期截至",
+    "有效期截止至",
+    "有效期截止",
+    "有效期到",
+)
+
+#: 与前置锚点同生成方式（每关键词 × 每粒度），可读优先于一条巨型正则
+_EXPIRY_ANCHORED = tuple(
+    (
+        source,
+        re.compile(f"{re.escape(keyword)}{_GAP}(?:{pattern.pattern})"),
+    )
+    for source, pattern in _PATTERNS
+    for keyword in _EXPIRY_KEYWORDS
+)
+
+
 def _last_day_of_month(year: int, month: int) -> int:
     return calendar.monthrange(year, month)[1]
 
@@ -193,4 +221,38 @@ def resolve_document_date(
         built = _build(source, match, max_year=max_year)
         if built is not None:
             return built, source
+    return None, SOURCE_NONE
+
+
+def resolve_document_expiry(
+    *,
+    text: str,
+    today: date | None = None,
+) -> tuple[date | None, str]:
+    """认出文档**自己声明**的有效期终点；认不出 ⇒ ``(None, "none")``。
+
+    与 :func:`resolve_document_date` 的同与不同：
+
+    - **同**：认不出就是 ``None``，不猜；粒度与健康年间判定共用同一个 ``_build``。
+    - **不同**：只看含自称主语的行（``_DOC_SUBJECTS``）。错跨文档认领的代价是把
+      **别人的**失效日写到本文档上——那种错误会静默地把现行条款标成已过期，
+      比认不出来危险得多，所以这一层过滤**不是**可选的优化。
+
+    :param text: 文档正文（Markdown 即可）。
+    :param today: 仅用于计算年份上限（默认取系统当天，测试可注入）。
+    """
+    if not text:
+        return None, SOURCE_NONE
+
+    max_year = (today or date.today()).year + _FUTURE_YEAR_MARGIN
+    for line in text.splitlines():
+        if not any(subject in line for subject in _DOC_SUBJECTS):
+            continue
+        for source, pattern in _EXPIRY_ANCHORED:
+            match = pattern.search(line)
+            if match is None:
+                continue
+            built = _build(source, match, max_year=max_year)
+            if built is not None:
+                return built, source
     return None, SOURCE_NONE

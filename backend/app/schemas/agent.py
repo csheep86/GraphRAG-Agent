@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.document import GraphEdge, GraphNode
 
@@ -54,6 +54,35 @@ class AgentQueryRequest(BaseModel):
             "一律返回 409 KG_VERSION_NOT_ACTIVE，严禁静默降级（ADR-0002 §3.2）"
         ),
     )
+    as_of: str | None = Field(
+        default=None,
+        description=(
+            "**全生命周期 as-of**（``YYYY-MM-DD``，ADR-0005 §6 L2-③）：把推理链"
+            "倒回该日，只保留在那天成立的跳。缺省为 **None = 当前**视图"
+            "（即改此字段前的既有行为，缺省必须零变化）。\n\n"
+            "口径：① 只剔除**被日期证伪**的跳（那天还没生效 / 那天已失效）；"
+            "② **缺日期的跳照旧保留**——不知道就说不知道（三值语义），"
+            "不因为某个日期过滤就把未纳入时效治理的事实也一并抹掉；"
+            "③ 日期格式非法 ⇒ 400（见 :func:`graphs.validate_as_of`，"
+            "**不**静默当作查当前）。④ 整个链在该日不成立 ⇒ ``reasoning_path`` 为空列表，"
+            "不是报错——“图上那天没有这条链”本身就是一个合法结论。"
+        ),
+    )
+
+    @field_validator("as_of")
+    @classmethod
+    def _valid_as_of(cls, value: str | None) -> str | None:
+        """复用**读侧唯一**的日期校验，不另写一份正则。
+
+        :func:`graphs.validate_as_of` 对非法格式**抛错而非静默降级**——静默的后果
+        是：调用方以为在查 2024 年的状态、实际拿到"现在"的答案，且不报错。
+        在此处校验 ⇒ Pydantic 把错误转成 422，路由不必再写一遍判断。
+        """
+        from app.services.graphs import (
+            validate_as_of,  # 延迟导入（schema 不依赖 services）
+        )
+
+        return validate_as_of(value)
 
     @model_validator(mode="after")
     def _require_doc_id_for_single_doc(self) -> AgentQueryRequest:
@@ -141,6 +170,21 @@ class ReasoningPathHop(BaseModel):
         description=(
             "原文出处（仅 ``origin = document`` 时有值）：``chunk:<chunk_id>``；"
             "其余来源为 ``null``（**不**留空串冒充有出处）"
+        ),
+    )
+    valid_from: str | None = Field(
+        default=None,
+        description=(
+            "该跳的生效日（``valid_from``，``YYYY-MM-DD``）；图上没写则为 ``null``"
+            "（**不**猜日期——读侧判据见 ADR-0005 §6：``null`` 属不可判定，"
+            "与“永远有效”是两回事）。供前端把**已失效**的跳画成虚线"
+        ),
+    )
+    valid_to: str | None = Field(
+        default=None,
+        description=(
+            "该跳的失效日（``valid_to``）；``null`` = **未失效**（不是“明天失效”）。"
+            "非空 ⇒ 前端应画虚线表示这条事实已经过期"
         ),
     )
 

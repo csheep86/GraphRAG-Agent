@@ -55,6 +55,23 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+# 同 ``ingest_attendance_csv.py``：脚本方式跑时 ``scripts/`` 由解释器自动入路径，
+# 被 pytest 以包路径导入时不在 ⇒ 必须显式补，否则 ``_bridge_window`` 解析失败。
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+# 派生边窗口继承（ADR-0005 §4 增补）：与 CSV 脚本共用同一份口径与同一句 Cypher，
+# 免得同形状的 GOVERNED_BY 一边有日期一边没有。
+# 见 changes/Sprint10.5/11-derived-window-inheritance.md
+from _bridge_window import (  # noqa: E402
+    DEFAULT_SCOPE_STORE,
+    apply_clause_window,
+    clause_windows,
+    document_window,
+    record_document_scope,
+)
+
 from app.core.config import get_settings  # noqa: E402
 from app.db.models import Document  # noqa: E402
 from app.db.session import SessionLocal, init_db  # noqa: E402
@@ -76,9 +93,19 @@ REPO_ROOT = BACKEND_DIR.parent
 CORPUS_DIR = REPO_ROOT / "demo" / "attendance" / "corpus"
 EMPLOYEES_CSV = CORPUS_DIR / "employees.csv"
 
-#: 4 份制度文档（Demo 语料，**仿真**数据）
+#: 制度文档（Demo 语料，**仿真**数据）
+#:
+#: 2026-09-30（Sprint 10.5）新增两份 **2025 版**：它们不是"多放两份文档"，
+#: 而是知识的**历史态**——L2 的失效视觉语义与全生命周期 as-of 要求图上真有
+#: ``valid_to`` 非空的边，而通用层拿不到 L1 仲裁（见 ``builder.py:1100`` 的注释），
+#: ``valid_to`` 只能来自抽取；抽取的规则是「**只有文本明确写了失效日期才填**」
+#: （``prompts/kg_extraction_v3.md`` 字段约束 5）⇒ 2025 版的附则必须明写
+#: 「有效期至 2025 年 12 月 31 日」。差异点仅一处（外勤缺卡补卡由手工变自动），
+#: 且这一处是 **2026 版自己宣称的**，不是这里替它编的。
 POLICY_FILES: tuple[str, ...] = (
+    "attendance-policy-2025.docx",
     "attendance-policy-2026.docx",
+    "fieldwork-attendance-rules-2025.docx",
     "fieldwork-attendance-rules.docx",
     "overtime-and-comp-off.docx",
     "worktime-system-rules.docx",
@@ -384,15 +411,29 @@ def bridge_governed_by(
     markdown: str,
     entities: Sequence[Mapping[str, Any]],
     systems: Mapping[str, str],
+    windows: Mapping[str, tuple[str | None, str | None]] | None = None,
+    fallback: tuple[str | None, str | None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """给 ``POLICY_CLAUSE`` 加 ``WORK_TIME_SYSTEM -[GOVERNED_BY]-> POLICY_CLAUSE``。
 
     规则（确定性，非 LLM）：条款判据文本里出现某个工时制的名称即连一条边。
     边的 id 取 ``uuid5(head|tail)`` ⇒ **重跑幂等**（MERGE 同一条边）。
+
+    :param windows: 条款窗口表（:func:`_bridge_window.clause_windows`）。本边是
+        **派生边**：它的有效期定义上等于所指条款的有效期 ⇒ 继承条款窗口
+        （ADR-0005 §4 增补）。条款窗口不唯一或缺失 ⇒ 不写，绝不补值。
+    :param fallback: **文档窗口**（R4-b 兜底）：条款自身没有候选窗口时才轮到它，
+        绝不覆盖条款自身的窗口（见 :func:`_bridge_window.apply_clause_window`）。
+        文档自己没声明 ⇒ ``None`` ⇒ 该边保持无日期。
     """
     added: list[dict[str, Any]] = []
     per_system: dict[str, int] = {name: 0 for name in systems}
     unmatched = 0
+    # 三态计数必须可见（可观测性规范）：继承 / 文档兜底 / 仍无窗口各有多少。
+    # 静默地把 66 条里的绝大部分变成"有窗口"却不说来源，等于把口径变更藏起来。
+    inherited = 0
+    doc_scope = 0
+    no_window = 0
 
     for entity in entities:
         if str(entity.get("entity_type")) != TAIL_ENTITY_TYPE:
@@ -411,22 +452,41 @@ def bridge_governed_by(
                 uuid.NAMESPACE_URL,
                 f"urn:graphrag-agent:demo:attendance:goistby:{head_id}|{clause_id}",
             ).hex[:12]
+            row = {
+                # ``rel-bridge-`` 前缀标明**规则桥接**的来源：模型也会抽到
+                # GOVERNED_BY（端点在文档内部），混在一起就无法回答
+                # "这两条链路到底汇合了几条边"。
+                "id": f"rel-bridge-{stable}",
+                "source_entity_id": head_id,
+                "target_entity_id": clause_id,
+                "relation_type": BRIDGE_RELATION_TYPE,
+                "evidence": text[:200],
+                "confidence": 1.0,  # 确定性规则：命中即成立，非模型置信度
+            }
+            own = (windows or {}).get(clause_id)
+            if own is not None:
+                inherited += 1
+            elif fallback is not None:
+                doc_scope += 1
+            else:
+                no_window += 1
             added.append(
-                {
-                    # ``rel-bridge-`` 前缀标明**规则桥接**的来源：模型也会抽到
-                    # GOVERNED_BY（端点在文档内部），混在一起就无法回答
-                    # "这两条链路到底汇合了几条边"。
-                    "id": f"rel-bridge-{stable}",
-                    "source_entity_id": head_id,
-                    "target_entity_id": clause_id,
-                    "relation_type": BRIDGE_RELATION_TYPE,
-                    "evidence": text[:200],
-                    "confidence": 1.0,  # 确定性规则：命中即成立，非模型置信度
-                }
+                apply_clause_window(
+                    row,
+                    windows=windows or {},
+                    tail_id=clause_id,
+                    fallback=fallback,
+                )
             )
             per_system[name] += 1
 
-    return added, {"unmatched": unmatched, **per_system}
+    return added, {
+        "unmatched": unmatched,
+        "inherited": inherited,
+        "doc_scope": doc_scope,
+        "no_window": no_window,
+        **per_system,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -537,8 +597,42 @@ def process_document(
         )
 
     if with_bridge:
+        # 派生边继承条款窗口（ADR-0005 §4 增补）：先算窗口表再连边。
+        # 三项计数必须可见 —— 继承了多少、放弃了多少，不得静默。
+        with driver.session(database=database) as bridge_session:
+            windows, wstats = clause_windows(bridge_session, kg_version=kg_version)
+        print(
+            "  [4/5] 条款窗口：可继承 "
+            f"{wstats['one']} / 多义弃用 {wstats['many']} / 无窗口 {wstats['none']}"
+        )
+        # **R4-b 文档级作用域继承**：只有这里知道"这批条款出自哪份文件"
+        # （图里不存在 条款→文档 的链接，见 12 号口径记录 §1 的实测）。
+        # 窗口两侧都读不出 ⇒ (None, None) ⇒ 该文档对无窗口条款不提供兜底，保持不猜。
+        doc_window, doc_src = document_window(text=markdown)
+        print(
+            f"  [4/5] 文档窗口 {doc_src} ⇒ {doc_window[0]} ~ {doc_window[1]}"
+            f"（来源：{source_path.name}）"
+        )
+        # 登记册：**CSV 入图器也要这份结论**，但它没有文档上下文，读这里即可。
+        # 跨文档冲突在此剔除（歧义条款两版都留无日期，不猜用哪版）。
+        clause_ids = [
+            str(item.get("id") or "").strip()
+            for item in entities
+            if str(item.get("entity_type")) == TAIL_ENTITY_TYPE
+        ]
+        same, conflict, total = record_document_scope(
+            store=DEFAULT_SCOPE_STORE, clause_ids=clause_ids, window=doc_window
+        )
+        print(
+            f"  [4/5] 文档作用域登记：一致 {same} / 冲突剔除 {conflict}"
+            f" / 累计 {total} 条"
+        )
         added, bridge_stats = bridge_governed_by(
-            markdown=markdown, entities=entities, systems=systems
+            markdown=markdown,
+            entities=entities,
+            systems=systems,
+            windows=windows,
+            fallback=doc_window,
         )
         if not added:
             # 单份文档零命中是**合法的**（例如考勤总纲条款讲的是打卡 / 补卡，
@@ -547,6 +641,11 @@ def process_document(
                 f"  [warn] {source_path.name} 的 {clause_count} 条条款无一命中工时制"
                 "（本份不参与汇合）"
             )
+        # 桥接边每次重算 ⇒ 必须**替换**同 id 的旧行：``_dedupe_relations`` 保序留
+        # **首次**出现的行（见其 docstring），直接 list+added 会让本轮带窗口的新行
+        # 被 artifacts 里上一轮遗留的无窗口行盖掉 ⇒ 窗口继承静默失效。
+        added_ids = {str(item.get("id")) for item in added if item.get("id")}
+        relations = [row for row in relations if str(row.get("id")) not in added_ids]
         relations = _dedupe_relations(list(relations) + added)
         _write_json_artifact(
             org_id=org_id, doc_id=doc_id, filename="relations.json", payload=relations

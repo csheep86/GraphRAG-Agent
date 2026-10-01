@@ -61,7 +61,26 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+# **为什么两个目录都要塞**：以脚本方式跑（``python scripts/x.py``）时，解释器
+# 会把 ``scripts/`` 自动放到 ``sys.path[0]``，故同目录模块可以直接 import；
+# 但被 pytest 以 ``scripts.x`` 包路径导入时，``sys.path[0]`` 是 repo 根，
+# ``scripts/`` **不在**其中 ⇒ ``_bridge_window`` 解析失败（2026-09-30 实测：
+# ``tests/test_ingest_temporal.py`` 收集期就 ModuleNotFoundError，CI 必红）。
+# 显式补上 ⇒ 两种运行方式同解，不再依赖"脚本被怎么调用"。
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
 import yaml  # noqa: E402
+
+# 派生边窗口继承（ADR-0005 §4 增补）：两处 Rule-generated 桥接边共用同一份口径，
+# 避免「同形状的边一边有日期一边没有」。见 changes/Sprint10.5/11-derived-window-inheritance.md
+from _bridge_window import (  # noqa: E402
+    DEFAULT_SCOPE_STORE,
+    apply_clause_window,
+    clause_windows,
+    load_document_scopes,
+)
 
 from app.core.config import get_settings  # noqa: E402
 from app.db.session import SessionLocal, init_db  # noqa: E402
@@ -405,6 +424,9 @@ MATCH (b:Entity {id: row.tail, kg_version: $kg_version})
 MERGE (a)-[r:RELATION {id: row.id, kg_version: $kg_version}]->(b)
 SET r.relation_type = row.relation_type,
     r.valid_from = coalesce(r.valid_from, row.valid_from),
+    // valid_to 同理：桥接边按 ADR-0005 §4 增补继承所指条款的窗口；
+    // 普通 CSV 事实边的 row.valid_to 恒为 null ⇒ 不为它们凭空补值。
+    r.valid_to = coalesce(r.valid_to, row.valid_to),
     r.org_id = $org_id,
     r.trace_id = $trace_id
 RETURN count(r) AS merged
@@ -507,12 +529,16 @@ def fetch_policy_context(session: Any, *, kg_version: str) -> list[dict[str, Any
 def build_governed_by_relations(
     wts_rows: list[dict[str, Any]],
     policy_context: list[dict[str, Any]],
+    windows: Mapping[str, tuple[str | None, str | None]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """把工时制节点连到正文含其名称的条款。
 
     :param wts_rows: **CSV 派生**的工时制实体行（来自 ``build_nodes``，
         id 形如 ``WORK_TIME_SYSTEM:<名>``）。
     :param policy_context: :func:`fetch_policy_context` 的产物。
+    :param windows: 条款窗口表（:func:`_bridge_window.clause_windows`）。本边是
+        **派生边**：它的有效期定义上等于所指条款的有效期 ⇒ 继承条款窗口。
+        条款窗口不唯一或缺失 ⇒ 不写（``None``）。传 ``None`` 表示不继承（旧行为）。
     :returns: ``(relation_rows, misses)``——``misses`` 是未命中任何条款的
         工时制名，调用方必须让它**可见**（连通失败不得静默）。
     """
@@ -540,13 +566,16 @@ def build_governed_by_relations(
                 continue
             seen.add(key)
             hit += 1
+            row = {
+                "id": f"GOVERNED_BY:{wts_id}->{clause_id}",
+                "relation_type": "GOVERNED_BY",
+                "head": wts_id,
+                "tail": clause_id,
+            }
+            # 派生边继承所指条款的窗口（ADR-0005 §4 增补）。窗口缺失/多义时
+            # apply_clause_window 原样返回 ⇒ 边保持无日期，绝不补值。
             rows.append(
-                {
-                    "id": f"GOVERNED_BY:{wts_id}->{clause_id}",
-                    "relation_type": "GOVERNED_BY",
-                    "head": wts_id,
-                    "tail": clause_id,
-                }
+                apply_clause_window(row, windows=windows or {}, tail_id=clause_id)
             )
         if hit == 0:
             misses.append(name)
@@ -904,7 +933,32 @@ def import_graph(
             ]
             if wts_rows:
                 context = fetch_policy_context(session, kg_version=kg_version)
-                governed_rows, misses = build_governed_by_relations(wts_rows, context)
+                # 派生边窗口继承（ADR-0005 §4 增补）：先算条款窗口表，再连边。
+                # 三项计数必须可见 —— 继承了多少、放弃了多少，不得静默。
+                windows, wstats = clause_windows(session, kg_version=kg_version)
+                print(
+                    "  [governed-by] 条款窗口：可继承 "
+                    f"{wstats['one']} / 多义弃用 {wstats['many']} / 无窗口 "
+                    f"{wstats['none']}"
+                )
+                # **R4-b 兜底**：本脚本不读制度原文 ⇒ 无从知道每个条款出自哪份
+                # 文档，改从登记册取（登记侧是制度入图器，它知道）。
+                # ``setdefault`` ⇒ **条款自身窗口优先**，文档窗口只补缺口，不覆盖。
+                doc_scopes = load_document_scopes(DEFAULT_SCOPE_STORE)
+                filled = 0
+                for clause_id, window in doc_scopes.items():
+                    if clause_id in windows:
+                        continue
+                    windows[clause_id] = (window[0], window[1])
+                    filled += 1
+                print(
+                    f"  [governed-by] R4-b 文档级兜底：登记 {len(doc_scopes)}"
+                    f" / 本次补位 {filled}"
+                    + ("" if doc_scopes else "（登记册为空 ⇒ 未兜底，边保持无日期）")
+                )
+                governed_rows, misses = build_governed_by_relations(
+                    wts_rows, context, windows
+                )
                 relation_rows.extend(governed_rows)
                 print(
                     f"  [governed-by] 工时制 {len(wts_rows)} 类 × 条款语料 "

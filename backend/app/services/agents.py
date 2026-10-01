@@ -400,6 +400,9 @@ class AgentService:
                 nodes=subgraph.nodes,
                 edges=subgraph.edges,
                 chunks=evidence_chunks,
+                # 全生命周期 as-of（Sprint 10.5 / L2-③）：由请求传入，缺省 None
+                # ⇒ 当前视图，与加此参数之前完全同解（缺省必须零变化）。
+                as_of=request.as_of,
             )
         except GraphUnavailableError as exc:
             logger.bind(trace_id=trace_id, reason=str(exc)).error(
