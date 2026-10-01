@@ -626,6 +626,10 @@ _DOC_HEAD = (
 )
 _DOC_TAIL = "<w:sectPr/></w:body></w:document>"
 
+#: zip 目录项的固定时间戳（见 :func:`md_to_docx` 的注释）。
+#: 取 zip 格式的年代下限 1980-01-01 00:00:00——早于此戳部分的工具读不了。
+_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+
 
 def _run(text: str, *, bold: bool = False, size: int | None = None) -> str:
     rpr = ""
@@ -702,9 +706,17 @@ def md_to_docx(md_text: str) -> bytes:
 
     bio = io.BytesIO()
     with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("[Content_Types].xml", _CONTENT_TYPES)
-        zf.writestr("_rels/.rels", _RELS)
-        zf.writestr("word/document.xml", document)
+        # 逐字节可复现：zip 的目录项缺省写入**当前时间**，同一份 md 两次生成的
+        # docx 字节不同（内容相同却 git-diff 一堆红绿）。固定 1980-01-01 ⇒
+        # 模块 docstring 第 3 条纪律（"重复执行产物逐字节一致"）在 DOCX 上**也成立**。
+        for name, payload in (
+            ("[Content_Types].xml", _CONTENT_TYPES),
+            ("_rels/.rels", _RELS),
+            ("word/document.xml", document),
+        ):
+            info = zipfile.ZipInfo(name, date_time=_ZIP_TIMESTAMP)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, payload)
     return bio.getvalue()
 
 
