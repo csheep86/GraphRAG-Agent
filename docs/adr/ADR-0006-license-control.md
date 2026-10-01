@@ -4,7 +4,22 @@
 - **日期**：2026-09-27
 - **决策者**：用户（产品 / 商业化）+ 架构（`specs/` + `docs/` 域）
 - **相关**：ADR-0003（租户隔离，租户数维度依赖 `org`）、ADR-0004（接缝门禁机制，接缝 9 复用其门禁；`users` 表登记）、M5（席位数依赖 `users` 表）、**`docs/deployment-spec.md`**（离线交付，本 ADR 的前提）
-- **落地版本**：**v1.7.0（Sprint 11）**
+- **落地版本**：**v1.7.0（Sprint 11）** —— ⚠️ **2026-10-01 重排**：`S11` 编号已废，实现编排改指 `delivery-plan.md` **P4**（DR-C1）。**正文中的 `S11` 一律读作 P4**，另有两处裁决已改，见下方重排注记。
+
+> ### ⚠️ 2026-10-01 重排注记（**不篡改 ADR 正文，守 R5**）
+>
+> **1. `users` 表归属已改**（正文多处写「`users` 表 S11 才建 / 随 M5」——§26 / §214 / §229 / §248）：
+> ⚠️ **`users` 表按 DR-B13 前置到 `delivery-plan.md` P2 第一步，不随 M5**。
+> 它是 **SSO（DR-D9）/ RBAC（DR-B9）/ License 席位（本 ADR）**三者的**共同前置**，
+> 沿用正文口径会同时阻塞 P2 与 P4。
+>
+> **2. License 落地阶段改 P4**（原「与 M5 同批」失效）。
+>
+> **3. 完成判据由护栏 G-23 机械判定**：`licenses` 表 / `LicenseProvider` / **纯 ASGI**
+> `LicenseMiddleware` / 6 个 `LICENSE_*` 契约码（**§122 所列即为其清单**）/
+> `GET /license/status` / `license-cli fingerprint`，外加「移除 license ⇒ 受保护端点
+> 403 `LICENSE_MISSING`、**拒绝必须落审计**」。截至 2026-10-01 **全部为零代码**
+> ⇒ G-23 以 `xfail` 骨架挂起：**有本篇 ADR 不等于 License 已做**。
 
 ---
 

@@ -36,7 +36,7 @@ M5 要求「角色 / 文档 / 场景三粒度权限」与「操作审计」，�
 | **1** | **所有核心表（PostgreSQL）必须含 `org_id` 字段**（`UUID NOT NULL` + 索引） |
 | **2** | **启用 PostgreSQL RLS**（`ENABLE` + `FORCE ROW LEVEL SECURITY`） |
 | **3** | **`storage_key` 必须以 `org_id` 为前缀** |
-| **4** | **查询强制经 ORM / 中间件注入 `org_id` 过滤，严禁裸写 SQL** |
+| **4** | **查询强制经 ORM / 中间件注入 `org_id` 过滤，严禁裸写 SQL**；**该应用层过滤为常设防线，不因 RLS 生效而移除**（理由见 §3.7 裁决一） |
 
 ---
 
@@ -112,9 +112,11 @@ CREATE POLICY tenant_isolation ON documents
 - `Storage.get(key)` **必须校验 key 前缀与当前 `org_id` 一致**，防止越权读取他人文件。
 - MVP 单 Org 也必须按此格式写入，**避免 P2 迁移历史文件**。
 
-### 3.6 Sprint 1 临时兜底：SQLite（**限期，必须偿还**）
+### 3.6 SQLite 兜底与切换 PostgreSQL 的裁决
 
-> **SQLite 仅作为 Sprint 1 契约验证阶段的临时兜底，不支持 RLS。Sprint 3 集成 Neo4j + PostgreSQL 时，必须切换到 PostgreSQL 并启用 RLS。**
+#### 3.6.1 Sprint 1 临时兜底（**历史记述；已裁决终止**）
+
+> **SQLite 仅作为 Sprint 1 契约验证阶段的临时兜底，不支持 RLS。** 本节约定的偿还动作**截至 Sprint 10.5 仍未完成**，属**逾期的已知债**——不得因为「一直这么跑着」而被视为可继续。
 
 | 项 | 约定 |
 |---|---|
@@ -123,8 +125,41 @@ CREATE POLICY tenant_isolation ON documents
 | 隔离兜底 | RLS 缺位期间，`org_id` 过滤**只由应用层保证**（查询强制带 `org_id`，跨租户返回 `403 FORBIDDEN`） |
 | 索引 | 仍按 §3.1 **`org_id` 打头**建复合索引（如 `ix_documents_org_id_status`），避免切库时返工 |
 | 其它兜底 | `X-Org-Id` / `X-Actor-Id` 开发态请求头（`ALLOW_DEV_ORG_HEADER=true` 且非生产才生效）**同样限期移除**，见 `backend/CODEBUDDY.md` §2 |
-| 偿还动作 | Sprint 3：切 PostgreSQL → §3.1 补全各表 `org_id` → §3.2 建 `ENABLE`/`FORCE` 策略 → §3.3 事务内 `SET LOCAL app.current_org` → 删除本节全部兜底分支 |
+| 偿还动作 | 切 PostgreSQL → §3.1 补全各表 `org_id` → §3.2 建 `ENABLE`/`FORCE` 策略 → §3.3 事务内 `SET LOCAL app.current_org` → 删除本节全部兜底分支 |
 | 风险声明 | 本节生效期间，§3.2「DB 层兜底」**实际未生效**，越权防御强度**低于本 ADR 的目标状态**；**不得据此认为隔离已完成** |
+
+#### 3.6.2 裁决（2026-10-01）：直接切换 PostgreSQL，**不再以 SQLite 作为开发态替身**
+
+| 项 | 裁决 |
+|---|---|
+| **决策** | **开发 / 测试 / 生产一律使用 PostgreSQL**；不再把 SQLite 当「PG 的开发态替身」——`backend/CODEBUDDY.md` §1 中「PostgreSQL 的本地等价替身」这一**定位就此废止** |
+| **版本** | **PostgreSQL 16.x**（`docs/deployment-spec.md` §2 组件清单）；**固定小版本 tag**，遵守 D-N：`:latest` 是不可复现的同义词 |
+| **理由** | SQLite 与 PG 在**并发模型（单写锁 vs MVCC）、UUID 存储格式、事务隔离级别、RLS** 上均不同 ⇒ **SQLite 上跑绿的测试不能证明 PG 上正确**。考勤 / 薪酬数据下，这类差异会在**客户现场才暴露**——那是本 ADR 最贵的暴露时机（例：`backend/app/scripts/probe_temporal_state.py` 已踩过「`Uuid` 列在 SQLite 里存无连字符格式」的方言坑） |
+| **附加偿还** | 清理 SQLite 兜底分支：`app/db/session.py` 的 `check_same_thread` 特判、`.env.example` 的「开发态替身」说明、`backend/CODEBUDDY.md` §1 / §2 的限期声明 |
+| **风险声明** | 切换后**必然暴露一批 SQLite 下测不出的缺陷**（尤其并发）。这是**预期代价**，不得以「以前都好好的」为由回退 |
+
+### 3.7 应用层过滤为常设防线 + 信创降级退路（2026-10-01 补）
+
+**裁决一：应用层 `org_id` 过滤不得因 RLS 存在而移除。**
+
+1. **DB 层 RLS 可能被降级或不可用**——客户若有国产化（信创）要求而选用**非 PG 兼容内核**的数据库（如达梦，Oracle 兼容为主），RLS 无法平移；此时若应用层过滤已被当作「兜底」拆除，隔离**直接击穿**。
+2. 双层防御的价值恰在于**两层各自独立成立**；任一层被当成「另一层的备份」而弱化，即退化为单层。
+
+⇒ 应用层过滤由「RLS 缺位期间的兜底」**升格为常设防线**，与 RLS 并列，**不设移除条件**。
+
+**裁决二：部署单元 = 一个租户。**
+
+默认隔离为**方案 A（一套部署 + `org_id` + RLS）**；但**部署单元按「一套 compose = 一个租户」设计**，使方案 B（每子公司独立部署）退化为「多起几套」，**不需要改代码**（部署侧同步见 `docs/deployment-spec.md` §1.1）。
+
+**信创兼容分级**（选型参考，不构成承诺）：
+
+| 国产库 | 内核来源 | RLS 可平移性 |
+|---|---|---|
+| 人大金仓 KingbaseES | PG 内核 | 好 |
+| GaussDB / openGauss | PG 内核 | 好 |
+| 达梦 DM | Oracle 兼容为主 | **差——需重做** |
+
+⇒ 遇非 PG 兼容内核时：**牺牲 DB 层 RLS，保留应用层过滤**。隔离强度降级但**不击穿**；该降级必须**显式登记并告知客户**，不得静默。
 
 ---
 
@@ -140,6 +175,19 @@ CREATE POLICY tenant_isolation ON documents
 - ⚠️ **测试必须覆盖多 Org**：单 Org 测试无法证明 RLS 生效，**必须新增跨 org 越权用例**（否则隔离只是「纸面」的）。
 - ⚠️ **轻微性能开销**：策略表达式求值 + 索引需以 `org_id` 打头。
 
+### 4.1 必须补的两类测试（**2026-10-01 登记 · 待纳入开发需求与 CI 围栏**）
+
+> 登记目的：后续梳理开发需求与围栏时**不得遗漏**。截至登记日，两类用例**均为缺口**。
+
+| # | 用例 | 断言 | 缺口后果 |
+|---|---|---|---|
+| **T1** | **跨 org 越权**：以 A org 身份查询 / 读取 B org 的资源（`documents`、`audit_log`、`qa_logs`、存储 `storage_key`） | 返回**空**或 `403`；**不得**返回 B 的数据 | 隔离只是纸面 |
+| **T2** | **并发串租户**：多线程 / 多协程**同时**以不同 `org_id` 发起请求，**必须覆盖连接池复用路径** | 每个请求**只**看到自己 org 的数据；**不得**串号 | `SET LOCAL` 误写成 `SET`、或连接泄漏 ⇒ **A 公司看到 B 公司的考勤 / 薪酬** |
+
+**T2 为何单独列出**：RLS + 连接池是本 ADR **唯一可能产出「静默跨租户泄露」**的组合——它在**单 org、串行**测试里永远测不出来，只在真实并发下暴露。T2 不落地，**§3.2 的三前提不可宣称已守**。
+
+**围栏要求**：两类用例**均须在 PostgreSQL 上执行**（SQLite 无 RLS，在其上跑无意义），纳入 CI 必过项；**禁止**标 `local_only` 绕过（否则「看着绿、其实没跑」）。
+
 ---
 
 ## 5. 备选方案与取舍
@@ -148,7 +196,7 @@ CREATE POLICY tenant_isolation ON documents
 |---|---|
 | **仅 API 层过滤** | 一次漏写即越权泄露；无兜底，风险不可接受。 |
 | **仅 DB 层（无请求级注入）** | 缺少可信的 `org_id` 上下文来源；且 M5 仍需在路由层做 RBAC 权限校验。 |
-| **每 Org 独立 schema / 独立数据库** | MVP 单 Org 下运维过重；作为 P2 大规模租户的可选演进方向。 |
+| **每 Org 独立 schema / 独立数据库** | MVP 单 Org 下运维过重。**2026-10-01 更新**：仍**不作为默认**（默认方案 A），但**部署单元按「一套 compose = 一个租户」设计**（§3.7 裁决二）⇒ 客户要求子公司**物理隔离**时只需多起几套，**不改代码**。 |
 | **存储层不隔离** | P2 需**迁移全部历史文件**，成本与风险极高。 |
 | **不做预留，等 P2 再加** | 需给每张表加列 + 逐条审计查询，**任何遗漏都是安全洞**。 |
 
@@ -165,7 +213,10 @@ CREATE POLICY tenant_isolation ON documents
 | 5 | `specs/m4-affiliation-detection.md` | §4.3 / §4.4 / §4.5 补 `org_id` |
 | 6 | `specs/m1-async-ingest.md` | §4.3 存储抽象层补 `storage_key` 前缀规则（`{org_id}/{doc_id}/{filename_hash}`） |
 | 7 | `contracts/openapi.yaml`（实现阶段） | 所有列表 / 详情端点的租户隔离与 403 语义（Sprint 1 已定稿 5 个核心接口） |
-| 8 | `backend/CODEBUDDY.md` §1 / §2 | SQLite 兜底与开发态请求头的**限期声明**（Sprint 1 已落地，Sprint 3 偿还） |
+| 8 | `backend/CODEBUDDY.md` §1 / §2 | **§1 的「SQLite = PostgreSQL 本地等价替身」定位已废止**（§3.6.2 裁决），改为一律 PG；§2 开发态请求头的限期声明仍待偿还 |
+| 9 | `docs/deployment-spec.md` §1.1 / §2 | §1.1 补「**一套 compose = 一个租户**」的部署单元定义（§3.7 裁决二）；§2 的 PG 位由「留空待 S11」改为**就位**（PG 16.x 固定小版本 tag） |
+| 10 | `backend/app/db/session.py`、`backend/.env.example` | 清理 SQLite 兜底分支（`check_same_thread` 特判、「开发态替身」说明），见 §3.6.2「附加偿还」 |
+| 11 | `specs/m5-permission-audit.md` §3 | 补 **T2 并发串租户**验收（§4.1）：多 org 并发请求不得串号；T1 / T2 **均须在 PG 上跑** |
 
 > **注意**：本 ADR 一旦落地，**M1–M4 的全部规格表都需补 `org_id`**——这是横向基础设施的固有代价，**必须在实现前一次性对齐**。
 

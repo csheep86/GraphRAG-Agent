@@ -6,8 +6,8 @@
 >
 > **口径真源**（本文件不复制细节，只做映射）：
 > - 需求与硬约束：`docs/03-prd.md` §2 / §4 / §5 / §8
-> - 交付与门禁：`docs/v1.1.0-demo-mvp-plan.md` §3.2 B / §15 / §20 ～ §21
-> - 倒推与闸门：`docs/v2.0.0-ship-backward-plan.md` §1 ～ §3
+> - 交付与门禁：**排期见 [`docs/delivery-plan.md`](./delivery-plan.md)**（P1~P6）；**PRD 承接见 [`docs/prd-mvp-takeup.md`](./prd-mvp-takeup.md)**。⚠️ 原 `docs/v1.1.0-demo-mvp-plan.md` §3.2 B / §15 / §20～§21 **已随该计划全废**（2026-10-01，归档于 `changes/archive/2026-10-01-obsolete-plans/`），其中 **§15 已抢救迁移至 `prd-mvp-takeup.md`**。本文**历史记述**中对旧文件 / 旧编号（S5~S13）的引用为**史实，保留不改**。
+> - 倒推与闸门：~~`docs/v2.0.0-ship-backward-plan.md` §1 ～ §3~~ **该排期已全废**（2026-10-01，见需求基线 §6.2）；现行依据 = [`delivery-plan.md`](./delivery-plan.md) **P1~P6** + [`delivery-requirements-and-guardrails.md`](./delivery-requirements-and-guardrails.md)
 > - 验收条文：`specs/m1..m6-*.md` §3
 > - 指标定义：`docs/02-product-outline.md` 附录 C；反证条件：`docs/01-research.md` §3.3
 >
@@ -113,7 +113,7 @@
 | **M3-4** | `scope=single_doc` 严格隔离，`citations` 仅含该文档 | 单 / 跨文档各一例 | ✅ **达成**：`agents.py:441-445` 按 scope 分流；取证据时 `doc_id is not None` → `_QUERY_EVIDENCE_CHUNKS_BY_DOCUMENT`（`graphs.py:782-784`，受 `doc_id + kg_version` **双重约束**），`cross_doc` 才走「按实体回查」 | 保持 |
 | **M3-5** | 意图路由到 M4 → `route = "m4_affiliation"` + 携带 M4 `task_id` | 响应 `route` 取值 + 路由调用点 | ❌ **未做**：`route` 在两个出口**恒为 `"m3_graphqa"`**（`agents.py:378 / 506`），无 `intent_router` 调用。S7 的 M4 疑点链路走**独立页面 + 独立端点**（`POST /affiliation/detect`），**未接回 M3 路由** | **未排期** |
 | **M3-6** | 输出置信度评级 `high / medium / low`，`low` 在 UI 标记「建议人工复核」 | 响应 `confidence` + 前端标记 | ✅ **达成**：`QueryConfidence` 三值（拒答固定 `low`）；前端 `chat-message-item.tsx:50-52` 对 `confidence === "low"` 打「**低置信度**」徽标。⚠️ **字面差异**：UI 文案是「低置信度」而非 spec 原文「建议人工复核」——语义一致、措辞不同，**登记不修改** | 保持 |
-| **M3-7** | `trace_id` + 「问题 → 答案 → 引用条数 → 拒答原因」完整链路打点 | `qa_logs` 落库 | 🟡 **部分达成**：`trace_id` ✅（同 M2-7 / H4）；「引用条数 / 拒答原因」**在响应体内** ✅。**缺**：`qa_logs`（`question_hash` / `answer_hash` / `citation_count` / `refused` / `refusal_reason` / `kg_version` / `trace_id`）**表未建**，无持久化打点 | **未排期**（建议随 S10「真实引用细化」一并估） |
+| **M3-7** | `trace_id` + 「问题 → 答案 → 引用条数 → 拒答原因」完整链路打点 | `qa_logs` 落库 | 🟡 **部分达成**：`trace_id` ✅（同 M2-7 / H4）；「引用条数 / 拒答原因」**在响应体内** ✅。~~**缺**：`qa_logs`（`question_hash` / `answer_hash` / `citation_count` / `refused` / `refusal_reason` / `kg_version` / `trace_id`）**表未建**，无持久化打点~~ → ⚠️ **2026-10-01 更正（本行原为过期口径）**：`qa_logs` **已于 2026-09-26（S8 批次 A）建表并写入**，上述列均已落，真机累计 **16 行**（与本节 M3-3、H4 行口径一致）⇒ **M3 验收 7 的「打点」已达成**，**不再记为部分达成** | ✅ **已闭合**（原「未排期」结论作废） |
 
 **对账结论（不伪装）**：
 
@@ -124,7 +124,8 @@
 
 **本次补做的实质发现（口径更正）**：多个文档（本矩阵 §3.1 M2 行、`plan.md` §15.3 M2 行、`specs/m2` 状态行）长期写着「M2 **`confidence` 不落库**」——**2026-09-24 复核为错误**：`confidence` 已随 v1.2.0 写入 Neo4j 的节点与关系属性，且带完整取值纪律（丢弃、裁剪、不猜值）。三处已按更正后口径重写，**理由留在本节以备反查**，避免下次有人照旧口径又改回去。
 
-**另一条要记住的**：`qa_logs` 从未建表（M3 §4.3），因此 M3 验收 3 / 7 的「打点」**今天也不成立**——这不是 S6 留下的债，而是它当时就依赖一个尚未落地的东西。
+~~**另一条要记住的**：`qa_logs` 从未建表（M3 §4.3），因此 M3 验收 3 / 7 的「打点」**今天也不成立**——这不是 S6 留下的债，而是它当时就依赖一个尚未落地的东西。~~
+⚠️ **2026-10-01 更正（本行原结论已过期，作废）**：`qa_logs` **已于 2026-09-26（S8 批次 A）建表并写入**，真机累计 **16 行** ⇒ M3 验收 3 / 7 的「打点」**现已成立**。**保留删除线仅为留痕**（守 R5 不篡改历史结论），**现行口径以更正后内容为准**。
 
 ### 3.5 知识时效（M2 §3 验收 8–10）→ 判据（**2026-09-27 登记，ADR-0005**）
 
@@ -150,9 +151,20 @@
 > 而演示库 `valid_to` 为 0 条。若将来补了「同一主题的两份不同日期文档」语料并重跑抽取，
 > **先重跑 §11 的探针确认 `inconsistent` 由 0 变非零**，再做 12 / 13 —— 顺序反了就是拿不可验证的东西假装验收通过。
 
+### 3.6 租户隔离测试 **T1 / T2**（**2026-10-01 登记，ADR-0003 §4.1**）
+
+> 登记目的：切 PostgreSQL 前**两类均为缺口**。二者**必须在 PG 上跑**（SQLite 无 RLS，在其上跑无意义），纳入 CI 必过项，**禁止**标 `local_only` 绕过（否则"看着绿、其实没跑"）。
+
+| # | 用例 | 断言 | 缺口后果 |
+|---|---|---|---|
+| **T1** | **跨 org 越权**：以 A org 身份查询 / 读取 B org 的资源。**PG 侧**：`documents`、`audit_log`、`qa_logs`、存储 `storage_key`；**图谱侧（2026-10-01 补入，见需求基线 DR-B11）**：跨 org 子图查询 / Cypher 直读 | 返回**空**或 `403`（**图谱侧为 `403 KG_TENANT_LEAK`**）；**不得**返回 B 的数据 | 隔离只是纸面。⚠️ **图谱侧（Neo4j）无 RLS 可依赖**，应用层校验是**唯一**防线；CI 无 Neo4j ⇒ 图谱侧用例为**集成测试**，须独立环境留证，**不得**声称已由 CI 验证 |
+| **T2** | **并发串租户**：多线程 / 多协程**同时**以不同 `org_id` 发起请求，**必须覆盖连接池复用路径** | 每个请求**只**看到自己 org 的数据；**不得**串号 | `SET LOCAL` 误写成 `SET`、或连接泄漏 ⇒ **A 公司看到 B 公司的考勤 / 薪酬** |
+
+**T2 为何单独列出**：RLS + 连接池是 ADR-0003 **唯一可能产出「静默跨租户泄露」**的组合——它在**单 org、串行**测试里永远测不出来，只在真实并发下暴露。**T2 不落地 ⇒ ADR-0003 §3.2 的三前提不可宣称已守。**
+
 ---
 
-## 4. H1–H14 硬约束 → 验收锚点 → 判据（**本矩阵核心**）
+## 4. H1–H16 硬约束 → 验收锚点 → 判据（**本矩阵核心**）
 
 | # | 约束（摘要，全文见 PRD §4） | 锚点 | 判据类型 | 判据 / 命令 | 验收人 | 现状 |
 |---|---|---|---|---|---|---|
@@ -168,8 +180,10 @@
 | **H10** | 契约先行 | 各 spec §"API 端点草案" + `contracts/openapi.yaml` | 机械 | `backend/`：`uv run python scripts/export_openapi.py --check`；`frontend/`：`npm run gen:api` 后 `git diff --exit-code -- frontend/src/types/api.d.ts` | CI（`contract` job） | ✅ 门禁在跑；**S7 批次 C / D 各跑一次 `gen:api` 均零 diff**；bump 1.3.0 连带重导契约（`info.version` 取自 `app_version`，不同步则必红）后仍零漂移 |
 | **H11** | 准入线 C1–C3 | M4 §3 验收 6；M3 §3 验收 2 | 机械 + 人工 | 见 §5.1 | 架构师 + 用户 | ⏳ S13（评测脚本**待建**） |
 | **H12** | 反证 F3 引用覆盖率 < 100% → **直接 NO-GO** | M3 §3 验收 2；M4 §3 验收 4 | 机械 + 人工 | 脚本统计"含可回溯 span 的答案数 / 总答案数"，**必须 = 1.00**；受控问题集人工复核 | 架构师 | 🟡 **S6 首次达标（F3 未触发）**：受控问题集 14 问，引用覆盖率 **100%**、拒答误伤 **0**（`scripts/eval_controlled_qset.py`）。**终局判据仍属 S10**——多跳 ≥3 跳 + 全量问题集；本轮为**演示剧本口径**（单份真机文档），不等同全量召回指标，已按 G5 在 release notes v1.2.0 §6.4 显式声明。**M4 侧首次达标（F3 未触发）**：**10 / 10** 疑点含可回溯 `:Chunk` 证据（合计 42 条，覆盖率 100%，见 §3.3 验收 4）；数据集为 6 片年报切片，**终局仍待 S13 全量样本**，已在 release notes v1.3.0 §6.7 声明 |
-| **H13** | **License 每请求校验**：四维度（租户数 / 席位数 / 功能模块 / 有效期）组合校验，超限按分级拒绝，**拒绝必落审计** | **全局中间件**（横向，无模块 spec）→ [`ADR-0006`](./adr/ADR-0006-license-control.md) §2.4 / §2.5 / §2.6 | 机械 | ① 移除 license 文件 → 受保护端点 403 `LICENSE_MISSING`（仅 `/health` 与 `/license/status` 可访问）；② 过期 → 宽限期只读、超期 403 `LICENSE_EXPIRED`；③ 模块未授权 → 403 `LICENSE_MODULE_DISABLED`；④ 席位超限 → 拒绝新建 / 启用用户且已有用户只读可用；⑤ 每次拒绝落 `audit_log`（`license.denied`）；⑥ 每请求校验的 P95 增量 **< 1ms** | CI + 后端 B | ⏳ **零代码**（2026-09-27 登记）→ **S11** |
-| **H14** | **离线可交付**：可离线安装、可备份恢复、可版本升级（含数据库迁移） | [`docs/deployment-spec.md`](./deployment-spec.md) §4 / §6 / §7 | 半机械 | 安装验收清单 10 项逐条（compose healthy / license active / 上传建图 / 问答溯源 / 审计 ≥7 条 / 租户隔离 / 备份 manifest / **恢复演练** / 生产配置）；迁移脚本存在且可重执行；**D-1 容器化**与 **D-2 数据库迁移**两缺口闭合 | DevOps + 架构师 | ⏳ **零代码**（2026-09-27 登记）→ **S11**；D-1 / D-2 未补齐前**不得对外承诺可私有化交付** |
+| **H13** | **License 每请求校验**：四维度（租户数 / 席位数 / 功能模块 / 有效期）组合校验，超限按分级拒绝，**拒绝必落审计** | **全局中间件**（横向，无模块 spec）→ [`ADR-0006`](./adr/ADR-0006-license-control.md) §2.4 / §2.5 / §2.6 | 机械 | ① 移除 license 文件 → 受保护端点 403 `LICENSE_MISSING`（仅 `/health` 与 `/license/status` 可访问）；② 过期 → 宽限期只读、超期 403 `LICENSE_EXPIRED`；③ 模块未授权 → 403 `LICENSE_MODULE_DISABLED`；④ 席位超限 → 拒绝新建 / 启用用户且已有用户只读可用；⑤ 每次拒绝落 `audit_log`（`license.denied`）；⑥ 每请求校验的 P95 增量 **< 1ms** | CI + 后端 B | ⏳ **零代码**（2026-09-27 登记）→ **`delivery-plan.md` P4**（DR-C1）；**护栏 G-23 骨架已就位**（xfail 挂起）。**原 S11 编号已废** |
+| **H14** | **离线可交付**：可离线安装、可备份恢复、可版本升级（含数据库迁移） | [`docs/deployment-spec.md`](./deployment-spec.md) §4 / §6 / §7 | 半机械 | 安装验收清单 10 项逐条（compose healthy / license active / 上传建图 / 问答溯源 / 审计 ≥7 条 / 租户隔离 / 备份 manifest / **恢复演练** / 生产配置）；迁移脚本存在且可重执行；**D-1 容器化**与 **D-2 数据库迁移**两缺口闭合 | DevOps + 架构师 | ⏳ **零代码**（2026-09-27 登记）→ **`delivery-plan.md` P6**（DR-E2~E4）；D-1 / D-2 未补齐前**不得对外承诺可私有化交付**。**原 S11 编号已废** |
+| **H15** | **可定制交付（插件式）**：构建期烘焙；单一代码库 + variant（镜像 N 份、代码 1 份）；插件**不污染基座契约**；定制 **L0/L1/L2** 分档 | [`ADR-0007`](./adr/ADR-0007-plugin-delivery.md) §3.1–§3.5（**无模块 spec，锚点为 ADR**） | 半机械 | ① 存在 `deploy/variants/<客户>.yaml` 且**不含业务代码**；② 基座 `contracts/openapi.yaml` 中**无**任何客户专属字段（人工 + 零漂移门禁）；③ 构建产物 tag 形如 `<base_version>-<variant>`；④ 一次基座改动 ⇒ CI 遍历**全部** variant 构建成功 | CI + 架构师 | ⏳ **零代码**（2026-10-01 登记）；`deploy/variants/` 未建 → **`delivery-plan.md` P1**（DR-A1~A3）。**护栏 G-12 / G-14 / G-19 / G-22 骨架已就位**（xfail 挂起）。**原 S11 编号已废** |
+| **H16** | **补丁可升级且不破坏插件**：补丁位 = **第三位 PATCH**（当前 `1.6.0` 的补丁 = `1.6.1`；**完整版本语义见需求基线 §7**）**不改契约 / 不改八个接缝接口签名 / DB 只向后兼容加法** | [`ADR-0007`](./adr/ADR-0007-plugin-delivery.md) §3.8.3 / §3.9 | 机械 | ① **接缝签名快照**：打 PATCH / MINOR 时快照**逐字相同** ⇒ **✅ 已建 = 护栏 G-11**（`uv run python backend/scripts/extract_seam_signatures.py --check`）；② 补丁 PR 中 `contracts/openapi.yaml` **零 diff** ⇒ **✅ 已建 = 护栏 G-15**（`check_patch_contract_freeze.py`，**已接入 `ci.yml`**）；③ 迁移脚本评审 + 升级演练（**人工判据**，须留证据） | CI | ✅ **①②已建并生效**（2026-10-01）；③ 演练属人工判据，待 **DR-E3** 兑现 |
 
 > **H1–H10 来自 `CODEBUDDY.md`，H11–H12 来自产品准入线**（PRD §4），**H13–H14 来自商业化与交付形态**（ADR-0006 / deployment-spec，2026-09-27 追加）。**H12 是唯一的"一票否决"项**：它不达标时不允许降级发布。
 >

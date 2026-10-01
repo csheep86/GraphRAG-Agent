@@ -2,8 +2,10 @@
 
 > **文档编号**：spec-m6
 > **版本**：v0.1（草案，待 Sprint 12 启动前升 v1.0）
-> **状态**：MVP 规格草案（**v3.0 计划纳入 Sprint 12**，承接 `docs/v1.1.0-demo-mvp-plan.md` §19.1 A/B/C/D 四批次与 §15.1 第 5 行；**本草案定稿时点 = Sprint 11 收尾前**）
-> **上游依据**：`docs/02-product-outline.md` §3.2 M6 + `docs/03-prd.md` §2（P1 模块）+ `docs/v1.1.0-demo-mvp-plan.md` §19
+> **状态**：MVP 规格草案（**排期见 [`docs/delivery-plan.md`](../docs/delivery-plan.md) P5 阶段**；承接原 plan v3.0 §19.1 A/B/C/D 四批次与 §15.1 第 5 行——**该计划已全废**，§15 内容已抢救迁移至 [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md)；**本草案定稿时点 = P5 阶段 M6 开工闸门**，对应需求 **DR-D2**）
+> **上游依据**：`docs/02-product-outline.md` §3.2 M6 + `docs/03-prd.md` §2（P1 模块）+ [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md) §1 第 5 行（**原 `v1.1.0-demo-mvp-plan.md` §19 / §15.1 已随该计划作废**）
+>
+> ⚠️ **引用处置**：本 spec 中形如 `plan §12 R12` / `plan §19.1` / `plan §21.3` / `plan §3.1` 的引用，其**结论已并入本 spec 正文**（如"GUI 只做三动作"、"仅建议不自动生效"、"`cost_ratio` 为 C3 取证字段"）。**引用仅作溯源**；原计划已废，**约束以本 spec 正文为准**。
 > **关联 Prompts**：`prompts/entity_relation_extract_v1.md`（**仅参数化复用，不修改**）；与 `prompts/kg_qa_v1.md`（冷启动建议 LLM 调用载体）
 > **关联研究结论**：`docs/v1.1.0-demo-mvp-plan.md` §12 R12（前端 GUI 工时风险）
 > **关联大纲**：`docs/02-product-outline.md` §3.2 M6 + §6 准入线（C3 单位成本）
@@ -285,7 +287,7 @@
 
 ## 10. v1.0 定稿 Checklist（**Sprint 12 开工闸门**，Sprint 11 收尾前完成）
 
-> 依据 `docs/v2.0.0-ship-backward-plan.md` §5.2 D-1（本 spec 升 v1.0 是 S12 的开工闸门）。逐项勾选后才可置"版本：v1.0"。
+> 依据 **DR-D2**（[`docs/delivery-requirements-and-guardrails.md`](../docs/delivery-requirements-and-guardrails.md)）：本 spec 升 v1.0 是 **P5 阶段 M6 的开工闸门**（~~原依据 `v2.0.0-ship-backward-plan.md` §5.2 D-1 已随该计划全废~~）。逐项勾选后才可置"版本：v1.0"。
 
 - [ ] **§4.4 与 M2 §4.5 接口对齐复核**：确认 M2 §4.5 已加 `applied` 枚举（依赖 P1-4，S9 顺路完成）；若未加，本 spec 不得升 v1.0
 - [ ] **PRD §2 / 附录 C 同步**：`docs/03-prd.md` §2 的 M6 行由"P1（不在本期 MVP）"改为"M6 进入 MVP 1.0，Sprint 12 承接"；附录 C 落清单加本 spec

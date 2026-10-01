@@ -9,8 +9,11 @@
 | 文档 | 用途 |
 |---|---|
 | [`docs/03-prd.md`](./docs/03-prd.md) | **需求真源**：6 个 P0 模块（M1–M6）、H1–H12 硬约束、黄金路径 7 步 |
-| [`docs/v1.1.0-demo-mvp-plan.md`](./docs/v1.1.0-demo-mvp-plan.md) | **交付计划 v3.0**：阶段总表、tag 规划、承接表 |
-| [`docs/v2.0.0-ship-backward-plan.md`](./docs/v2.0.0-ship-backward-plan.md) | **倒推计划**：上线闸门 G1–G5 + §7 决策记录 |
+| ~~**`docs/v1.1.0-demo-mvp-plan.md`**~~ | ❌ **已作废**（2026-10-01 全废，归档于 `changes/archive/2026-10-01-obsolete-plans/`）— 原交付计划 v3.0；**其 §15「PRD 承接表」已抢救迁移为下方 `prd-mvp-takeup.md`** |
+| ~~**`docs/v2.0.0-ship-backward-plan.md`**~~ | ❌ **已作废**（2026-10-01 全废，同上归档）— 原倒推计划（上线闸门 G1–G5 + §7 决策记录） |
+| [`docs/delivery-plan.md`](./docs/delivery-plan.md) | **交付排期（现行）**：取代上述两份；阶段 **P1~P6**（不再沿用 S9/S10/S11）；只定结构与依赖 |
+| [`docs/delivery-requirements-and-guardrails.md`](./docs/delivery-requirements-and-guardrails.md) | **需求与护栏基线**：DR-A~E 需求 + G-1~G-16 护栏（排期的唯一输入） |
+| [`docs/prd-mvp-takeup.md`](./docs/prd-mvp-takeup.md) | **PRD 承接表**：五处口径裁决 / M4 算法映射 / **M1–M5 模块现状**（从已废 plan §15 迁移） |
 | [`docs/acceptance-traceability-matrix.md`](./docs/acceptance-traceability-matrix.md) | **验收对账**：H1–H12 / C1–C3 / F1–F5 → 判据 → 验收人 |
 | [`docs/dev-doc-status.md`](./docs/dev-doc-status.md) | **文档状态跟踪**（唯一活表）+ 批次开工 / 收尾 checklist |
 | [`specs/`](./specs/) | 模块规格权威目录（`m1`～`m6`）；`_template/` 为 SDD 三件套模板 |

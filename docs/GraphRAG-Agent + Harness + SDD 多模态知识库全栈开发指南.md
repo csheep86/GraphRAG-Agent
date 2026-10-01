@@ -4,7 +4,7 @@
 > 协作模式：模拟"A做前端、B做后端"，双方通过 `contracts/openapi.yaml` 和 `specs/` 强制对齐标准。
 > 技术栈（**运行时组件，已按本地实测收敛**）：MinerU \+ LangExtract \+ LangChain \+ DeepSeek \+ FastAPI \+ Pydantic \+ React（Next.js 16）\+ Neo4j \+ PostgreSQL \+ loguru \+ slowapi \+ tenacity。
 > 工具链：VSCode \+ CodeBuddy 插件（Plan / Craft / Ask 三模式）\+ Pencil 插件（**仅阶段八 UI 设计稿使用**）。
-> **已排除项（勿再按技术栈理解）**：**Milvus**（阶段十四明确"跳过 Milvus，只跑通 Neo4j + Agentic-RAG"）、**MCP**（仅作为 CodeBuddy 内置能力出现在"防幻觉铁律"中，**不是规划组件**）。
+> **已排除项（勿再按技术栈理解）**：**Milvus**（阶段十四明确"跳过 Milvus，只跑通 Neo4j + Agentic-RAG"）、**MCP**（仅作为 CodeBuddy 内置能力出现在"防幻觉铁律"中，**不是规划组件**）、**Java**（2026-10-01 裁决：**不换 Java，坚持 Python**——理由与"JAR 式补丁"的替代方案见 [`ADR-0007`](./adr/ADR-0007-plugin-delivery.md) §3.7 / §3.8）。
 > 执行原则：先独立 MVP 验证，再集成组装；本地实测结果反哺规范文档；机器强制同步契约；无法匹配的功能先预留空位，严禁强行同步开发。
 > 企业底线：环境隔离、异步任务、存储抽象、日志可观测、测试分层、CI 自动化、安全限流、错误统一、Prompt 版本化、依赖锁定、格式化统一、跨平台换行符一致。
 > 操作环境：VSCode \+ CodeBuddy 插件 \+ Pencil 插件。
@@ -12,10 +12,11 @@
 > **⚠️ 文档适用边界（2026-09-21 标注，先读这一段）**
 >
 > 1. **覆盖范围**：本指南当前覆盖 **阶段一 ～ 阶段十八 = Sprint 1 ～ 9**（至 tag `v1.5.0`；**阶段十八于 2026-09-27 补写**，含**知识时效改造**，依据 `docs/adr/ADR-0005-temporal-knowledge-model.md`）。**阶段十九 ～ 二十二（Sprint 10 ～ 13，至 `v2.0.0`）尚未编写**（缺口登记：`docs/v2.0.0-ship-backward-plan.md` §5.2 **D-4**）。
-> 2. **口径优先级**：Sprint 9 ～ 13 的**排期、闸门与验收口径**，以 `docs/v1.1.0-demo-mvp-plan.md`（**v3.0**）与 `docs/v2.0.0-ship-backward-plan.md` 为**唯一真源**；本指南若与二者冲突，**以二者为准**。
+> 2. **口径优先级**（**2026-10-01 改**）：~~以 `docs/v1.1.0-demo-mvp-plan.md`（v3.0）与 `docs/v2.0.0-ship-backward-plan.md` 为唯一真源~~ **该口径已废**——上述排期三件套已于 2026-10-01 **全废并归档**（见需求基线 §6.2）。**现行唯一真源 = [`delivery-plan.md`](./delivery-plan.md)（P1~P6）+ [`delivery-requirements-and-guardrails.md`](./delivery-requirements-and-guardrails.md)（DR / G / R 编号）**；本指南若与之冲突，**以二者为准**。
 > 3. **交付口径修订**：**`v1.4.0` 是中途演示点（Demo），不是交付版**；**最终交付 = `v2.0.0`（Sprint 13）**。本指南中凡出现"Demo-MVP 完成点 / 完成"的表述，均按此修订理解。
 > 4. **验收对账**：逐条判据（谁验、怎么验、到哪一步）见 `docs/acceptance-traceability-matrix.md`。
 > 5. **OpenSpec CLI 已停用**：本指南"环境准备"中"安装 OpenSpec CLI"与"`openspec init`"两步**已作废**（决议 **O-1**：SDD 变更落点为 `changes/Sprint<N>.<M>/`，**不启用 OpenSpec CLI**）。**不要安装、不要执行 `openspec init` / `openspec new change`**——它会重新生成 `.codebuddy/commands/opsx/` 并把落点指向 `openspec/changes/`。详见下方第 6 / 9 步的作废说明与 `docs/v2.0.0-ship-backward-plan.md` §6.1。
+> 6. **交付形态以 ADR-0007 为准（2026-10-01 新增）**：本指南早期按"单一产品"撰写，未涉及**多客户定制交付**。凡涉及「客户定制 / 插件 / 补丁升级 / 变体镜像 / 数据库（SQLite→PG）」的口径，**一律以 [`ADR-0007`](./adr/ADR-0007-plugin-delivery.md) 与 [`docs/deployment-spec.md`](./deployment-spec.md) 为准**，本指南与之冲突处以二者为准。**三句话记住**：① 插件**构建期烘焙**，不做运行时热插拔；② **镜像 N 份、代码 1 份**（单一代码库 + `deploy/variants/`）；③ 补丁 = **新 tag 镜像 + registry 分层拉取**，补丁位**不改契约 / 不改接缝签名 / DB 只向后兼容加法**。
 > 
 > 
 
@@ -47,7 +48,9 @@
 
 **禁止在 Sprint 中途合并到 main**。 提前合并会导致最终收尾时 `merge --no-ff` 无事可做，或产生混乱。
 
-> **⚠️ 交付口径**：**`v1.4.0` 不是交付版**，对外沟通时不得称"MVP 1.0 已完成"；**交付版 = `v2.0.0`（Sprint 13）**，其充要条件是 plan §3.2 B 段五条全满足且 §15 承接表逐行勾选（或已有显式降级登记）。
+> **⚠️ 交付口径**：**`v1.4.0` 不是交付版**，对外沟通时不得称"MVP 1.0 已完成"；**交付版 = `v2.0.0`**（排期见 [`docs/delivery-plan.md`](./delivery-plan.md) **P6**），其充要条件是 **PRD 承接表 [`docs/prd-mvp-takeup.md`](./prd-mvp-takeup.md) 逐行勾选**（或已有显式降级登记）+ 需求基线 [`delivery-requirements-and-guardrails.md`](./delivery-requirements-and-guardrails.md) 的 DR 项达成（~~原"plan §3.2 B 段 / §15 承接表"已随该计划全废，§15 **已抢救迁移**至 `prd-mvp-takeup.md`~~）。
+>
+> ⚠️ **已废三件套（2026-10-01 全废，归档于 `changes/archive/2026-10-01-obsolete-plans/`）**：`v1.1.0-demo-mvp-plan.md` v3.0、`v2.0.0-ship-backward-plan.md`、`sprint-calendar.md`。**本指南对其引用的处置**：① **历史记述**（各阶段"某日完成/决策"记录）= **史实，保留不改**；② **活引用**（计划 / 排期 / 闸门 / 阶段总表）**以 `delivery-plan.md`（P1~P6）+ `prd-mvp-takeup.md` + `delivery-requirements-and-guardrails.md` 为准**。
 
 ## 📌 Sprint 收尾动作（必须执行）
 
@@ -73,7 +76,7 @@ git push --tags
 
 - `sprint-1-done`（轻量 tag，指向脚手架完成点）作为历史记录保留，不再用于 Sprint 收尾。
 
-- 从 Sprint 1 开始，所有 Sprint 收尾统一用语义化版本附注 tag：`v0.1.0 / v0.2.0 / v0.3.0 / v1.0.0`；**Demo-MVP 段** `v1.1.0 / v1.2.0 / v1.3.0 / v1.4.0`（Sprint 5~8）；**PRD MVP 1.0 追加段** `v1.5.0 / v1.6.0 / v1.7.0 / v1.8.0 / v2.0.0`（Sprint 9~13）。**全量计划详见 `docs/v1.1.0-demo-mvp-plan.md`（v3.0）§13 阶段总表**。
+- 从 Sprint 1 开始，所有 Sprint 收尾统一用语义化版本附注 tag：`v0.1.0 / v0.2.0 / v0.3.0 / v1.0.0`；**Demo-MVP 段** `v1.1.0 / v1.2.0 / v1.3.0 / v1.4.0`（Sprint 5~8）；**PRD MVP 1.0 追加段** `v1.5.0 / v1.6.0 / v1.7.0 / v1.8.0 / v2.0.0`（Sprint 9~13）。**全量计划详见 [`docs/delivery-plan.md`](./delivery-plan.md)（P1~P6；原 `v1.1.0-demo-mvp-plan.md` v3.0 §13 阶段总表已随该计划全废）**。
 
 Sprint 验收不通过怎么办：
 
@@ -92,6 +95,59 @@ Sprint 验收不通过怎么办：
 - Ask 模式：查资料、问报错、解释代码。只读。
 
 口诀：写文档用 Plan → 写代码用 Craft → 遇报错用 Ask → 再切回 Craft 修。
+
+## 📦 插件式交付速查（ADR-0007，2026-10-01）
+
+> 完整规格见 [`docs/adr/ADR-0007-plugin-delivery.md`](./adr/ADR-0007-plugin-delivery.md)。本节只给**执行时够用**的要点。
+
+**1. 乐高发生在构建期，不在客户现场**
+
+| 环节 | 谁做 | 动作 |
+|---|---|---|
+| 选积木 | 实施 | 写 `deploy/variants/<客户>.yaml`（声明插件 + 配置，**不含业务代码**） |
+| 拼装 | **构建机** | Docker 构建时 COPY 插件进镜像（完全离线，与客户环境无关） |
+| 交付 | 客户 | `docker compose pull` + `up -d`（云主机）或 `docker load` + `up -d`（内网） |
+| 撤积木 | 同上 | 改 variant 列表 → 重新出镜像 → 换回去 |
+
+⚠️ **禁运行时热插拔**：`deployment-spec.md` §1.2 明令禁现场编译 / 禁 `pip install`。客户现场永远是**一个烘焙好的完整镜像**——这是既定取舍，换取**零状态漂移**。
+
+**2. 镜像 N 份，代码永远 1 份**
+
+单一代码库（基座 + 所有插件）+ 每客户一份 variant 配置 ⇒ 改基座一处，CI 遍历 variant 自动重建。**禁止"客户分支"**（`feature/customerA`）——那正是要消灭的对象。
+
+**3. 定制三档（成本控制主杠杆）**
+
+| 档 | 例子 | 成本 | 策略 |
+|---|---|---|---|
+| **L0 配置** | 阈值、开关、考勤规则、审批流 | **≈ 0** | **尽量往这里推**——做成配置项 / DSL，不写代码 |
+| **L1 适配器** | LDAP、OA webhook、对象存储 | 低 | 对应 ADR-0004 八个接缝；接口冻结则不用动 |
+| **L2 业务定制** | 定制报表、专属审批流 | **高** | 尽量不做；做则**单独报价 + 单独维护合同** |
+
+**产品化回抽**：反复出现的定制，**季度性抽象为基座标准功能 + 配置开关**，并删掉原定制代码。没有这个循环，三年后会有 20 份实现同一件事的业务代码。
+
+**4. 插件两类**
+
+- **A 类（纯配置）**：不碰契约，manifest 声明配置项 ⇒ 基座设置页**动态渲染表单**，**前端零改动**。八个接缝多数属此类。
+- **B 类（要 UI / 新端点）**：自带 `contracts/plugins/<id>.yaml` 片段 + 自带前端，构建期并入。
+- **判据**：默认一律 A 类；确证"配置搞不定"才升 B 类。
+
+**5. 补丁（版本号第三位 `v1.0.x`）三条纪律**
+
+| # | 纪律 | 机器判据 |
+|---|---|---|
+| 1 | **不改** `contracts/openapi.yaml` | `export_openapi.py --check`（已有） |
+| 2 | **不改** ADR-0004 八个接缝的接口签名 | **接缝签名快照测试**：`v1.x` 补丁 ⇒ 快照**逐字相同** |
+| 3 | DB 只允许**向后兼容的加法** | Alembic 迁移评审 + 升级演练 |
+
+> 第 2 条兑现商业承诺：**同一大版本内插件不因补丁失效**；**升 V2.0 才允许打破**（届时插件需重新开发）。
+
+**6. 数据库：PostgreSQL 16.x**
+
+开发 / 测试 / 生产**一律 PG**（ADR-0003 §3.6.2）⇒ **不再用 SQLite 当"开发态替身"**。原因：并发模型 / UUID 存储 / 事务隔离 / RLS 均不同，SQLite 跑绿**不能证明** PG 正确。切 PG 后须补 **T1 跨 org 越权** + **T2 并发串租户**两类用例（矩阵 §3.6），且**必须在 PG 上跑**。
+
+**7. 不要提议换 Java**
+
+本项目核心依赖 `langchain-openai` + `neo4j`，是 LLM / GraphRAG 项目 ⇒ Python 生态**无可替代**。且容器化部署下 Java 与 Python 在补丁粒度上**完全等价**（都要重建镜像）。换 Java = 用 100% 成本买 0% 收益。
 
 # 一、环境准备（手动执行）
 
@@ -119,7 +175,7 @@ irm https://astral.sh/uv/install.ps1 | iex
 # 【状态】已停用——不要执行
 # 【原因】本项目不启用 OpenSpec CLI。SDD 变更落点为 changes/Sprint<N>.<M>/（方案 A′），
 #         三件套模板在 specs/_template/，无需任何全局 CLI。
-#         决议见 docs/v2.0.0-ship-backward-plan.md §6.1 / §7。
+#         决议见 ~~`docs/v2.0.0-ship-backward-plan.md` §6.1 / §7（**该计划已全废**）~~ → 现行口径不变：落点仍为 `changes/Sprint<N>.<M>/`（方案 A′），排期见 `docs/delivery-plan.md`。
 # 【风险】若已安装无害，但不得执行 openspec init / openspec new change——
 #         会重新生成 .codebuddy/commands/opsx/ 并把落点写向 openspec/changes/。
 ```

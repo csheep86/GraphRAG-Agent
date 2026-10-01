@@ -6,18 +6,32 @@
 
 | 存储 | 承担的数据 | 环境 | 状态 |
 |---|---|---|---|
-| **SQLite** | 关系型数据（`documents` 等）—— **PostgreSQL 的本地等价替身** | `development` / `test` | 在用 |
-| **PostgreSQL** | 生产关系型数据；启用 RLS 做租户隔离 | `production` | 待 Sprint 4 接入 |
+| **PostgreSQL 16.x** | **全部关系型数据**（`documents` 等）；启用 RLS 做租户隔离 | **全环境**（`development` / `test` / `production`） | **目标态（DR-B1，`delivery-plan.md` **P1 第 2 项**；**原 S11 编号已废**）**——当前代码仍连 SQLite，见下方「切换前」 |
+| **SQLite** | ~~PG 的本地等价替身~~ **该定位已废止**（2026-10-01） | — | **待移除**：仅作为切换完成前的临时现状，不得再当作"替身"依赖 |
 | **Neo4j** | 知识图谱：`(:KgVersion)` 版本状态机 + `(:Entity)` 实体与实体间关系 | 全环境 | 在用 |
 
-- `DATABASE_URL` 默认 `sqlite:///./dev.db` 只允许出现在 `development` / `test`。
-- `production` 环境若检测到 `sqlite` 驱动，**必须直接启动失败**，禁止静默降级。
-- 依据：[`docs/adr/ADR-0003-tenant-isolation-rls.md`](../docs/adr/ADR-0003-tenant-isolation-rls.md) §3.6。
+> **口径变更（2026-10-01，依据 [`ADR-0003`](../docs/adr/ADR-0003-tenant-isolation-rls.md) §3.6.2）**：
+> **开发 / 测试 / 生产一律使用 PostgreSQL**，**不再以 SQLite 作为「PG 的开发态替身」**。
+> 理由：SQLite 与 PG 在**并发模型（单写锁 vs MVCC）、UUID 存储格式、事务隔离级别、RLS** 上均不同
+> ⇒ **SQLite 上跑绿的测试不能证明 PG 上正确**；考勤 / 薪酬数据下，这类差异会在**客户现场**才暴露。
+> **预期代价**：切换后必然暴露一批 SQLite 下测不出的缺陷（尤其并发）——**不得以「以前都好好的」为由回退**。
+
+**切换前（当前现状，限期）**：
+
+- `DATABASE_URL` 默认 `sqlite:///./dev.db` 仅作为**切换完成前的临时现状**存在。
+- `production` 环境若检测到 `sqlite` 驱动，**必须直接启动失败**，禁止静默降级（`config.py::_guard_production_sqlite`）。
+- 依据：[`ADR-0003`](../docs/adr/ADR-0003-tenant-isolation-rls.md) §3.6.1（历史记述）/ §3.6.2（切换裁决）。
 - 未启用 RLS 期间，`org_id` 过滤**只由应用层保证**（`app/services/documents.py`），
   **任何新增查询都必须带 `org_id` 条件**，不得绕过。
+- **待清理**（ADR-0003 §3.6.2「附加偿还」）：`app/db/session.py` 的 `check_same_thread` 特判、`.env.example` 的「开发态替身」说明。
 
-> SQLite 不是「临时兜底」而是 PG 的**开发态替身**：字段类型、约束与查询语义以 PG 为准，
-> 两者的差异只允许出现在「RLS 是否由数据库强制」这一点上。
+**应用层过滤 = 常设防线**（ADR-0003 §3.7 裁决一）：
+
+> **`org_id` 过滤不得因 RLS 生效而移除。** 客户若有信创要求而选用**非 PG 兼容内核**的数据库
+> （如达梦，Oracle 兼容为主），RLS 无法平移；此时若应用层过滤已被当作「兜底」拆除，隔离**直接击穿**。
+> ⇒ 它与 RLS **并列常设**，不设移除条件。
+>
+> **新增查询必须带 `org_id`** 这条纪律**不因 PG / RLS 落地而失效**。
 
 ### 1.1 Neo4j 图谱与版本可见性（ADR-0002）
 
@@ -60,9 +74,21 @@
 
 ## 4. 已登记的实现缺口
 
+> ⚠️ **阅读须知（2026-10-01 补，先读这一段）**
+>
+> 本表「依据」列常引用 **「计划 §x」/「plan.md 第 N 行」/「Sprint N 批次 X」**，指的是
+> **原 `docs/v1.1.0-demo-mvp-plan.md` v3.0**——该计划连同排期三件套已于 2026-10-01
+> **全废并归档**到 `changes/archive/2026-10-01-obsolete-plans/`。
+> **这些引用仅为「史实与证据索引」，不得当作现行排期依据。**
+>
+> - **排期 / 阶段**：以 [`docs/delivery-plan.md`](../docs/delivery-plan.md) 的 **P1~P6** 为准。
+> - **需求 / 护栏 / 纪律**：以 [`docs/delivery-requirements-and-guardrails.md`](../docs/delivery-requirements-and-guardrails.md)
+>   的 **DR / G / R** 编号为准。
+> - **「这条到底做没做完」**：跑 `uv run python scripts/check_startup_readiness.py`，**看机器输出**，不要凭本表文字下结论。
+
 | 缺口 | 现状 | 依据 |
 |---|---|---|
-| PostgreSQL RLS + `SET LOCAL app.current_org` | 未实现；SQLite 下由应用层 `org_id` 过滤兜底 | ADR-0003 §3.1 / §3.2 |
+| PostgreSQL RLS + `SET LOCAL app.current_org` | 未实现；应用层 `org_id` 过滤**为常设防线**（不因 RLS 生效而移除） | ADR-0003 §3.1 / §3.2 / **§3.7** |
 | `kg_versions` 表（PG 真源） | ✅ 已偿还（S5 批次 B 落 PG 真源表）；**S6 定 PG 为真源**（`ready` 即 active 语义）+ 新增 `POST /graph/versions/{version}/activate`（Neo4j 镜像双写，旧版置 `superseded`），读侧 PG 优先、**PG 说没有不回落** | ADR-0002 §2 |
 | M3 完整 Agentic-RAG | 🟡 **S6 已偿还 chunk 级引用反查**：`_to_citation` 按 `chunk_id` 回查真实 `doc_id` / `page` / `snippet`，回查不到即丢弃（F3）；**仍无** Tool 调用循环（P2） | M3 §4 |
 | `AgentQueryResponse` 缺 `kg_nodes` / `kg_relations` / `token_usage` | ✅ 已偿还（Sprint 4.10.0.A）：契约已定义三字段并由 `AgentService` 填充 | 本文件 §3 |
@@ -145,5 +171,6 @@ uv run python scripts/export_openapi.py --check # 校验契约是否漂移
 uv run python scripts/check_seams.py           # 接缝纪律门禁（实现集合 / 配置消费者 / 预留字段）
 uv run python scripts/check_seams.py --strict  # Sprint 收尾：未到期项也要求全绿
 uv run pytest                                  # 契约与行为测试
+uv run python scripts/check_startup_readiness.py # 开工自检：护栏到底有没有在拦
 uv run ruff check . && uv run ruff format .
 ```

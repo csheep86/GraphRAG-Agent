@@ -3,7 +3,7 @@
 - **状态**：Accepted（2026-09-21 裁决，随 v1.1.0 开发计划 v2.1 生效）
 - **日期**：2026-09-21
 - **决策者**：架构（`specs/` + `contracts/` 域）
-- **相关**：ADR-0002（Neo4j/PG 一致性）、ADR-0003（租户隔离）、`docs/v1.1.0-demo-mvp-plan.md` §8~§9
+- **相关**：ADR-0002（Neo4j/PG 一致性）、ADR-0003（租户隔离）、~~`docs/v1.1.0-demo-mvp-plan.md` §8~§9（**该计划 2026-10-01 已全废**）~~ → 现行：**排期见 [`docs/delivery-plan.md`](../delivery-plan.md)**、需求与护栏见 [`docs/delivery-requirements-and-guardrails.md`](../delivery-requirements-and-guardrails.md)
 - **落地版本**：v1.1.0（Sprint 5 批次 A2）、v1.3.0（Sprint 7 批次 B/D）、v1.4.0（Sprint 8 批次 E）
 
 ---
@@ -103,13 +103,20 @@
 
 ---
 
-## 3. 五条硬规则
+## 3. 六条硬规则
 
 1. **预留字段一律 nullable 且不进 API 契约**（根 `CODEBUDDY.md` §功能预留原则 第 4 条）。只有真正启用某个集成时，才把对应字段提升到契约。反例警示：字段一旦进契约即成为对外承诺，改动要走完整契约流程。
 2. **不做动态插件加载、不做通用连接器框架、不为未来系统写 stub**（理由见计划文档 §8.5）。
 3. **新增接缝实现时，必须同步扩写本 ADR 的 §4「未来如何扩展」**——接缝的可用性靠文档维持，不靠记忆。
 4. **接口实现集合 = 登记集合（不多不少）**：抽象允许有 N 个接口，但**每个接口的实现类必须恰好等于 §2.1 登记的实现集合**。Demo-MVP 阶段绝大多数为 1 个（接缝 1 仅 `LocalAuthProvider`、接缝 6 一个 JSON/CSV 实现）；**唯一例外是接缝 5 事件出口——`db` + `log` 两个本地实现**（§2.1："仅 `db` / `log` 实现"），两者都不是对外集成，而是让事件出口可观测的最小集。**出现登记集合之外的实现即越界**（如 `LdapAuthProvider` / `SmbIngestionSource` / `OaEventSink`）——那是"多做"，属 Pro / Enterprise 范围；反之少一个也是"少做"。此判据由 `backend/scripts/check_seams.py` 按接口机械执行，且**本节 §2.1 的登记行与该门禁的登记集合由 CI 强制一致**（门禁的"登记表一致"判据逐个核对第 N 行是否含登记的实现类名）。**漏改任一侧都会红**：只改代码 → 判据 1 报"登记外实现"；只改本文档 → 判据 4 报"未出现在 §2.1"。因此新增实现时**先扩写 §2.1 登记行、再改门禁**，不依赖"记得同步"。**接缝 9 同款**：其登记行在 [`ADR-0006`](./ADR-0006-license-control.md) §4，门禁同步要求完全相同（漏任一侧 CI 必红）。
 5. **任何 `settings.*` 配置项必须能指出读取它的代码行**——无消费者的配置不得提交。这是防"**假做**"的机械判据，历史病例：`task_retry_multiplier`（声明存在，**任务退避路径从未读取**——只在 `app/services/agents.py` 作为 `exp_base` 被读）。**盲区声明**：本判据只能拦"完全无消费者"，拦不到"读它的地方不全"（B4 即后者），那类只能靠验收项兜底（计划文档附录 T11）。
+6. **八个接缝的接口签名冻结（`v1.x` 内不得变更）——2026-10-01 新增**：本 ADR 的八个接缝是**客户插件的唯一接入面**（[`ADR-0007`](./ADR-0007-plugin-delivery.md) §3.2）。用户裁决：**付费升 V2.0 时插件才需重新开发** ⇒ 同一大版本内，**插件不得因打补丁而失效**。
+   - **判据（✅ 2026-10-01 已建 = 需求基线护栏 G-11）**：提取八个接缝的公开接口签名（`module.Class.method` → 参数名 / 默认值 / 注解）存 JSON 快照；**打 PATCH / MINOR ⇒ 快照必须逐字相同**；只有 bump MAJOR 才允许改快照，且该次提交须**显式注明 `breaking`**。命令：`uv run python backend/scripts/extract_seam_signatures.py --check`（比对）/ `--update`（重写快照）。
+   - ⚠️ **实际冻结集为三个已存在的接口**（`AuthProvider` / `EventSink` / `ExportSink`）——接缝 2 `IngestionSource` 尚无实现、接缝 9 `LicenseProvider` 尚未落地（见 ADR-0006），二者实现后并入，**并入本身即 MAJOR 级变更**。
+   - ⚠️ **版本口径消歧**：本条原写“`v1.x` 补丁”，易被读成“版本须为 `1.x`”。实指**第三位 PATCH**（当前 `1.6.0` 的补丁 = `1.6.1`）。完整版本语义见 [`delivery-requirements-and-guardrails.md`](../delivery-requirements-and-guardrails.md) §7。
+   - **为什么必须机械判**：补丁若改一行 `AuthProvider.authenticate()` 的参数，客户的 LDAP 适配就废了，且**要到补丁后的某次登录才炸**——这是"**静默失效**"，人工评审拦不住。
+   - **与第 4 条的区别**：第 4 条管"实现类有几个"（集合不能多不能少）；第 6 条管"**接口长什么样**"（签名不能变）。两条互补，缺一则插件可能在客户现场静默失效。
+   - 依据：[`ADR-0007`](./ADR-0007-plugin-delivery.md) §3.9；PRD **H16**。
 
 > **例外登记（合规占位）**：以下配置项在 Demo-MVP 阶段为**已登记占位**，合规形态必须是"**有读取代码行 + 显式报未实现**"，禁止静默无效：`PRIVATE_DEPLOY_ENABLED`（H6 私域禁外发，计划文档 §3.4）、`settings.log_export`（可观测导出，Sprint 8 批次 E）。**除这两项外不得新增占位配置**——新增即违反第 5 条。
 
@@ -119,7 +126,7 @@
 
 | 接缝 | 未来接入方式 | 需要新增的东西 |
 |---|---|---|
-| 1 身份 | 新增 `LdapAuthProvider` / `OidcAuthProvider` 实现，注册到 provider 表 | `users` 表、组织架构同步任务。**窗口（2026-09-27 定）= Post-v2.0.0（v2.1.0 首个企业客户交付）**，不占 MVP 关键路径但**不停在"无排期"**；接入时须先扩写 §2.1 登记行再改门禁 |
+| 1 身份 | 新增 `LdapAuthProvider` / `OidcAuthProvider` 实现，注册到 provider 表 | `users` 表、组织架构同步任务。**窗口（2026-09-27 定）= Post-v2.0.0**；⚠️ **2026-10-01 已改裁决：SSO / AD 提前进 MVP**（见 **DR-D9**，`delivery-plan.md` **P2**）——企业客户通常**第一个就要 AD 域账号登录**，不提前则 `v2.0.0` **对首个企业客户不可交付**（风险 R8）。**本行原窗口作废，仅留痕**；接入时仍须先扩写 §2.1 登记行再改门禁 |
 | 2 数据接入 | 新增 `SmbIngestionSource` 等实现 + 建 `document_sources` 表 | 增量扫描任务、来源侧 ACL 同步 |
 | 3 模型 | 改配置即可切内网 LLM（OpenAI 兼容） | 协议非兼容时才需新增适配器 |
 | 4 流水线 | 在 `EXECUTOR_REGISTRY` 登记新阶段函数 | 阶段实现函数 + `pipeline_stages` 配置项 |
