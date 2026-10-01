@@ -98,7 +98,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **DR-B10** | **信创降级预案**：遇非 PG 兼容内核（如达梦）时**牺牲 RLS、保留应用层过滤**，且降级须**显式登记并告知客户** | 📄 文档就绪 | ADR-0003 §3.7 | 降级不击穿隔离底线 |
 | **DR-B11** | 🆕 **图谱侧（Neo4j）租户隔离**——**2026-10-01 审阅补入**：Neo4j **没有 RLS**，图谱隔离**只能靠应用层**。① 节点/关系全量带 `org_id` 属性；② `kg_version_strategy = per_org`；③ 查询侧强制 `validate_kg_version_tenant_boundary` 校验 | 🟡 **已有实现**（S5 批次 B），**但未进需求与排期** | ADR-0003 §4 / `backend/CODEBUDDY.md` 债务表 | 跨 org 子图 ⇒ **403 `KG_TENANT_LEAK`**。**本条使 ADR-0003 §3.7「应用层过滤升格为常设防线」在图谱侧坐实**——图谱侧永远不会有 RLS 可依赖，应用层是**唯一**防线。⚠️ **ADR-0003 §4.1 的 T1 资源清单仅列 PG 表、未含图谱侧** ⇒ 本条补该缺口（**按 R5 不篡改 ADR 原文**，在此登记） |
 | **DR-B12** | 🆕 **`agent_fail_closed` 逃生阀围栏**——**2026-10-01 审阅补入**：该开关置 `False` 时隔离**降级为 fail-open**（仅告警放行）。这是全系统**唯一一个可配置关闭租户隔离**的开关 | ⚠️ **当前无围栏** | `config.py:161`（默认 `True` 是对的）；`agents.py:311-337`（逃生阀分支写 `tenant_leak.warn`） | 生产环境**禁止**置 `False`；若客户侧确需，须**显式登记 + 告知客户 + 落审计**（与信创降级 DR-B10 同级别处理）⇒ 判据见护栏 **G-17** |
-| **DR-B13** | 🆕 **`users` 表前置**——**2026-10-01 审阅补入**：`users` 表**当前不存在**（`models.py` 无 `class User`），却是 **DR-D9（SSO）/ DR-B9（RBAC）/ DR-C1（License 席位）**三者的共同前置 | ❌ **未建**，且**归属未定**（原计划随 M5） | 代码核实 2026-10-01 | **前置到 P2 第一步**，不随 M5（P5）——否则 P2 的 SSO 与 P4 的 License 均被阻塞 |
+| **DR-B13** | 🆕 **`users` 表前置**——**2026-10-01 审阅补入**：`users` 表**当前不存在**（`models.py` 无 `class User`），却是 **DR-D9（SSO）/ DR-B9（RBAC）/ DR-C1（License 席位）**三者的共同前置 | ✅ **已建**（2026-10-01，**P2-A**）：`app/db/models.py::User` + 迁移 `a1f3c9d27b08` | 代码核实 2026-10-01 + `check_startup_readiness.py` 2026-10-01 实测（地雷区由 ❌ 转 [OK]） | **前置到 P2 第一步**，不随 M5（P5）——否则 P2 的 SSO 与 P4 的 License 均被阻塞。⚠️ **表算建完了，功能没有**：本表当前 **0 消费者**（无登录 / 无 RBAC / 无 License），不得因表存在而宣称 SSO / RBAC / License 任一条已达成 |
 
 ### C 组 · 商业化
 
@@ -175,7 +175,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **G-15** | **补丁期契约冻结** | DR-C2 / PRD H16 | 版本号第三位变更的 PR 中，`contracts/openapi.yaml` **零 diff** | ✅ **已建**（2026-10-01）：`scripts/check_patch_contract_freeze.py` + `tests/test_patch_contract_freeze.py`，**已接入 `ci.yml` backend job**。判据：版本只 bump **PATCH** ⇒ `contracts/openapi.yaml` **零 diff**。不适用时（非 PATCH / 取不到基准）退 0 **但打印原因**，不沉默。⚠️ **与 G-4 的分工**：G-4 管"契约与 Pydantic 模型一致"，本条管"**补丁期根本不许改契约**"——改了模型并同步导出契约，G-4 会通过而客户插件已失效，只有本条拦得住 |
 | **G-16** | **文档登记门禁** | 全部 | 新增文档必须登记到 PRD 附录 C.0；新增接缝实现必须先扩写 ADR-0004 §2.1 | 🟡 部分（接缝侧由 G-2 已拦；文档登记侧无机械判据） |
 | **G-17** | 🆕 **fail-open 逃生阀围栏** | **DR-B12** | 断言生产配置 `agent_fail_closed != False`；若客户侧确需置 `False`，须**显式登记 + 告知客户 + 落审计**（与信创降级 DR-B10 同级别处理） | ✅ **已建**（2026-10-01）：`config.py::_guard_agent_fail_open` + `tests/test_guardrails.py` 三条用例 + `.env.example` 登记。**设计要点：拦的是「无声」**——默认禁止；客户侧确需时显式置 `ALLOW_AGENT_FAIL_OPEN=true` 即可破例（破例仍须完成登记/告知/审计三项）。**理由**：`agent_fail_closed=False` 会让隔离降级为 fail-open，这是全系统**唯一一个可配置关闭租户隔离**的开关——没有它，ADR-0003 §3.7「常设防线、不设移除条件」会被一个配置项绕过 |
-| **G-18** | 🆕 **`users` 表存在性护栏** | **DR-B13** | 断言 `users` 表已建且含 P2/P4 所需列（`org_id` / 外部身份字段 / 席位关联字段）；**该表不存在时，SSO / RBAC / License 三条线全部阻塞** ⇒ 本条是**P2 的开工闸门** | 🟡 **骨架已就位**（2026-10-01，`test_g18_users_table_exists`，xfail 挂起）：`users` 表不存在 ⇒ 断言失败 ⇒ XFAIL（CI 绿）；P2 建表后断言通过 ⇒ XPASS ⇒ strict **判红**，强制来人摘标记 ⇒ 转常驻门禁。**理由**：DR-B13 若无护栏则违反 §3 原则「缺护栏的需求不可宣称完成」 |
+| **G-18** | 🆕 **`users` 表存在性护栏** | **DR-B13** | 四条判据：① `users` 表存在；② **列集合逐字等于 `specs/m5-permission-audit.md` §4.1 的 7 列**（不多不少）；③ 有 **`org_id` 打头**的复合索引（ADR-0003 §3.1）；④ `username` 有唯一约束。另有 `test_g18_password_hash_is_not_in_public_contract`：**敏感字段不得进契约** | ✅ **已生效（2026-10-01，P2-A 转正）**：`test_g18_users_table_exists` 摘 xfail 转常驻门禁，**判据同时补强**（原判据只看「有没有叫 users 的表」——删 `org_id` / 改列名它照样绿 ⇒ 只摘标记就是假防御）。📌 **判据文字变更**：本行原写「含 P2/P4 所需列（`org_id` / **外部身份字段** / **席位关联字段**）」——那两组字段的消费者分别是 SSO（DR-D9）与 License（DR-C1），提前加进来就是**没有消费者的预留** ⇒ 随各自消费批次（P2-C / P4）再带迁移。⚠️ **转正只解除前置阻塞**：`users` 仍 **0 消费者**，SSO / RBAC / License 三条线一条都没达成 |
 | **G-19** | 🆕 **compose 版本化镜像** | **DR-A6** | 断言 `deploy/docker-compose.yml` 每个服务都声明 `image:` 且 tag **非 `latest`** | 🟡 **骨架已就位**（2026-10-01，`test_g19_compose_uses_versioned_images`，xfail 挂起）。**实测**：`backend` / `frontend` 仍为 `build:` 且**无 `image:`**。**理由**：DR-A6 是 DR-A7 / DR-C2 的**唯一前提**（§5 依赖 1）——没有版本化镜像就没有"补丁包"，而这条此前**零护栏** |
 | **G-20** | 🆕 **PG 就位** | **DR-B1** | 断言 `database_url` **默认值**以 `postgresql` 开头，且 `deploy/docker-compose.yml` 含**固定 tag** 的 PG 服务 | 🟡 **骨架已就位**（2026-10-01，`test_g20_postgres_is_in_place`，xfail 挂起）。**实测**：`config.py` 默认仍 `sqlite:///./dev.db`；compose **无 PG 服务**（仅注释掉的 `pg_data:` 占位） |
 | **G-21** | 🆕 **清除 SQLite 兜底** | **DR-B3** | 四判据：`session.py` 无 `check_same_thread` 方言特判 / `database_url` 默认非 sqlite / `.env.example` 非 sqlite / `app/db/__init__.py` 无"兜底"口径 | 🟡 **骨架已就位**（`test_g21_no_sqlite_fallback_in_code`，xfail 挂起）：**实测命中 4 处**（已逐条列进失败输出，照单清理即可）。另配 `test_g21_production_sqlite_guard_still_present` **反向守卫（始终通过）**——清理时极易把 `_guard_production_sqlite` 当成"SQLite 残留"一并误删，那条是**最后的底线** |
@@ -211,7 +211,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | B10（信创降级） | **人工判据** | 显式登记 + 告知客户 ⇒ **留证据**，非 CI |
 | B11（图谱侧） | **G-9（图谱侧部分）** | 待建；**集成测试**（CI 无 Neo4j） |
 | B12（fail-open 围栏） | **G-17** | 待建 |
-| B13（`users` 表） | **G-18** | 待建；**P2 开工闸门** |
+| B13（`users` 表） | **G-18** ✅ | ✅ **2026-10-01 达成（P2-A）**：表 + 迁移入库，G-18 转正常驻门禁。**只解除前置阻塞**——本表**仍 0 消费者**：SSO / RBAC / License 分属 P2-C / P2-B / P4 |
 
 > **不粉饰**（2026-10-01 更新）：**B1 / B2 / B3 / B6（PG 侧）的护栏已转正常驻门禁**；
 > **B9 / B10 / B13 仍只有人工判据或未建的骨架**；**B5 只能靠人工 CR**。
@@ -268,14 +268,24 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 **截至 2026-10-01，本文档中：**
 
-- ✅ **已达成（护栏，已生效）**：G-1 ~ G-7（既有）；**G-11 / G-15 / G-17**（2026-10-01 新建）；**G-19 / G-20 / G-21（P1-A / P1-B 转正）**；**G-8 / G-9（PG 侧，`audit_log` 部分）（P1-C 转正）**；`test_g21_production_sqlite_guard_still_present`（**反向守卫**）；DR-B10 文档侧；DR-E1 基线部分
-- 🟡 **骨架已就位（xfail 挂起 ⇒ CI 绿但**尚未生效**）**：G-10 / G-12 / G-14 / G-18 / **G-22 / G-23 / G-24** ⇒ **其对应需求仍不得宣称完成**
+- ✅ **已达成（护栏，已生效）**：G-1 ~ G-7（既有）；**G-11 / G-15 / G-17**（2026-10-01 新建）；**G-19 / G-20 / G-21（P1-A / P1-B 转正）**；**G-8 / G-9（PG 侧，`audit_log` 部分）（P1-C 转正）**；**G-18 / DR-B13（P2-A 转正，2026-10-01）**；`test_g21_production_sqlite_guard_still_present`（**反向守卫**）；DR-B10 文档侧；DR-E1 基线部分
+- 🟡 **骨架已就位（xfail 挂起 ⇒ CI 绿但**尚未生效**）**：G-10 / G-12 / G-14 / **G-22 / G-23 / G-24** ⇒ **其对应需求仍不得宣称完成**（G-18 已于 P2-A 转出本行）
 - 📄 **仅文档就绪**：DR-A1~A8、DR-B10、DR-C2、DR-B5（口径）——**规格已写，代码零行**
 - ⏳ **零代码（需求侧）**：DR-B4（RLS）、DR-B7（T2 并发）、DR-C1（License）、**DR-A 组其余**（`deploy/variants/` 尚不存在）
 - ✅ **2026-10-01 清偿**：**CI 的 pytest 已跑在 PostgreSQL 16.x 上**（`ci.yml` 的 backend job 起 `postgres:16-alpine` + job 级 `DATABASE_URL`；`conftest.py` 不再用 SQLite 临时文件，改用固定库 `graphrag_test`）。原「B 组全部需求的绿都是假的」这条最高 blocker **已解除**。
 - 📌 **2026-10-01 补一条边界**：G-9 转正**只**代表应用层 `org_id` 过滤在 PG 上生效，**不代表** RLS 落地（DR-B4 仍归 P3）；`documents` / `qa_logs` / `storage_key` 与图谱侧同样仍未补齐。
 - 📌 **2026-10-01 更正（不粉饰）**：本基线 **DR-D6（`qa_logs` 建表）原写「⏳ 未建表」是错误口径**——实为 **2026-09-26 已建并已写**（真机累计 16 行）。**错因**：摘抄 `dev-doc-status` 的历史记录而**未回代码核实**。**教训入册**：本文档每条「未做 / 已做」标注**必须以代码或真机证据为准**，历史文档记录**只能作为线索、不能作为结论**。
 - 📌 **2026-10-01 补入**：**图谱侧（Neo4j）没有 RLS**，租户隔离只能靠应用层 ⇒ ADR-0003 §3.7「应用层过滤为常设防线」在图谱侧**不是冗余防线，而是唯一防线**。原 B 组只覆盖 PG，已补 **DR-B11** 并将 T1 扩展至图谱侧。
+- 📌 **2026-10-01（P2-A）`users` 表的三条登记**（守 **R5**：不篡改 ADR 原文，登记在此）：
+  1. **类型差异**：`specs/m5-permission-audit.md` §4.1 写 TEXT，实现按本仓惯例收敛为 `String(255)` /
+     `String(16)`（`status` 另加 `CheckConstraint` 限 `active` / `disabled` 两档）；主键 `Uuid`。
+     与 ADR-0003 §3.1 差异表 **A9**（`audit_log` / `qa_logs` 由 spec 的 `BIGSERIAL` 改 Uuid）**同源**。
+  2. **遗留**：`username` 按 spec 取**全局 unique**；若日后出现「不同租户同名账号」，需单开一批改为
+     `(org_id, username)` 复合唯一（见 `changes/P2/proposal.md` RK-2）。
+  3. **遗留**：`documents.uploaded_by` 与 `ontology_schemas.confirmed_by_user` **均未**加指向
+     `users.id` 的外键——演示库已有真实数据，补 FK 属不可逆清洗；待 P2-C 首次真实账号链路一并处理。
+- 📌 **2026-10-01（P2-A）不许外推**：**G-18 转正 ≠ 账号体系落地**。`users` 表当前 **0 消费者**
+  （无登录 / 无 RBAC / 无 License），三条线的终端归属仍是 **P2-C（SSO）/ P2-B（RBAC）/ P4（License）**。
 
 **必须承认的依赖关系**（影响重排）：
 

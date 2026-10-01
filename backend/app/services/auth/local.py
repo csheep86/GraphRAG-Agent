@@ -1,8 +1,14 @@
 """LocalAuthProvider（接缝 1 唯一登记实现，Sprint 5 批次 A2）。
 
 包装 ``app.core.auth`` 现有 dev token / dev header 校验逻辑——
-批次 A2 的收口动作是「加一层接口」，**不改动任何校验语义**；
-``users`` 表按 T10 裁决不建。
+批次 A2 的收口动作是「加一层接口」，**不改动任何校验语义**。
+
+``users`` 表按 T10 裁决不建 —— ⚠️ **T10 已被 DR-B13 推翻**（2026-10-01，
+见 ``docs/delivery-requirements-and-guardrails.md`` §2.2 的 DR-B13 行）：
+``users`` 已随 **P2-A** 建表。**但本实现仍不查库**——全部测试的身份来源就是
+dev token / dev header，一改全线红；接线（LDAP / OIDC）归 **P2-C**：须先扩写
+ADR-0004 §2.1 登记行，再改 ``get_auth_provider()``。
+**不动** T10 的历史记录本身（守 R5），只在冲突处写明它被后来者推翻。
 """
 
 from __future__ import annotations
