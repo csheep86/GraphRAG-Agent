@@ -12,12 +12,22 @@ from pathlib import Path
 
 _TMP_DIR = Path(tempfile.mkdtemp(prefix="graphrag-backend-tests-"))
 
-os.environ["APP_ENV"] = "test"
-os.environ["ALLOW_DEV_ORG_HEADER"] = "true"
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP_DIR / 'test.db').as_posix()}"
-
 # 存储抽象层隔离：测试统一写入临时目录，不污染 backend/storage/
 os.environ["STORAGE_ROOT"] = str(_TMP_DIR / "storage")
+
+#: **DR-B2 / G-8**：测试库是 PostgreSQL 16.x 上的固定库 ``graphrag_test``。
+#: 不再用 SQLite 临时文件——在 SQLite 上跑通的租户隔离（T1 / T2）什么都不证明：
+#: SQLite 既没有 RLS，也没有 ``SET LOCAL``（ADR-0003 §4.1）。
+_TEST_DATABASE_URL = (
+    "postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test"
+)
+
+os.environ["APP_ENV"] = "test"
+os.environ["ALLOW_DEV_ORG_HEADER"] = "true"
+# 用 **setdefault** 而不是直接赋值，也不能完全不设：
+#   直接赋值 ⇒ 盖掉 CI 的显式注入；
+#   完全不设   ⇒ 被开发者 .env 里的**开发库**带偏，测试写脏真实数据。
+os.environ.setdefault("DATABASE_URL", _TEST_DATABASE_URL)
 
 # 无 MINERU_TOKEN 时 PDF 解析任务会以 MineruApiError 重试 3 次；
 # 等待降至最小值（字段校验 gt=0）避免用例真实 sleep 1s + 2s。
@@ -50,11 +60,16 @@ os.environ["EXTRACTION_ENGINE"] = "mock"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from pg_scratch import ensure_database  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.services.graphs import GraphService  # noqa: E402
 from app.services.kg.versioning import KgVersioningService  # noqa: E402
+
+# 测试库是**持久**的（不再像 SQLite 时代那样每次换一个临时文件），因此必须显式
+# 保证它存在。`create_app()` 只建 engine 不连库，所以放在导入之后仍然来得及。
+ensure_database("graphrag_test")
 
 OTHER_ORG_ID = "00000000-0000-4000-8000-000000000002"
 
@@ -72,7 +87,8 @@ _REAL_GET_BY_VERSION = KgVersioningService.get_by_version
 def pg_active_kg_version(monkeypatch: pytest.MonkeyPatch) -> None:
     """默认让 **PG 真源存在一条 ready 版本**（Sprint 6.3：读侧 PG 优先）。
 
-    测试库是空 SQLite：不桩的话 ``fetch_active_kg_version`` 的 PG 分支会先抛
+    测试库是持久的 PostgreSQL（`graphrag_test`，P1-C 起）：不桩的话
+    ``fetch_active_kg_version`` 的 PG 分支会先抛
     ``NoActiveKgVersionError``（409），把「Neo4j 不可达」这类**基础设施故障**
     伪装成「无 active 版本」——与既有 501 用例的语义直接冲突（plan §4.4 纪律）。
     桩了 ``fetch_active_kg_version`` 的用例不受影响（整方法被替换）。

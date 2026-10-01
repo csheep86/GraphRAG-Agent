@@ -48,6 +48,39 @@ jobs:
         # 工作目录固定为 backend/，使裸 `ruff check .` 等价于根目录的
         # `ruff check backend/`（uv 需要以项目根为工作目录才能读到 pyproject.toml）
         working-directory: backend
+
+    # DR-B2 / G-8：pytest 必须跑在 PostgreSQL **16.x** 上，不是 SQLite。
+    # 在 SQLite 上跑通的"租户隔离"什么都不证明——它没有 RLS，也没有 SET LOCAL
+    # （ADR-0003 §4.1）。本 job 之前**没有任何 services 块**。
+    #
+    # ⚠️ **三方必须一致**，改任一处都要改另外两处：
+    #   ① 这里的 POSTGRES_DB         = graphrag_test
+    #   ② 这里的 DATABASE_URL 库名   = graphrag_test
+    #   ③ backend/tests/conftest.py 的 _TEST_DATABASE_URL 回落库名 = graphrag_test
+    services:
+      postgres:
+        # tag 固定且与 deploy/docker-compose.yml 的 postgres 服务一致：
+        # G-8 会真连上去核对 server_version 是 16.x，两侧漂移会在那里被叫住。
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: graphrag
+          POSTGRES_PASSWORD: graphrag
+          POSTGRES_DB: graphrag_test
+        ports:
+          - 5432:5432
+        # health check 是 runner 判断服务就绪的**唯一依据**：没有它，steps 会在
+        # PG 还在初始化时就开跑，表现为一连串 "connection refused" 式的随机红。
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # 放 **job 级**而不是 Pytest 那一个 step：本 job 里「本地独占用例」那一步
+      # 也要连库。只塞进单个 step 会让那一步悄悄退化成"看着像跑了、其实没跑"。
+      DATABASE_URL: postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -116,6 +149,9 @@ jobs:
 
       # `-rs`：把 skip **原因**打进日志。只用 `-q` 时，"本地 3 skip / CI 5 skip"
       # 这种差异在日志里完全无痕——依赖未入库产物的用例会悄悄地一次都没跑过。
+      #
+      # DATABASE_URL 取自本 job 级 env（指向 services.postgres 的 graphrag_test）；
+      # 本地复现同样需要它，命令在本 job 末尾的失败摘要里。
       - name: Pytest
         run: uv run pytest -q -rs
 
@@ -145,6 +181,8 @@ jobs:
             echo "- 触发: \`${{ github.event_name }}\` @ \`${{ github.ref_name }}\`"
             echo "- 复现命令（backend/ 目录下）:"
             echo "  - \`uv sync --all-groups\`"
+            echo "  - 起测试库（G-8 要求 PostgreSQL 16.x，本地与 CI 同 tag）:"
+            echo "    \`docker run --rm -d -e POSTGRES_USER=graphrag -e POSTGRES_PASSWORD=graphrag -e POSTGRES_DB=graphrag -p 5432:5432 postgres:16-alpine\`"
             echo "  - \`uv run ruff check . && uv run ruff format --check .\`"
             echo "  - \`uv run python scripts/check_seams.py\`（接缝纪律门禁；Sprint 收尾用默认档 ERROR=0，\`--strict\` 属 v1.4.0 完成点）"
             echo "  - \`uv run pytest -q\`"

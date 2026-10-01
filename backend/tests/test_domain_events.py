@@ -9,7 +9,8 @@
 4. 业务回滚时事件**不残留**（db sink 不自己 commit，与业务同 session）；
 5. ``org_id`` / ``trace_id`` 取自任务上下文，**不是**事件里新造的。
 
-用例一律用**独立 org_id** 落库并只查自己，避免污染其他用例（测试库是共享 SQLite）。
+用例一律用**独立 org_id** 落库并只查自己，避免污染其他用例
+（测试库是全会话共享的 PostgreSQL ``graphrag_test``）。
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from app.services.events.types import RISK_SUSPECT_CREATED
 
 @pytest.fixture
 def session() -> Iterator[Session]:
-    init_db()  # 幂等：测试库是 SQLite，建表靠 create_all
+    init_db()  # 幂等：测试库的建表走 create_all（缺表才建，重复调用安全）
     db = SessionLocal()
     try:
         yield db

@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
 import yaml
 
 from app.core.config import Settings
@@ -55,13 +54,7 @@ def _postgres_service() -> tuple[str, dict] | None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "G-20 / DR-B1：尚未切 PG。实测 config.py 默认仍 sqlite:///./dev.db，"
-        "且 compose 无 PG 服务（仅有注释掉的 `pg_data:` 占位）"
-    ),
-)
+# ✅ **已转正（2026-10-01）**：默认库已为 PG，compose 已有固定 tag 的 `postgres:16-alpine`。
 def test_g20_postgres_is_in_place() -> None:
     """PG 必须**就位**：默认持久化是 PG，且 compose 起固定 tag 的 PG 服务。
 
@@ -100,13 +93,11 @@ def test_g20_postgres_is_in_place() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "G-21 / DR-B3：SQLite 兜底未清。实测命中 4 处：session.py 的 check_same_thread 特判 / "
-        "config.py 默认 sqlite / .env.example 的 DATABASE_URL / app/db/__init__.py 的兜底口径"
-    ),
-)
+# ✅ **已转正（2026-10-01）**：方言特判 / 默认值 / .env.example / 口径注释四类痕迹均已清除。
+#    ⚠️ 本文件（含注释）此后**禁止**再出现那几个被清列名开关的**字面名**——
+#       G-21 按字样扫描，写「已删除 xxx」同样判命中（本批次实踩两次）。
+#    ⚠️ 下方 `test_g21_production_sqlite_guard_still_present` 是**反向守卫**，必须保留
+#       且始终通过 —— 删它等于以后有人再悄悄加回 SQLite 也无人拦。
 def test_g21_no_sqlite_fallback_in_code() -> None:
     """不得再有任何"SQLite 兜底"痕迹——方言特判尤其必须清干净。
 

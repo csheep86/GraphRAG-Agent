@@ -4,7 +4,7 @@
 - ✅ 上传：MIME 白名单校验（415）→ 大小上限校验（413）→ **文件写入存储抽象层**
   （Sprint 5 批次 A，`app.storage`）→ 落 `documents` 记录（`pending`）；
 - ✅ 异步任务：通过 :class:`app.tasks.TaskManager` 注册 ``document.parse`` 执行体；
-- ✅ 状态：读 PostgreSQL / SQLite 返回，跨租户 403、不存在 404；
+- ✅ 状态：读 PostgreSQL 返回，跨租户 403、不存在 404；
 - ✅ 列表（批次 C）：`GET /documents`，按 `org_id` 强制过滤，支持 `q` / `status` /
   `page` / `page_size`，返回 `DocumentListResponse`；
 - ✅ `storage_key` 在解析 `completed` 时回填（M1 §4.1；executor 职责）。

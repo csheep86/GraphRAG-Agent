@@ -60,8 +60,11 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parents[0]
 
-#: 本批次边界声明的候选位置（不含 archive —— 归档批次不再指导当前开发）
-_PROPOSAL_GLOBS = ("changes/Sprint*/proposal.md", "changes/Sprint*/*.md")
+#: 本批次边界声明的候选**目录**（不含 archive —— 归档批次不再指导当前开发）。
+#: 前缀**不写死** `Sprint*`：`changes/P1/` 这类阶段批次（见 `docs/delivery-plan.md` §3）
+#: 匹配不到 ⇒ S1 会静默拿**别的**批次的 Non-goals 来对照本批改动——报告看起来正常，
+#: 对照的却是错的边界（2026-10-01 实踩：整个 P1 期间 S1 一直在报 Sprint10.5 的 5 条边界）。
+_BATCH_DIR_GLOBS = ("changes/Sprint*", "changes/P*")
 
 #: proposal 里声明边界的几种节标题写法，历史上有过两种叫法
 _NONGOALS_HEADINGS = ("non-goals", "明确不做", "边界")
@@ -155,22 +158,49 @@ def _added_lines(diff_text: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 # S1：批次边界
 # --------------------------------------------------------------------------- #
+def _batch_recency(batch: Path) -> float:
+    """批次目录的「最近活跃度」：取其自身与目录下 md 的最大 mtime。
+
+    两条理由：目录 mtime 只在文件**增删**时变（改既有 md 不变），光看它会把
+    一直在推进的批次判成"不活跃"；而 md 之外的内容（子目录里的 py / png）
+    不该影响"边界声明文档"的新旧判断。读不到就退回 0.0，不让它炸掉整份报告。
+    """
+    try:
+        stamps = [batch.stat().st_mtime]
+    except OSError:  # pragma: no cover - 目录被并发删除
+        return 0.0
+    try:
+        stamps.extend(doc.stat().st_mtime for doc in batch.glob("*.md"))
+    except OSError:  # pragma: no cover - 同上
+        pass
+    return max(stamps)
+
+
 def _latest_proposal() -> Path | None:
     """找**处于进行中**（未归档）的最新批次文档。
 
     为什么排除 archive/：归档批次描述的是历史工作，拿它的 Non-goals 来对照
     今天这批改动，会得出完全跑偏的结论。
     """
-    candidates = [
-        p
-        for p in REPO_ROOT.glob("changes/Sprint*")
-        if p.is_dir() and "archive" not in p.parts and p.name != "archive"
-    ]
+    candidates: list[Path] = []
+    for pattern in _BATCH_DIR_GLOBS:
+        candidates.extend(
+            path
+            for path in REPO_ROOT.glob(pattern)
+            if path.is_dir() and "archive" not in path.parts
+        )
     if not candidates:
         return None
-    # 按目录 mtime 取最近的一个正在推进的批次
-    batch = max(candidates, key=lambda p: p.stat().st_mtime)
-    for doc in sorted(batch.glob("*.md")):
+    # 按「批次内文档的最近改动时间」取正在推进的那一个。
+    # 只看目录 mtime 会漏判：目录 mtime **只**随文件增删而变，改既有 md 不变
+    # （⇒ 一直在推进的批次可能永远排不到最前）。
+    batch = max(candidates, key=_batch_recency)
+    docs = sorted(batch.glob("*.md"))
+    # `proposal.md` 优先：S1 的定义就是「本批次 proposal 的 Non-goals」。
+    # 批次里还有别的 md（如 integration-log.md）也写了边界节，纯按文件名排序会先命中它
+    # ⇒ 对照的仍是"第二手"边界。把它排到最前，它没写边界时再退而求其次。
+    docs.sort(key=lambda path: (path.name != "proposal.md", path.name))
+    for doc in docs:
         if _nongoals_of(doc):
             return doc
     # 该批次没有任何文档写了边界节 —— 取 proposal 让它挨骂

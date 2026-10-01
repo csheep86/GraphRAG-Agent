@@ -2,8 +2,8 @@
 
 **连接串与元数据只认两处真源**，不在本文件重复定义：
 
-- URL：``app.core.config.get_settings().database_url``（与运行时同一份配置，
-  dev 默认 SQLite、生产 PG——迁移脚本两侧通用）；
+- URL：``app.core.config.get_settings().database_url``（与运行时同一份配置；
+  **DR-B1 起 dev / 测试 / 生产一律 PostgreSQL 16.x**，不再有第二份方言）；
 - 元数据：``app.db.models.Base.metadata``（``create_all`` 的同一真源，
   autogenerate 与它对比产生迁移）。
 

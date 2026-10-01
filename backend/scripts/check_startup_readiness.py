@@ -59,6 +59,19 @@ _PATH_METHODS = ("exists", "is_dir", "is_file", "resolve")
 #: 从 docstring / reason 里揪出这个护栏守的是哪条需求
 _DR_RE = re.compile(r"DR-[A-Z]\d+")
 
+#: 从 config.py 抠出 ``database_url`` 的**字段默认值**。
+#: ⚠️ **为什么不能用 `"sqlite" not in cfg.lower()` 了**：config.py 里有
+#: ``_guard_production_sqlite``——那是 G-21 的**反向守卫本体，永远不许删**，
+#: 于是按子串判的话这条地雷会**永久 NG**，把「别信文档、信脚本」这条纪律
+#: 反过头来变成误导。要判的是**默认值**，不是文件里有没有这个字样。
+_CFG_DB_URL_RE = re.compile(
+    r'^\s*database_url\s*:\s*str\s*=\s*["\']([^"\']+)', re.MULTILINE
+)
+
+#: `.env.example` 的 ``DATABASE_URL`` **赋值行**（只看赋值行：注释里回顾口径历史
+#: 是允许的，把注释也算上会重蹈上面那条同型误报）。
+_ENV_DB_URL_RE = re.compile(r"^\s*DATABASE_URL\s*=\s*(\S+)", re.MULTILINE)
+
 #: 「来源是否存在」探测：G 编号 -> 依赖的路径（相对仓库根）。
 #: 这些路径不存在时，对应护栏即便转正也只是在做空转。
 SOURCE_PATHS: dict[str, str] = {
@@ -223,11 +236,15 @@ def reality_checks() -> list[tuple[str, bool, str]]:
     env = _read(BACKEND_ROOT / ".env.example")
     compose = _read(REPO_ROOT / "deploy" / "docker-compose.yml")
     models = _read(BACKEND_ROOT / "app" / "db" / "models.py")
+    cfg_match = _CFG_DB_URL_RE.search(cfg)
+    default_url = cfg_match.group(1) if cfg_match else ""
+    env_match = _ENV_DB_URL_RE.search(env)
+    env_url = env_match.group(1) if env_match else ""
     return [
         (
             "已切 PostgreSQL（DR-B1）",
-            "sqlite" not in cfg.lower(),
-            "config.py 默认值仍含 sqlite",
+            default_url.startswith("postgresql"),
+            f"config.py 的 database_url 默认值为 {default_url or '（未找到）'}",
         ),
         (
             "compose 含 PG 服务（DR-B1 / G-20）",
@@ -236,8 +253,8 @@ def reality_checks() -> list[tuple[str, bool, str]]:
         ),
         (
             ".env.example 非 SQLite（DR-B3 / G-21）",
-            "sqlite" not in env.lower(),
-            ".env.example 仍是 sqlite",
+            env_url.startswith("postgresql"),
+            f".env.example 的 DATABASE_URL 为 {env_url or '（未找到）'}",
         ),
         (
             "plugins/ 已建（DR-A2）",

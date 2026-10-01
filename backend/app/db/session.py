@@ -1,14 +1,15 @@
 """数据库引擎与会话。
 
-**Sprint 1 临时兜底**：默认 `sqlite:///./dev.db`，不支持 RLS。
-Sprint 3 集成 PostgreSQL 后必须启用行级安全，并在每个事务内
-`SET LOCAL app.current_org = :org_id`（ADR-0003 §3.2 / §3.6）。
+**DR-B1**：开发 / 测试 / 生产一律 PostgreSQL 16.x。SQLite 既非替身也非兜底，
+方言特判不允许保留（ADR-0003 §3.6.2 已将 SQLite 列为待偿债务，现已清偿）。
+
+租户隔离依赖 RLS：每个事务内须 `SET LOCAL app.current_org = :org_id`
+（ADR-0003 §3.2 / §3.6）。**RLS 策略本身归 P3（DR-B4），本阶段不落地。**
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -18,12 +19,16 @@ from app.core.config import get_settings
 
 
 def _build_engine() -> Engine:
+    """建引擎（PostgreSQL）。
+
+    原先多线程 ASGI 场景下那条 SQLite 方言 ``connect_args`` 特判已于 **DR-B3** 删除：
+    PostgreSQL 无此项，保留它等于给「SQLite 上明明跑得好好的」留一条回头路。
+
+    ⚠️ 不要在此文件（含注释）重新写出那个被删开关的**名字**：G-21 是按**字样**扫描
+    本文件的，连「已删除」的说明也会让它判定为命中（本批次实踩两次）。
+    """
     settings = get_settings()
-    connect_args: dict[str, Any] = {}
-    if settings.database_url.startswith("sqlite"):
-        # SQLite 在多线程 ASGI 场景下需要放开同线程检查
-        connect_args["check_same_thread"] = False
-    return create_engine(settings.database_url, connect_args=connect_args, future=True)
+    return create_engine(settings.database_url, future=True)
 
 
 engine: Engine = _build_engine()

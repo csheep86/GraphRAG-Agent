@@ -165,8 +165,8 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 | # | 护栏 | 对应需求 | 判据 | 状态 |
 |---|---|---|---|---|
-| **G-8** | **CI 起 PostgreSQL，pytest 跑在 PG 上** | DR-B1 / DR-B2 | CI 新增 `services.postgres`（固定 tag）；`DATABASE_URL` 指向 PG；**去掉 SQLite 作为测试库** | 🟡 **骨架已就位**（2026-10-01，`tests/test_guardrails.py::test_g8_test_database_is_postgres`，xfail 挂起）。**这是本轮最关键的一条**——现 G-3 跑在 SQLite 上，等于"PG 相关的一切都没被验证过"。⚠️ **骨架只拦「测试库不是 PG」**；CI 加 `services.postgres` + 切换 `DATABASE_URL` 仍属 **P3 的开发本体**（DR-B1/B2），不属护栏范围 |
-| **G-9** | **T1 跨 org 越权** | DR-B6 / **DR-B11** | A org 查 B org 的 `documents` / `audit_log` / `qa_logs` / `storage_key` → 空或 403；**图谱侧**：跨 org 子图 / Cypher 直读 ⇒ **403 `KG_TENANT_LEAK`** | 🟡 **骨架已就位**（2026-10-01，`test_g9_t1_cross_org_read_returns_empty`，xfail 挂起）：当前覆盖 `audit_log`，`documents` / `qa_logs` / `storage_key` 与**图谱侧**待 P3 补齐。骨架内置 `_require_postgres()`——非 PG 直接 fail，**避免"在 SQLite 上跑通的隔离"被误当成证据**。CI 必过，**禁止**标 `local_only`。⚠️ **图谱侧为集成测试**：CI 当前**无 Neo4j 服务**（`ci.yml` 仅 4 job、无 `services`）⇒ 图谱侧用例**须起 Neo4j 容器**才能真实断言；**在 CI 起 Neo4j 之前，该部分不得声称"已由 CI 验证"**，须独立环境留证 |
+| **G-8** | **CI 起 PostgreSQL，pytest 跑在 PG 上** | DR-B1 / DR-B2 | CI 新增 `services.postgres`（固定 tag）；`DATABASE_URL` 指向 PG；**去掉 SQLite 作为测试库**；并核对 `server_version` 为 **16.x** | ✅ **已转正（2026-10-01，P1-C）**：`ci.yml` 的 backend job 起 `postgres:16-alpine`（job 级 `DATABASE_URL` 指向 `graphrag_test`），`tests/conftest.py` 不再用 SQLite 临时文件，`test_g8_test_database_is_postgres` 已摘 xfail。全量 **707 passed / 3 skipped / 8 xfailed**（原 SQLite 基线 705 / 3 / 10，差值=本条与 G-9 转正）。⚠️ **追加两条判据**：① 真连一次取 `SHOW server_version`，首段须为 `16`——只判 URL 前缀的话 CI 被换成 15 / 17 照样绿；② `tests/test_migrations_baseline.py` 由临时 SQLite 文件改为 PG 临时库（迁移等价性自此**在 PG 上成立**） |
+| **G-9** | **T1 跨 org 越权** | DR-B6 / **DR-B11** | A org 查 B org 的 `documents` / `audit_log` / `qa_logs` / `storage_key` → 空或 403；**图谱侧**：跨 org 子图 / Cypher 直读 ⇒ **403 `KG_TENANT_LEAK`** | ✅ **PG 侧（`audit_log`）已转正（2026-10-01，P1-C）**：测试库切到 PG 后本例由 `XPASS(strict)` 转常驻门禁（留在 xfail 里 CI 会一直红）。⚠️ **不许外推**：这**只**证明「**应用层 `org_id` 过滤**在 PG 上拦住了跨 org 读」——即 ADR-0003 §3.7 的**常设防线**；**不代表** RLS 已落地（DR-B4 仍归 P3）。仍待 P3 补齐：`documents` / `qa_logs` / `storage_key` 与**图谱侧**。CI 必过，**禁止**标 `local_only`。骨架内置的 `_require_postgres()` 保留——非 PG 直接 fail，**避免"在 SQLite 上跑通的隔离"被误当成证据**。⚠️ **图谱侧仍为集成测试**：CI 无 Neo4j 服务 ⇒ 图谱侧用例须起 Neo4j 容器才能真实断言；**在 CI 起 Neo4j 之前，该部分不得声称"已由 CI 验证"**，须独立环境留证 |
 | **G-10** | **T2 并发串租户** | DR-B7 / DR-B8 | 多 org 并发请求，每个请求只看到自己 org 的数据；**须覆盖连接池复用路径** | 🟡 **骨架已就位**（2026-10-01，`test_g10_t2_concurrent_requests_do_not_cross_tenants`，xfail 挂起）：**24 请求 / 8 并发**交替租户，逼连接池**真复用**。CI 必过，**禁止**标 `local_only`。**最易产出静默跨租户泄露的组合**——`SET LOCAL` 误写成会话级 `SET` **只有并发才测得出来** |
 | **G-11** | **接缝签名快照** | DR-C2 / PRD H16 / **§7 版本语义** | 提取八个接缝公开接口签名（`module.Class.method` → 参数名 / 默认值 / 注解）存 JSON；**打 PATCH / MINOR ⇒ 快照逐字相同**；仅 bump **MAJOR** 允许改且须注明 `breaking`。**冻结集排除尚未实现的接缝**（如接缝 9 `LicenseProvider` 当前无实现）——实现后并入，避免给一个尚不存在的接口冻结签名 | ✅ **已建**（2026-10-01）：`backend/scripts/extract_seam_signatures.py`（`--check` / `--update`）+ 快照 `backend/tests/snapshots/seam_signatures.json` + `tests/test_seam_signature_snapshot.py`。冻结集 = **三个已存在**的接口（`AuthProvider` / `EventSink` / `ExportSink`）；接缝 2 `IngestionSource`（0 实现）与接缝 9 `LicenseProvider`（未落地）**排除**，实现后并入（并入本身即 MAJOR 级变更）。兑现"**V2.0 才需重做插件**"的商业承诺 |
 | **G-12** | **variant 矩阵构建** | DR-A1 / DR-A3 | 一次基座改动 ⇒ CI 遍历**全部** `deploy/variants/*.yaml` 构建成功 | 🟡 **骨架已就位**（2026-10-01，`tests/test_guardrails_delivery.py::test_g12_variant_matrix_builds`，xfail 挂起）：`deploy/variants/` 当前 **0 个**变体。骨架阶段只判「yaml 可解析 + 顶层是映射」；**真实镜像构建待 deploy 侧构建流程落地后升级**——在那之前**不得**宣称已验证"构建成功"。**启用条件写死**：variant ≥ 2 即必须转常驻门禁 |
@@ -190,7 +190,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | 需求组 | 依赖护栏 | 缺口 |
 |---|---|---|
 | A 组（交付形态） | **G-11 ✅ / G-15 ✅** / G-12 🟡 / G-14 🟡 / G-19 🟡 / G-22 🟡 / G-13 ❌作废 | **已非"全部待建"**：G-11 / G-15 已建并生效。**逐条点名见 §3.2** |
-| B 组（数据与隔离） | G-7 ✅ / G-17 ✅ / G-8 🟡 / G-9 🟡 / G-10 🟡 / G-18 🟡 / **G-20 🟡 / G-21 🟡 / G-24 🟡** | G-3 现跑 SQLite ⇒ B 组整体未被真实验证。**逐条点名见 §3.1** |
+| B 组（数据与隔离） | G-7 ✅ / G-17 ✅ / **G-8 ✅ / G-9 ✅（PG 侧）** / G-10 🟡 / G-18 🟡 / **G-20 ✅ / G-21 ✅** / G-24 🟡 | **2026-10-01 更新（P1-A/B/C）**：B1 / B2 / B3 的护栏已转正常驻门禁；G-3 已跑在 PostgreSQL 上。**缺口从"整体未被真实验证"收窄到 G-10（须先有 RLS）/ G-18（`users` 表）/ G-24（RBAC）三条，均归 P2~P3**。**逐条点名见 §3.1** |
 | C 组（商业化） | **G-11 ✅ / G-15 ✅** / **G-23 🟡** | G-11 / G-15 已建并生效；DR-C1 的 License 专项 = **G-23**（骨架已就位，挂起） |
 | D 组（功能欠债） | G-1~G-7（已有） | 已有护栏可覆盖 |
 | E 组（运维） | G-6（已有）+ 演练类人工判据 | 演练属**人工判据**，须在验收时留证据 |
@@ -199,12 +199,12 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 | DR | 护栏 | 形态 / 缺口 |
 |---|---|---|
-| B1（切 PG 16.x） | **G-20** 🟡 | 骨架已就位：断言**默认配置**为 PG + compose 含**固定 tag** 的 PG 服务。**实测未切**——`config.py` 默认仍 `sqlite:///./dev.db`，compose 无 PG 服务 |
-| B2（CI 跑 PG） | **G-8** | 待建 |
-| B3（清 SQLite 兜底） | **G-21** 🟡 | 骨架已就位：**实测命中 4 处**（`session.py` 的 `check_same_thread` 特判 / `config.py` 默认 sqlite / `.env.example` / `app/db/__init__.py` 兜底口径），失败输出已逐条列出，照单清理即可。另配**反向守卫**防 `_guard_production_sqlite` 被误删 |
+| B1（切 PG 16.x） | **G-20** ✅ | **已达成（2026-10-01 P1-B）**：`config.py` 默认 `postgresql+psycopg://…`，compose 引入 `postgres:16-alpine`（固定 tag），`.env.example` 同步。**反向守卫** `test_g21_production_sqlite_guard_still_present` 仍绿（生产禁 SQLite 的围栏**未被**清理动作误删） |
+| B2（CI 跑 PG） | **G-8** ✅ | **已达成（2026-10-01 P1-C）**：`ci.yml` 的 backend job 起 `postgres:16-alpine` + job 级 `DATABASE_URL`；`tests/conftest.py` 由 SQLite 临时文件改为固定库 `graphrag_test`；护栏另判 `server_version` 须为 **16.x**。迁移等价性测试同步改为在 PG 临时库上执行 |
+| B3（清 SQLite 兜底） | **G-21** ✅ | **已达成（2026-10-01 P1-B）**：原实测命中的 4 处（`session.py` 方言特判 / `config.py` 默认值 / `.env.example` / `app/db/__init__.py` 口径）已全部清理。**反向守卫**防 `_guard_production_sqlite` 被误删 |
 | B4（RLS 全量） | **G-9 / G-10** 间接覆盖 | T1/T2 通过 ⇒ RLS 生效；**无独立断言** |
 | B5（应用层常设防线） | ⚠️ **仅人工判据** | 无法机械判"新增查询都带 `org_id`" ⇒ **靠 CR 清单**，**不宣称**有护栏 |
-| B6（T1，PG 侧） | **G-9** | 待建 |
+| B6（T1，PG 侧） | **G-9** ✅ | **PG 侧 + `audit_log` 已达成（2026-10-01 P1-C）**：应用层 `org_id` 过滤在 PG 上拦住跨 org 读。仍缺 `documents` / `qa_logs` / `storage_key`（P3 补齐） |
 | B7（T2） | **G-10** | 待建 |
 | B8（`SET LOCAL`） | **G-10** 覆盖 | 待建 |
 | B9（RBAC 三粒度） | **G-24** 🟡 | 骨架已就位：断言**角色 × 资源 × 操作**矩阵**存在**且路由层有**强制校验入口**；依赖前置 `users` 表（DR-B13 / G-18） |
@@ -213,7 +213,9 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | B12（fail-open 围栏） | **G-17** | 待建 |
 | B13（`users` 表） | **G-18** | 待建；**P2 开工闸门** |
 
-> **不粉饰**：**B1 / B3 / B9 的护栏已建成骨架（xfail 挂起，尚未生效）**；**B5 只能靠人工 CR**。
+> **不粉饰**（2026-10-01 更新）：**B1 / B2 / B3 / B6（PG 侧）的护栏已转正常驻门禁**；
+> **B9 / B10 / B13 仍只有人工判据或未建的骨架**；**B5 只能靠人工 CR**。
+> ⇒ 在这些护栏转正常驻门禁前，**对应条目不得宣称「已完成」**——这正是 §3 标题那句话的直接含义。
 > ⇒ 在这些护栏转正常驻门禁前，**对应条目不得宣称「已完成」**——这正是 §3 标题那句话的直接含义。
 
 #### B5 的人工 CR 清单（**无法机械判 ⇒ 显式列出，评审逐项勾选**）
@@ -266,11 +268,12 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 **截至 2026-10-01，本文档中：**
 
-- ✅ **已达成（护栏，已生效）**：G-1 ~ G-7（既有）；**G-11 / G-15 / G-17**（2026-10-01 新建）；`test_g21_production_sqlite_guard_still_present`（**反向守卫**）；DR-B10 文档侧；DR-E1 基线部分
-- 🟡 **骨架已就位（xfail 挂起 ⇒ CI 绿但**尚未生效**）**：G-8 / G-9 / G-10 / G-12 / G-14 / G-18 / G-19 / **G-20 / G-21 / G-22 / G-23 / G-24** ⇒ **其对应需求仍不得宣称完成**
+- ✅ **已达成（护栏，已生效）**：G-1 ~ G-7（既有）；**G-11 / G-15 / G-17**（2026-10-01 新建）；**G-19 / G-20 / G-21（P1-A / P1-B 转正）**；**G-8 / G-9（PG 侧，`audit_log` 部分）（P1-C 转正）**；`test_g21_production_sqlite_guard_still_present`（**反向守卫**）；DR-B10 文档侧；DR-E1 基线部分
+- 🟡 **骨架已就位（xfail 挂起 ⇒ CI 绿但**尚未生效**）**：G-10 / G-12 / G-14 / G-18 / **G-22 / G-23 / G-24** ⇒ **其对应需求仍不得宣称完成**
 - 📄 **仅文档就绪**：DR-A1~A8、DR-B10、DR-C2、DR-B5（口径）——**规格已写，代码零行**
-- ⏳ **零代码（需求侧）**：DR-B1（PG 未切）、DR-B6 / DR-B7（T1/T2）、DR-C1（License）、**DR-A 组全部**（`deploy/variants/` 尚不存在；compose 的 `backend` / `frontend` 仍为 `build:`，无 `image:`）
-- ⚠️ **最关键的一条**：**CI 的 pytest 仍跑在 SQLite 上**（`conftest.py`），而 ADR-0003 已裁决"一律 PG"。⇒ **G-8 不建，B 组全部需求的"绿"都是假的**。
+- ⏳ **零代码（需求侧）**：DR-B4（RLS）、DR-B7（T2 并发）、DR-C1（License）、**DR-A 组其余**（`deploy/variants/` 尚不存在）
+- ✅ **2026-10-01 清偿**：**CI 的 pytest 已跑在 PostgreSQL 16.x 上**（`ci.yml` 的 backend job 起 `postgres:16-alpine` + job 级 `DATABASE_URL`；`conftest.py` 不再用 SQLite 临时文件，改用固定库 `graphrag_test`）。原「B 组全部需求的绿都是假的」这条最高 blocker **已解除**。
+- 📌 **2026-10-01 补一条边界**：G-9 转正**只**代表应用层 `org_id` 过滤在 PG 上生效，**不代表** RLS 落地（DR-B4 仍归 P3）；`documents` / `qa_logs` / `storage_key` 与图谱侧同样仍未补齐。
 - 📌 **2026-10-01 更正（不粉饰）**：本基线 **DR-D6（`qa_logs` 建表）原写「⏳ 未建表」是错误口径**——实为 **2026-09-26 已建并已写**（真机累计 16 行）。**错因**：摘抄 `dev-doc-status` 的历史记录而**未回代码核实**。**教训入册**：本文档每条「未做 / 已做」标注**必须以代码或真机证据为准**，历史文档记录**只能作为线索、不能作为结论**。
 - 📌 **2026-10-01 补入**：**图谱侧（Neo4j）没有 RLS**，租户隔离只能靠应用层 ⇒ ADR-0003 §3.7「应用层过滤为常设防线」在图谱侧**不是冗余防线，而是唯一防线**。原 B 组只覆盖 PG，已补 **DR-B11** 并将 T1 扩展至图谱侧。
 
@@ -317,7 +320,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 1. **按依赖顺序，不按旧编号**：S9/S10/S11 等编号**不再沿用**——重排后重新编号，避免"旧编号的心理惯性"把超载的 S11 带回来。
 2. **签单优先**：能解锁签单的（A 组 + SSO）排最前；安全底线（B 组 PG 切换）紧随——**PG 不切，T1/T2 无从验证，隔离是纸面的**。
 3. **每条需求必须有对应护栏**，否则不宣称完成（§3）。
-4. **"转 PG"是排期项而非当下动作**：SQLite 上的测试在 CI 切 PG 前视为**临时状态**，随 G-8 一并落地；**不单独为它开一个 Sprint**。
+4. ~~**"转 PG"是排期项而非当下动作**：SQLite 上的测试在 CI 切 PG 前视为**临时状态**，随 G-8 一并落地~~ ✅ **已清偿（2026-10-01 P1-B + P1-C）**：已于 P1 内部完成时落实（未单独开 Sprint），货物已落地——默认库切 PG、**清 SQLite 兜底**、CI 的 pytest 跑 PG 16.x 三件事一并完成。**保留教训**：切 PG 越晚方言债越多，本次迁移等价性（`alembic` vs `create_all`）在 PG 上实测**类型零差异**属于运气好而非必然，日后不要指望同样的运气。
 
 ### 6.4 ⚠️ 在途工作与旧编号冲突（**2026-10-01 发现**）
 

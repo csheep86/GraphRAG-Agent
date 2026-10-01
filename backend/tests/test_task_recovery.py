@@ -7,7 +7,8 @@
 - :func:`~app.tasks.manager.list_in_flight_task_ids`：仅返回处于
   ``pending`` / ``processing`` 的 task_id（对账 / 测试辅助）。
 
-**隔离策略**：``documents`` 表是 session 级共享 SQLite（见 ``conftest.py``），
+**隔离策略**：``documents`` 表位于会话级共享的 PostgreSQL 测试库
+``graphrag_test``（见 ``conftest.py``；2026-10-01 之前是每会话一个 SQLite 临时文件），
 而 ``recover_orphan_tasks`` 是**全表扫描**，会波及同一进程内其它用例遗留的在途行。
 因此本模块：
 

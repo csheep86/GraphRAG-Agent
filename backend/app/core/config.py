@@ -92,8 +92,10 @@ class Settings(BaseSettings):
     app_version: str = "1.6.0"
     api_prefix: str = "/api/v1"
 
-    # -- 数据库：Sprint 1 临时兜底为 SQLite（见 backend/CODEBUDDY.md §1）--
-    database_url: str = "sqlite:///./dev.db"
+    # -- 数据库：**DR-B1 裁决**：开发 / 测试 / 生产一律 PostgreSQL 16.x --
+    # SQLite **既非替身也非兜底**：原「开发态替身」口径已于 2026-10-01 作废——
+    # 它让方言债在「反正只是开发库」的心态下持续累积（RK-2 的成因）。
+    database_url: str = "postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag"
 
     # -- 租户隔离（ADR-0003）--
     allow_dev_org_header: bool = False

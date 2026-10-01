@@ -15,7 +15,17 @@
    所以判据是"集合相等"而不是"数量等于 1"。
 2. **`settings.*` 必须有消费者**（ADR-0004 §3 第 5 条）——拦"假做"：配置声明了但代码从不读。
    经 `@property` 间接读取也算消费（如 `settings.max_upload_size_bytes` ⇒ 其引用的
-   `max_upload_size_mb`）。**盲区**：本判据只拦"完全无消费者"；B4 `task_retry_multiplier`
+   `max_upload_size_mb`）；**`Settings` 自身方法里的 `self.<字段>` 读取同样算**
+   （见下方历史错误）——守卫类配置的消费者本来就是它自己的校验器。
+
+   **历史错误（2026-10-01 修正）**：`config.py` 被 `SKIP_FILES` 整体排除，于是
+   `allow_agent_fail_open` 只在 `_guard_agent_fail_open` 里以 `self.` 被读这件事
+   永远不计入 ⇒ 门禁报 ERROR「settings.allow_agent_fail_open 无消费者」，而它其实
+   **读了之后会抛错**（G-17 逃生阀围栏，货真价实的消费者）。这是**误报**，且会让
+   CI 的接缝门禁红 ⇒ 已修正，并由 `tests/test_check_seams.py` 的
+   `test_settings_self_read_counts_as_consumption` 锁住；紧随其后的
+   `test_guard_setting_is_not_false_positive_on_real_repo` 在真实 `config.py` 上复核。
+   **盲区**：本判据只拦"完全无消费者"；B4 `task_retry_multiplier`
    属"读它的地方不全"（`app/services/agents.py` 以 `exp_base` 读它，而任务退避路径没读），
    拦不到，需靠验收项兜底（计划文档附录 T11）。
 3. **预留字段双向判据**——`documents` 的 8 个预留字段必须在 ORM 模型存在且可空，
@@ -368,6 +378,39 @@ def _collect_setting_consumers() -> dict[str, set[str]]:
     return consumers
 
 
+def _collect_settings_self_reads() -> dict[str, str]:
+    """返回 {属性名: 位置}——`Settings` **自身方法体**里出现的 `self.<名>` 读取。
+
+    `config.py` 整体被 `SKIP_FILES` 排除 ⇒ 类内部的读取**一个也进不了**
+    `_collect_setting_consumers`。对守卫类配置而言这是致命的：它们的消费者恰恰是
+    `Settings` 自己的校验器（`allow_agent_fail_open` ⇐ `_guard_agent_fail_open`，
+    读了还会抛错），于是判据 2 必然误报 ⇒ CI 接缝门禁红。
+
+    **这不是放宽判据**：`self.x` 出现在 `Settings` 的方法体里，就意味着改它会改到
+    行为；一个连自己类里都没人读的字段，才有资格被判"无人读取"。
+    """
+    reads: dict[str, str] = {}
+    module = _parse(CONFIG_FILE)
+    if module is None:
+        return reads
+    rel = CONFIG_FILE.relative_to(BACKEND_DIR).as_posix()
+
+    for node in ast.walk(module):
+        if not isinstance(node, ast.ClassDef) or node.name != "Settings":
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for inner in ast.walk(stmt):
+                if (
+                    isinstance(inner, ast.Attribute)
+                    and isinstance(inner.value, ast.Name)
+                    and inner.value.id == "self"
+                ):
+                    reads.setdefault(inner.attr, f"{rel}:{inner.lineno}")
+    return reads
+
+
 def _expand_indirect(consumed: set[str], properties: dict[str, set[str]]) -> set[str]:
     """属性间接消费：`settings.dev_org_header_enabled` 被读 ⇒ 其引用的字段也算被消费。"""
     queue = list(consumed)
@@ -614,9 +657,10 @@ def _check_settings_consumers(
     consumers: dict[str, set[str]],
     version: str,
     findings: list[Finding],
+    internal: dict[str, str] | None = None,
 ) -> None:
     check = "配置消费者"
-    consumed = _expand_indirect(set(consumers), properties)
+    consumed = _expand_indirect(set(consumers) | set(internal or {}), properties)
     due = _is_due(SETTINGS_CONSUMER_FROM, version)
     unconsumed = [name for name in sorted(fields) if name not in consumed]
 
@@ -861,7 +905,13 @@ def main(argv: list[str]) -> int:
     index = _collect_classes()
     fields, properties = _collect_settings()
     consumers = _collect_setting_consumers()
-    consumed = _expand_indirect(set(consumers), properties)
+    # `Settings` 自己方法里的 `self.<字段>` 也是消费者（守卫类配置的唯一读取点）
+    internal = {
+        name: loc
+        for name, loc in _collect_settings_self_reads().items()
+        if name in fields
+    }
+    consumed = _expand_indirect(set(consumers) | set(internal), properties)
     columns = _collect_table_columns(RESERVED_TABLE)
     contract_text = (
         CONTRACT_FILE.read_text(encoding="utf-8") if CONTRACT_FILE.is_file() else ""
@@ -871,7 +921,9 @@ def main(argv: list[str]) -> int:
     _check_interfaces(index, version, findings)
     _check_adr_registry(findings)
     _check_presence(_collect_tables(), version, consumed, findings)
-    _check_settings_consumers(fields, properties, consumers, version, findings)
+    _check_settings_consumers(
+        fields, properties, consumers, version, findings, internal
+    )
     _check_reserved_fields(columns, contract_text, version, findings)
     _check_prompt_versions(findings, base=base, explicit=explicit)
 

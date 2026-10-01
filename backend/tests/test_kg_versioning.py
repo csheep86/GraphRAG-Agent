@@ -10,7 +10,8 @@
    出库回转 UUID（json.dumps 不支持 UUID 原生类型）；
 7. ``KG_VERSION_STATUS_VALUES`` 常量与模型注释一致。
 
-直接落 sqlite 共享测试库（conftest 已隔离到临时目录），用例自清理。
+直接落会话级共享的 PostgreSQL 测试库（conftest 固定为 ``graphrag_test``，
+不再每次换临时目录），用例自清理。
 """
 
 from __future__ import annotations

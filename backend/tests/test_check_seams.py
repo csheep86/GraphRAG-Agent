@@ -161,6 +161,37 @@ def test_property_indirection_counts_as_consumption() -> None:
     assert _levels(findings) == ["OK"]
 
 
+def test_settings_self_read_counts_as_consumption() -> None:
+    """守卫类配置的唯一读取点在 `Settings` 自己身上（`config.py` 被排除扫描）。
+
+    历史误报（2026-10-01 修正）：`allow_agent_fail_open` 由
+    `_guard_agent_fail_open` 以 `self.` 读取、读了还会抛错（G-17 逃生阀围栏），
+    却因为没有 `settings` 字样被判「无消费者」⇒ CI 接缝门禁红。
+    """
+    fields = {"allow_agent_fail_open": "app/core/config.py:169"}
+    internal = {"allow_agent_fail_open": "app/core/config.py:218"}
+
+    findings: list = []
+    gate._check_settings_consumers(fields, {}, {}, DUE, findings, internal=internal)
+    assert _levels(findings) == ["OK"]
+
+    without_internal: list = []
+    gate._check_settings_consumers(fields, {}, {}, DUE, without_internal)
+    assert _levels(without_internal) == ["ERROR"]
+
+
+def test_guard_setting_is_not_false_positive_on_real_repo() -> None:
+    """在同一份 `config.py` 上复核：`self.<字段>` 读取必须真的被采到。"""
+    fields, _properties = gate._collect_settings()
+    internal = {
+        name: loc
+        for name, loc in gate._collect_settings_self_reads().items()
+        if name in fields
+    }
+    assert "allow_agent_fail_open" in internal
+    assert "allow_agent_fail_open" in fields
+
+
 def test_presence_rule_catches_declared_but_unread_setting() -> None:
     """`llm_provider` 存在但无人读——接了配置不通链路，同样算未到位。"""
     findings: list = []

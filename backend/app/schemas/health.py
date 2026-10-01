@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class HealthCheckStatus(BaseModel):
     database: Literal["up", "down"] = Field(
-        description="数据库连通性。SQLite 兜底期间仅探测 `SELECT 1`，不代表 RLS 已生效"
+        description="数据库连通性。仅探测 `SELECT 1`，不代表 RLS 已生效"
     )
 
 

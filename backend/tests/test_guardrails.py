@@ -1,4 +1,9 @@
-"""待建护栏测试：G-8 / G-9 / G-10 / G-17 / G-18。
+"""护栏测试：G-8 / G-9 / G-10 / G-17 / G-18。
+
+**2026-10-01（P1-C）状态更新**：随测试库切到 PostgreSQL，**G-8 与 G-9（PG 侧 +
+``audit_log`` 部分）已由 xfail 骨架转正常驻门禁**；仍挂起的只剩
+G-10（T2 并发，须先有 RLS，归 P3）与 G-18（``users`` 表，归 P2）。
+真实状态一律以 ``check_startup_readiness.py`` 的输出为准，别只看本文注释。
 
 对应 ``docs/delivery-requirements-and-guardrails.md`` §2.2。
 
@@ -22,8 +27,13 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import text
 
 from app.core.config import Settings, get_settings
+
+#: **DR-B2 锁定 PostgreSQL 16.x**。光判「是 PG」不够——CI 哪天被换成 15 / 17
+#: 也照样绿，方言债就是从这种"看起来一样"里重新渗进来的（RK-2 的成因）。
+PG_MAJOR_VERSION = "16"
 
 
 def _require_postgres() -> None:
@@ -53,18 +63,38 @@ def clean_audit() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# G-8：CI 起 PostgreSQL（本轮最关键的一条）
+# G-8：CI 起 PostgreSQL —— **已转正（2026-10-01，P1-C）**
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="G-8 / DR-B1 / DR-B2：测试库仍是 SQLite，须切 PostgreSQL 16.x 并让 CI 跑在 PG 上",
-)
 def test_g8_test_database_is_postgres() -> None:
-    """G-3（pytest）当前跑在 SQLite 上 ⇒ PG 相关的一切都没被真实验证过。"""
-    assert get_settings().database_url.startswith("postgresql"), (
-        "测试库不是 PostgreSQL。现 G-3 的结论不能代表 PG 上的行为。"
+    """✅ **已转正（2026-10-01，P1-C）**：CI 的 pytest 跑在 PostgreSQL **16.x** 上。
+
+    转正常驻门禁后守两件事：
+
+    1. **方言**：测试库必须是 PG。在 SQLite 上跑出来的结论（尤其租户隔离 T1 / T2）
+       什么都不证明——SQLite 没有 RLS，也没有 ``SET LOCAL``（ADR-0003 §4.1）。
+    2. **大版本**：必须是 **16.x**。DR-B2 锁的是具体大版本，不是「任意 PG」；
+       ``ci.yml`` 的 ``services.postgres`` 与 ``deploy/docker-compose.yml`` 同 tag，
+       任一侧漂移都得在这里被叫住。
+    """
+    url = get_settings().database_url
+    assert url.startswith("postgresql"), (
+        f"测试库不是 PostgreSQL（当前 {url.split('://')[0]}）——"
+        "G-3 的结论不能代表 PG 上的行为（DR-B2）"
+    )
+
+    # 真连一次再判版本：URL 前缀只能证明"配的是 PG"，证明不了对面真跑着 16.x。
+    # ``SHOW server_version`` 形如 `16.9 (Debian 16.9-1…)`，取首位即大版本。
+    from app.db.session import engine
+
+    with engine.connect() as connection:
+        raw = connection.execute(text("SHOW server_version")).scalar_one()
+
+    major = str(raw).split(".", 1)[0]
+    assert major == PG_MAJOR_VERSION, (
+        f"测试库须为 PostgreSQL {PG_MAJOR_VERSION}.x，实测 {raw}。"
+        "请核对 ci.yml 的 services.postgres 与 compose 的 PG tag"
     )
 
 
@@ -118,14 +148,10 @@ def test_g18_users_table_exists() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# G-9：T1 跨 org 越权
+# G-9：T1 跨 org 越权 —— **已转正（2026-10-01，P1-C）：PG 侧 + audit_log 部分**
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="G-9 / DR-B6 / DR-B11：T1 跨 org 越权，须在 PG 上跑且 RLS 尚未落地",
-)
 def test_g9_t1_cross_org_read_returns_empty(
     client: TestClient,
     dev_headers: dict[str, str],
@@ -134,9 +160,14 @@ def test_g9_t1_cross_org_read_returns_empty(
 ) -> None:
     """A org 产生审计，B org 查 ⇒ **空集**（不是错误，也不是别人的数据）。
 
-    资源清单（ADR-0003 §4.1）：``documents`` / ``audit_log`` / ``qa_logs`` /
-    ``storage_key``。本例覆盖 ``audit_log``；其余资源与**图谱侧**（DR-B11，
-    须起 Neo4j 才能真实断言）在 P3 补齐后并入。
+    ✅ **已转正（2026-10-01，P1-C）**：测试库切到 PG 后本例由 ``XPASS(strict)``
+    转为常驻门禁——留在 xfail 里，CI 会一直红。
+
+    ⚠️ **转正的边界，不许外推**：本条**只**证明「**应用层 ``org_id`` 过滤**在 PG 上
+    拦住了跨 org 读」，这正是 ADR-0003 §3.7 定下的**常设防线**；它**不代表** RLS
+    已落地（DR-B4 仍归 P3）。资源清单（ADR-0003 §4.1）里的 ``documents`` /
+    ``qa_logs`` / ``storage_key`` 与**图谱侧**（DR-B11，须起 Neo4j 才能真实断言）
+    均在 P3 补齐后并入。
     """
     _require_postgres()
 

@@ -2,21 +2,23 @@
 #
 # 规格出处：`docs/deployment-spec.md` §1.1（编排文件 = 唯一入口）、§2（组件清单）、§2 注（PG / Neo4j 端口不对外）
 #
-# ⚠️ **裁决 D-L 已作废（2026-10-01）**
+# ✅ **裁决 D-L 已作废（2026-10-01），且 P1 已完成切换**
 #    原文：不引入 PG 容器，理由是「起一个**没有任何组件连接**的 PG 就是假组件」。
 #    该前提已被 **DR-B1** 推翻——裁决（2026-10-01）：**开发 / 测试 / 生产一律
 #    PostgreSQL 16.x，不再用 SQLite 作替身**（见需求基线 DR-B1 / DR-B3）。
-#    ⇒ 本文件里的 SQLite 是**待替换的过渡态**，**不是**被批准的方案。
-#    ⇒ 切换动作归 **P1**（DR-B1 / DR-B3 / G-8 / G-20），排期见 `docs/delivery-plan.md`。
-#    ⇒ **不要在 P1 完成前先把这里改成 PG**：那会得到一个没应用连的 PG 服务，
-#      恰恰就是当初 D-L 要防的"假组件"。**正确顺序**：先让 backend 默认连 PG
-#      （`config.py` + `.env.example` 实测通过），**再**改本文件。
+#    切换按 D-L 当年防的那个顺序完成：**先**让 backend 默认连 PG 并实测跑通
+#    （`config.py` + `.env.example`），**才**在本文件引入 PG 服务 ⇒ 这个 PG
+#    是**真有应用连的**，不是假组件。SQLite 配置与 `sqlite_data` 卷已一并清除。
 #
-# ⚠️ **尚未满足 G-19（DR-A6 版本化镜像）**
-#    backend / frontend 目前只有 `build:`、**没有 `image:`** ⇒ 现场无法 pull 升级、
-#    也无法改 tag 回滚 ⇒ 离线包（DR-A7）与补丁流程（DR-C2）**都还不存在**。
-#    护栏：`backend/tests/test_guardrails_delivery.py::test_g19_compose_uses_versioned_images`
-#    （当前 xfail；开工状态一律以 `check_startup_readiness.py` 的输出为准，别看本文注释）。
+# ✅ **G-19（DR-A6 版本化镜像）已达成（2026-10-01）**
+#    backend / frontend 均已声明固定 tag 的 `image:`（构建产物自动打此 tag）⇒ 现场
+#    可 pull 升级、可改 tag 回滚；离线包（DR-A7）与补丁流程（DR-C2）的前提已就位。
+#    护栏已转正（摘 xfail）：`test_g19_compose_uses_versioned_images`。
+# ✅ **tag 漂移已受拦（2026-10-01，决策点 1 采纳 (a)）**：
+#    tag 与 `config.py` 的 `app_version` 仍**没有自动联动**（发版仍须手工改这里），
+#    但漏改不再沉默——`test_g19_own_image_tags_track_app_version` 会判红。
+#    （负向验证已做：把下面 backend 的 tag 改成 1.5.9，该用例即 FAIL。）
+#    真实护栏状态一律以 `check_startup_readiness.py` 的输出为准，别只看本文注释。
 #
 # 使用：`cp .env.example .env` → 填 NEO4J_PASSWORD → `docker compose up -d`
 # （详见同目录 README.md）
@@ -46,15 +48,40 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # DR-B1：关系型库。按 §2「PG / Neo4j 禁止暴露到业务网络」⇒ **不映射 ports**，
+  # 需直连时用 `docker compose exec postgres psql -U graphrag -d graphrag`。
+  postgres:
+    # tag 固定小版本（D-N）：`:latest` 是不可复现的同义词
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: graphrag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填，见 .env.example}
+      POSTGRES_DB: graphrag
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graphrag -d graphrag"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
   backend:
     build:
       # context 用 backend/ 自身（不是仓库根）：COPY 路径即 Dockerfile 内所写，`.dockerignore` 也生效
       context: ../backend
       dockerfile: Dockerfile
+    # DR-A6（G-19）：版本化镜像。保留 build: 的同时声明 image: ⇒ 构建产物自动打此 tag，
+    # 现场即可 pull 升级 / 改 tag 回滚。tag **必须固定小版本**（`:latest` 是不可复现的同义词，D-N）。
+    # ⚠️ 此 tag 与 `backend/app/core/config.py` 的 `app_version`（当前 1.6.0）**无自动
+    #    联动** ⇒ **发版 bump 时必须手工同步这里**；漏改由
+    #    `test_g19_own_image_tags_track_app_version` 判红（2026-10-01，决策点 1 采纳 (a)）。
+    image: graphrag-agent/backend:1.6.0
     environment:
-      # ⚠️ 过渡态（DR-B1 已裁决弃用 SQLite）：P1 切 PG 时，本项与 `sqlite_data` 卷一并替换。
-      # 详见文件头「裁决 D-L 已作废」。四斜杠 = named volume 内的绝对路径。
-      DATABASE_URL: sqlite:////data/dev.db
+      # DR-B1：连本文件的 `postgres` 服务。**必须写服务名**，不能写 localhost——
+      # 容器里的 localhost 是容器自己；写错的表现是连不上，而 healthcheck 报得很含糊。
+      DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD}@postgres:5432/graphrag
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       # 必须全大写：`case_sensitive=False` 让小写写法（`NEO4J_password`）侥幸可用，
@@ -65,10 +92,10 @@ services:
       PRIVATE_DEPLOY_ENABLED: "true"
     ports:
       - "127.0.0.1:8000:8000"
-    volumes:
-      - sqlite_data:/data
     depends_on:
       neo4j:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       # 契约路径是 `/api/v1/health`（不是 /health）：backend/app/api/v1/routes/health.py
@@ -94,6 +121,10 @@ services:
         NEXT_PUBLIC_USE_MOCK: "false"
         NEXT_PUBLIC_APP_ENV: production
         NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
+    # DR-A6（G-19）：tag 固定小版本；发版时与 backend 一并同步。
+    # 位置注意：必须在 `build.args` 块**之后**且与之同级（4 空格）。插在 args 中间
+    #           会把剩余 ARG 挤出该块 ⇒ 整个 compose 不可解析（YAML 静默变死文件）。
+    image: graphrag-agent/frontend:1.6.0
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
@@ -116,7 +147,5 @@ services:
 volumes:
   neo4j_data:
   neo4j_logs:
-  # ⚠️ 过渡态卷：DR-B1 裁决后失去意义，P1 切 PG 时随 SQLite 一并删除
-  sqlite_data:
-  # PG 位（**P1** 切 PG / DR-B1 时启用，届时替代 sqlite_data）：
-  # pg_data:
+  # DR-B1：关系型数据。`sqlite_data` 已于 2026-10-01 随 SQLite 一并删除。
+  pg_data:

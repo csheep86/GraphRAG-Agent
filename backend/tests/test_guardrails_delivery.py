@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from app.core.config import get_settings
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = REPO_ROOT / "contracts" / "openapi.yaml"
 VARIANT_DIR = REPO_ROOT / "deploy" / "variants"
@@ -126,13 +128,10 @@ def test_g12_variant_matrix_builds() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "G-19 / DR-A6：deploy/docker-compose.yml 的 backend / frontend 仍是 "
-        "`build:` 且**无 `image:`** ⇒ 没有版本化镜像 ⇒ 补丁包无从谈起"
-    ),
-)
+# ✅ **已转正（2026-10-01）**：三个服务均已声明固定 tag 的 `image:`，摘 `xfail` 转为常驻门禁。
+# ✅ **tag 漂移缺口已补（2026-10-01，决策点 1 采纳 (a)）**：原判据管不到
+#    「app_version bump 而 compose 忘了改」，由下一条 `test_g19_own_image_tags_track_app_version`
+#    接管——已做负向验证（把 tag 改错则该用例 FAIL）。
 def test_g19_compose_uses_versioned_images() -> None:
     """每个服务都必须声明**固定 tag 的镜像**——否则"出补丁 / 回滚"两件事都不存在。
 
@@ -167,6 +166,45 @@ def test_g19_compose_uses_versioned_images() -> None:
 
     assert not problems, (
         f"{COMPOSE.name} 尚未满足版本化镜像要求（DR-A6，补丁流程的唯一前提）：\n  - "
+        + "\n  - ".join(problems)
+    )
+
+
+def test_g19_own_image_tags_track_app_version() -> None:
+    """自研服务的 ``image`` tag 必须等于 **当前** ``app_version``（决策点 1 采纳 (a)）。
+
+    上一条只校验「有 image: 且 tag 不是 latest」⇒ **管不住漂移**：
+    ``app_version`` bump 到 1.7.0 而 compose 忘了改时它照样绿——护栏会在最该响的
+    那一刻沉默（`changes/P1/proposal.md` §6 决策点 1 就是这个缺口）。
+
+    判定范围收紧到**本仓库构建**的服务：以是否声明 ``build:`` 为准。
+    ``neo4j`` / ``postgres`` 这类第三方镜像没有 ``build:``，它们的 tag 跟
+    ``app_version`` 无关，强制相等反而会逼出一个每次都要改的假约束。
+    """
+    version = get_settings().app_version
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8")) or {}
+    services = compose.get("services") or {}
+
+    problems: list[str] = []
+    checked = 0
+    for name, service in sorted(services.items()):
+        if not isinstance(service, dict) or "build" not in service:
+            continue
+        checked += 1
+        image = service.get("image") or ""
+        tag = image.rsplit(":", 1)[-1] if ":" in image else ""
+        if tag != version:
+            problems.append(
+                f"{name}：image={image or '（无）'} 的 tag 是 {tag or '（缺省）'}，"
+                f"与 app_version={version} 不一致"
+            )
+
+    assert checked, (
+        f"{COMPOSE.name} 里没有任何带 build: 的服务 ⇒ 本判据失去对象。"
+        "自研镜像必须同时声明 build: 与 image:（DR-A6）"
+    )
+    assert not problems, (
+        f"compose 的镜像 tag 与 app_version={version} 脱钩（发版 bump 时必须同步改）：\n  - "
         + "\n  - ".join(problems)
     )
 

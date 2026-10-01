@@ -14,7 +14,11 @@ type AgentQueryResponse = components["schemas"]["AgentQueryResponse"];
  *   EMPLOYEE:E002 → ATTENDANCE_RECORD:A00023 → SHIFT:S00023）。推理路径本来就
  *   **不出 LLM**（确定性构造），因此可以脱离 LLM 单独取真值；
  * - ⚠️ **`answer` / `confidence` / `citations` 是占位**：没有 LLM 就没有真答案。
- *   占位文案自带「非真机产出」标记，页面另有提示条，不允许被读成结论。
+ *   占位文案自带「非真机产出」标记，页面另有提示条，不允许被读成结论；
+ * - ⚠️ **`reasoning_path` 的每一跳都没有 `valid_from` / `valid_to`**：这份快照取自
+ *   2026-09-28，**早于**时效治理（Sprint10.5 的 L2-③）把它们写进契约的时间点，当时图上
+ *   确实没这两个属性。二者在契约里是**可选**字段，缺省按 ADR-0005 §6 读作「不知道什么时候
+ *   生效/失效」——**不可判定**，与「永远有效」是两回事。要演示虚线（已失效跳）请切到真机。
  */
 export const MOCK_POLICY_QA: AgentQueryResponse = {
   answer:
