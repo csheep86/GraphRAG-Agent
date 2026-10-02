@@ -1,7 +1,7 @@
 # M6 · 本体管理与增量更新 — MVP 规格说明书
 
 > **文档编号**：spec-m6
-> **版本**：**v1.0**（**2026-10-02 定稿**；草案期 v0.1，§10 checklist 七项已全勾）
+> **版本**：**v1.0**（**2026-10-02 定稿**；草案期 v0.1，§10 checklist **八项**已全勾）
 > **状态**：**MVP 规格定稿**（**排期见 [`docs/delivery-plan.md`](../docs/delivery-plan.md) P5 阶段**；承接原 plan v3.0 §19.1 A/B/C/D 四批次与 §15.1 第 5 行——**该计划已全废**，§15 内容已抢救迁移至 [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md)；**定稿时点 = P5 阶段 M6 开工闸门**，对应需求 **DR-D2**；**定稿证据**（PoC / 契约先行 / checklist 逐项）见 [`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md) §1~§3）
 >
 > ⚠️ **定稿 ≠ 已实现**：本 spec 定稿时，7 个端点**仍为 501 占位骨架**（契约已先行，路径 19 → 26）。**实现归 P5-M6 / Sprint 12**，见 §10.1。

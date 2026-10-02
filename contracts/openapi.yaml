@@ -1387,7 +1387,7 @@ components:
           title: By Date
           type: array
         cost_ratio:
-          description: '**增量 / 全量成本比**（M6 C3 准入线：显著 < 1.00）。仅日志告警，**不阻断**请求（阈值 `COST_RATIO_ALERT_THRESHOLD`，默认 0.5）'
+          description: '**增量 / 全量成本比**（M6 C3 准入线：显著 < 1.00）。超阈值**仅日志告警，不阻断**请求（告警阈值规范见 spec §6；**该配置尚未落 `config.py`**，实现批次须先有消费者再提交）'
           minimum: 0.0
           title: Cost Ratio
           type: number
@@ -3782,7 +3782,7 @@ paths:
       description: '按日期区间给出**成本总览**：token 用量、单文档成本、**增量 / 全量成本比**，以及按天明细。
 
 
-        **`cost_ratio` 是准入线的载体**：M6 C3 要求「增量 / 全量成本比显著 < 1.00」，超过 `COST_RATIO_ALERT_THRESHOLD`（默认 0.5）只**日志告警，不阻断**请求。
+        **`cost_ratio` 是准入线的载体**：M6 C3 要求「增量 / 全量成本比显著 < 1.00」，超过告警阈值只**日志告警，不阻断**请求（阈值规范见 spec §6，**尚未落 `config.py`**）。
 
 
         **当前状态**：占位骨架，恒返回 501。成本打点侧 M2 §3 验收 7 的 `token_usage` **已具备**，聚合与口径实现归 P5-M6。

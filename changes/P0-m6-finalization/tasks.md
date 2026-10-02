@@ -62,13 +62,17 @@
       （整节删会让 §8/§9/§10 错位，多处锚点指向 §10；守 `dev-doc-status.md` **R5** 编号只追加）
 - [x] ④ 契约漂移核验 ⇒ ✅ 由 F2 提供证据：路径 **19 → 26**、`export_openapi.py --check` **[OK] 零 diff**、
       `gen:api` + `typecheck` + `lint` 通过
-- [x] ⑤ 配置项消费者核验 ⇒ ✅ **不适用（本批不实现）**：三个配置（`ONTOLOGY_LLM_SUGGEST_TIMEOUT` /
-      `INCREMENT_REBUILD_BATCH_SIZE` / `COST_RATIO_ALERT_THRESHOLD`）**一个都没落 `config.py`**
+- [x] ⑤ 配置项消费者核验 ⇒ ✅ **不适用（本批不实现）**：**实测**（全仓 grep 三个配置名）确认
+      三个配置（`ONTOLOGY_LLM_SUGGEST_TIMEOUT` / `INCREMENT_REBUILD_BATCH_SIZE` /
+      `COST_RATIO_ALERT_THRESHOLD`）**只出现在 spec §6 与本文档，一个都没落 `config.py`**
       —— 无消费者的配置不得提交（CODEBUDDY §功能预留原则 第 6 条）。
       spec §10 已注明：勾选含义 = **本批没有违规配置项**，**不是**「三个配置已就绪」
-- [x] ⑥ 版本行改写 ⇒ ✅ `v0.1（草案…）` → **`v1.0`（2026-10-02 定稿）**；状态行「草案」→「**定稿**」；
+- [x] ⑥ **接缝登记核验**（**spec §10 有此条，本文件先前漏列 —— 2026-10-02 复核补齐**）
+      ⇒ ✅ **实测**：本批未引入任何 `settings.*` 字段、未新增 ADR-0004 §2.1 接缝实现类
+      （只加路由 / schema / 1 个错误码）；`uv run python scripts/check_seams.py` = **ERROR 0 / WARN 0 / OK 10**
+- [x] ⑦ 版本行改写 ⇒ ✅ `v0.1（草案…）` → **`v1.0`（2026-10-02 定稿）**；状态行「草案」→「**定稿**」；
       并加一句「**定稿 ≠ 已实现**」警告
-- [x] ⑦ 回填 `docs/dev-doc-status.md` ⇒ ✅ **P1-3 置 ✅ 2026-10-02**（含证据路径）；
+- [x] ⑧ 回填 `docs/dev-doc-status.md` ⇒ ✅ **P1-3 置 ✅ 2026-10-02**（含证据路径）；
       同步 §0 汇总表（P1 已完成 2 → **4**、进行中 **1**）与 **R2 风险置「已闭环」**
 
 > **F3 顺带裁决的 2 件事**（F1 / F2 各自登记、本批必须给结论）：
@@ -87,7 +91,7 @@
 
 ## 出口判据（一句话）
 
-`m6` 版本行 = **v1.0**、§10 checklist **七项全勾**、§7 **已删**；
+`m6` 版本行 = **v1.0**、§10 checklist **八项全勾**（spec §10 实为 8 个 checkbox；本文档早前列 7 项系漏列第 ⑥ 接缝核验，已补齐）、§7 **已删**；
 `dev-doc-status.md` **P1-3 / P1-5 = ✅**；契约含 **7 个 ontology/cost 端点**且 `--check` **零 diff**。
 
 ## 收尾三件套（每子任务都跑）

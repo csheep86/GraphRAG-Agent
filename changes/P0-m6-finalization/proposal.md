@@ -37,8 +37,9 @@
 
 ## 3. 出口判据（一句话）
 
-`specs/m6-ontology-incremental.md` 的**版本行 = v1.0**、**§10 checklist 七项全勾**、
-**§7 已删**；`dev-doc-status.md` **P1-3 / P1-5 置 ✅**；
+`specs/m6-ontology-incremental.md` 的**版本行 = v1.0**、**§10 checklist 八项全勾**
+（**2026-10-02 复核**：spec §10 实际是 **8** 个 checkbox，本文件立项时写"七项"系漏列第 ⑥
+「接缝登记核验」，已按事实更正，不改判据）、**§7 已删**；`dev-doc-status.md` **P1-3 / P1-5 置 ✅**；
 `export_openapi.py --check` **零 diff** 且契约中**含 7 个 ontology/cost 端点**。
 
 ---

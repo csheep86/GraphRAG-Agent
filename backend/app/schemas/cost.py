@@ -79,7 +79,8 @@ class CostDashboardResponse(BaseModel):
         ge=0.0,
         description=(
             "**增量 / 全量成本比**（M6 C3 准入线：显著 < 1.00）。"
-            "仅日志告警，**不阻断**请求（阈值 `COST_RATIO_ALERT_THRESHOLD`，默认 0.5）"
+            "超阈值**仅日志告警，不阻断**请求（告警阈值规范见 spec §6；"
+            "**该配置尚未落 `config.py`**，实现批次须先有消费者再提交）"
         ),
     )
     by_date: list[CostByDateItem] = Field(description="按天明细（供仪表盘画趋势）")

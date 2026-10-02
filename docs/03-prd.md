@@ -64,7 +64,7 @@
 > 1. C3 准入线（单位成本 / 增量全量成本比）**没有 M6 就没有验证载体**（`02-product-outline.md` §3.2 M6）；
 > 2. 本体不可校正 = 抽取错误无法收敛 = 一次性玩具（GAP-F2 的付费前提）。
 >
-> 规格就绪状态：`specs/m6-ontology-incremental.md` 已于 **2026-10-02 升 v1.0 定稿**（对应需求 **DR-D2** 的 **P5 阶段 M6 开工闸门已开**；排期见 `docs/delivery-plan.md` P5）。定稿证据（PoC / 契约先行 / §10 checklist 七项全勾）见 [`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md)；**状态同步见附录 C.0 第 5 行**。
+> 规格就绪状态：`specs/m6-ontology-incremental.md` 已于 **2026-10-02 升 v1.0 定稿**（对应需求 **DR-D2** 的 **P5 阶段 M6 开工闸门已开**；排期见 `docs/delivery-plan.md` P5）。定稿证据（PoC / 契约先行 / §10 checklist **八项**全勾）见 [`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md)；**状态同步见附录 C.0 第 5 行**。
 >
 > ⚠️ **定稿 ≠ 已实现**：spec 的 7 个端点当前为 **501 占位骨架**（契约已先行，路径 19 → 26），**实现归 P5-M6 / Sprint 12**（spec §10.1）。
 
