@@ -16,10 +16,15 @@
 | 类别 | 总数 | 已完成 | 进行中 | 未开始 |
 |---|---|---|---|---|
 | P0（开 Sprint 5 前必办） | 1 | 1 | 0 | 0 |
-| P1（后续 Sprint 9/11/12 启动前） | **11** | 2 | 0 | **9** |
+| P1（后续 Sprint 9/11/12 启动前） | **11** | **4** | **1** | **6** |
 | P2（每 Sprint 收尾 routine） | 3 | 0 | 0 | 3 |
 | P3（上线 gate） | 1 | 0 | 0 | 1 |
-| **合计** | **16** | **3** | **0** | **13** |
+| **合计** | **16** | **5** | **1** | **10** |
+
+> **2026-10-02 更新**（架构师）：**P1-3（m6 spec v1.0 定稿）** 与 **P1-5（schema-suggestion PoC）** 双双完成
+> ⇒ P1 已完成 2 → **4**；**P1-4** 文档侧已完成、代码/契约侧待 M6 ⇒ 计入**进行中 1**。
+
+**2026-10-02 更新（架构师，M6 定稿批次）**：**P1-3 置 ✅** —— `specs/m6-ontology-incremental.md` 由 v0.1 草案升 **v1.0 定稿**（§10 checklist 8 项全勾：M2 §4.5 `applied` 文档侧对齐 / PRD §2+附录 C 同步 / §7 草案节删除 / 契约零漂移 **19 → 26 路径** / 配置项本批无违规 / `check_seams` ERROR 0 / 版本行 v1.0 / 本节回填）；**P1-5 已于同批次前置完成**（端到端 PoC 跑通，新增 `prompts/ontology_suggest_v1.md`，R2 由此解除）；**PRD §7 的 prompt 冲突登记已裁决**：冷启动由 `kg_qa_v1.md` 改为 **`ontology_suggest_v1.md`**，spec §3.1 验收 1 已同步改写。证据：[`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md) §1~§3。⚠️ **定稿 ≠ 已实现** —— 7 个端点仍是 501 占位骨架，实现归 P5-M6 / Sprint 12。
 
 最近更新：2026-09-21（架构师）——**P0 口径更正**（原"Sprint 9 启动前"→"开 Sprint 5 前"，见 §1）；P0-1 完成（M6 草案落地，已移入 §7 历史）；新增 P1-3（M6 spec v1.0 定稿）/ P1-4（M2 §4.5 加 `applied`）/ P1-5（schema-suggestion PoC），来源 `docs/v2.0.0-ship-backward-plan.md` §5.2 D-1/D-2/D-3。
 **2026-09-21 追加**：开口项 **O-1~O-5 全部拍板**（倒推文档 §7 决策记录）；P1-3 / P1-5 已补**两段式检查点**（见 §2 备注列，机制见倒推文档 §7.1）；§9 新增"每批次开工"SDD checklist。
@@ -115,7 +120,7 @@
 |---|---|---|---|---|---|
 | **P1-1** | 核 `entity_relation_extract_v1.md` 是否支持 schema-suggestion 模式 | ✅ **已完成** | 架构师 | 2026-09-21 | v1 已支持参数化（`{{entity_types}}` / `{{relation_types}}` / `{{domain_description}}`），schema-suggestion 可在应用层封装实现——**无需新增 Prompt 版本**，符合 PRD §7 |
 | **P1-2** | OpenSpec 现状口径选择 | ✅ **已完成**（方案 1） | 架构师 | 2026-09-21 | README 行 25 改写一句话承认事实；根/后端 CODEBUDDY 未含 OpenSpec 字段，未改 |
-| **P1-3** | `specs/m6-*.md` 由 v0.1 草案升 **v1.0 定稿** | ⏳ 未开始 | 架构师（验收：用户） | **S11 收尾前**（S12 开工闸门，**硬**） | 倒推文档 §5.2 D-1 + **§7.1 检查点**：**CP-1 = S10 收尾时**写入 S11 的 `changes/Sprint11.*/tasks.md` 立项；**CP-2 = S11 中段**核对是否进入待审；**CP-3 = S11 收尾前**闸门。m6 spec §10 已有 8 项可勾选 checklist；m6 spec 状态行自述"定稿时点 = S11 收尾前" |
+| **P1-3** | `specs/m6-*.md` 由 v0.1 草案升 **v1.0 定稿** | ✅ **已完成（2026-10-02）** | 架构师（验收：用户） | — | **S12 开工闸门已开**。§10 checklist **8 项全勾**（含① M2 §4.5 `applied` 文档侧已对齐 / ② PRD §2+附录 C 已同步 / ③ §7 草案节已删 / ④ 契约零漂移：路径 **19 → 26**、`export_openapi.py --check` **[OK]** / ⑤ 配置项**本批无违规**（三个配置未落 `config.py`，实现时回填）/ ⑥ `check_seams.py` ERROR 0 / ⑦ 版本行 v1.0 / ⑧ 本节回填）。**证据**：[`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md) §1~§3。⚠️ **定稿 ≠ 已实现**：7 个端点仍为 **501 占位骨架**，实现归 P5-M6（spec §10.1 六条遗留） |
 | **P1-4** | `specs/m2-*.md` §4.5 `entity_merge_candidates.status` **加 `applied`**（并补 §3 验收 3 一条） | 🟡 **文档侧已完成**（2026-09-21） | 架构师 + 后端 B | 文档已补；**代码/契约侧 = S9 顺路** | 倒推文档 §5.2 D-2。**已完成**：M2 §4.5 加前向预留注脚 + §3 验收 3 交叉引用（**明确 M2/S9 不落该值、口径不变**）。**余下**：M6 落地前走后端 CODEBUDDY §3 契约同步 5 步（Pydantic → 重导契约 → 提交生成物 → `gen:api` → 零漂移校验） |
 | **P1-5** | schema-suggestion **端到端 PoC**（应用层封装 + v1 参数注入） | ✅ **已完成（2026-10-02）** | 后端 B（验收：架构师） | — | **风险 R2 由此解除**。实测：v1 参数注入侧**本就已通**（`tasks/registry.py:60` / `graphs.py:2320` 在真消费），故 PoC 只补冷启动建议一段；`suggest_ontology_types()` 签名**无会话参数** ⇒ 结构上写不出"未确认即生效"。真机（deepseek-chat，1 次定向调用）产出 12 实体 + 12 关系类型，双双命中上限。**新增 `prompts/ontology_suggest_v1.md`**——⚠️ spec §3.1 验收 1 原文点名复用 `kg_qa_v1.md`，与"生成本体建议"语义错配，该差异已登记为**定稿增补项，F3 必须裁决**。证据见 `changes/P0-m6-finalization/integration-log.md` §1 |
 | **P1-6** | **S9 首日 schema 冻结必须含时态四字段**（`valid_from` / `valid_to` / `created_at` / `expired_at` + `source_document_id`）+ `Document.document_date` + `relation_type → 有效期策略` 配置表 | ⏳ **未开始**（文档侧已就绪 2026-09-27） | 架构师（冻结）+ 后端 B（实现） | **S9 首日 2026-11-11**（**硬闸门 CP-T1**） | 倒推依据：**错过即全链路返工**（四源对齐做完再补时间字段 = 重做）。**已完成部分**：决策 [`ADR-0005`](./adr/ADR-0005-temporal-knowledge-model.md)（Accepted）、`specs/m2` §3 验收 8–10 + §4.6 字段与仲裁规则 R1–R4、验收矩阵 §3.5 判据、`sprint-calendar` §4 **CP-T1 / CP-T2**、长指南**阶段十八**。**余下**：实现侧（批次 A 冻结 / B 落 `document_date` + prompt v3 / C 四字段 + 仲裁），判据脚本由 `temporal_poc/run_track_s.py` 迁入 `backend/tests/`（**n ≥ 3 达 3/3**） | 倒推文档 §5.2 D-3 + **§7.1 检查点**：**CP-2（S11 中段）必须已"跑通"**，不接受"写了一半"——若未通即**升级报用户**，评估 S12 顺延或走 F1~F5 显式降级决议。缓解 R2（v1 参数化路径未实测） |
@@ -272,7 +277,7 @@
 | # | 风险 | 影响 | 缓解 | 状态 |
 |---|---|---|---|---|
 | ~~**R1**~~ | ~~PRD §2 与 plan §15.1 第 5 行口径冲突~~ | M6 spec 落地后文档未同步 | ✅ **已闭环 2026-09-21**：PRD §2 / §7 / §3 / §4 / 附录 C 全部同步（见 F9 / F10 / F12），**不再推迟到 Sprint 12** | **已关闭** |
-| **R2** | schema-suggestion 模式未实测验证 | S12 启动后发现 v1 参数化路径走不通 | Sprint 11 收尾前补端到端 PoC（**CP-2 于 S11 中段核对是否已跑通**，见 P1-5） | 跟踪中 |
+| ~~**R2**~~ | ~~schema-suggestion 模式未实测验证~~ | ~~S12 启动后发现 v1 参数化路径走不通~~ | Sprint 11 收尾前补端到端 PoC（**CP-2 于 S11 中段核对是否已跑通**，见 P1-5） | ✅ **已闭环 2026-10-02**：P1-5 端到端 PoC **已跑通**（fake + 真机 deepseek-chat 各一次，产出 12 实体 + 12 关系类型）；新增 `prompts/ontology_suggest_v1.md`（PRD §7 冲突已裁决）。证据：`changes/P0-m6-finalization/integration-log.md` §1 |
 | **R3** | dev-doc-status.md 失维护 | §15.4 纪律被打破 | 列入 Sprint 收尾 checklist（P2-1 / P2-2）+ §9.2 第 3 项 | 跟踪中 |
 | **R4** | release-notes v1.5.0 起累计欠账 | §15.4 显式声明失败 | 每次 Sprint 收尾跟进，**不堆积** | 跟踪中 |
 | **R5** | **规格验收编号漂移**：任一次"重排 / 插入 / 删除"编号，会使 `acceptance-traceability-matrix.md` 全部锚点失效 | 验收对账静默失效（比无矩阵更危险：看起来有判据） | **矩阵 §7 第 1 条**：编号一经定稿**只能追加**；Sprint 收尾核对时若发现编号变动，**必须同步修矩阵** | 新增 |

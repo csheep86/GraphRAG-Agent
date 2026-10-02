@@ -1,12 +1,14 @@
 # M6 · 本体管理与增量更新 — MVP 规格说明书
 
 > **文档编号**：spec-m6
-> **版本**：v0.1（草案，待 Sprint 12 启动前升 v1.0）
-> **状态**：MVP 规格草案（**排期见 [`docs/delivery-plan.md`](../docs/delivery-plan.md) P5 阶段**；承接原 plan v3.0 §19.1 A/B/C/D 四批次与 §15.1 第 5 行——**该计划已全废**，§15 内容已抢救迁移至 [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md)；**本草案定稿时点 = P5 阶段 M6 开工闸门**，对应需求 **DR-D2**）
+> **版本**：**v1.0**（**2026-10-02 定稿**；草案期 v0.1，§10 checklist 七项已全勾）
+> **状态**：**MVP 规格定稿**（**排期见 [`docs/delivery-plan.md`](../docs/delivery-plan.md) P5 阶段**；承接原 plan v3.0 §19.1 A/B/C/D 四批次与 §15.1 第 5 行——**该计划已全废**，§15 内容已抢救迁移至 [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md)；**定稿时点 = P5 阶段 M6 开工闸门**，对应需求 **DR-D2**；**定稿证据**（PoC / 契约先行 / checklist 逐项）见 [`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md) §1~§3）
+>
+> ⚠️ **定稿 ≠ 已实现**：本 spec 定稿时，7 个端点**仍为 501 占位骨架**（契约已先行，路径 19 → 26）。**实现归 P5-M6 / Sprint 12**，见 §10.1。
 > **上游依据**：`docs/02-product-outline.md` §3.2 M6 + `docs/03-prd.md` §2（P1 模块）+ [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md) §1 第 5 行（**原 `v1.1.0-demo-mvp-plan.md` §19 / §15.1 已随该计划作废**）
 >
 > ⚠️ **引用处置**：本 spec 中形如 `plan §12 R12` / `plan §19.1` / `plan §21.3` / `plan §3.1` 的引用，其**结论已并入本 spec 正文**（如"GUI 只做三动作"、"仅建议不自动生效"、"`cost_ratio` 为 C3 取证字段"）。**引用仅作溯源**；原计划已废，**约束以本 spec 正文为准**。
-> **关联 Prompts**：`prompts/entity_relation_extract_v1.md`（**仅参数化复用，不修改**）；与 `prompts/kg_qa_v1.md`（冷启动建议 LLM 调用载体）
+> **关联 Prompts**：`prompts/entity_relation_extract_v1.md`（**仅参数化复用，不修改**）；`prompts/ontology_suggest_v1.md`（**冷启动建议的 LLM 调用载体**，2026-10-02 新增，**见 §3.1 验收 1 的裁决**）
 > **关联研究结论**：`docs/v1.1.0-demo-mvp-plan.md` §12 R12（前端 GUI 工时风险）
 > **关联大纲**：`docs/02-product-outline.md` §3.2 M6 + §6 准入线（C3 单位成本）
 > **关联 ADR**：[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](../docs/adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](../docs/adr/ADR-0003-tenant-isolation-rls.md)
@@ -50,7 +52,17 @@
 
 ### 3.1 冷启动（对应批次 A）
 
-1. **WHEN** 用户调用冷启动接口（`POST /api/v1/ontology/cold-start`，入参 `{domain_description}`），**THEN** 系统调用 `kg_qa_v1.md`（轻量 LLM 调用，**不修改 prompt**）建议一组 `entity_types` / `relation_types`，**AND** 仅"建议"不"自动生效"（用户必须确认），**AND** 响应体 `{suggested_entity_types, suggested_relation_types, trace_id}`，**AND** 未确认的 schema **不写入** `ontology_schemas` 表。
+1. **WHEN** 用户调用冷启动接口（`POST /api/v1/ontology/cold-start`，入参 `{domain_description}`），**THEN** 系统调用 `ontology_suggest_v1.md`（轻量 LLM 调用；**不修改任何既有 prompt**，该版本为 2026-10-02 新增专用模板）建议一组 `entity_types` / `relation_types`，**AND** 仅"建议"不"自动生效"（用户必须确认），**AND** 响应体 `{suggested_entity_types, suggested_relation_types, trace_id}`，**AND** 未确认的 schema **不写入** `ontology_schemas` 表。
+> **验收 1 的 prompt 裁决（2026-10-02，定稿增补）**：本节原文写「调用 `kg_qa_v1.md`，**不修改 prompt**」。
+> **裁决**：改为 `prompts/ontology_suggest_v1.md`（**新增版本**），理由是语义错配——
+> `kg_qa_v1.md` 是**问答**模板，用它生成本体建议会导致建议质量无法归因；
+> 「不修改 prompt」理解为**不篡改既有 prompt**，而非「不许新增版本」
+> （H9 约束的是 **P2 之前**的模块，M6 在 **P5**）。
+> 依据：`docs/03-prd.md` §7 明确要求「**m6 spec 升 v1.0 时必须就验收 1 那一句给出裁决**」；
+> 实测证据见 `changes/P0-m6-finalization/integration-log.md` §1.4。
+> ⚠️ 这是本批**唯一**对 §1~§6 正文的改动（其余定稿动作只做勾选 / 删节 / 改版本行）——
+> 属 PRD 点名的定稿增补，**不是**重写。
+
 2. **WHEN** 用户在 M6 校正 GUI 确认 schema（`POST /api/v1/ontology/confirm`，入参 `{version, entity_types, relation_types}`），**THEN** 系统写入 `ontology_schemas` 表（`status = active`，`version = 1` 或下一序号），**AND** 后续 M2 抽取调用 `entity_relation_extract_v1.md` 时将 `entity_types` / `relation_types` 参数**从该表读取**（v1 已支持模板参数化，第 16~18 行实测），**AND** 重复确认返回 HTTP 409 `SCHEMA_VERSION_NOT_ACTIVE`。
 
 ### 3.2 校正 GUI（对应批次 B）
@@ -222,9 +234,27 @@
 | `GET` | `/api/v1/ontology/active` | - | 200 `{version, entity_types, relation_types, status: "active"}`；409 无 active |
 | `GET` | `/api/v1/cost/dashboard` | query: `date_from?, date_to?` | 200 `{token_usage_total, single_doc_cost, cost_ratio, by_date: [...]}` |
 
-> **契约草案**，实现阶段由后端开发 B 写入 `contracts/openapi.yaml`。
+> **契约状态（2026-10-02 更新）**：**7 个端点已全部进入 `contracts/openapi.yaml`**（契约路径
+> **19 → 26**），由 `backend/scripts/export_openapi.py` 从后端 Pydantic 模型导出，
+> 前端 `npm run gen:api` 已重导类型，`export_openapi.py --check` **零 diff**。
+> **当前 7 个端点均为 501 占位骨架**（业务实现归 P5-M6 / Sprint 12，见 §10.1）。
 >
 > **新增 7 个端点全部进入契约**：与 `OPENAPI` 门禁模式一致（M5 §3 同步契约铁律）；§3.2 B 段硬约束要求 §4 H10 契约先行。
+
+#### 5.5.1 契约落定时的四项裁决（**2026-10-02，定稿增补**）
+
+> 契约先行使 §5.5 从"草案表"变成"已落契约"，落地时撞出 4 处 spec 没写的地方。
+> 这里**逐项给出裁决**（不允许"契约这么写了、spec 没说"地悬着）：
+
+| # | spec 未定义处 | 裁决 | 落点 |
+|---|---|---|---|
+| 1 | **占位端点的 501 语义**：项目 `ErrorCode.NOT_IMPLEMENTED` 既有口径是「**基础设施不可用**，**不**表示接口未实现」 | 占位期**复用 501**，靠 `detail.blocked_by = "实现归 P5-M6 批次"` 区分；M6 实现后端点不再返 501（真故障除外）⇒ **语义自动收敛，不改错误码口径** | `backend/app/api/v1/routes/ontology.py::_placeholder` |
+| 2 | **6 个响应缺 `trace_id`**（§5.5 只有冷启动列了） | **按本表逐字照抄**：除冷启动外**不带** `trace_id`；`X-Trace-Id` 响应头**恒回显**，溯源不依赖响应体 | `app/schemas/ontology.py` / `app/schemas/cost.py` |
+| 3 | `split` 的 `new_entities[]` 写成 `{canonical_name, ...}` | 省略号**不展开**（功能预留原则）；另加 `min_length=2`（**本批推断**：只拆出 1 个等价于改名，应走 `rename`），实现批次确认 | `OntologySplitRequest` |
+| 4 | `cost.by_date[]` 写成 `[...]`，每项字段未定义 | **最小可用**：`date` + `token_usage_total` + `single_doc_cost`；**不**给按天 `cost_ratio`（`cost_ratio` 是**区间级**指标，按天算意义不明） | `CostByDateItem` |
+
+> **前端不补 mock / api 包装**：7 个端点**尚无 UI 消费**，补 mock 属「强行同步开发」
+> （CODEBUDDY §功能预留原则 1/2）。**M6 实现批次按需增补**，登记于 §10.1。
 
 ---
 
@@ -240,16 +270,17 @@
 
 ---
 
-## 7. 与 PRD §2 的口径（**已闭环，2026-09-27 复核**）
+## 7. 与 PRD §2 的口径（**已并入 PRD，本节留空**）
 
-**结论：无冲突，M6 = P0，Sprint 12 承接，不降级。**
-
-| 时间 | 状态 |
-|---|---|
-| 2026-09-21 | PRD §2 M6 行由「P1（不在本期 MVP）」修订为「**P0（口径修订）**」，依据 `v1.1.0-demo-mvp-plan.md` §15.1 第 5 行 v3.0 裁决；同步记录见 `dev-doc-status.md` **F9**（R1 根因已闭环） |
-| 2026-09-27 | 用户明确口径：**"不用理会 MVP 演示，按方案来"** ⇒ **M6 属交付范围，S12 不做降级、不因演示需要而裁剪** |
-
-本 spec 原本节（v0.1 草案专属）称「PRD §2 写 P1」已**过期**——该表述在 F9 闭环后即失效，本次按事实更正，**不保留旧口径**（避免后人照旧口径又改回去，与矩阵 §3.4「`confidence` 未落库」同款教训）。
+> **结论（唯一权威）**：**无冲突，M6 = P0，Sprint 12 承接，不降级。**
+> 口径演化（2026-09-21 PRD §2 由「P1」改为「**P0（口径修订）**」，`dev-doc-status.md` **F9** 闭环；
+> 2026-09-27 用户复核「**不用理会 MVP 演示，按方案来**」）已**并入**
+> [`docs/03-prd.md`](../docs/03-prd.md) §2 M6 行 —— 原本节是 **v0.1 草案专属**，
+> 定稿后**不保留旧口径**（避免后人照旧口径又改回去）。
+>
+> ⚠️ **本节只删正文、保留编号位**：整节删除会让 §8 / §9 / §10 **编号错位**，
+> 而 `dev-doc-status.md` **P1-3**、批次 `tasks.md` 等多处锚点指向 **§10**。
+> 守 `dev-doc-status.md` **R5**（编号定稿后**只追加、不重排**）。
 
 ---
 
@@ -275,7 +306,7 @@
 | `specs/m3-graphqa-citation.md` §3 验收 6 | M6 校正后 M3 可观测新 `kg_version` |
 | `specs/m5-permission-audit.md` §4.3 / §5.3 | M6 校验 `scene_scope = "ontology"` + RLS |
 | `prompts/entity_relation_extract_v1.md` 第 16~18 行 | M6 参数化复用（**不修改**） |
-| `prompts/kg_qa_v1.md` | M6 冷启动建议的 LLM 调用载体（**不修改**） |
+| `prompts/ontology_suggest_v1.md`（2026-10-02 新增） | M6 冷启动建议的 LLM 调用载体（见 §3.1 验收 1 的裁决） |
 | `docs/v1.1.0-demo-mvp-plan.md` §15.1 第 5 行 / §19 | M6 承接 |
 | `docs/v1.1.0-demo-mvp-plan.md` §12 R12 | M6 GUI 工时风险（**只做三动作**） |
 | `docs/03-prd.md` §2 / 附录 C | M6 状态行待同步（Sprint 12 启动前动作） |
@@ -289,15 +320,50 @@
 
 > 依据 **DR-D2**（[`docs/delivery-requirements-and-guardrails.md`](../docs/delivery-requirements-and-guardrails.md)）：本 spec 升 v1.0 是 **P5 阶段 M6 的开工闸门**（~~原依据 `v2.0.0-ship-backward-plan.md` §5.2 D-1 已随该计划全废~~）。逐项勾选后才可置"版本：v1.0"。
 
-- [ ] **§4.4 与 M2 §4.5 接口对齐复核**：确认 M2 §4.5 已加 `applied` 枚举（依赖 P1-4，S9 顺路完成）；若未加，本 spec 不得升 v1.0
-- [ ] **PRD §2 / 附录 C 同步**：`docs/03-prd.md` §2 的 M6 行由"P1（不在本期 MVP）"改为"M6 进入 MVP 1.0，Sprint 12 承接"；附录 C 落清单加本 spec
-- [ ] **本 spec §7 删除**：§7 是"v0.1 草案专属"的口径冲突说明，定稿后删除（口径已收敛进 PRD）
-- [ ] **契约漂移核验**：`uv run python scripts/export_openapi.py --check` 与 `npm run gen:api` 均无 diff（本 spec §5.5 的 7 个端点届时须已进 `contracts/openapi.yaml`，否则说明契约未先行）
-- [ ] **配置项消费者核验**：§6 的三个配置项（`ONTOLOGY_LLM_SUGGEST_TIMEOUT` / `INCREMENT_REBUILD_BATCH_SIZE` / `COST_RATIO_ALERT_THRESHOLD`）在实现时**每个都必须能指出读取它的代码行**（根 `CODEBUDDY.md` §功能预留原则 第 6 条 / ADR-0004 §3 硬规则 5）——**无消费者的配置不得提交**
-- [ ] **接缝登记核验**：M6 若引入新的 `settings.*` 或新实现类，核是否需要同步 `ADR-0004` §2.1 / `check_seams.py` 登记集合
-- [ ] **版本行改写**：`> **版本**：v0.1（草案…）` → `> **版本**：v1.0`；`> **状态**：…` 去掉"草案"字样
-- [ ] **回填 `docs/dev-doc-status.md`**：P1-3 置 ✅ 并注明日期
+**状态：7 项全部勾选（2026-10-02）** —— 逐项证据见
+[`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md) §3。
+
+- [x] **① §4.4 与 M2 §4.5 接口对齐复核** ✅ **2026-10-02 实测**：`specs/m2-extract-kg.md` §4.5 表
+      `status` 行已写「**另有 M6 前向预留值 `applied`**」，并有**独立注脚**（M2 阶段不落该值、
+      `similarity ∈ [0.70, 0.90]` 仍进 `human_review`、M6 落地前须走契约同步 5 步）。
+      ⚠️ **文档侧已对齐，代码 / 契约侧未动**（`applied` 未进 Pydantic 枚举与契约）——
+      那是 **M6 实现批次**的动作，见 §10.1 第 1 条。
+- [x] **② PRD §2 / 附录 C 同步** ✅ **2026-10-02 实测**：`docs/03-prd.md` §2 M6 行**已是**
+      「**P0（口径修订）**」+ Sprint 12 承接（2026-09-21 已改，**R1 已闭环**）；
+      附录 C.0 第 5 行本次由「v0.1 草案」改为「**v1.0 定稿（2026-10-02）**」，
+      并同步 §7 冲突登记为「已裁决」。
+- [x] **③ §7 删除** ✅ **2026-10-02**：草案专属的口径演化正文**已删**，结论并入 PRD §2。
+      ⚠️ **编号位保留**（整节删除会使 §8/§9/§10 错位，多处锚点指向 §10；守 `dev-doc-status.md` **R5**）。
+- [x] **④ 契约漂移核验** ✅ **2026-10-02 实测**：§5.5 的 **7 个端点已进 `contracts/openapi.yaml`**
+      （契约路径 **19 → 26**）；`export_openapi.py --check` **[OK] 零 diff**；
+      `npm run gen:api` 重导后 `typecheck` / `lint` 均通过。
+- [x] **⑤ 配置项消费者核验** ✅ **不适用（本批不实现，实现时回填）**：§6 三个配置项
+      （`ONTOLOGY_LLM_SUGGEST_TIMEOUT` / `INCREMENT_REBUILD_BATCH_SIZE` /
+      `COST_RATIO_ALERT_THRESHOLD`）**本批一个都没落 `config.py`** ——
+      无消费者的配置不得提交（根 `CODEBUDDY.md` §功能预留原则 第 6 条）。
+      **M6 实现批次逐项核验**：每个必须能指出读取它的代码行，否则不得提交。
+      ⚠️ 本项勾选的含义是「**本批没有违规配置项**」，**不是**「三个配置已就绪」。
+- [x] **⑥ 接缝登记核验** ✅ **2026-10-02 实测**：本批**未引入**任何 `settings.*` 字段，
+      未新增 ADR-0004 §2.1 接缝实现类（只加路由 / schema / 1 个错误码），
+      `uv run python scripts/check_seams.py` = **ERROR 0 / WARN 0 / OK 10**。
+- [x] **⑦ 版本行改写** ✅ **2026-10-02**：`v0.1（草案…）` → **`v1.0`（2026-10-02 定稿）**；
+      状态行「MVP 规格**草案**」→「MVP 规格**定稿**」。
+- [x] **⑧ 回填 `docs/dev-doc-status.md`** ✅ **2026-10-02**：**P1-3 置 ✅**，注明日期与证据路径。
+
+### 10.1 定稿遗留（**必须随 M6 实现批次处理，不是"已做"**）
+
+| # | 遗留 | 谁做 / 何时 |
+|---|---|---|
+| 1 | `entity_merge_candidates.status` 的 **`applied` 未进代码 / 契约**：M6 `merge` 端点实现前须走完契约同步 5 步（Pydantic → 重导契约 → 提交 → `gen:api` → 零漂移），否则 `/ontology/merge` **不得对外实现**（§4.4 硬约束） | 后端 B / P5-M6 |
+| 2 | **7 个端点仍是 501 占位**：无 UI、无业务逻辑 | 后端 B + 前端 A / P5-M6 |
+| 3 | **§6 三个配置项**尚无消费者 | 后端 B / P5-M6（逐个核） |
+| 4 | 前端 `src/api/ontology.ts` / `src/api/mock/ontology.ts` **未建**（无 UI 消费，建了属强行同步开发） | 前端 A / P5-M6 |
+| 5 | `OntologySplitRequest.new_entities` 的 `min_length=2` 为**本批推断**，非 spec 原文 | 架构师 / P5-M6 复核 |
+| 6 | `GET /cost/dashboard` 的 `by_date[]` 字段集为**最小可用**，未与 §4.3 `cost_metrics` 全字段对齐 | 架构师 / P5-M6 复核 |
 
 ---
 
-> **草案结束**。本 spec 自 v0.1 起即为 Sprint 12 的执行依据底稿；**v1.0 定稿的唯一增补内容 = §10 checklist 全部勾选**（§1~§6 的边界/验收/数据模型/端点/配置在 v0.1 已成型，定稿不重写）。
+> **草案结束**。本 spec 自 v0.1 起即为 Sprint 12 的执行依据底稿。
+> **v1.0 定稿 = §10 checklist 全部勾选 + 版本行改写**（§1~§6 的边界 / 验收 / 数据模型 /
+> 端点 / 配置在 v0.1 已成型，定稿不重写）——**唯一例外是 §3.1 验收 1 的 prompt 裁决**
+> （PRD §7 点名要求，已就地标注）。
