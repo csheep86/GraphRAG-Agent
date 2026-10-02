@@ -4,7 +4,7 @@
 > 每批收尾跑：`uv run python scripts/check_startup_readiness.py`，确认没有护栏被本批**意外**转绿或转红。
 > 只删 xfail、测试没真通过 —— **不算转正**（行动指引第 2 条）。
 
-**状态（2026-10-02）**：**F1 已完成**（fake + 真机各跑通，P1-5 解除）；F2 / F3 未开工。
+**状态（2026-10-02）**：**F1 / F2 已完成**（P1-5 解除；契约 19 → 26 路径、零漂移）；F3 未开工。
 事后实测证据与遗留记 [`integration-log.md`](./integration-log.md)（本文件是事前计划，两者不可互相替代）。
 
 ---
@@ -34,15 +34,20 @@
 
 > 契约由 `scripts/export_openapi.py` **从 app 导出** ⇒ 必须**先有路由骨架**（决策点 D2）。
 
-- [ ] 后端 B：`app/api/` 增加 7 个端点的**骨架**，**一律返回 501 + 明确"未实现"说明**
+- [x] 后端 B：`app/api/` 增加 7 个端点的**骨架**，**一律返回 501 + 明确"未实现"说明**
       `POST /ontology/cold-start` / `POST /ontology/confirm` / `POST /ontology/merge` /
       `POST /ontology/split` / `POST /ontology/rename` / `GET /ontology/active` / `GET /cost/dashboard`
-      - [ ] 请求 / 响应 schema 逐字照 m6 §5.5（含 `SCHEMA_VERSION_NOT_ACTIVE` 409、`FORBIDDEN` 403 跨 org）
-      - [ ] ⚠️ **不写业务逻辑**（Non-goals）；占位骨架不等于实现
-- [ ] 架构师：`uv run python scripts/export_openapi.py` 重导 `contracts/openapi.yaml`
-- [ ] 前端 A：`npm run gen:api` 重导 TS 类型 + `git diff --exit-code` 零漂移；**只同步类型，不补业务**
-- [ ] `uv run python scripts/export_openapi.py --check` ⇒ **零 diff**（契约零漂移门禁）
-- [ ] 反向核对：契约路径数 **19 → 26**（原 19 + 新增 7）
+      - [x] 请求 / 响应 schema 逐字照 m6 §5.5（含 `SCHEMA_VERSION_NOT_ACTIVE` 409、`FORBIDDEN` 403 跨 org）
+      - [x] ⚠️ **不写业务逻辑**（Non-goals）；占位骨架不等于实现
+- [x] 架构师：`uv run python scripts/export_openapi.py` 重导 `contracts/openapi.yaml`
+- [x] 前端 A：`npm run gen:api` 重导 TS 类型 + `git diff --exit-code` 零漂移；**只同步类型，不补业务**
+- [x] `uv run python scripts/export_openapi.py --check` ⇒ **零 diff**（契约零漂移门禁）
+- [x] 反向核对：契约路径数 **19 → 26**（原 19 + 新增 7）⇒ 实测 26，7 个新路径全在
+
+> **F2 带出的 5 个待裁决项（F3 处理，详见 `integration-log.md` §2.4）**：
+> ① 501 语义冲突（项目既有口径是"基础设施不可用"）｜② 6 个响应缺 `trace_id`（spec 未列，
+> 与项目惯例冲突）｜③ `split.new_entities[]` 的省略号未展开｜④ `cost.by_date[]` 每项字段未定义
+> ｜⑤ 前端 mock / api 包装**未建**（无 UI 消费，补了属强行同步开发）
 
 ## F3 — spec 升 v1.0（架构师）
 

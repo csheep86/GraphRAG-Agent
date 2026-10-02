@@ -86,3 +86,77 @@ M6 在 P5，允许新增版本号。
 | 3 | `prompts/ontology_suggest_v1.md` 的**质量阈值**未定（类型数上限 12 是拍的） | 归 P5-M6 批次实测调；已写入 §1.3 观察 |
 | 4 | 验收 1 的 Prompt 点名差异 | F3 裁决（§1.4） |
 | 5 | `USERS_CONSUMER_MODULES` 与本批无关，但下次动 `app/` 引用 `User` 仍须登记 | 判据已在（P2-A 建的），不动它 |
+
+---
+
+## F2 — 契约先行（§5.5 的 7 个端点进契约）
+
+**结论：契约 19 → **26** 路径，零漂移。** spec §10 ④「契约漂移核验」的**前置条件已具备**
+（勾选仍归 F3）。
+
+### 2.1 为什么必须先落骨架（决策点 D2 的实测依据）
+
+契约**不是手写**的：`contracts/openapi.yaml` 由 `scripts/export_openapi.py` **从 app 导出**
+（`app.main:app` 的 Pydantic 模型是唯一真源）。⇒ **端点不注册路由就进不了契约**，
+前端 `gen:api` 也就拿不到类型。所谓"契约先行"在本仓的**机械含义** = 先有路由骨架。
+
+**占位一律 501，不返回 200 空结果**：空结果会被前端读成「接口可用」，
+那是本项目反复拦的"假做"（业务没实现却报成功）。`detail.blocked_by` 写明
+「实现归 P5-M6 批次」，让排障的人能分清「还没做」与「基础设施挂了」。
+
+### 2.2 落了什么
+
+| 文件 | 内容 |
+|---|---|
+| `app/schemas/ontology.py` | 6 个 ontology 端点的请求 / 响应；与 F1 的 `OntologySuggestion` **同构** |
+| `app/schemas/cost.py` | `GET /cost/dashboard` 响应 |
+| `app/api/v1/routes/ontology.py` | 6 个端点，共用 `_placeholder()` 抛 501 |
+| `app/api/v1/routes/cost.py` | 1 个端点 |
+| `app/core/errors.py` | 新增 `SCHEMA_VERSION_NOT_ACTIVE`（409；重复确认 / 无 active schema） |
+| `app/api/v1/responses.py` | 新增 `SCHEMA_VERSION_NOT_ACTIVE` + `PLACEHOLDER_NOT_IMPLEMENTED` 声明 |
+| `app/api/v1/router.py` / `core/openapi.py` | 注册 + `ontology` / `cost` 两个 tag 说明（含"当前恒 501"警告） |
+| `tests/test_ontology_placeholder_endpoints.py` | **15 条**新测试 |
+| `tests/test_openapi_contract.py` | 路径集 19 → 26、operation_id 计数 19 → 26 |
+| `contracts/openapi.yaml` + `frontend/src/types/api.d.ts` | 重导产物 |
+
+**同构是刻意的**：冷启动建议的形状 = `{name, description?}` / `{name, head_types, tail_types, description?}`
+= `confirm` 入参形状 ⇒ 建议结果可**原样**交给 confirm，路由层 / 前端**不需要**二次映射
+（映射层是错配高发地，能不写就不写）。
+
+### 2.3 收尾三件套（数字）
+
+| 项 | 结果 |
+|---|---|
+| `uv run pytest -q` | **733 passed / 3 skipped / 7 xfailed**（上批 718 ⇒ **+15**；无失败） |
+| `ruff check` + `ruff format --check` | 全过（format 曾报 3 文件待格式化，已修） |
+| `export_openapi.py --check` | **[OK] 与后端模型一致**（重导后零 diff） |
+| 契约路径数 | **26**（脚本核对：`len(paths) == 26`，7 个新路径全在） |
+| `npm run gen:api` + `typecheck` + `lint` | 均通过，无报错 |
+| `check_seams.py` | ERROR 0 / WARN 0 / OK 10 |
+| `check_startup_readiness.py` | 🟢 已生效 9 / 🟠 部分 2 / 🟡 挂起 4 —— **与本批改动无关**（本批未碰任何护栏） |
+| `check_session_drift.py` | S1 ✅ 有 7 条 Non-goals / S3 ✅ / S5 ✅ 无孤儿模块；**S2 ⚠️ 新增 2168 行 > 600** |
+
+**S2 自答**（脚本是报告不是门禁，但必须答）：2168 行里 **2078 行是生成物**
+（`contracts/openapi.yaml` +1019、`frontend/src/types/api.d.ts` 重导），
+手写的骨架代码约 700 行且**已拆成两个提交**（后端骨架 / 契约+前端类型）分开落账，
+不存在"顺手多做"。另三条自检问句：① 无顺便做的东西；② 无绕路实现
+（`date` 字段与 `datetime.date` 撞名 ⇒ 用 `dt.date` 标注，是 Pydantic 的硬性要求，不是绕路）；
+③ 判据是真跑出来的（733 passed / 26 路径 / `--check [OK]` 均有命令输出）。
+
+### 2.4 ⚠️ 带出的 5 个待裁决项（**F3 处理**，不粉饰）
+
+| # | 项 | 本次处置 | F3 该做什么 |
+|---|---|---|---|
+| ① | **501 语义冲突**：项目 `ErrorCode.NOT_IMPLEMENTED` 既有口径是「**基础设施不可用**，**不**表示接口未实现」，而 7 个占位用它表示"功能未实现" | 复用 501（HTTP 本义即 Not Implemented），靠 `detail.blocked_by` 区分；新增错误码只用 7 次、实现时必删 ⇒ 不划算 | 裁决：改 `NOT_IMPLEMENTED` 的描述口径 / 或登记「占位期例外」 |
+| ② | **6 个响应缺 `trace_id`**：§5.5 只有冷启动列了 `trace_id`，其余 6 个没列，与项目惯例（所有响应都带）冲突 | **按 spec 逐字照抄**（spec 是本批权威）；`X-Trace-Id` 响应头恒回显，不受影响 | 裁决：补 `trace_id` 进 spec，或明确"本体/成本响应不带" |
+| ③ | `split.new_entities[]` 的 **`{canonical_name, ...}` 省略号**未展开 | 只落 `canonical_name`；另加 `min_length=2`（本批**推断**：只拆 1 个 = 改名，应走 rename） | 确认 `min_length=2`，并按需补字段 |
+| ④ | `cost.by_date[]` **每项字段未定义** | 最小可用：`date` + `token_usage_total` + `single_doc_cost`；**不**发明 `cost_ratio`（那是区间级指标，按天算意义不明） | 确认字段集 |
+| ⑤ | 前端 **mock / api 包装未建** | 未建：7 个端点**无 UI 消费**，补 mock 属「强行同步开发」（CODEBUDDY §功能预留原则 1/2） | 确认；M6 实现批次按需增补 |
+
+### 2.5 遗留（照实登记）
+
+| # | 遗留 | 处置 |
+|---|---|---|
+| 1 | 7 个端点**仍是占位**：调用即 501，无 UI、无实现 | F3 只勾「契约已先行」；**不得**据此宣称 M6 已实现 |
+| 2 | 前端 `src/api/ontology.ts` / `src/api/mock/ontology.ts` 不存在 | 等 M6 实现批次；已登记（§2.4 ⑤） |
+| 3 | `min_length=2`（split）为本批推断，非 spec 原文 | F3 确认（§2.4 ③） |
