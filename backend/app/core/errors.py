@@ -31,6 +31,11 @@ class ErrorCode(StrEnum):
     #: Sprint 9.5 批次 C3：active 版本里没有考勤事实（EMPLOYEE / SHIFT / 打卡），
     #: 扫描**无从下手**。与「服务不可用」区分开——库是通的、版本是对的，只是没有数据。
     COMPLIANCE_NO_FACTS = "COMPLIANCE_NO_FACTS"
+    #: M6 §5.5（Sprint 12 契约先行批次）：本体 schema 版本冲突 ——
+    #: 重复确认（`POST /ontology/confirm` 同一 version 二次确认）或
+    #: 取 active schema 时本租户尚无 active 版本。与 `KG_VERSION_NOT_ACTIVE` 同源纪律：
+    #: **不静默复用旧版本**。
+    SCHEMA_VERSION_NOT_ACTIVE = "SCHEMA_VERSION_NOT_ACTIVE"
     TASK_INTERRUPTED = "TASK_INTERRUPTED"
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
     RATE_LIMITED = "RATE_LIMITED"
@@ -51,6 +56,7 @@ ERROR_HTTP_STATUS: Mapping[ErrorCode, int] = {
     ErrorCode.KG_VERSION_NOT_ACTIVE: 409,
     ErrorCode.KG_TENANT_LEAK: 403,
     ErrorCode.COMPLIANCE_NO_FACTS: 409,
+    ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: 409,
     ErrorCode.TASK_INTERRUPTED: 409,
     ErrorCode.NOT_IMPLEMENTED: 501,
     ErrorCode.RATE_LIMITED: 429,
@@ -71,6 +77,7 @@ DEFAULT_MESSAGES: Mapping[ErrorCode, str] = {
     ErrorCode.KG_VERSION_NOT_ACTIVE: "Requested kg_version is not active",
     ErrorCode.KG_TENANT_LEAK: "Cross-tenant subgraph detected",
     ErrorCode.COMPLIANCE_NO_FACTS: "No attendance facts in the active kg_version",
+    ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: "Ontology schema version conflict",
     ErrorCode.TASK_INTERRUPTED: "Task interrupted by process restart",
     ErrorCode.NOT_IMPLEMENTED: "Infrastructure unavailable",
     ErrorCode.RATE_LIMITED: "Too many requests",
@@ -96,6 +103,11 @@ ERROR_CODE_DESCRIPTIONS: Mapping[ErrorCode, str] = {
         "跨租户子图泄漏检测到（ADR-0003 §4，Sprint 5 批次 B）。"
         "active kg_version 内任一 Entity 节点 org_id 与当前 org_id 不一致——"
         "属数据质量事故伪装为正常结论，由 /agent/query 路由层转 403。"
+    ),
+    ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: (
+        "本体 schema 版本冲突（M6 §5.5）：① `POST /ontology/confirm` 对同一 version "
+        "重复确认；② `GET /ontology/active` 时本租户尚无 active schema。"
+        "与 `KG_VERSION_NOT_ACTIVE` 同一纪律——**不**静默复用旧版本 / 默认 schema。"
     ),
     ErrorCode.TASK_INTERRUPTED: (
         "进程重启导致在途任务被 TaskManager.recover() 回收置 failed（ADR-0001 §3.2）。"
@@ -129,6 +141,7 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "M1 §3 验收 3",
     ErrorCode.KG_VERSION_NOT_ACTIVE: "ADR-0002 §3.2 / M3 §4.1",
     ErrorCode.KG_TENANT_LEAK: "ADR-0003 §4 / Sprint 5 批次 B",
+    ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: "M6 §5.5 / changes/P0-m6-finalization F2",
     ErrorCode.TASK_INTERRUPTED: "ADR-0001 §3.2",
     ErrorCode.COMPLIANCE_NO_FACTS: "Sprint 9.5 批次 C3 / changes/archive/2026-09-28-Sprint9.5/proposal.md §5.3",
     ErrorCode.NOT_IMPLEMENTED: "backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2",

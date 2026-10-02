@@ -133,6 +133,35 @@ COMPLIANCE_NO_FACTS: dict[int, dict[str, Any]] = {
     }
 }
 
+SCHEMA_VERSION_NOT_ACTIVE: dict[int, dict[str, Any]] = {
+    409: {
+        "model": ErrorResponse,
+        "description": (
+            "本体 schema 版本冲突（`SCHEMA_VERSION_NOT_ACTIVE`，M6 §5.5）："
+            "① `POST /ontology/confirm` 对同一 version **重复确认**；"
+            "② `GET /ontology/active` 时本租户**尚无 active schema**。"
+            "与 409 `KG_VERSION_NOT_ACTIVE` 同一纪律——**严禁**静默降级到旧版本 / 默认"
+            "schema（那会让用户以为自己配过）"
+        ),
+    }
+}
+
+#: **占位**端点的 501 声明（M6 契约先行批次）。
+#: ⚠️ 语义冲突登记：项目 `ErrorCode.NOT_IMPLEMENTED` 的既有口径是「**基础设施不可用**」，
+#: 明确写了「**不**表示接口未实现」。本批 7 个占位端点复用 501（HTTP 语义即 Not Implemented），
+#: 靠 `detail.blocked_by` 区分「功能未实现」与「基础设施故障」。
+#: ⇒ 该冲突登记为定稿增补项（F3 裁决）；M6 实现批次替换占位时须一并复核。
+PLACEHOLDER_NOT_IMPLEMENTED: dict[int, dict[str, Any]] = {
+    501: {
+        "model": ErrorResponse,
+        "description": (
+            "**占位骨架，功能未实现**（M6 契约先行批次）。返回 501，"
+            "`detail.blocked_by` 标明「实现归 P5-M6 批次」。"
+            "与既有 501（基础设施不可用）靠 `detail` 区分"
+        ),
+    }
+}
+
 ANOMALY_NOT_FOUND: dict[int, dict[str, Any]] = {
     404: {
         "model": ErrorResponse,
