@@ -71,7 +71,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": (
             "M6 本体增量演进（冷启动建议 / 确认生效 / 合并 / 拆分 / 改名 / 读 active）。"
             "**全部要求租户上下文**。\n\n"
-            "⚠️ **当前全部为占位骨架，恒返回 501**：本批次（`changes/P0-m6-finalization` F2）"
+            "⚠️ **当前全部为占位骨架，恒返回 501**：本批次（`changes/archive/2026-10-02-P0-m6-finalization` F2）"
             "只做契约先行，实现归 P5-M6（Sprint 12）。"
             "**只有 `POST /ontology/confirm` 会写生效状态**（其余端点不改本体），"
             "这是 GAP-F2「严禁 LLM 自动修改本体」的落点。"

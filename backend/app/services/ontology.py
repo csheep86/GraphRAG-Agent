@@ -51,7 +51,7 @@ __all__ = [
 #: 但那是**问答**模板，拿它生成本体建议属语义错配，建议质量无法归因。
 #: 验收 1 的「不修改 prompt」应理解为「不篡改既有 prompt」，而非「不许新增版本」——
 #: PRD H9 约束的是 P2 之前的模块，M6 在 P5，允许新增版本号。
-#: ⚠️ 该差异已登记为定稿增补项（见 ``changes/P0-m6-finalization/integration-log.md``）。
+#: ⚠️ 该差异已登记为定稿增补项（见 ``changes/archive/2026-10-02-P0-m6-finalization/integration-log.md``）。
 _SUGGEST_PROMPT_NAME = "ontology_suggest"
 
 #: 冷启动建议的**条数上限**（M6 §3.1 验收 1 的 PoC 护栏）。

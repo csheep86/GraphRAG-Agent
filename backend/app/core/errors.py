@@ -141,7 +141,7 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.UNSUPPORTED_MEDIA_TYPE: "M1 §3 验收 3",
     ErrorCode.KG_VERSION_NOT_ACTIVE: "ADR-0002 §3.2 / M3 §4.1",
     ErrorCode.KG_TENANT_LEAK: "ADR-0003 §4 / Sprint 5 批次 B",
-    ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: "M6 §5.5 / changes/P0-m6-finalization F2",
+    ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: "M6 §5.5 / changes/archive/2026-10-02-P0-m6-finalization F2",
     ErrorCode.TASK_INTERRUPTED: "ADR-0001 §3.2",
     ErrorCode.COMPLIANCE_NO_FACTS: "Sprint 9.5 批次 C3 / changes/archive/2026-09-28-Sprint9.5/proposal.md §5.3",
     ErrorCode.NOT_IMPLEMENTED: "backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2",

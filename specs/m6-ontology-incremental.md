@@ -2,7 +2,7 @@
 
 > **文档编号**：spec-m6
 > **版本**：**v1.0**（**2026-10-02 定稿**；草案期 v0.1，§10 checklist **八项**已全勾）
-> **状态**：**MVP 规格定稿**（**排期见 [`docs/delivery-plan.md`](../docs/delivery-plan.md) P5 阶段**；承接原 plan v3.0 §19.1 A/B/C/D 四批次与 §15.1 第 5 行——**该计划已全废**，§15 内容已抢救迁移至 [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md)；**定稿时点 = P5 阶段 M6 开工闸门**，对应需求 **DR-D2**；**定稿证据**（PoC / 契约先行 / checklist 逐项）见 [`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md) §1~§3）
+> **状态**：**MVP 规格定稿**（**排期见 [`docs/delivery-plan.md`](../docs/delivery-plan.md) P5 阶段**；承接原 plan v3.0 §19.1 A/B/C/D 四批次与 §15.1 第 5 行——**该计划已全废**，§15 内容已抢救迁移至 [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md)；**定稿时点 = P5 阶段 M6 开工闸门**，对应需求 **DR-D2**；**定稿证据**（PoC / 契约先行 / checklist 逐项）见 [`changes/archive/2026-10-02-P0-m6-finalization/integration-log.md`](../changes/archive/2026-10-02-P0-m6-finalization/integration-log.md) §1~§3）
 >
 > ⚠️ **定稿 ≠ 已实现**：本 spec 定稿时，7 个端点**仍为 501 占位骨架**（契约已先行，路径 19 → 26）。**实现归 P5-M6 / Sprint 12**，见 §10.1。
 > **上游依据**：`docs/02-product-outline.md` §3.2 M6 + `docs/03-prd.md` §2（P1 模块）+ [`docs/prd-mvp-takeup.md`](../docs/prd-mvp-takeup.md) §1 第 5 行（**原 `v1.1.0-demo-mvp-plan.md` §19 / §15.1 已随该计划作废**）
@@ -59,7 +59,7 @@
 > 「不修改 prompt」理解为**不篡改既有 prompt**，而非「不许新增版本」
 > （H9 约束的是 **P2 之前**的模块，M6 在 **P5**）。
 > 依据：`docs/03-prd.md` §7 明确要求「**m6 spec 升 v1.0 时必须就验收 1 那一句给出裁决**」；
-> 实测证据见 `changes/P0-m6-finalization/integration-log.md` §1.4。
+> 实测证据见 `changes/archive/2026-10-02-P0-m6-finalization/integration-log.md` §1.4。
 > ⚠️ 这是本批**唯一**对 §1~§6 正文的改动（其余定稿动作只做勾选 / 删节 / 改版本行）——
 > 属 PRD 点名的定稿增补，**不是**重写。
 
@@ -321,7 +321,7 @@
 > 依据 **DR-D2**（[`docs/delivery-requirements-and-guardrails.md`](../docs/delivery-requirements-and-guardrails.md)）：本 spec 升 v1.0 是 **P5 阶段 M6 的开工闸门**（~~原依据 `v2.0.0-ship-backward-plan.md` §5.2 D-1 已随该计划全废~~）。逐项勾选后才可置"版本：v1.0"。
 
 **状态：7 项全部勾选（2026-10-02）** —— 逐项证据见
-[`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md) §3。
+[`changes/archive/2026-10-02-P0-m6-finalization/integration-log.md`](../changes/archive/2026-10-02-P0-m6-finalization/integration-log.md) §3。
 
 - [x] **① §4.4 与 M2 §4.5 接口对齐复核** ✅ **2026-10-02 实测**：`specs/m2-extract-kg.md` §4.5 表
       `status` 行已写「**另有 M6 前向预留值 `applied`**」，并有**独立注脚**（M2 阶段不落该值、

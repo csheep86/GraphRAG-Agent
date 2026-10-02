@@ -1,6 +1,6 @@
 """M6 本体增量演进契约（spec §5.5 的 6 个 ontology 端点 + §4.1 数据形状）。
 
-**本批（`changes/P0-m6-finalization` F2）只落契约与 501 占位骨架，不含业务逻辑**
+**本批（`changes/archive/2026-10-02-P0-m6-finalization` F2）只落契约与 501 占位骨架，不含业务逻辑**
 （Non-goals：占位骨架 ≠ 实现，实现归 P5-M6 批次）。
 
 字段形状与 F1 的 :class:`~app.services.ontology.OntologySuggestion` **同构**

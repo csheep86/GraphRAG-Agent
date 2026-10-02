@@ -2,7 +2,7 @@
 
 **为什么单独成脚本而不是放在 pytest 里**：真 LLM 调用要花钱、不可复现、且依赖
 ``LLM_API_KEY``。CI 里跑的是 ``tests/test_ontology_suggest.py``（全 fake）；
-**真机只在这里跑一次**，把输出贴回 ``changes/P0-m6-finalization/integration-log.md``。
+**真机只在这里跑一次**，把输出贴回 ``changes/archive/2026-10-02-P0-m6-finalization/integration-log.md``。
 
 用法（须先配好 ``.env`` 的 ``LLM_API_KEY`` / ``LLM_BASE_URL`` / ``LLM_MODEL``）：
 

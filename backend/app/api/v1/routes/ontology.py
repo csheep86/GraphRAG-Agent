@@ -1,6 +1,6 @@
 """M6 **本体增量演进**路由（`specs/m6-ontology-incremental.md` §5.5）。
 
-⚠️ **本批全部是占位骨架，一律 501**（`changes/P0-m6-finalization` F2，契约先行）：
+⚠️ **本批全部是占位骨架，一律 501**（`changes/archive/2026-10-02-P0-m6-finalization` F2，契约先行）：
 
 - **为什么先落骨架再谈实现**：契约由 `scripts/export_openapi.py` **从 app 导出**
   （后端模型是唯一真源）⇒ 要让 7 个端点进 `contracts/openapi.yaml` 并让前端

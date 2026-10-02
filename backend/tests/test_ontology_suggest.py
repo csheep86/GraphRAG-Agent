@@ -1,4 +1,4 @@
-"""M6 §3.1 验收 1 的**冷启动建议 PoC** 测试（`changes/P0-m6-finalization` F1）。
+"""M6 §3.1 验收 1 的**冷启动建议 PoC** 测试（`changes/archive/2026-10-02-P0-m6-finalization` F1）。
 
 **为什么单独成文件**：它验的不是某个端点，而是「域描述 → LLM 建议 → 可被抽取链路消费」
 这条**通路是否走得通**（P1-5 硬闸门 / 风险 R2：schema-suggestion 模式此前未实测验证）。

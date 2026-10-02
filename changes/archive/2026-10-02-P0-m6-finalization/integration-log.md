@@ -278,7 +278,7 @@ M6 在 P5，允许新增版本号。
   （merge/split/rename）、增量重算、`cost_metrics` 落库与仪表盘」。
   7 个端点由 501 变可用 = **整个 P5-M6 / Sprint 12 的工作量**（且 §3.2 B 段要求实现前先走完
   `applied` 的契约同步 5 步）。在这批里做 = **批次崩坏**，且失败时找不到是哪一处（S2 的精神）。
-- **spec §10.1 已把六条遗留写成可执行清单**，实现批次照单linha：
+- **spec §10.1 已把六条遗留写成可执行清单**，实现批次照单执行：
   ① `applied` 进契约（5 步）② 7 端点实现 ③ 三个配置逐个核消费者 ④ 前端 mock ⑤ `min_length=2` 复核
   ⑥ `by_date[]` 与 §4.3 `cost_metrics` 对齐。
 
@@ -298,3 +298,48 @@ M6 在 P5，允许新增版本号。
 本批（`P0-m6-finalization`）**F1/F2/F3 + 本附录已全部完成**，
 建议**另立 `changes/` 批次**开 F4 —— 它要先解决"评测脚本从哪来"（含把
 `temporal_poc/run_track_s.py` 之类的判据脚本迁入 `backend/tests/`，见 P1-6 的同类先例）。
+
+---
+
+## §5 — 批次归档（**2026-10-02 收尾**）
+
+### 5.1 为什么现在可以归档
+
+`tasks.md` **出口判据三项全部达成**（§10 checklist **八项**全勾 / `dev-doc-status.md`
+P1-3 + P1-5 = ✅ / 契约含 7 个端点且 `--check` 零 diff），附录 A 处置的用户三问亦已收口
+（含发现的 2 个真缺陷已修）。**批次内无未决项**，`tasks.md` 非空 Todo 仅剩 **F4**，而 F4
+按决策 **D3 另立一批** ⇒ **本批到此为止**。
+
+### 5.2 归档动作（实测记录）
+
+| 动作 | 结果 |
+|---|---|
+| `git mv changes/P0-m6-finalization → changes/archive/2026-10-02-P0-m6-finalization/` | git 识别为 **R**（rename，3 个文件），历史保留 |
+| 全仓引用路径更新 | **15 个文件 / **30 处**（见 5.3） |
+| 残留 `changes/P0-m6-finalization` 串 | **0 处**（实测 grep） |
+
+### 5.3 被更新的 15 个文件
+
+- **代码 11**（`router.py` / `routes/ontology.py` / `routes/cost.py` / `core/errors.py` /
+  `core/openapi.py` / `schemas/ontology.py` / `schemas/cost.py` / `services/ontology.py` /
+  `scripts/probe_ontology_suggest.py` / `tests/test_ontology_suggest.py` /
+  `tests/test_ontology_placeholder_endpoints.py`）
+- **契约 1**：`contracts/openapi.yaml`（2 处：错误码溯源行 + ontology tag 描述）⇒ **已重导并 `--check`**
+- **文档 3**：`specs/m6-ontology-incremental.md`（4 处）/ `docs/03-prd.md`（4 处）/
+  `docs/dev-doc-status.md`（4 处）
+
+> ⚠️ **为什么连代码注释里的路径都改**：那是**活引用**（指向可读的批次证据），留着就是死链。
+> 与 `2026-10-01-obsolete-plans` 那次归档同一处理口径。
+
+### 5.4 后续两个入口（**不在本批**）
+
+1. **P5-M6 实现批次**（Sprint 12）：7 个端点去 501，照 **spec §10.1 六条**清单执行；
+   先做的必是 ① `applied` 进契约（走同步 5 步）。
+2. **F4 评测方案批次**（另立 `changes/` 批次）：受控问题集 + TBD-7 阈值 + 评测脚本入口（DR-D10）。
+   ⚠️ 序关系：**出口判据 C1–C3 的实测依赖 M6 实现**（没端点就无 = 无法评），
+   故 F4 也可选择先做"脚本脚手架 + 受控问题集设计"，真正的评测跑在 P5-M6 之后。
+
+### 5.5 本批最终状态（一句话）
+
+**`specs/m6-ontology-incremental.md` 已 v1.0 定稿（S12 开工闸门已开）；7 个端点仍是 501
+占位骨架，实现归 P5-M6 —— 任何人不得据"已定稿"宣称 M6 已交付。**

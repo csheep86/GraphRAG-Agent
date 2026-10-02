@@ -1933,7 +1933,7 @@ components:
         NOT_FOUND: CODEBUDDY.md 错误响应规范
         NOT_IMPLEMENTED: backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2
         RATE_LIMITED: M5 §3 验收 5 / 决策 A14（Sprint 8.1 批次 B）
-        SCHEMA_VERSION_NOT_ACTIVE: M6 §5.5 / changes/P0-m6-finalization F2
+        SCHEMA_VERSION_NOT_ACTIVE: M6 §5.5 / changes/archive/2026-10-02-P0-m6-finalization F2
         TASK_INTERRUPTED: ADR-0001 §3.2
         UNAUTHORIZED: M5 §3 验收 1
         UNSUPPORTED_MEDIA_TYPE: M1 §3 验收 3
@@ -4996,7 +4996,7 @@ tags:
 - description: 'M6 本体增量演进（冷启动建议 / 确认生效 / 合并 / 拆分 / 改名 / 读 active）。**全部要求租户上下文**。
 
 
-    ⚠️ **当前全部为占位骨架，恒返回 501**：本批次（`changes/P0-m6-finalization` F2）只做契约先行，实现归 P5-M6（Sprint 12）。**只有 `POST /ontology/confirm` 会写生效状态**（其余端点不改本体），这是 GAP-F2「严禁 LLM 自动修改本体」的落点。'
+    ⚠️ **当前全部为占位骨架，恒返回 501**：本批次（`changes/archive/2026-10-02-P0-m6-finalization` F2）只做契约先行，实现归 P5-M6（Sprint 12）。**只有 `POST /ontology/confirm` 会写生效状态**（其余端点不改本体），这是 GAP-F2「严禁 LLM 自动修改本体」的落点。'
   name: ontology
 - description: 'M6 §3.4 成本仪表盘：token 用量 / 单文档成本 / **增量 vs 全量成本比**。**要求租户上下文**。
 

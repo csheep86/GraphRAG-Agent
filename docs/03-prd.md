@@ -4,7 +4,7 @@
 > **版本**：v1.0（**2026-09-21 口径修订**：§2 M6 归属 / §7 Prompt 清单 / §8 TBD 窗口 / 附录 C 落清单）
 > **状态**：MVP 汇总 PRD（**v1.0.0 仅交付工程外壳，MVP 1.0 未完成**——**PRD 承接与模块现状见 [`docs/prd-mvp-takeup.md`](./prd-mvp-takeup.md)**（原 plan v3.0 §15，已从已废计划抢救迁移）；**排期见 [`docs/delivery-plan.md`](./delivery-plan.md)**（P1~P6）；实现态见 `backend/CODEBUDDY.md` §4；**逐条验收对账见 [`acceptance-traceability-matrix.md`](./acceptance-traceability-matrix.md)**）
 > **上游依据**：`docs/01-research.md`（v1.0）、`docs/02-product-outline.md`（v1.0）
-> **关联规格**：[specs/m1-async-ingest.md](../specs/m1-async-ingest.md)、[m2-extract-kg.md](../specs/m2-extract-kg.md)、[m3-graphqa-citation.md](../specs/m3-graphqa-citation.md)、[m4-affiliation-detection.md](../specs/m4-affiliation-detection.md)、[m5-permission-audit.md](../specs/m5-permission-audit.md)、[**m6-ontology-incremental.md**](../specs/m6-ontology-incremental.md)（**v1.0 定稿 2026-10-02**；原 v0.1 草案定稿闸门见**已废**倒推文档 §7.1；定稿证据见 [`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md)）、[specs/_template/](../specs/_template/)
+> **关联规格**：[specs/m1-async-ingest.md](../specs/m1-async-ingest.md)、[m2-extract-kg.md](../specs/m2-extract-kg.md)、[m3-graphqa-citation.md](../specs/m3-graphqa-citation.md)、[m4-affiliation-detection.md](../specs/m4-affiliation-detection.md)、[m5-permission-audit.md](../specs/m5-permission-audit.md)、[**m6-ontology-incremental.md**](../specs/m6-ontology-incremental.md)（**v1.0 定稿 2026-10-02**；原 v0.1 草案定稿闸门见**已废**倒推文档 §7.1；定稿证据见 [`changes/archive/2026-10-02-P0-m6-finalization/integration-log.md`](../changes/archive/2026-10-02-P0-m6-finalization/integration-log.md)）、[specs/_template/](../specs/_template/)
 > **关联 ADR**：[ADR-0001 异步任务后端选型](./adr/ADR-0001-async-task-backend.md)、[ADR-0002 Neo4j ↔ PostgreSQL 一致性边界](./adr/ADR-0002-neo4j-postgres-consistency.md)、[ADR-0003 跨租户资源隔离粒度](./adr/ADR-0003-tenant-isolation-rls.md)、[ADR-0004 企业集成接缝](./adr/0004-integration-seams.md)、[ADR-0005 知识时效模型](./adr/ADR-0005-temporal-knowledge-model.md)、[**ADR-0006 License 控制与离线激活**](./adr/ADR-0006-license-control.md)
 > **关联计划**：[**`docs/delivery-plan.md`**（交付排期 · P1~P6）](./delivery-plan.md)、[**`docs/delivery-requirements-and-guardrails.md`**（需求与护栏基线 · DR/G）](./delivery-requirements-and-guardrails.md)、[**`docs/prd-mvp-takeup.md`**（PRD 承接表）](./prd-mvp-takeup.md)、`docs/dev-doc-status.md`（文档状态跟踪）、[**`docs/deployment-spec.md`**（私有化部署规格）](./deployment-spec.md)
 >
@@ -64,7 +64,7 @@
 > 1. C3 准入线（单位成本 / 增量全量成本比）**没有 M6 就没有验证载体**（`02-product-outline.md` §3.2 M6）；
 > 2. 本体不可校正 = 抽取错误无法收敛 = 一次性玩具（GAP-F2 的付费前提）。
 >
-> 规格就绪状态：`specs/m6-ontology-incremental.md` 已于 **2026-10-02 升 v1.0 定稿**（对应需求 **DR-D2** 的 **P5 阶段 M6 开工闸门已开**；排期见 `docs/delivery-plan.md` P5）。定稿证据（PoC / 契约先行 / §10 checklist **八项**全勾）见 [`changes/P0-m6-finalization/integration-log.md`](../changes/P0-m6-finalization/integration-log.md)；**状态同步见附录 C.0 第 5 行**。
+> 规格就绪状态：`specs/m6-ontology-incremental.md` 已于 **2026-10-02 升 v1.0 定稿**（对应需求 **DR-D2** 的 **P5 阶段 M6 开工闸门已开**；排期见 `docs/delivery-plan.md` P5）。定稿证据（PoC / 契约先行 / §10 checklist **八项**全勾）见 [`changes/archive/2026-10-02-P0-m6-finalization/integration-log.md`](../changes/archive/2026-10-02-P0-m6-finalization/integration-log.md)；**状态同步见附录 C.0 第 5 行**。
 >
 > ⚠️ **定稿 ≠ 已实现**：spec 的 7 个端点当前为 **501 占位骨架**（契约已先行，路径 19 → 26），**实现归 P5-M6 / Sprint 12**（spec §10.1）。
 
@@ -225,14 +225,14 @@ flowchart TD
 
 > **关键约束**（来自 `CODEBUDDY.md`）：**P2 场景扩展时新增版本号**（如 `kg_qa_v2.md`），**禁止原地覆盖历史版本**。
 >
-> ✅ **2026-10-02 冲突已裁决**（原登记见 `changes/P0-m6-finalization/integration-log.md` §1.4）：
+> ✅ **2026-10-02 冲突已裁决**（原登记见 `changes/archive/2026-10-02-P0-m6-finalization/integration-log.md` §1.4）：
 > `specs/m6-ontology-incremental.md` §3.1 验收 1 原文写冷启动「调用 `kg_qa_v1.md`，**不修改 prompt**」，
 > 但 `kg_qa` 是**问答**模板，用它生成本体建议属语义错配，建议质量无法归因。
 > **裁决**：冷启动改用 **新增的 `prompts/ontology_suggest_v1.md`** ——「不修改 prompt」理解为
 > **不篡改既有 prompt**，而非「不许新增版本」（H9 约束的是 **P2 之前**的模块，M6 在 **P5**）。
 > **spec §3.1 验收 1 已就地改写为 `ontology_suggest_v1.md`**（2026-10-02 v1.0 定稿时同步），
 > **不再**出现「spec 写 `kg_qa_v1`、代码按新 prompt 跑」的错配。
-> 上表 M6 行的 prompt 清单已同步；实测证据见 `changes/P0-m6-finalization/integration-log.md` §1。
+> 上表 M6 行的 prompt 清单已同步；实测证据见 `changes/archive/2026-10-02-P0-m6-finalization/integration-log.md` §1。
 
 ---
 

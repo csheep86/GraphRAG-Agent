@@ -13,7 +13,7 @@
   路径口径以 spec 为准，plan §6.2 摘要原写 `/affiliation/suspects` 已统一为 `suspicions`）
 - `GET /audit`、`GET /audit/trace/{trace_id}`（**Sprint 8.1 批次 A**，M5 §3 验收 7 / 6）
 - `GET /attendance/compliance/scan`（**Sprint 9.5 批次 C3**，考勤域合规预警，确定性规则）
-- **M6 契约先行批次**（`changes/P0-m6-finalization` F2，**7 个端点全部 501 占位**，
+- **M6 契约先行批次**（`changes/archive/2026-10-02-P0-m6-finalization` F2，**7 个端点全部 501 占位**，
   实现归 P5-M6 / Sprint 12）：`POST /ontology/cold-start`、`POST /ontology/confirm`、
   `POST /ontology/merge`、`POST /ontology/split`、`POST /ontology/rename`、
   `GET /ontology/active`、`GET /cost/dashboard`（spec §5.5）

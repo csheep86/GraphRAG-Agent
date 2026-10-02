@@ -1,4 +1,4 @@
-"""M6 spec §5.5 的 7 个**占位端点**测试（`changes/P0-m6-finalization` F2）。
+"""M6 spec §5.5 的 7 个**占位端点**测试（`changes/archive/2026-10-02-P0-m6-finalization` F2）。
 
 **为什么给占位端点写测试**：契约先行批次最容易出的两个事故 ——
 
