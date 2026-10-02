@@ -274,6 +274,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cost/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 成本仪表盘（M6 §3.4，占位骨架）
+         * @description 按日期区间给出**成本总览**：token 用量、单文档成本、**增量 / 全量成本比**，以及按天明细。
+         *
+         *     **`cost_ratio` 是准入线的载体**：M6 C3 要求「增量 / 全量成本比显著 < 1.00」，超过 `COST_RATIO_ALERT_THRESHOLD`（默认 0.5）只**日志告警，不阻断**请求。
+         *
+         *     **当前状态**：占位骨架，恒返回 501。成本打点侧 M2 §3 验收 7 的 `token_usage` **已具备**，聚合与口径实现归 P5-M6。
+         *
+         *     **错误语义**：跨租户 → 403 `FORBIDDEN`；未实现 → 501。
+         */
+        get: operations["getCostDashboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents": {
         parameters: {
             query?: never;
@@ -508,6 +534,164 @@ export interface paths {
         get: operations["getHealth"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ontology/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取当前生效的本体 schema（M6 §3.1，占位骨架）
+         * @description 读当前租户**生效中**的本体 schema（版本 + 实体 / 关系类型集）。
+         *
+         *     **无 active → 409** `SCHEMA_VERSION_NOT_ACTIVE`：**严禁**静默返回一份默认的内置 schema —— 那会让用户以为自己配过（与 ADR-0002 §3.2 同款纪律）。
+         *
+         *     **当前状态**：占位骨架，恒返回 501。读取侧应用层**已具备**（`app.services.ontology.load_active_ontology`），接线归 P5-M6。
+         *
+         *     **错误语义**：无 active → 409；跨租户 → 403；未实现 → 501。
+         */
+        get: operations["getActiveOntology"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ontology/cold-start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 本体冷启动建议（M6 §3.1，占位骨架）
+         * @description 给一段业务域描述，**建议**一组实体 / 关系类型（LLM 调用）。
+         *
+         *     **仅建议、未生效**：本端点**不**写 `ontology_schemas`；要生效必须再调 `POST /ontology/confirm`（M6 §3.1 验收 1 / §3.5 验收 12）。
+         *
+         *     **当前状态**：占位骨架，恒返回 501。PoC 已在应用层跑通（`app.services.ontology.suggest_ontology_types`，真机产出 12 实体 + 12 关系类型），**但未接线到本端点**——接线属实现，归 P5-M6。
+         *
+         *     **错误语义**：跨租户 → 403 `FORBIDDEN`；未实现 → 501。
+         */
+        post: operations["coldStartOntology"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ontology/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 确认本体 schema 生效（M6 §3.1，占位骨架）
+         * @description 把（人工在校正 GUI 上确认过的）类型集写入 `ontology_schemas`，置 `status='active'`。
+         *
+         *     **唯一会写生效状态的端点**：冷启动只建议、merge / split / rename 产新 `kg_version` 但**不改本体**——GAP-F2「严禁 LLM 自动修改本体」的落点。
+         *
+         *     **重复确认 → 409** `SCHEMA_VERSION_NOT_ACTIVE`：同一 `version` 二次确认一律拒绝，**不**静默复用旧版本（与 `KG_VERSION_NOT_ACTIVE` 同一纪律）。
+         *
+         *     **当前状态**：占位骨架，恒返回 501。
+         *
+         *     **错误语义**：重复确认 / 版本冲突 → 409；跨租户 → 403；未实现 → 501。
+         */
+        post: operations["confirmOntology"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ontology/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 合并两个实体（M6 §3.2 三动作之一，占位骨架）
+         * @description 把 `right_entity_id` 并入 `left_entity_id`，产出**新的** `kg_version`。
+         *
+         *     **跨 org → 403** `FORBIDDEN`：两个实体必须同属当前租户，跨租户合并是数据污染，**不**降级为「只合并同租户的那个」。
+         *
+         *     **当前状态**：占位骨架，恒返回 501。
+         *
+         *     **错误语义**：跨租户 → 403；未实现 → 501。
+         */
+        post: operations["mergeOntologyEntities"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ontology/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 改实体规范名（M6 §3.2 三动作之一，占位骨架）
+         * @description 改实体的规范名，产出**新的** `kg_version`。
+         *
+         *     **为什么改名也算本体动作**：规范名进入抽取词表与消解键，改名等价于重跑一段图谱——所以它**必须**产新版本，而不是原地 UPDATE。
+         *
+         *     **当前状态**：占位骨架，恒返回 501。
+         *
+         *     **错误语义**：跨租户 → 403；未实现 → 501。
+         */
+        post: operations["renameOntologyEntity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ontology/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 拆分一个实体（M6 §3.2 三动作之一，占位骨架）
+         * @description 把一个实体拆成多个新实体（`new_entities[]` **至少 2 个**——只拆出 1 个等于改名，应走 `POST /ontology/rename`），产出**新的** `kg_version`。
+         *
+         *     ⚠️ `new_entities[]` 每项目前**只有 `canonical_name`**：spec §5.5 写的是 `{canonical_name, ...}`，省略号部分本批**不自行展开**（功能预留原则），待 M6 实现批次按真实需求补字段并同步契约。
+         *
+         *     **当前状态**：占位骨架，恒返回 501。
+         *
+         *     **错误语义**：跨租户 → 403；未实现 → 501。
+         */
+        post: operations["splitOntologyEntity"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1711,6 +1895,77 @@ export interface components {
             unresolved: string[];
         };
         /**
+         * CostByDateItem
+         * @description 成本仪表盘的**按天**明细。
+         *
+         *     ⚠️ 字段集为 spec §5.5 未定义处的**最小可用推断**（见本模块 docstring）。
+         * @example {
+         *       "date": "2026-10-02",
+         *       "single_doc_cost": 0.42,
+         *       "token_usage_total": 128450
+         *     }
+         */
+        CostByDateItem: {
+            /**
+             * Date
+             * Format: date
+             * @description 统计日（ISO 日期）
+             */
+            date: string;
+            /**
+             * Single Doc Cost
+             * @description 当日单文档平均成本（口径与响应顶层 `single_doc_cost` 一致）
+             */
+            single_doc_cost: number;
+            /**
+             * Token Usage Total
+             * @description 当日 token 用量合计
+             */
+            token_usage_total: number;
+        };
+        /**
+         * CostDashboardResponse
+         * @description `GET /api/v1/cost/dashboard` 响应：成本总览（M6 §3.4）。
+         *
+         *     **字段逐字照 spec §5.5**：`token_usage_total` / `single_doc_cost` / `cost_ratio` /
+         *     `by_date`。§5.5 未列 `trace_id`，本批按 spec 执行（差异见
+         *     :mod:`app.schemas.ontology` 的模块 docstring）。
+         * @example {
+         *       "by_date": [
+         *         {
+         *           "date": "2026-10-02",
+         *           "single_doc_cost": 0.42,
+         *           "token_usage_total": 128450
+         *         }
+         *       ],
+         *       "cost_ratio": 0.31,
+         *       "single_doc_cost": 0.42,
+         *       "token_usage_total": 1284500
+         *     }
+         */
+        CostDashboardResponse: {
+            /**
+             * By Date
+             * @description 按天明细（供仪表盘画趋势）
+             */
+            by_date: components["schemas"]["CostByDateItem"][];
+            /**
+             * Cost Ratio
+             * @description **增量 / 全量成本比**（M6 C3 准入线：显著 < 1.00）。仅日志告警，**不阻断**请求（阈值 `COST_RATIO_ALERT_THRESHOLD`，默认 0.5）
+             */
+            cost_ratio: number;
+            /**
+             * Single Doc Cost
+             * @description 单文档平均成本（全量抽取口径；与增量对比的分母）
+             */
+            single_doc_cost: number;
+            /**
+             * Token Usage Total
+             * @description 区间内 token 用量合计
+             */
+            token_usage_total: number;
+        };
+        /**
          * DocumentChunkResponse
          * @description `GET /api/v1/documents/{id}/chunks/{chunk_id}` 响应：单个原文片段。
          *
@@ -2128,7 +2383,7 @@ export interface components {
          * @description 统一业务错误码。HTTP 状态码与业务错误码分离（CODEBUDDY.md 错误响应规范）。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "COMPLIANCE_NO_FACTS" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | "HTTP_ERROR";
+        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "COMPLIANCE_NO_FACTS" | "SCHEMA_VERSION_NOT_ACTIVE" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | "HTTP_ERROR";
         /**
          * ErrorResponse
          * @description 统一错误响应体（**所有** 4xx / 5xx 均使用本结构）。
@@ -2456,6 +2711,350 @@ export interface components {
              * @description 被激活的 kg_version 版本号
              */
             version: string;
+        };
+        /**
+         * OntologyActionResponse
+         * @description merge / split / rename **三个动作共用**的响应（M6 §3.2：三动作，不多做）。
+         *
+         *     `status` 恒为 `applied`：动作已应用到图谱并产出新的 `kg_version`。
+         *     **没有 `pending`**——三动作是同步的（原子性由 M6 实现批次保证），
+         *     契约不承诺产不出的中间态。
+         * @example {
+         *       "kg_version": "kg-20261002-003",
+         *       "status": "applied"
+         *     }
+         */
+        OntologyActionResponse: {
+            /**
+             * Kg Version
+             * @description 本次动作产出的图谱版本（新版本，非原版本）
+             */
+            kg_version: string;
+            /**
+             * Status
+             * @description 动作状态（**恒为** `applied`）
+             * @constant
+             */
+            status: "applied";
+        };
+        /**
+         * OntologyActiveResponse
+         * @description `GET /ontology/active` 响应：当前生效的本体 schema。
+         *
+         *     **无 active 时返回 409 `SCHEMA_VERSION_NOT_ACTIVE`**，与图谱版本的纪律一致：
+         *     **严禁**静默返回一份"看起来合理"的默认 schema（那会让用户以为自己配过）。
+         * @example {
+         *       "entity_types": [
+         *         {
+         *           "description": "法人主体",
+         *           "name": "COMPANY"
+         *         }
+         *       ],
+         *       "relation_types": [
+         *         {
+         *           "head_types": [
+         *             "COMPANY"
+         *           ],
+         *           "name": "PARTY_TO",
+         *           "tail_types": [
+         *             "COMPANY"
+         *           ]
+         *         }
+         *       ],
+         *       "status": "active",
+         *       "version": 1
+         *     }
+         */
+        OntologyActiveResponse: {
+            /**
+             * Entity Types
+             * @description 生效中的实体类型集
+             */
+            entity_types: components["schemas"]["OntologyEntityType"][];
+            /**
+             * Relation Types
+             * @description 生效中的关系类型集
+             */
+            relation_types: components["schemas"]["OntologyRelationType"][];
+            /**
+             * Status
+             * @description 状态（**恒为** `active`）
+             * @constant
+             */
+            status: "active";
+            /**
+             * Version
+             * @description 生效中的 schema 版本号
+             */
+            version: number;
+        };
+        /**
+         * OntologyColdStartRequest
+         * @description `POST /ontology/cold-start` 请求：一段业务域描述换一组类型建议。
+         * @example {
+         *       "domain_description": "财务关联交易识别"
+         *     }
+         */
+        OntologyColdStartRequest: {
+            /**
+             * Domain Description
+             * @description 业务域描述（人工输入）。越具体，建议的类型越贴业务
+             */
+            domain_description: string;
+        };
+        /**
+         * OntologyColdStartResponse
+         * @description `POST /ontology/cold-start` 响应：**仅建议，未生效**。
+         *
+         *     ⚠️ **未确认不生效**（M6 §3.1 验收 1 / §3.5 验收 12）：本端点只返回建议，
+         *     **不**写 `ontology_schemas`；要生效必须再调 `POST /ontology/confirm`。
+         * @example {
+         *       "suggested_entity_types": [
+         *         {
+         *           "description": "法人主体",
+         *           "name": "COMPANY"
+         *         },
+         *         {
+         *           "name": "EMPLOYEE"
+         *         }
+         *       ],
+         *       "suggested_relation_types": [
+         *         {
+         *           "description": "关联关系",
+         *           "head_types": [
+         *             "COMPANY"
+         *           ],
+         *           "name": "PARTY_TO",
+         *           "tail_types": [
+         *             "COMPANY"
+         *           ]
+         *         }
+         *       ],
+         *       "trace_id": "5f2c1b7e-9d4a-4c1e-8f3b-6a0d2e5c7b91"
+         *     }
+         */
+        OntologyColdStartResponse: {
+            /**
+             * Suggested Entity Types
+             * @description 建议的实体类型（**未生效**，需 confirm）
+             */
+            suggested_entity_types: components["schemas"]["OntologyEntityType"][];
+            /**
+             * Suggested Relation Types
+             * @description 建议的关系类型（**未生效**，需 confirm）
+             */
+            suggested_relation_types: components["schemas"]["OntologyRelationType"][];
+            /**
+             * Trace Id
+             * @description 本次请求的 trace_id（冷启动含 LLM 调用，便于溯源）
+             */
+            trace_id: string;
+        };
+        /**
+         * OntologyConfirmRequest
+         * @description `POST /ontology/confirm` 请求：把（人工校正后的）类型集确认为 active。
+         * @example {
+         *       "entity_types": [
+         *         {
+         *           "description": "法人主体",
+         *           "name": "COMPANY"
+         *         }
+         *       ],
+         *       "relation_types": [
+         *         {
+         *           "head_types": [
+         *             "COMPANY"
+         *           ],
+         *           "name": "PARTY_TO",
+         *           "tail_types": [
+         *             "COMPANY"
+         *           ]
+         *         }
+         *       ],
+         *       "version": 1
+         *     }
+         */
+        OntologyConfirmRequest: {
+            /**
+             * Entity Types
+             * @description 确认后的实体类型集
+             */
+            entity_types: components["schemas"]["OntologyEntityType"][];
+            /**
+             * Relation Types
+             * @description 确认后的关系类型集
+             */
+            relation_types: components["schemas"]["OntologyRelationType"][];
+            /**
+             * Version
+             * @description 要确认生效的 schema 版本号
+             */
+            version: number;
+        };
+        /**
+         * OntologyConfirmResponse
+         * @description `POST /ontology/confirm` 响应：确认生效的结果。
+         *
+         *     `status` **只有 `active`** 一种取值——写进 Literal 是刻意的：契约不承诺
+         *     产不出的状态（M6 §4.1 的 `status` 只有 `active` / `superseded` 两档，
+         *     本端点不可能返回 `superseded`）。
+         * @example {
+         *       "status": "active",
+         *       "version": 1
+         *     }
+         */
+        OntologyConfirmResponse: {
+            /**
+             * Status
+             * @description 生效状态（**恒为** `active`）
+             * @constant
+             */
+            status: "active";
+            /**
+             * Version
+             * @description 已生效的 schema 版本号
+             */
+            version: number;
+        };
+        /**
+         * OntologyEntityType
+         * @description 一个实体类型（与 F1 建议结果、``ontology_schemas.entity_types`` 同形状）。
+         * @example {
+         *       "description": "员工，含正式工与合同工",
+         *       "name": "EMPLOYEE"
+         *     }
+         */
+        OntologyEntityType: {
+            /**
+             * Description
+             * @description 中文一句话说明该类型在本域指什么；可省略
+             */
+            description?: string | null;
+            /**
+             * Name
+             * @description 类型名。**必须英文大写下划线**（如 `EMPLOYEE` / `POLICY_CLAUSE`）——它会被整段塞进抽取 Prompt 的类型词表，中文或含空格会导致抽取侧匹配失败
+             */
+            name: string;
+        };
+        /**
+         * OntologyMergeRequest
+         * @description `POST /ontology/merge` 请求：合并两个实体（M6 §3.2 三动作之一）。
+         * @example {
+         *       "left_entity_id": "ent_6f1c2b7e9d4a",
+         *       "right_entity_id": "ent_9a0d2e5c7b91"
+         *     }
+         */
+        OntologyMergeRequest: {
+            /**
+             * Left Entity Id
+             * @description 保留侧的实体 id
+             */
+            left_entity_id: string;
+            /**
+             * Right Entity Id
+             * @description 被并入侧的实体 id（合并后不再独立存在）
+             */
+            right_entity_id: string;
+        };
+        /**
+         * OntologyNewEntity
+         * @description `POST /ontology/split` 里拆分出的**新实体**。
+         *
+         *     ⚠️ spec §5.5 写的是 ``{canonical_name, ...}``——省略号部分本批**不展开**
+         *     （功能预留原则），等 M6 实现批次按真实需求补字段并同步契约。
+         * @example {
+         *       "canonical_name": "张伟"
+         *     }
+         */
+        OntologyNewEntity: {
+            /**
+             * Canonical Name
+             * @description 拆分后新实体的规范名
+             */
+            canonical_name: string;
+        };
+        /**
+         * OntologyRelationType
+         * @description 一个关系类型（含首尾实体类型约束）。
+         * @example {
+         *       "description": "双方存在关联关系",
+         *       "head_types": [
+         *         "COMPANY"
+         *       ],
+         *       "name": "PARTY_TO",
+         *       "tail_types": [
+         *         "COMPANY"
+         *       ]
+         *     }
+         */
+        OntologyRelationType: {
+            /**
+             * Description
+             * @description 中文一句话说明该关系在本域指什么；可省略
+             */
+            description?: string | null;
+            /**
+             * Head Types
+             * @description 允许的头实体类型名（**必须**取自同一份 entity_types）
+             */
+            head_types: string[];
+            /**
+             * Name
+             * @description 关系类型名，同实体类型的命名约束（英文大写下划线）
+             */
+            name: string;
+            /**
+             * Tail Types
+             * @description 允许的尾实体类型名（**必须**取自同一份 entity_types）
+             */
+            tail_types: string[];
+        };
+        /**
+         * OntologyRenameRequest
+         * @description `POST /ontology/rename` 请求：改实体的规范名。
+         * @example {
+         *       "entity_id": "ent_6f1c2b7e9d4a",
+         *       "new_canonical_name": "张伟"
+         *     }
+         */
+        OntologyRenameRequest: {
+            /**
+             * Entity Id
+             * @description 要改名的实体 id
+             */
+            entity_id: string;
+            /**
+             * New Canonical Name
+             * @description 新的规范名
+             */
+            new_canonical_name: string;
+        };
+        /**
+         * OntologySplitRequest
+         * @description `POST /ontology/split` 请求：把一个实体拆成多个。
+         * @example {
+         *       "entity_id": "ent_6f1c2b7e9d4a",
+         *       "new_entities": [
+         *         {
+         *           "canonical_name": "张伟"
+         *         },
+         *         {
+         *           "canonical_name": "张玮"
+         *         }
+         *       ]
+         *     }
+         */
+        OntologySplitRequest: {
+            /**
+             * Entity Id
+             * @description 要拆分的实体 id
+             */
+            entity_id: string;
+            /**
+             * New Entities
+             * @description 拆分出的新实体（**至少 2 个**——只拆出 1 个等价于改名，应走 `POST /ontology/rename`）。本约束为本批推断，待 F3 确认
+             */
+            new_entities: components["schemas"]["OntologyNewEntity"][];
         };
         /**
          * ReasoningPathHop
@@ -3262,6 +3861,63 @@ export interface operations {
             };
         };
     };
+    getCostDashboard: {
+        parameters: {
+            query?: {
+                /** @description 起始日（ISO，含）；缺省由实现侧定义默认区间（本批未定） */
+                date_from?: string | null;
+                /** @description 结束日（ISO，含）；缺省由实现侧定义默认区间（本批未定） */
+                date_to?: string | null;
+            };
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostDashboardResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listDocuments: {
         parameters: {
             query?: {
@@ -3790,6 +4446,356 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    getActiveOntology: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologyActiveResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 本体 schema 版本冲突（`SCHEMA_VERSION_NOT_ACTIVE`，M6 §5.5）：① `POST /ontology/confirm` 对同一 version **重复确认**；② `GET /ontology/active` 时本租户**尚无 active schema**。与 409 `KG_VERSION_NOT_ACTIVE` 同一纪律——**严禁**静默降级到旧版本 / 默认schema（那会让用户以为自己配过） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    coldStartOntology: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OntologyColdStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologyColdStartResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    confirmOntology: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OntologyConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologyConfirmResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 本体 schema 版本冲突（`SCHEMA_VERSION_NOT_ACTIVE`，M6 §5.5）：① `POST /ontology/confirm` 对同一 version **重复确认**；② `GET /ontology/active` 时本租户**尚无 active schema**。与 409 `KG_VERSION_NOT_ACTIVE` 同一纪律——**严禁**静默降级到旧版本 / 默认schema（那会让用户以为自己配过） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    mergeOntologyEntities: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OntologyMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologyActionResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    renameOntologyEntity: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OntologyRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologyActionResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    splitOntologyEntity: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OntologySplitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologyActionResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
