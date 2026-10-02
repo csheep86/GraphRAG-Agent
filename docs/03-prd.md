@@ -219,9 +219,16 @@ flowchart TD
 | M2 | `prompts/entity_relation_extract_v1.md` | 实体 / 关系 / 证据抽取（核心） |
 | M3 | `prompts/intent_router_v1.md` | 意图路由（问答 / 场景识别） |
 | M3 / M4 | `prompts/kg_qa_v1.md` | GraphRAG 答案生成 |
-| M6（**本期含，Sprint 12 承接**） | `prompts/entity_relation_extract_v1.md` + `prompts/kg_qa_v1.md` | 本体冷启动建议（参数区分）+ 增量重算（**复用 v1，不新增版本**，plan §19.1 A） |
+| M6（**本期含，Sprint 12 承接**） | **冷启动：`prompts/ontology_suggest_v1.md`（2026-10-02 新增）**；增量重算：复用 `prompts/entity_relation_extract_v1.md` / `prompts/kg_qa_v1.md`，**不新增版本** | 本体冷启动建议 + 增量重算 |
 
 > **关键约束**（来自 `CODEBUDDY.md`）：**P2 场景扩展时新增版本号**（如 `kg_qa_v2.md`），**禁止原地覆盖历史版本**。
+>
+> ⚠️ **2026-10-02 冲突登记（待裁决）**：`specs/m6-ontology-incremental.md` §3.1 验收 1 原文写冷启动
+> 「调用 `kg_qa_v1.md`，**不修改 prompt**」。但 `kg_qa` 是**问答**模板，用它生成本体建议属语义错配，
+> 建议质量无法归因。**M6 冷启动 PoC（`changes/P0-m6-finalization` F1）已新增 `ontology_suggest_v1.md`**
+> ——将「不修改 prompt」理解为**不篡改既有 prompt**，而非「不许新增版本」（H9 约束的是 **P2 之前**的模块，
+> M6 在 P5）。**m6 spec 升 v1.0 时必须就验收 1 那一句给出裁决**，不许 spec 继续写着 `kg_qa_v1`
+> 而代码按新 prompt 跑。
 
 ---
 

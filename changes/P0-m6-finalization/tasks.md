@@ -4,7 +4,7 @@
 > 每批收尾跑：`uv run python scripts/check_startup_readiness.py`，确认没有护栏被本批**意外**转绿或转红。
 > 只删 xfail、测试没真通过 —— **不算转正**（行动指引第 2 条）。
 
-**状态（2026-10-02）**：**未开工**。三件套已写，开工前实测见 proposal §1。
+**状态（2026-10-02）**：**F1 已完成**（fake + 真机各跑通，P1-5 解除）；F2 / F3 未开工。
 事后实测证据与遗留记 [`integration-log.md`](./integration-log.md)（本文件是事前计划，两者不可互相替代）。
 
 ---
@@ -13,17 +13,22 @@
 
 > ⚠️ **必须先跑它再定稿**：PoC 不通 ⇒ spec 要改，先定稿即返工（风险 R2）。
 
-- [ ] 读 `app/services/ontology.py` 现有能力（`load_active_ontology` / `extraction_type_vocabulary` /
+- [x] 读 `app/services/ontology.py` 现有能力（`load_active_ontology` / `extraction_type_vocabulary` /
       `entity_type_categories`），确认**哪些已有、缺哪一段**
-- [ ] 写最小 suggest 通路：`domain_description` → LLM 建议 `{entity_types, relation_types}` →
-      落 `ontology_schemas` 的**候选**（`suggested_by_llm=true`）
-      - [ ] **候选不生效**：不得置 `status="active"`（M6 §3.5 验收 12：active 必须经确认后写入）
-      - [ ] **不阻断抽取**：取不到 active 时走内置默认 schema（既有纪律，不得改）
-- [ ] **可注入 fake provider**（默认路径，CI 可跑、零成本）+ **一次真 LLM 留证**（决策点 D1）
-      ⚠️ 真 LLM 只跑**一次定向**调用，预算护栏照 v1.3.0 先例（余额意识）
-- [ ] 端到端判据：建议结果**能被抽取链路消费**（`extraction_type_vocabulary` 取到建议的类型集），
-      且**未确认前不生效**
-- [ ] 出口：`dev-doc-status.md` **P1-5 置 ✅**（PoC 口径：跑通，非"写了一半"）
+      ⇒ 实测：v1 参数注入**已通**（`tasks/registry.py:60`、`graphs.py:2320` 在真消费），缺的只有冷启动建议
+- [x] 写最小 suggest 通路：`domain_description` → LLM 建议 `{entity_types, relation_types}` →
+      **只返回建议、不落库**
+      - [x] **未确认不生效**：`suggest_ontology_types` **签名里没有会话参数** ⇒ 结构上写不出
+            「未确认即生效」（M6 §3.1 验收 1 / §3.5 验收 12）。⚠️ 实测修正：spec §4.1 的 `status`
+            **只有 `active` / `superseded`**，本就不存在"候选"这一档，故**不做**"落候选行"
+      - [x] **不阻断抽取**：取不到 active 时走内置默认 schema（既有纪律，未改动）
+- [x] **可注入 fake provider**（默认路径，CI 可跑、零成本）+ **真 LLM 留证**（决策点 D1）
+      ⇒ `scripts/probe_ontology_suggest.py`；实测产出 12 实体 + 12 关系类型（双双命中上限）
+- [x] 端到端判据：建议结果**能被抽取链路消费**（`extraction_type_vocabulary` 取到建议的类型集），
+      且**未确认前不生效** ⇒ 两条都有测试钉住
+- [x] 出口：`dev-doc-status.md` **P1-5 置 ✅**（PoC 口径：跑通，非"写了一半"）
+- [x] ⚠️ **差异登记**：验收 1 原文点名复用 `kg_qa_v1.md`，与"生成本体建议"语义错配
+      ⇒ 本次新增 `prompts/ontology_suggest_v1.md`;**F3 定稿时必须裁决**（日志 §1.4）
 
 ## F2 — 契约先行（§5.5 的 7 个端点进契约）
 
