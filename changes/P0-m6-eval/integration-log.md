@@ -306,9 +306,13 @@ uv run python scripts/export_openapi.py --check   # [OK] 零 diff
   （`.env.example` 必须同步）；新增 `app/evaluation/*` 模块 ⇒ 由 **S5** 拦
   （必须被 `scripts/eval_acceptance.py` 真实 import，本批已满足）。
   ⚠️ 跑之前**必须 `git add -N`** 新文件，否则 S5 等于没跑（见 §E1.5）。
-- **CI 接线建议（本批未做，登记）**：把 `uv run python scripts/eval_acceptance.py --offline`
-  加进 CI 的 backend job——它**不依赖 LLM / 网络 / Neo4j**，且两次运行报告逐字一致
-  （幂等契约已有单测钉住）。这是让"判据状态"进入 CI 的最小一步，属下一批。
+- **CI 接线：结论 = **不接**，归 **P6**（本批未做，登记为 **L9**）**。
+  我原先的理由是「它不依赖 LLM / 网络 / Neo4j，且幂等」——**这个理由恰好是"不能现在接"的论据**：
+  正因为它什么都不依赖，实测 offline 下 **7 条判据全部 `value=null / INDETERMINATE`**、
+  **退出码恒 0**（只有 `verdict == FAIL` 才退 1）⇒ 接进 CI 就是**恒绿失效**门禁（**R-9**），
+  会制造「CI 绿 = 准入线在拦」的假象——正是开工自检要防的那一类。
+  仓内已有同型先例：`check_startup_readiness.py` 正因**恒退 0**被明写为「**只打日志，不做门禁**」。
+  落点与两个前置见 **§9 L9**。
 
 ---
 
@@ -381,6 +385,27 @@ uv run python scripts/export_openapi.py --check   # [OK] 零 diff
   否则修的是猜的那一个。
 - **本批做了什么**：只**按事实登记**（报告 `detail.refusal_mismatches` 可查，含期望值与实际值），
   **没有**顺手改链路。
+
+### L9（E3.5）**判据进 CI**：归 **P6**，且 P6 开工前须先裁决两个前置
+- **为什么不现在接**：`--offline` **恒退 0**（`main()` 只有 `verdict == FAIL` 才 `return 1`，
+  而 offline 下 7 条判据全 `value=null / INDETERMINATE`，2026-10-03 实测）⇒ 接进 CI 即
+  **恒绿失效**（**R-9**），并制造「CI 绿 = 准入线在拦」的假象。
+  仓内同型先例：`check_startup_readiness.py` 因恒退 0 被降级为「只报告、非门禁」。
+- **为什么不落 P5-M6**：P5-M6 落 `cost_metrics` 只解开 **C3-a 的分母**，但 ① 取值仍需 live；
+  ② CI 的 backend job **现在只有 postgres、无 `neo4j` service**（护栏 **G-9** 那条正是"待加"）、
+  也无 LLM key ⇒ **到 P5-M6 结束，CI 里的 `--offline` 依旧恒退 0** ⇒ 落点不对。
+- **为什么落 P6**：P6 = 运维与评测，出口判据就是 **D10 的 C1–C3 达标**（≥10% / ≥0.80 / ≤0.15 / =1.00），
+  且 P6 的纪律是「独立环境留证」⇒ 判据门禁与 E1~E4 同批，不单开批次。
+- **P6 开工前必须先裁决的两件事**：
+  1. **CI 到底能不能跑 live**：依赖 **G-9**（backend job 加 `neo4j` service）+ LLM 侧取舍
+     （注入 key / 录制回放 / 或明写"live 判据只在独立环境留证、不进 CI"）。
+     这决定它在 CI 里是**真门禁**还是**只留证**。
+  2. **怎样让它成为真门禁而非恒绿**：需至少一条判据在 CI 环境下**会随代码变更变红**。
+     唯一现实路径：把 **C2-a / C2-b** 改成"**离线可复算**"——用**真机疑点输出快照**当输入
+     （本批 `tests/test_evaluation_affiliation.py` 已存 **9 条真机输出快照**），
+     指标回归进 CI、判据数字仍靠 live 留证。这可能也是把"判据进 CI"**提前到 P6 之前**
+     （甚至与 P5-M6 同期）的唯一办法。
+- **本批做了什么**：只**按事实登记**，**没有**接进 CI。
 
 ### L6（E2）改 `MANIFEST.json` 时把 JSON 写坏了（**自己的教训**）
 - **现象**：在 `chunks_note` 里写了未转义的英文双引号 ⇒ `json.JSONDecodeError` ⇒ **11 条测试连带变红**（数据集是多个判据的公共上游）。
