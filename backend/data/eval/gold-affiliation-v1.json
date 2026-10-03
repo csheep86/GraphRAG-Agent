@@ -1,0 +1,104 @@
+{
+  "id": "gold-affiliation-v1",
+  "version": "v1-2026-10-03",
+  "kg_version": "affiliation-demo-v1",
+  "org_id": "5dea8f62-0c67-579a-9509-8b4ce98eadea",
+  "purpose": "矩阵 §5.1 C2-a「隐性关联召回 ≥ 0.80」/ C2-b「误报率 ≤ 0.15」的 gold 标注集",
+  "unit": "finding（**组**级，非二元组）——M4 的疑点是「一组主体 + 一个类型」，不是一条 (head, tail) 关系；故指标走 app/evaluation/metrics.py 的 Finding 口径",
+  "entity_id_space": {
+    "space": "graph_node_id",
+    "human_readable_key": "supplier_id（S001–S020）**仅用于人工标注 / 复核**，不参与比对——真机输出里它是节点属性，不是 id",
+    "subject_id_form": "SUBJECT:<tax_id>",
+    "document_id_form": "CONTRACT:<contract_no> / INVOICE:<invoice_no> / VOUCHER:<voucher_no>",
+    "member_prefixes": ["SUBJECT:", "CONTRACT:", "INVOICE:", "VOUCHER:"],
+    "non_member_prefixes": ["ADDRESS:", "PHONE:", "LEGALPERSON:"],
+    "member_rule": "**共享节点（ADDRESS / PHONE / LEGALPERSON）不计入成员**——它是「为什么命中」的证据，不是「谁被牵连」的成员。故 shared_* 的成员恒为 2 个主体（真机返回 3 个 id，第 3 个被滤掉）",
+    "verified_against_live_output": true,
+    "verified_at": "2026-10-03",
+    "verification_note": "真机样本：AffiliationService.detect(kg_version=affiliation-demo-v1, org_id=<本文件 org_id>) 返回 **9 条**疑点，分型 {shared_legal_rep 1 / shared_address 1 / shared_phone 1 / cycle 3 / amount_mismatch 3} 与本集**逐组一致**；成员 id 逐条比对通过（顺序不同，按 members() 去重排序后相等）。样本与命令见 changes/P0-m6-eval/integration-log.md §E2.7。",
+    "previously_wrong": "本集初版把 id 空间写成 supplier_id，**与真机输出不同构**：那样比对会 0 命中 ⇒ 召回被读成 0 ⇒ 误触发反证 F2。故初版置 verified=false 不出数；本版已按真机样本改正。"
+  },
+  "source": {
+    "implanted_groups": "demo/affiliation/README.md §3.1「刻意植入的疑点样本（S9.12，共 9 组）」",
+    "derived_from": [
+      "demo/affiliation/suppliers.csv（主体主数据；shared_legal_rep / shared_address / shared_phone 由 legal_rep_id / address / phone 字段相等推导）",
+      "demo/affiliation/shareholders.csv（cycle：持股环）",
+      "demo/affiliation/contracts.csv + invoices.csv + vouchers.csv（amount_mismatch：三方金额比对，trade_ref 为 TR-0002/0003/0004）"
+    ],
+    "scale_caveat": "demo/affiliation/README.md §5 明示：spec §3 验收 6 要求 200 合同 / 500 发票 / 100 凭证 / 20 组植入，本语料只有 8 / 60 / 30 / 9 ⇒ **不宣称**召回 ≥ 0.80 / 误报 ≤ 0.15（缺口 S13）。本集只能自证口径 + 给演示语料上的实测值，不能当作 spec 验收结论。"
+  },
+  "findings": [
+    {
+      "type": "shared_legal_rep",
+      "node_ids": ["SUBJECT:91440106MA03Q7J4MX", "SUBJECT:91610113MA09H1C7EX"],
+      "entity_ids": ["S004", "S010"],
+      "tax_ids": ["91440106MA03Q7J4MX", "91610113MA09H1C7EX"],
+      "evidence": "suppliers.csv：legal_rep_id 同为 110101199001010004（李强）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_address",
+      "node_ids": ["SUBJECT:91330106MA05N5G2JX", "SUBJECT:91500112MA13D6X3AX"],
+      "entity_ids": ["S006", "S014"],
+      "tax_ids": ["91330106MA05N5G2JX", "91500112MA13D6X3AX"],
+      "evidence": "suppliers.csv：address 同为「北京市昌平区科技园路8号」",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_phone",
+      "node_ids": ["SUBJECT:91110108MA01T2W4XX", "SUBJECT:91320506MA12E7Y4BX"],
+      "entity_ids": ["S002", "S013"],
+      "tax_ids": ["91110108MA01T2W4XX", "91320506MA12E7Y4BX"],
+      "evidence": "suppliers.csv：phone 同为 010-88886666",
+      "expected_count": 1
+    },
+    {
+      "type": "cycle",
+      "node_ids": ["SUBJECT:91310115MA02R8K5NX", "SUBJECT:91440305MA04P6H3KX"],
+      "entity_ids": ["S003", "S005"],
+      "tax_ids": ["91310115MA02R8K5NX", "91440305MA04P6H3KX"],
+      "evidence": "shareholders.csv 第 2–3 行：30% / 25% 互持（2 环）",
+      "expected_count": 1
+    },
+    {
+      "type": "cycle",
+      "node_ids": ["SUBJECT:91120116MA10G9B6DX", "SUBJECT:91320106MA06M4F1HX", "SUBJECT:91420111MA08J2D8FX"],
+      "entity_ids": ["S007", "S009", "S011"],
+      "tax_ids": ["91320106MA06M4F1HX", "91420111MA08J2D8FX", "91120116MA10G9B6DX"],
+      "evidence": "shareholders.csv 第 4–6 行：40% → 35% → 20% → 回到起点（3 环）",
+      "expected_count": 1
+    },
+    {
+      "type": "cycle",
+      "node_ids": ["SUBJECT:91320506MA12E7Y4BX", "SUBJECT:91430104MA14C5W2YX", "SUBJECT:91340104MA16A3T9WX", "SUBJECT:91370102MA18X1Q7TX"],
+      "entity_ids": ["S013", "S015", "S017", "S019"],
+      "tax_ids": ["91320506MA12E7Y4BX", "91430104MA14C5W2YX", "91340104MA16A3T9WX", "91370102MA18X1Q7TX"],
+      "evidence": "shareholders.csv 第 7–10 行：28% → 22% → 18% → 15% → 回到起点（4 环）",
+      "expected_count": 1
+    },
+    {
+      "type": "amount_mismatch",
+      "node_ids": ["CONTRACT:HT2026-0002", "INVOICE:FP2026-0002", "VOUCHER:PZ2026-0002"],
+      "entity_ids": ["S002"],
+      "trade_ref": "TR-0002",
+      "evidence": "TR-0002：合同 96000.00 / 发票 96000.00 / 凭证 91500.00 ⇒ 凭证少 4500",
+      "expected_count": 1
+    },
+    {
+      "type": "amount_mismatch",
+      "node_ids": ["CONTRACT:HT2026-0003", "INVOICE:FP2026-0003", "VOUCHER:PZ2026-0003"],
+      "entity_ids": ["S003"],
+      "trade_ref": "TR-0003",
+      "evidence": "TR-0003：合同 143000.00 / 发票 119000.00 / 凭证 119000.00 ⇒ 合同多 24000",
+      "expected_count": 1
+    },
+    {
+      "type": "amount_mismatch",
+      "node_ids": ["CONTRACT:HT2026-0004", "INVOICE:FP2026-0004", "VOUCHER:PZ2026-0004"],
+      "entity_ids": ["S004"],
+      "trade_ref": "TR-0004",
+      "evidence": "TR-0004：合同 72000.00 / 发票 76000.00 / 凭证 72000.00 ⇒ 发票多 4000",
+      "expected_count": 1
+    }
+  ]
+}

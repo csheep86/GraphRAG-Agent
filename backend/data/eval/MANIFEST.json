@@ -1,0 +1,79 @@
+{
+  "manifest_version": "v1-2026-10-03",
+  "batch": "changes/P0-m6-eval（F4 · M6 出口判据评测体系）",
+  "annotator": "架构师（本批 E2）",
+  "annotated_at": "2026-10-03",
+  "rubric": {
+    "id": "rubric-v1",
+    "note": "**A3**：脚本不做关键词判分（关键词命中会把答非所问读成达标）⇒ 答对率只能人工判；本 rubric 写死判分规则，使两次运行可比。",
+    "per_question": [
+      "① 拒答判定与 should_refuse 一致；",
+      "② 答案覆盖 expected_points 的**全部**要点；",
+      "③ 无与语料矛盾的事实（幻觉）。"
+    ],
+    "correct_rule": "①②③ 全部满足 ⇒ correct=true；任一不满足 ⇒ correct=false；未判分 ⇒ correct=null（**不入分母**，不是 0）。",
+    "judged_by_rule": "判分人必须写入 judged_by，禁止匿名判分。"
+  },
+  "datasets": [
+    {
+      "id": "controlled-qset-v3",
+      "version": "v3-2026-09-30",
+      "path": "controlled-qset-v3.json",
+      "kg_version": "attendance-demo-v1",
+      "items": 14,
+      "source": "backend/scripts/eval_controlled_qset.py::QUESTIONS（逐字投影，由 test_eval_qset_parity 钉死）"
+    },
+    {
+      "id": "gold-multihop-v1",
+      "version": "v1-2026-10-03",
+      "path": "gold-multihop-v1.json",
+      "kg_version": "attendance-demo-v1",
+      "items": 6,
+      "hops_range": [2, 4],
+      "source": "demo/attendance/README.md §4 埋设用例 + 制度条款"
+    },
+    {
+      "id": "gold-affiliation-v1",
+      "version": "v1-2026-10-03",
+      "path": "gold-affiliation-v1.json",
+      "kg_version": "affiliation-demo-v1",
+      "findings": 9,
+      "source": "demo/affiliation/README.md §3.1 植入样本 + suppliers/shareholders/contracts/invoices/vouchers.csv 推导"
+    },
+    {
+      "id": "fixture-baseline-v1",
+      "version": "v1-2026-10-03",
+      "path": "baselines/fixture-baseline-v1.json",
+      "kind": "fixture",
+      "warning": "非产品基线，不含任何基线测量结果（A1）"
+    }
+  ],
+  "corpus": {
+    "attendance": {
+      "kg_version": "attendance-demo-v1",
+      "origin": "demo/attendance/（仿真演示语料，README 首屏自证）",
+      "chunks_in_neo4j": 224,
+      "documents_in_neo4j": 15,
+      "entities_in_neo4j": 2987,
+      "measured_at": "2026-10-03（重建演示数据后复测；与重建前一致 ⇒ 224 是当前稳定值）",
+      "chunks_note": "⚠️ **数字漂移已处置**：`backend/scripts/eval_controlled_qset.py` docstring 写「230 chunks」，那是 **2026-09-30 那次 probe 的历史值**；2026-10-03 复测为 **224**（历史另有「230 → 去重后 205」的记录，见 `tests/test_langextract_chunks.py`）。处置方式 = **不改写历史数字**，改在该注释处补一行指向本文件（**本文件是「当前 chunk 数」的单一真源**）。",
+      "is_single_source_of_truth": true
+    },
+    "affiliation": {
+      "kg_version": "affiliation-demo-v1",
+      "origin": "demo/affiliation/（合成语料，README 首屏自证）",
+      "chunks_in_neo4j": 128,
+      "documents_in_neo4j": 5,
+      "entities_in_neo4j": 176,
+      "measured_at": "2026-10-03",
+      "scale_caveat": "spec §3 验收 6 要求 200 合同 / 500 发票 / 100 凭证 / 20 组植入；本语料仅 8 / 60 / 30 / 9 ⇒ 召回 / 误报**不得**在此语料上给判据结论（缺口 S13）"
+    }
+  },
+  "dirty_data_handling": [
+    "库外 2 题**刻意保留**：用于验证拒答出口不被误伤（F3 反面），不因「答不出」而剔除；",
+    "制度存在 2025 → 2026 **版本更替**（《外勤与出差考勤补充规定》第五条 / 第七条，README §7）⇒ 涉及该条的问题必须带时点，否则判分时按「未指明版本」视为要点缺失；",
+    "CSV 类问题的出处以**首行样本**为准（题面已写明），若图谱上该行缺失 ⇒ 判 UNKNOWN 而非判错；",
+    "gold-affiliation 的实体 id 空间**尚未与真机疑点输出核对** ⇒ 该集上的召回 / 误报只用于自证口径（见该文件 entity_id_space.verification_note）"
+  ],
+  "status": "provisional（演示 / 合成语料，非终局；终局需全量语料 + gold 扩标，见 changes/P0-m6-eval/proposal.md §10）"
+}

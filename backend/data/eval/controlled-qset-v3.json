@@ -1,0 +1,113 @@
+{
+  "id": "controlled-qset-v3",
+  "version": "v3-2026-09-30",
+  "kg_version": "attendance-demo-v1",
+  "question_count": 14,
+  "in_corpus": 12,
+  "out_of_corpus": 2,
+  "source": {
+    "single_source_of_truth": "backend/scripts/eval_controlled_qset.py::QUESTIONS",
+    "note": "本文件是既有脚本问题集的**版本化投影**，与之逐字一致；一致性由 tests/test_eval_qset_parity.py 钉死（改任一侧都会红）。不修改原脚本。",
+    "corpus": "demo/attendance/（4 份考勤制度 docx + 9 张考勤 CSV），出处均经 :Chunk 正文核对（2026-09-30 实测）"
+  },
+  "items": [
+    {
+      "index": 1,
+      "question": "每名员工每月的补卡次数上限是多少？",
+      "should_refuse": false,
+      "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第三章 第八条",
+      "expected_points": ["每名员工每月补卡不超过 3 次", "超出按事假处理"]
+    },
+    {
+      "index": 2,
+      "question": "迟到是怎么认定的？超过 30 分钟怎么算？",
+      "should_refuse": false,
+      "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第二章 第六条",
+      "expected_points": ["晚于排班上班时间 30 分钟以内记迟到", "超过 30 分钟按事假半天"]
+    },
+    {
+      "index": 3,
+      "question": "外勤与出差考勤补充规定适用于哪些员工？",
+      "should_refuse": false,
+      "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第一章 第一条",
+      "expected_points": ["因公外出（外勤）或出差期间", "无法按常规方式打卡的员工"]
+    },
+    {
+      "index": 4,
+      "question": "能不能因为没有门禁刷卡记录就认定外勤员工未出勤？",
+      "should_refuse": false,
+      "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第二章 第三条",
+      "expected_points": ["不能", "门禁仅覆盖公司自有场所", "不得以无门禁记录否定出勤"]
+    },
+    {
+      "index": 5,
+      "question": "每月加班时间不得超过多少小时？",
+      "should_refuse": false,
+      "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第二章 第四条",
+      "expected_points": ["每月不得超过 36 小时", "依据劳动法第四十一条"]
+    },
+    {
+      "index": 6,
+      "question": "员工自愿延长在岗时间、未经审批的，算加班吗？",
+      "should_refuse": false,
+      "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第一章 第二条",
+      "expected_points": ["不认定为加班", "须经审批"]
+    },
+    {
+      "index": 7,
+      "question": "销售经理适用哪种工时制？",
+      "should_refuse": false,
+      "source_doc": "《工时制实施细则》HR-WTS-2026-002 第三章 岗位适用表",
+      "expected_points": ["不定时工作制", "已履行审批"]
+    },
+    {
+      "index": 8,
+      "question": "标准工时制岗位的核心在岗时段是什么时候？",
+      "should_refuse": false,
+      "source_doc": "《工时制实施细则》HR-WTS-2026-002 第四章 第十二条",
+      "expected_points": ["核心在岗时段 10:00 至 16:00"]
+    },
+    {
+      "index": 9,
+      "question": "张伟在哪个部门、担任什么岗位？",
+      "should_refuse": false,
+      "source_doc": "employees.csv（首行 E001,张伟,售后部,售后工程师,综合计算工时制）",
+      "expected_points": ["售后部", "售后工程师"]
+    },
+    {
+      "index": 10,
+      "question": "张伟适用哪种工时制？",
+      "should_refuse": false,
+      "source_doc": "employees.csv（首行 E001,张伟,售后部,售后工程师,综合计算工时制）",
+      "expected_points": ["综合计算工时制"]
+    },
+    {
+      "index": 11,
+      "question": "E004 在 2026 年 10 月 25 日请的是什么假，共几天？",
+      "should_refuse": false,
+      "source_doc": "leave_requests.csv（首行 LV0001,E004,病假,2026-10-25,2026-10-27,3）",
+      "expected_points": ["病假", "3 天"]
+    },
+    {
+      "index": 12,
+      "question": "工单 SO-2026-0912 的处理地点在哪里？",
+      "should_refuse": false,
+      "source_doc": "work_orders.csv（首行 SO-2026-0912,E001,武汉光谷希尔顿酒店,武汉光谷）",
+      "expected_points": ["武汉光谷希尔顿酒店", "武汉光谷"]
+    },
+    {
+      "index": 13,
+      "question": "比亚迪 2025 年新能源汽车销量是多少？",
+      "should_refuse": true,
+      "source_doc": "（库外）刻意选语料中完全不存在的主体，验证拒答出口不被误伤",
+      "expected_points": ["应拒答"]
+    },
+    {
+      "index": 14,
+      "question": "《红楼梦》中贾宝玉的妻子是谁？",
+      "should_refuse": true,
+      "source_doc": "（库外）刻意选语料中完全不存在的主体，验证拒答出口不被误伤",
+      "expected_points": ["应拒答"]
+    }
+  ]
+}

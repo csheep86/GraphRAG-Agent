@@ -1,0 +1,22 @@
+{
+  "id": "fixture-baseline-v1",
+  "version": "v1-2026-10-03",
+  "kind": "fixture",
+  "warning": "⚠️ **非产品基线**：RAG 基线检索在仓库内**尚未实现**（登记项 A1：矩阵只写「(图谱 − 基线) / 基线」，未定义基线是什么）。本文件**刻意不含**任何基线测量结果——给一个编造的基线分数，就是拿假数据去算真判据。",
+  "provided": false,
+  "baseline_accuracy": null,
+  "reason": "基线实现缺失 ⇒ C1 的**分母不存在** ⇒ 该判据状态为 BLOCKED（blocked_by=baseline-not-implemented），**不是** 0。",
+  "self_test": {
+    "note": "仅供评测体系**自测增益公式口径**（E2 的 offline 演练与单测使用）：构造值，非实测，不得写入任何报告作为基线。",
+    "graph_accuracy": 0.88,
+    "baseline_accuracy": 0.8,
+    "expected_gain": 0.1,
+    "formula": "(graph - baseline) / baseline"
+  },
+  "what_a_real_baseline_must_define": [
+    "检索方式（纯向量 / BM25 / 混合 + 是否重排）",
+    "chunk 池是否与图谱版同源（G5 要求同数据集 / 同问题集 / 同标注口径）",
+    "拒答策略（不设拒答会把「编得像」读成答对）",
+    "实现归属（是否属 M6 范围——当前判定：不属，见 proposal §6 A1）"
+  ]
+}
