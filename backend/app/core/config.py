@@ -186,6 +186,31 @@ class Settings(BaseSettings):
     #: 唯一消费点：core/logging.py::setup_logging
     log_export: bool = False
 
+    # -- 评测准入线（TBD-7 / DR-D10；P0-m6-eval 批次 E3 落地）--
+    #: C3-a「单文档成本」上限。**单位 = token / 文档**（**不是**元——spec §4.3 的
+    #: ``single_doc_cost`` 把 token 与钱混用了，这里不继承那个歧义）。
+    #:
+    #: **来源 = 2026-10-03 演示语料推算，provisional（不是达标线）**：
+    #:   单次抽取 LLM 调用 1799 tokens（矩阵 §3.4 M2-7 真机）
+    #:   × 约 13 chunk/文档（attendance-demo-v1 = 224 chunks / 15 docs，其中 CSV 派生
+    #:     约占 77% ⇒ 4 份 docx ≈ 52 chunks ⇒ ≈13/文档）
+    #:   ≈ 23.4k token/文档 × 1.35 余量 ⇒ 取整 32 000。
+    #:
+    #: ⚠️ **chunk 数一律读 `backend/data/eval/MANIFEST.json`**（当前值的**单一真源**）。
+    #:    `scripts/eval_controlled_qset.py` 注释里的 **230 是 2026-09-30 那次 probe 的
+    #:    历史值**（旁证：`tests/test_langextract_chunks.py` 记「230 → 去重后 205」），
+    #:    **不可**拿它推演阈值——本字段的推算就差点踩这条。按 224 重算仍是 ≈13 chunk/文档
+    #:    ⇒ 32 000 **不变**，但**分母的出处必须写对**。
+    #:
+    #: ⚠️ TBD-7 正式收敛在 **P6**：须经 `scripts/eval_acceptance.py --calibrate` 校准；
+    #:    校准前判定只给 ``PASS(provisional)``（**不构成 TBD-7 收敛证据**，§5.2 第 3 条）。
+    #:    已知不确定性：若抽取是「每文档一次调用」而非「每 chunk 一次」，真实量级
+    #:    会掉到 ~2k/文档 ⇒ 32 000 偏松，这正是 `--calibrate` 存在的理由。
+    #:
+    #: 唯一消费点：`app/evaluation/runner.py::resolve_cost_ceiling`（C3-a 判定）
+    #:            + `scripts/eval_acceptance.py::_calibrate`（校准建议）。
+    eval_single_doc_token_ceiling: int = Field(default=32_000, gt=0)
+
     @field_validator("allowed_mime_types")
     @classmethod
     def _normalize_mime_types(cls, value: list[str]) -> list[str]:

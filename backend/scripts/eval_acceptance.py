@@ -36,9 +36,14 @@ if str(BACKEND_DIR) not in sys.path:
 if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - 仅 Windows 生效
     sys.stdout.reconfigure(encoding="utf-8")
 
+from app.evaluation.criteria import (  # noqa: E402
+    THRESHOLD_PROVISIONAL,
+    judge,
+)
 from app.evaluation.metrics import (  # noqa: E402
     DocumentCostRecord,
     dedupe_document_costs,
+    single_doc_cost,
 )
 from app.evaluation.report import (  # noqa: E402
     build_report,
@@ -50,6 +55,7 @@ from app.evaluation.report import (  # noqa: E402
 from app.evaluation.runner import (  # noqa: E402
     ALL_CRITERIA,
     RunnerContext,
+    resolve_cost_ceiling,
     run,
     self_test,
     upgrade_todo,
@@ -83,13 +89,28 @@ def _percentile(values: list[int], pct: float) -> float:
 
 
 def _calibrate(cost_records: Path | None) -> int:
-    """TBD-7 校准：**只输出建议值**（RK-E7：绝不改 config / .env）。"""
+    """TBD-7 校准：**只输出建议值**（RK-E7：绝不改 config / .env）。
+
+    **本函数是 `EVAL_SINGLE_DOC_TOKEN_CEILING` 的消费者之一**：阈值与来源都从
+    `runner.resolve_cost_ceiling()` 读（不硬编码 32 000），并**当场判一次**
+    「实测均值 vs 当前阈值」——让"阈值是多少 / 从哪来 / 判出来是什么"一目了然。
+    """
     print("== TBD-7 校准（只输出建议，不改任何配置） ==")
+    ceiling, source = resolve_cost_ceiling()
+    print(f"当前 ceiling: {ceiling} token/doc  [threshold_source={source}]")
+    if source == THRESHOLD_PROVISIONAL:
+        print(
+            "  ⚠️ 该值是**演示语料推算的默认值**（config 默认，未经校准）⇒ "
+            "判定只给 PASS(provisional)，**不构成 TBD-7 收敛证据**。"
+        )
+    else:
+        print("  ✅ env 显式覆盖（人工裁决过）⇒ 判定可给 PASS / FAIL。")
     if cost_records is None:
         print(
             "无 --cost-records ⇒ **无法校准**。\n"
             "原因：真实成本数据要等 P5-M6 落 cost_metrics 表（token 目前只进日志、未落库）。\n"
-            "⇒ TBD-7 维持 provisional（默认 eval_single_doc_token_ceiling = 32 000，见 config.py 注释）。"
+            f"⇒ TBD-7 维持 {source}（当前 eval_single_doc_token_ceiling = {ceiling}，"
+            "见 config.py 注释）。"
         )
         return 0
 
@@ -110,6 +131,23 @@ def _calibrate(cost_records: Path | None) -> int:
     print(f"文档数（去重后）      : {len(values)}")
     print(f"P50 / P90（token/文档）: {p50:.0f} / {p90:.0f}")
     print(f"建议 ceiling（P90×1.2）: {suggested}")
+
+    #: **当场判一次**：实测均值 vs 当前阈值（阈值与来源都来自 config / env，不硬编码）。
+    mean = single_doc_cost(records)
+    if mean.value is None:
+        print(f"实测均值              : 无（{mean.reason}）⇒ 不判")
+    else:
+        verdict = judge(
+            mean.value,
+            threshold=float(ceiling),
+            threshold_source=source,
+            higher_is_better=False,
+        )
+        print(
+            f"实测均值 vs 当前阈值  : {mean.value:.0f} vs {ceiling} ⇒ **{verdict.value}**"
+        )
+        print(f"  （判定用 {source} 阈值；口径 {mean.unit} / {mean.options}）")
+
     print(
         "\n⚠️ 本命令**不写** config.py / .env；阈值必须由人裁决后手动设置"
         "（eval_single_doc_token_ceiling）。"

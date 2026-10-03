@@ -17,6 +17,9 @@ from pathlib import Path
 
 import pytest
 
+from app.evaluation.criteria import THRESHOLD_ENV_OVERRIDE, THRESHOLD_PROVISIONAL
+from app.evaluation.metrics import COST_RATIO_SIGNIFICANT
+
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 SCRIPT = BACKEND_DIR / "scripts" / "eval_acceptance.py"
 
@@ -158,6 +161,81 @@ def test_calibrate_never_touches_config(tmp_path: Path) -> None:
     assert config.read_text(encoding="utf-8") == before_config
     if env_example.exists():
         assert env_example.read_text(encoding="utf-8") == before_env
+
+
+def test_cost_ceiling_default_is_flagged_provisional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**TBD-7 落 config（E3.1）**：默认阈值必须是 config 默认 + ``provisional``。
+
+    ``provisional`` 的意义：即便达标也只给 ``PASS(provisional)``（§5.2 第 3 条），
+    避免"演示语料推算出来的数"被当成 TBD-7 的收敛证据。
+    """
+    import app.evaluation.runner as runner
+    from app.core.config import get_settings
+
+    monkeypatch.delenv(runner.ENV_COST_CEILING, raising=False)
+    ceiling, source = runner.resolve_cost_ceiling()
+    assert ceiling == get_settings().eval_single_doc_token_ceiling
+    assert source == THRESHOLD_PROVISIONAL
+
+
+def test_cost_ceiling_env_override_is_flagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """env 显式覆盖 ⇒ 来源变 ``env-override``（人裁决过 ⇒ 判定可以给真 PASS / FAIL）。"""
+    import app.evaluation.runner as runner
+
+    monkeypatch.setenv(runner.ENV_COST_CEILING, "25000")
+    assert runner.resolve_cost_ceiling() == (25_000, THRESHOLD_ENV_OVERRIDE)
+
+    monkeypatch.setenv(runner.ENV_COST_CEILING, "not-a-number")
+    with pytest.raises(ValueError, match="必须是整数"):
+        runner.resolve_cost_ceiling()
+
+
+def test_cost_criteria_are_blocked_but_carry_their_threshold(tmp_path: Path) -> None:
+    """C3-a / C3-b **没有值**（P5-M6）但**带出阈值**——「判据存在、阈值已定、没数据」
+    必须和「还没做」长得不一样，否则 TBD-7 停在"不可判"的死状态（D2）。
+    """
+    out = tmp_path / "offline.json"
+    assert _run("--offline", "--out", str(out)).returncode == 0
+    report = json.loads(out.read_text(encoding="utf-8"))
+    by_name = {item["criterion"]: item for item in report["criteria"]}
+
+    c3a = by_name["c3_a_single_doc_cost"]
+    assert c3a["value"] is None and "P5-M6" in c3a["blocked_by"]
+    assert c3a["threshold"] == 32_000
+    assert c3a["threshold_source"] == THRESHOLD_PROVISIONAL
+    assert c3a["unit"] == "token/doc"
+
+    c3b = by_name["c3_b_incremental_cost_ratio"]
+    assert c3b["value"] is None and "P5-M6" in c3b["blocked_by"]
+    #: D3：C3-b 阈值**不落 config**，来自 metrics 常量（矩阵「显著 < 1.00」）
+    assert c3b["threshold"] == COST_RATIO_SIGNIFICANT
+
+
+def test_calibrate_judges_against_current_ceiling(tmp_path: Path) -> None:
+    """``--calibrate`` 是阈值的**消费者**：当场用 config 阈值判一次，且不改配置。"""
+    import app.evaluation.runner as runner
+
+    ceiling, source = runner.resolve_cost_ceiling()
+    records = tmp_path / "costs.json"
+    records.write_text(
+        json.dumps(
+            [
+                {"doc_id": "d1", "token_usage_total": 20_000, "sequence": 0},
+                {"doc_id": "d1", "token_usage_total": 25_000, "sequence": 1},
+                {"doc_id": "d2", "token_usage_total": 30_000, "sequence": 0},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    proc = _run("--calibrate", "--cost-records", str(records))
+    assert proc.returncode == 0
+    assert f"{ceiling} token/doc" in proc.stdout
+    assert source in proc.stdout
+    #: 实测均值 27500 < 32000 ⇒ 达标，但阈值是 provisional ⇒ 只能给 PASS(provisional)
+    assert "实测均值 vs 当前阈值" in proc.stdout
+    assert "PASS(provisional)" in proc.stdout
 
 
 def test_calibrate_without_records_says_it_cannot(tmp_path: Path) -> None:

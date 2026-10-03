@@ -25,6 +25,13 @@ from typing import Literal
 #: 这里显式钉死为 token/文档，报告必带此单位）。
 UNIT_TOKEN_PER_DOC = "token/doc"
 
+#: C3-b（增量 / 全量成本比）的判定阈值（**D3：不落 `config.py`**）。
+#: 为什么不落：① 与 spec §6 的 ``COST_RATIO_ALERT_THRESHOLD`` 撞名；
+#: ② **无真实消费者**（无增量重算）⇒ 落了即**幽灵配置**（上批刚犯过）。
+#: 来源：矩阵 §5.1「显著 < 1.00」——**人工裁决定值**，不是实测推算、
+#: 也不是 provisional 推算，与 C3-a 的 32 000 **不同族**，不要互相套用。
+COST_RATIO_SIGNIFICANT = 1.00
+
 #: C2-a / C2-b 的匹配口径（**A2**：spec 未定义"识别正确"的判定方式）。
 #: - ``triple``        : ``(head_id, relation_type, tail_id)`` —— **默认**，方向敏感；
 #: - ``entity_pair``   : ``(head_id, tail_id)`` —— 忽略关系类型，方向仍敏感；

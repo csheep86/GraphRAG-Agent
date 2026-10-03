@@ -24,6 +24,9 @@ from typing import Any, Literal
 
 from app.evaluation.affiliation import DEFAULT_NON_MEMBER_PREFIXES
 from app.evaluation.criteria import (
+    THRESHOLD_CALIBRATED,
+    THRESHOLD_ENV_OVERRIDE,
+    THRESHOLD_PROVISIONAL,
     CriterionResult,
     CriterionStatus,
     PlaceholderEvaluator,
@@ -43,6 +46,8 @@ from app.evaluation.dataset import (
     load_question_set,
 )
 from app.evaluation.metrics import (
+    COST_RATIO_SIGNIFICANT,
+    UNIT_TOKEN_PER_DOC,
     AnswerRecord,
     CitationRef,
     Finding,
@@ -531,6 +536,97 @@ def eval_hidden_relation_fpr(ctx: dict[str, Any]) -> CriterionResult:
     return _affiliation_results(ctx["ctx"])[1]
 
 
+#: C3-a 阈值的环境变量名（**显式覆盖** ⇒ 阈值来源从 provisional 升为 env-override，
+#: 因为「人裁决过」与「推算默认值」在报告里必须长得不一样）。
+ENV_COST_CEILING = "EVAL_SINGLE_DOC_TOKEN_CEILING"
+
+
+def resolve_cost_ceiling() -> tuple[int, str]:
+    """**C3-a 的阈值与来源**（TBD-7 / D2）。
+
+    返回 ``(ceiling, threshold_source)``：
+
+    - 环境变量 :data:`ENV_COST_CEILING` **显式设置** ⇒ ``env-override``（人工裁决过）；
+    - 否则取 ``Settings.eval_single_doc_token_ceiling`` **默认** ⇒ ``provisional``
+      ⇒ 判定只能给 ``PASS(provisional)``（§5.2 第 3 条防假绿）。
+
+    **为什么不直接读 Settings**：``Settings`` 分不出「默认值」与「人显式设的值」，
+    而这两者在验收时的分量完全不同（前者不构成 TBD-7 收敛证据）。
+    """
+    from app.core.config import get_settings  # noqa: PLC0415 - 避免 import 期读配置
+
+    raw = os.environ.get(ENV_COST_CEILING)
+    if raw is None or not raw.strip():
+        return (
+            int(get_settings().eval_single_doc_token_ceiling),
+            THRESHOLD_PROVISIONAL,
+        )
+    try:
+        return int(raw.strip()), THRESHOLD_ENV_OVERRIDE
+    except ValueError as exc:
+        raise ValueError(
+            f"{ENV_COST_CEILING} 必须是整数（单位 token/文档），实际={raw!r}"
+        ) from exc
+
+
+def eval_single_doc_cost(ctx: dict[str, Any]) -> CriterionResult:
+    """**C3-a 单文档成本**（TBD-7）：**阈值已定、值还没有**。
+
+    ``P5-M6`` 之前没有 ``cost_metrics`` ⇒ **无真实分母** ⇒ 状态仍是 ``BLOCKED``
+    （``value=null``，**不是** 0）。但**阈值与来源照实带出**——
+    「判据存在、阈值未校准」和「还没做」在报告里必须长得不一样，
+    否则 TBD-7 永远停在"不可判"的死状态（D2 的裁决理由）。
+    """
+    runner_ctx: RunnerContext = ctx["ctx"]
+    ceiling, source = resolve_cost_ceiling()
+    return CriterionResult(
+        criterion=C_COST,
+        status=CriterionStatus.BLOCKED,
+        value=None,
+        provenance=_provenance(
+            runner_ctx,
+            dataset_version="n/a（cost_metrics 未落库，无分母）",
+            kg_version="n/a",
+            corpus="n/a（无成本数据）",
+        ),
+        unit=UNIT_TOKEN_PER_DOC,
+        blocked_by="P5-M6（cost_metrics 表未建、token 未落库 ⇒ 无真实分母）",
+        threshold=float(ceiling),
+        threshold_source=source,
+        verdict=Verdict.INDETERMINATE,
+        detail={
+            "ceiling": ceiling,
+            "ceiling_source": source,
+            "note": "阈值来自 config 推算（provisional），**不是**达标线；"
+            "校准命令 scripts/eval_acceptance.py --calibrate",
+        },
+    )
+
+
+def eval_incremental_cost_ratio(ctx: dict[str, Any]) -> CriterionResult:
+    """**C3-b 增量 / 全量成本比**：阈值按矩阵「显著 < 1.00」（**D3：不落 config**）。"""
+    runner_ctx: RunnerContext = ctx["ctx"]
+    return CriterionResult(
+        criterion=C_COST_RATIO,
+        status=CriterionStatus.BLOCKED,
+        value=None,
+        provenance=_provenance(
+            runner_ctx,
+            dataset_version="n/a（无增量重算，无分母）",
+            kg_version="n/a",
+            corpus="n/a（无成本数据）",
+        ),
+        blocked_by="P5-M6（增量重算未实现）",
+        threshold=COST_RATIO_SIGNIFICANT,
+        threshold_source=THRESHOLD_CALIBRATED,
+        verdict=Verdict.INDETERMINATE,
+        detail={
+            "threshold_origin": "矩阵 §5.1「显著 < 1.00」，人工裁决定值（非实测推算）",
+            "note": "D3：本阈值**不落 config**（无真实消费者 ⇒ 落了即幽灵配置）",
+        },
+    )
+
+
 def _register_builtin_criteria() -> None:
     """注册内置判据（**唯一真源**：新增判据必须在此登记）。"""
     for name, evaluator in (
@@ -552,13 +648,23 @@ def _register_builtin_criteria() -> None:
     for name, evaluator in zip((C_RECALL, C_FPR), affiliation_evaluators, strict=True):
         if name not in _registered():
             register_criterion(name, evaluator)
-    for name, reason in (
-        (C_GAIN, "baseline-not-implemented（A1：RAG 基线检索未实现，C1 分母不存在）"),
-        (C_COST, "P5-M6（cost_metrics 表未建，token 未落库）"),
-        (C_COST_RATIO, "P5-M6（增量重算未实现）"),
+    if C_GAIN not in _registered():
+        register_criterion(
+            C_GAIN,
+            PlaceholderEvaluator(
+                C_GAIN,
+                blocked_by="baseline-not-implemented"
+                "（A1：RAG 基线检索未实现，C1 分母不存在）",
+            ),
+        )
+    #: C3-a / C3-b **不用** PlaceholderEvaluator：它们**有阈值**（TBD-7 已落 config），
+    #: 只是没有值 ⇒ 用真 evaluator 带出 threshold / threshold_source。
+    for name, evaluator in (
+        (C_COST, eval_single_doc_cost),
+        (C_COST_RATIO, eval_incremental_cost_ratio),
     ):
         if name not in _registered():
-            register_criterion(name, PlaceholderEvaluator(name, blocked_by=reason))
+            register_criterion(name, evaluator)
 
 
 def _registered() -> dict[str, Any]:
@@ -656,11 +762,15 @@ __all__ = [
     "C_GAIN",
     "C_MULTIHOP",
     "C_RECALL",
+    "ENV_COST_CEILING",
     "RunnerContext",
     "ask",
     "dataset_version_map",
+    "eval_incremental_cost_ratio",
+    "eval_single_doc_cost",
     "gold_findings",
     "question_count",
+    "resolve_cost_ceiling",
     "run",
     "self_test",
     "upgrade_todo",
