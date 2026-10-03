@@ -7,11 +7,20 @@
   以及行为围栏——**移除 license 文件 ⇒ 受保护端点 403 `LICENSE_MISSING` 且拒绝落审计**。
 - **G-24**（DR-B9 RBAC 三粒度）：**角色 × 资源 × 操作**矩阵 + 端点强制校验。
 
-> ⚠️ **当前两者主体仍零代码** ⇒ 断言必然失败 ⇒ XFAIL。ADR-0006（License）尚未落地、
-> RBAC 的 `roles` / `user_roles` 与端点强制校验均未实现。
-> 📌 **2026-10-01（P2-A）更新**：RBAC 的前置 `users` 表**已建**（DR-B13 / G-18 已转正），
-> 它**不再是**本文件的阻塞项——但"前置解除"不等于"RBAC 开始存在"。
-> 骨架先就位的价值：把**验收判据钉死**，避免开工时把"写了点东西"当成"做完了"。
+> **G-23（License）仍零代码** ⇒ 两条断言挂起（ADR-0006 未落地）。
+>
+> 📌 **G-24 已转正（2026-10-03，P2-B）**：`roles` / `user_roles` 两张表 +
+> 角色 × 资源 × 操作矩阵 + 路由层强制校验入口 + 拒绝写 `permission.denied` 已落地，
+> 本条由 XPASS 转常驻门禁，判据同时**补强**（只摘 xfail 不算转正）。
+> 另加两条：`test_g24_roles_rls_exemption_is_declared_and_bounded`
+> （ADR-0003 §4.1 / spec §4.2 的 RLS 豁免三条机械断言）与
+> `test_g24_role_name_set_is_frozen`（角色集合封闭）。
+>
+> ⚠️ **转正的边界，不许外推**：
+> ① 本条**不断言具体权限值**——赋权属实现决策，取值与理由登记在
+> `changes/P2/integration-log.md`；
+> ② **RLS 策略一行未写**（DR-B4 归 **P3**），本批只做 `roles` 的豁免**登记**；
+> ③ 真实账号链路（登录 / 授权管理界面）归 **P2-C**，当前授权记录仍由测试夹具播种。
 """
 
 from __future__ import annotations
@@ -20,6 +29,7 @@ import re
 from pathlib import Path
 
 import pytest
+from sqlalchemy import CheckConstraint
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
@@ -137,18 +147,20 @@ def test_g23_missing_license_blocks_requests() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "G-24 / DR-B9：RBAC 未落地（缺角色 × 资源 × 操作矩阵 + 端点强制校验）；"
-        "前置 `users` 表已于 P2-A 建好（2026-10-01），本条卡的纯粹是 RBAC 本体"
-    ),
-)
 def test_g24_rbac_three_granularity_matrix() -> None:
-    """角色 × 资源 × 操作 三粒度矩阵必须**存在且端点强制校验**。
+    """✅ **已转正（2026-10-03，P2-B）**：角色 × 资源 × 操作矩阵存在 **且** 端点强制校验。
 
     只建角色表不算 RBAC——**端点不强制校验**的话，权限就只是数据库里的一列装饰。
-    因此本条同时断言：存在矩阵定义，且路由层有**统一的强制入口**（依赖 / 中间件）。
+    所以本条**同时**断言两侧的**具体落点**（不是"源码里出现过某个字样"就算数）：
+
+    - 矩阵侧：`roles` / `user_roles` 两张表在 ORM 元数据里，且 `user_roles` 带
+      `doc_scope` / `scene_scope`（三粒度的后两格）+ `org_id` 打头索引；
+    - 入口侧：`app/services/rbac/deps.py` 存在 `require_permission`，并且**真的挂**
+      在受保护端点上（后者由 `tests/test_rbac.py` 按路由对象逐条核对——静态扫源码
+      证明不了"挂在哪个端点上"，删掉某个端点的依赖它照样绿）。
+
+    ⚠️ **本条不断言具体权限值**：G-24 的判据是「矩阵存在 + 入口存在」，
+    具体赋权属实现决策（取值与理由登记在 `changes/P2/integration-log.md`）。
     """
     app_sources = _load_tree(APP_ROOT)
     models_src = MODELS.read_text(encoding="utf-8")
@@ -159,6 +171,10 @@ def test_g24_rbac_three_granularity_matrix() -> None:
         missing.append(
             "`users` 表（DR-B13 / G-18 前置，SSO / RBAC / License 席位三者共同依赖）"
         )
+    if not re.search(r"class\s+Role\b", models_src):
+        missing.append("`roles` 表（M5 §4.2，全局角色字典表）")
+    if not re.search(r"class\s+UserRole\b", models_src):
+        missing.append("`user_roles` 表（M5 §4.3，三粒度的载体）")
 
     if not _any_match(app_sources, r"(class|enum)\s+\w*Role\w*\b"):
         missing.append("角色定义（Role 枚举 / 常量）")
@@ -176,3 +192,77 @@ def test_g24_rbac_three_granularity_matrix() -> None:
         missing.append("路由层的**强制校验入口**（依赖 / 中间件）——否则矩阵形同虚设")
 
     assert not missing, "RBAC 三粒度未达标（DR-B9）：\n  - " + "\n  - ".join(missing)
+
+    # -- 判据补强（与 P2-A 给 G-18 补判据同一动作：只摘 xfail 不算转正）--
+    from app.db.models import Base
+
+    user_roles = Base.metadata.tables.get("user_roles")
+    assert user_roles is not None, "user_roles 表不在 ORM 元数据里"
+    columns = {column.name for column in user_roles.columns}
+    for granularity in ("doc_scope", "scene_scope"):
+        assert granularity in columns, (
+            f"user_roles 缺 {granularity} ——缺了就只剩「角色」一格，不是三粒度"
+        )
+    leading = {next(iter(index.columns.keys())) for index in user_roles.indexes}
+    assert "org_id" in leading, (
+        "user_roles 缺少 org_id 打头的索引（ADR-0003 §3.1 第 1 条）："
+        f"现有索引首列为 {sorted(leading)}"
+    )
+
+
+def test_g24_roles_rls_exemption_is_declared_and_bounded() -> None:
+    """`roles` 的 **RLS 豁免**三条机械断言（`specs/m5-permission-audit.md` §4.2）。
+
+    原文要求是「豁免必须在代码评审中被显式确认」，而 P2-B 是**无人值守**批次、
+    过程中没有人类 CR ⇒ 按 **2026-10-03 裁决（用户选 A）** 改为
+    「**代码内显式声明 + 机械断言 + 事后 CR 抽检**」：**要求未放松**
+    （仍须显式、仍须给理由、仍被断言盯住），只变更履行载体。
+
+    ① 不得出现租户业务列；② 仅允许 4 种系统预置角色；③ 豁免清单 == 实际模型。
+    """
+    from app.db.models import RLS_EXEMPT_TABLES, Base
+    from app.services.rbac.roles import ROLE_NAME_VALUES
+
+    roles = Base.metadata.tables.get("roles")
+    assert roles is not None, "roles 表不在 ORM 元数据里"
+
+    # ① 全局字典表**不得**出现租户业务列——出现即说明字典表被业务污染
+    assert "org_id" not in {column.name for column in roles.columns}, (
+        "roles 出现了 org_id：全局字典表被租户业务污染，RLS 豁免的正当性就没了"
+    )
+
+    # ② 仅允许 spec §4.2 的 4 种预置角色（DB 侧由 ck_roles_name 钉死）
+    checks = [
+        str(constraint.sqltext)
+        for constraint in roles.constraints
+        if isinstance(constraint, CheckConstraint)
+    ]
+    assert checks, "roles 缺少 name 的 CheckConstraint（预置角色集合无人把守）"
+    assert all(
+        any(f"'{name}'" in check for check in checks) for name in ROLE_NAME_VALUES
+    ), f"roles 的 CheckConstraint 未覆盖全部预置角色：{checks}"
+
+    # ③ 豁免清单 == 实际声明豁免的模型（防偷偷加表享受豁免）
+    declared = {
+        mapper.class_.__tablename__
+        for mapper in Base.registry.mappers
+        if getattr(mapper.class_, "__rls_exempt__", False)
+    }
+    assert declared == set(RLS_EXEMPT_TABLES), (
+        f"RLS 豁免登记 {sorted(RLS_EXEMPT_TABLES)} 与模型实际声明 {sorted(declared)} "
+        "不一致——新增豁免必须同时改两处（ADR-0003 §3.1 / spec §4.2）"
+    )
+
+
+def test_g24_role_name_set_is_frozen() -> None:
+    """角色集合**封闭**：模型常量、枚举、预置种子三处必须逐字一致。
+
+    P2-B 边界写了「不得新增角色名」。三处任一被单独改动 ⇒ 红。
+    """
+    from app.db.models import ROLE_NAME_VALUES as MODEL_VALUES
+    from app.services.rbac.policy import ROLE_PERMISSIONS
+    from app.services.rbac.roles import PRESET_ROLES, ROLE_NAME_VALUES, RoleName
+
+    assert tuple(MODEL_VALUES) == tuple(ROLE_NAME_VALUES) == tuple(RoleName)
+    assert [name for name, _ in PRESET_ROLES] == list(ROLE_NAME_VALUES)
+    assert set(ROLE_PERMISSIONS) == set(ROLE_NAME_VALUES)

@@ -104,6 +104,20 @@
 | `granted_by` | UUID | 是 | 授权人 |
 | `granted_at` | TIMESTAMP | 是 | - |
 
+> 📌 **落地状态（2026-10-03，P2-B 追加登记，不改动上表原文）**
+>
+> - 两张表已建：迁移 `7d2e91f4ab35`（**幂等**：以 `inspect` 判表存在，可重放；
+>   `roles` 的 4 种预置角色在迁移里播种，按 `name` 去重），`user_roles` **不播种**
+>   （真实授权链路归 P2-C，本批不编造授权数据）。
+> - **强制校验入口**：`app/services/rbac/deps.py::require_permission`，挂在 8 个受保护端点上
+>   （逐条核对见 `backend/tests/test_rbac.py`）。三粒度判定在
+>   `app/services/rbac/service.py::evaluate`：先角色、再资源 × 操作、最后收窄到场景 / 文档。
+> - **§3 验收 1 的两个半边都已达成**：无权限 ⇒ 403 `FORBIDDEN` + 写
+>   `audit_log(action=permission.denied)`（`app/services/audit.py` 调用方登记集合第 ④ 项）。
+> - 类型差异按既有先例 **A9** 收敛并登记（JSONB → SQLAlchemy `JSON`、主键取 `Uuid`）；
+>   差异与遗留见 `changes/P2/integration-log.md`。
+> - ⚠️ **未做**：RLS 策略（归 **P3**）；`roles` 仅做豁免**登记**。
+
 ### 4.4 PostgreSQL 表 `audit_log`（新增）
 
 | 字段 | 类型 | 必填 | 敏感 | 索引 | 说明 |

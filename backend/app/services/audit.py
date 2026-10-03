@@ -2,11 +2,13 @@
 
 三条硬纪律（proposal「硬约束」+「风险」）：
 
-1. **写入点 = 审计中间件 + 两个登记过的直写点**（决策 **A1** + 批次 **A14 / A12**）：
-   不是各服务显式埋点——埋点必然漏，而「漏埋」比「多写」更难被发现。本模块只提供
-   :func:`record_audit_entry` 这一个写入原语。调用方**登记集合**（不多不少）：
+1. **写入点 = 审计中间件 + 三个登记过的直写点**（决策 **A1** + 批次 **A14 / A12** +
+   P2-B）：不是各服务显式埋点——埋点必然漏，而「漏埋」比「多写」更难被发现。
+   本模块只提供 :func:`record_audit_entry` 这一个写入原语。调用方**登记集合**（不多不少）：
    ① ``AuditMiddleware``（全量写）；② slowapi 429 handler（``rate_limit.triggered``，
-   A14）；③ ``agents.py`` fail-open 逃生阀分支（``tenant_leak.warn``，A12）。
+   A14）；③ ``agents.py`` fail-open 逃生阀分支（``tenant_leak.warn``，A12）；
+   ④ ``app/services/rbac/service.py::record_permission_denied``（``permission.denied``，
+   M5 §3 验收 1 —— **拒绝必须留痕**，只返 403 不留痕不算完成）。
    新增调用方必须先在此登记。
 2. **`detail` 只写结构化字段**：**绝不写响应体原文**（决策 **A5**）。本批次不引入
    脱敏器（属 H5 / S11），所以宁可不写，也不先把原文写进库再想办法脱敏。

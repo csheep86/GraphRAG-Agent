@@ -157,14 +157,24 @@ cd backend && uv run python scripts/check_startup_readiness.py
 - **三粒度** = 角色（`role_id`）+ 文档（`doc_scope`）+ 场景（`scene_scope`），
   出处 `docs/02-product-outline.md` §3.2 第 1 条「RBAC + ABAC 最小组合」
 
-- [ ] `roles` 表（全局字典表，**RLS 显式豁免**）⇒ 📌 **按 2026-10-03 履行方式裁决（用户选 A）**：
+- [x] `roles` 表（全局字典表，**RLS 显式豁免**）⇒ 📌 **按 2026-10-03 履行方式裁决（用户选 A）**：
       **代码内显式声明 + 机械断言 + 事后 CR 抽检**（本批无人值守 ⇒ 过程中无人类 CR，故变更履行载体），
       三条断言见 `specs/m5-permission-audit.md` §4.2；`ADR-0003` §4.1 表与 `ADR-0006` 已同步登记
-- [ ] `user_roles` 表（含 `doc_scope` / `scene_scope` JSONB，`org_id` 打头索引）
-- [ ] 路由层**强制校验入口**（依赖 / 中间件）—— **没有它，权限只是库里的一列装饰**
-- [ ] 拒绝时写 `audit_log`（`action=permission.denied`）—— §3 验收 1 的**显式要求**；
+      ⇒ 实测：声明写在 `app/db/models.py::Role` docstring；三条断言落在
+      `test_g24_roles_rls_exemption_is_declared_and_bounded`（2026-10-03 全绿）
+- [x] `user_roles` 表（含 `doc_scope` / `scene_scope` JSONB，`org_id` 打头索引）
+      ⇒ `doc_scope` / `scene_scope` 用 SQLAlchemy `JSON`（类型差异按 **A9** 收敛登记）；
+      索引 `ix_user_roles_org_id_user_id` / `ix_user_roles_org_id_role_id` 均 `org_id` 打头
+- [x] 路由层**强制校验入口**（依赖 / 中间件）—— **没有它，权限只是库里的一列装饰**
+      ⇒ `app/services/rbac/deps.py::require_permission`，挂在 **8 个**受保护端点上；
+      逐条核对见 `tests/test_rbac.py::test_protected_routes_declare_the_enforcement_entry`
+- [x] 拒绝时写 `audit_log`（`action=permission.denied`）—— §3 验收 1 的**显式要求**；
       **只返 403 而不留痕 = 未完成**
-- [ ] 出口：`test_g24_rbac_three_granularity_matrix` 转正（**先真通过，再摘 xfail**）
+      ⇒ `app/services/rbac/service.py::record_permission_denied`，已登记为
+      `app/services/audit.py` 调用方集合第 ④ 项
+- [x] 出口：`test_g24_rbac_three_granularity_matrix` 转正（**先真通过，再摘 xfail**）
+      ⇒ 2026-10-03：先跑到真通过（XPASS），再摘 xfail 并**补强判据**，另加 2 条；
+      行为侧 14 条落在新增的 `tests/test_rbac.py`
 
 **实施边界（无人值守 ⇒ 先把自由度钉死，防自由发挥）**
 

@@ -42,6 +42,8 @@ from app.services.affiliation import (
     list_suspicions,
     patch_suspicion_status,
 )
+from app.services.rbac.deps import require_permission
+from app.services.rbac.policy import ACTION_WRITE, RESOURCE_AFFILIATION
 from app.tasks.manager import TaskManager
 from app.tasks.types import TaskSpec
 
@@ -68,6 +70,7 @@ router = APIRouter(prefix="/affiliation", tags=["affiliation"])
     ),
     responses={**TENANT_ERROR_RESPONSES, **VALIDATION_ERROR},
     status_code=202,
+    dependencies=[require_permission(RESOURCE_AFFILIATION, ACTION_WRITE)],
 )
 async def detect_affiliation(
     payload: AffiliationDetectRequest,
@@ -230,6 +233,7 @@ async def list_affiliation_suspicions(
         **AFFILIATION_SUSPICION_NOT_FOUND,
         **VALIDATION_ERROR,
     },
+    dependencies=[require_permission(RESOURCE_AFFILIATION, ACTION_WRITE)],
 )
 async def review_affiliation_suspicion(
     suspicion_id: UUID,

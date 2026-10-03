@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from uuid import UUID
 
 _TMP_DIR = Path(tempfile.mkdtemp(prefix="graphrag-backend-tests-"))
 
@@ -149,6 +150,62 @@ def graph_reasoning_path_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         GraphService, "fetch_anchor_entity_ids", lambda _self, **_kwargs: ()
     )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def rbac_default_actor_is_admin() -> None:
+    """给**默认 dev 主体**在两个租户里各授一份 `admin`（P2-B 的测试脚手架）。
+
+    **为什么必须有这条**：P2-B 起受保护端点会走 RBAC 强制校验，而 dev token /
+    dev header 解析出来的主体在 `user_roles` 里**天然没有任何授权**
+    （真实账号链路归 P2-C）⇒ 不播种的话全站受保护端点一律 403，
+    **818 条既有用例会为了与己无关的原因集体变红**。
+
+    **它不是"绕过护栏"**：校验照常执行、矩阵照常生效，只是把「这个主体是谁」
+    补上——与 :func:`pg_active_kg_version` 桩掉一个 ready 版本是同一类动作
+    （不打桩会让基础设施故障伪装成别的语义）。
+
+    **为什么两个 org 都授**：``cross_tenant_headers`` **只换 org 不换 actor**
+    （见本文件 :data:`OTHER_ORG_ID`）——不授 org B，跨租户用例就会被 RBAC 抢在
+    应用层 `org_id` 过滤**之前**拦掉，于是「跨租户返回空 / 403」的既有判据
+    （G-9 / G-10 / `test_documents.py`）虽然仍然绿，验的却不再是它们要验的那层。
+
+    ⚠️ **它同时意味着**：默认主体是 admin ⇒ 默认路径**验不到**拒绝分支。
+    拒绝分支由 `tests/test_rbac.py` 用**另外的 actor id** 专测（见该文件）。
+    """
+    from app.core.config import get_settings
+    from app.db.models import Role, UserRole
+    from app.db.session import SessionLocal, init_db
+    from app.services.rbac import ensure_preset_roles
+
+    settings = get_settings()
+    # autouse 夹具跑在 `client`（建 app → lifespan → create_all）**之前**，
+    # 此时测试库可能还是空的 ⇒ 先自己建表（create_all 幂等，不会覆盖已有数据）。
+    init_db()
+    with SessionLocal() as session:
+        ensure_preset_roles(session)
+        roles = {row.name: row.id for row in session.query(Role).all()}
+        admin_id = roles["admin"]
+        for org_id in (settings.default_org_id, UUID(OTHER_ORG_ID)):
+            exists = (
+                session.query(UserRole)
+                .filter(UserRole.org_id == org_id)
+                .filter(UserRole.user_id == settings.default_actor_id)
+                .filter(UserRole.role_id == admin_id)
+                .first()
+            )
+            if exists is None:
+                session.add(
+                    UserRole(
+                        org_id=org_id,
+                        user_id=settings.default_actor_id,
+                        role_id=admin_id,
+                        doc_scope=None,
+                        scene_scope=None,
+                        granted_by=settings.default_actor_id,
+                    )
+                )
+        session.commit()
 
 
 @pytest.fixture

@@ -44,6 +44,8 @@ from app.services.kg.versioning import (
     KgVersionNotActivatableError,
     KgVersionNotFoundError,
 )
+from app.services.rbac.deps import require_permission
+from app.services.rbac.policy import ACTION_WRITE, RESOURCE_GRAPH
 
 #: `graph` 标签单独建路由分组 —— 不与 `documents` 混合，便于 OpenAPI 标签筛选
 router = APIRouter(tags=["graph"])
@@ -197,6 +199,7 @@ async def get_entity_detail(
         **KG_VERSION_NOT_ACTIVE,
         **NOT_IMPLEMENTED,
     },
+    dependencies=[require_permission(RESOURCE_GRAPH, ACTION_WRITE)],
 )
 async def activate_kg_version(
     version: str,

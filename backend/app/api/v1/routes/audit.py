@@ -28,6 +28,8 @@ from app.services.audit import (
     list_audit_logs,
     list_audit_logs_by_trace,
 )
+from app.services.rbac.deps import require_permission
+from app.services.rbac.policy import ACTION_READ, RESOURCE_AUDIT
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -51,6 +53,8 @@ router = APIRouter(prefix="/audit", tags=["audit"])
         "`action=audit.list` 的记录——该条**不会出现在本次响应里**（它在本请求之后才写入）。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **VALIDATION_ERROR},
+    # 审计是「留痕对象」本身，只对有审计权限的角色开放（viewer / 无授权一律 403）
+    dependencies=[require_permission(RESOURCE_AUDIT, ACTION_READ)],
 )
 async def list_audit_logs_endpoint(
     identity: CurrentIdentity,
@@ -106,6 +110,8 @@ async def list_audit_logs_endpoint(
         "有全部 7 条」——本接口对应的是**单次 HTTP 请求**的留痕。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **VALIDATION_ERROR},
+    # 与 GET /audit 同一资源：审计留痕对象只对有审计权限的角色开放
+    dependencies=[require_permission(RESOURCE_AUDIT, ACTION_READ)],
 )
 async def list_audit_logs_by_trace_endpoint(
     trace_id: UUID,

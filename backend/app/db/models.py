@@ -29,6 +29,16 @@ Sprint 9.5 批次 A2 新增 `ontology_schemas` 表（M6 §4.1 的**最小子集*
 P2 批次 A（2026-10-01）新增 `users` 表（M5 §4.1 / DR-B13）：它是 SSO（DR-D9）/
 RBAC（DR-B9）/ License 席位（DR-C1）三者的**共同前置**，按 RK-1 裁决前置到 P2 第一步。
 本批**只落表与迁移**：当前**没有任何代码读取它**（接线归 P2-B / P2-C）。
+
+P2 批次 B（2026-10-03）新增 `roles` / `user_roles` 两张表（M5 §4.2 / §4.3 / DR-B9）：
+
+- `roles` 是**全局角色字典表**，按 ADR-0003 §3.1 第 9 行**显式豁免 RLS**
+  （豁免声明 / 理由 / 三条机械断言见 `specs/m5-permission-audit.md` §4.2，
+  本批按 2026-10-03 裁决以「代码内显式声明 + 机械断言」履行）；
+- `user_roles` 带 `org_id` 且**复合索引以 `org_id` 打头**（ADR-0003 §3.1 第 1 条），
+  `doc_scope` / `scene_scope` 承载**文档级 / 场景级**两粒度；
+- **本批不做 RLS 策略**（DR-B4 归 **P3**）：这里只做 `roles` 的豁免**登记**，
+  策略本身一行不写。
 """
 
 from __future__ import annotations
@@ -57,6 +67,20 @@ DOCUMENT_STATUS_VALUES = ("pending", "processing", "completed", "failed")
 KG_VERSION_STATUS_VALUES = ("pending", "building", "ready", "failed")
 #: `users.status` 的两档（逐字取 `specs/m5-permission-audit.md` §4.1，无第三态）
 USER_STATUS_VALUES = ("active", "disabled")
+
+#: `roles.name` 的**封闭集合**（逐字取 `specs/m5-permission-audit.md` §4.2）。
+#: P2-B 边界：**不得新增角色名**——要加角色须先改 spec §4.2，再改本元组与
+#: `app/services/rbac/roles.py::PRESET_ROLES`，最后由 G-24 的机械断言复核。
+ROLE_NAME_VALUES = ("admin", "auditor", "analyst", "viewer")
+
+#: **RLS 豁免登记表**（ADR-0003 §3.1 第 9 行 / `specs/m5-permission-audit.md` §4.2）。
+#:
+#: 只有**全局字典表**（无租户维度）才配进本集合；进来了就**不参与** RLS 隔离，
+#: 因此它是一个**高危集合**：偷偷往里加表 = 开一个不受租户约束的口子。
+#: ⇒ 两条机械约束（由 `tests/test_guardrails_compliance.py` 的 G-24 组断言盯住）：
+#:   ① 本集合必须与「模型上声明了 ``__rls_exempt__`` 的表」**逐字相等**（防偷偷加表）；
+#:   ② `roles` **不得出现租户业务列**（无 `org_id`）——出现即说明字典表被业务污染。
+RLS_EXEMPT_TABLES: frozenset[str] = frozenset({"roles"})
 
 
 def utcnow() -> datetime:
@@ -790,4 +814,92 @@ class User(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+class Role(Base):
+    """`roles` 表（M5 §4.2）：**全局角色字典表**，RLS **显式豁免**。
+
+    **豁免声明（本段就是 ADR-0003 §4.1 要求的"显式声明"，不是注释习惯）**：
+
+    - **豁免对象**：`roles`；
+    - **理由**：它是**无租户维度**的**系统预置字典表**——全租户共用同一套角色定义，
+      表内**仅**存放 spec §4.2 的 4 种系统预置角色（`admin / auditor / analyst / viewer`），
+      **禁止**写入任何租户业务数据。`user_roles`（真正的租户授权表）**不在**豁免集合内，
+      它带 `org_id` 并参与隔离；
+    - **风险与约束**：豁免意味着本表**不受 RLS 约束**，因此它被三条机械断言盯住
+      （见 `specs/m5-permission-audit.md` §4.2 第 2 条）：
+      ① 不得出现租户业务列（本表**没有** `org_id`）；
+      ② 表内仅允许 4 种预置角色（`ck_roles_name` 在 DB 层钉死）；
+      ③ 豁免清单与实际模型一致（见 :data:`RLS_EXEMPT_TABLES` 的注释）。
+      ⇒ **新增第 5 个角色名或给本表加 `org_id`，CI 必红。**
+
+    ⚠️ **RLS 策略本身归 P3（DR-B4）**：本批只做豁免**登记**，不建策略。
+    """
+
+    __tablename__ = "roles"
+    #: 参与 :data:`RLS_EXEMPT_TABLES` 的双向核对（G-24 断言 ③）
+    __rls_exempt__ = True
+    __table_args__ = (
+        CheckConstraint(
+            "name IN ('admin', 'auditor', 'analyst', 'viewer')",
+            name="ck_roles_name",
+        ),
+        UniqueConstraint("name", name="uq_roles_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    #: 角色名（CheckConstraint 限 :data:`ROLE_NAME_VALUES` 四档；唯一）
+    name: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: 角色说明（可空：预置角色的说明由 `app/services/rbac/roles.py::PRESET_ROLES` 提供）
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class UserRole(Base):
+    """`user_roles` 表（M5 §4.3）：**租户内**的授权记录，三粒度的载体。
+
+    三粒度 = **角色**（`role_id`）+ **文档**（`doc_scope`）+ **场景**（`scene_scope`）：
+
+    - `doc_scope`：``{"doc_ids": [...], "tags": [...]}``（JSON，可空 = 不限）；
+    - `scene_scope`：``["affiliation", "qa"]``（JSON 数组，可空 = 不限）。
+
+    **本表带 `org_id` 且索引以 `org_id` 打头**（ADR-0003 §3.1 第 1 条），
+    与 `roles` 相反——它是租户数据，**不**在 :data:`RLS_EXEMPT_TABLES` 里。
+
+    两点类型收敛（与 ADR-0003 §3.1 差异表 **A9** 同源：先例已裁决的收敛方式沿用，
+    不重开讨论，差异登记在 `changes/P2/integration-log.md`）：
+
+    1. spec 写 **JSONB**，本仓既有 JSON 列（`kg_versions.source_doc_ids` 等）一律用
+       SQLAlchemy ``JSON``（映射 PG ``json``）——保持方言中立，为 ADR-0003 §3.7 的
+       **信创降级**留退路（非 PG 内核未必有 JSONB）；
+    2. 主键取 ``Uuid``（全仓一致），不取 spec 未明写的整型。
+    """
+
+    __tablename__ = "user_roles"
+    __table_args__ = (
+        # ADR-0003 §3.1：复合索引必须 org_id 打头
+        Index("ix_user_roles_org_id_user_id", "org_id", "user_id"),
+        Index("ix_user_roles_org_id_role_id", "org_id", "role_id"),
+        # 同一租户内「同一用户 + 同一角色」只授权一次（重复授权无意义）
+        UniqueConstraint(
+            "org_id", "user_id", "role_id", name="uq_user_roles_org_user_role"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    #: 租户隔离键（ADR-0003）
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 被授权的主体（`users.id`；**不建外键**——与 `documents.uploaded_by` 同口径，
+    #: 见 P2-A 遗留 2）
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    #: 角色（`roles.id`）
+    role_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    #: **文档级**粒度：``{"doc_ids": [...], "tags": [...]}``；``None`` = 不限
+    doc_scope: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: **场景级**粒度：``["affiliation", "qa", ...]``；``None`` = 不限
+    scene_scope: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    #: 授权人（spec §4.3 标必填；系统预置时取 `DEFAULT_ACTOR_ID`）
+    granted_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
     )

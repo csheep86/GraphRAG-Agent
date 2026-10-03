@@ -42,6 +42,12 @@ from app.services.graphs import (
     GraphUnavailableError,
     NoActiveKgVersionError,
 )
+from app.services.rbac.deps import require_permission
+from app.services.rbac.policy import (
+    ACTION_READ,
+    ACTION_WRITE,
+    RESOURCE_DOCUMENT,
+)
 from app.tasks.manager import TaskManager
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -73,6 +79,7 @@ _LIST_STATUS_VALUES = ("pending", "processing", "completed", "failed")
         "PG 唯一真源；Neo4j 不可用时本接口仍可正常返回——不依赖图谱存储。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **VALIDATION_ERROR},
+    dependencies=[require_permission(RESOURCE_DOCUMENT, ACTION_READ)],
 )
 async def list_documents_endpoint(
     identity: CurrentIdentity,
@@ -151,6 +158,7 @@ async def list_documents_endpoint(
         "认不出即 `null`——不代填、不猜（ADR-0005 §4 / R4）。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **FILE_TOO_LARGE, **UNSUPPORTED_MEDIA_TYPE},
+    dependencies=[require_permission(RESOURCE_DOCUMENT, ACTION_WRITE)],
 )
 async def upload_document(
     file: Annotated[
@@ -196,6 +204,8 @@ async def upload_document(
         "**跨租户访问返回 403**（`FORBIDDEN`），不返回 404——按 M5 §3 验收 1 的显式要求。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **DOCUMENT_NOT_FOUND},
+    # 文档级粒度：路径上的 document_id 会被拿来比对 user_roles.doc_scope
+    dependencies=[require_permission(RESOURCE_DOCUMENT, ACTION_READ)],
 )
 async def read_document_status(
     document_id: UUID,
@@ -234,6 +244,7 @@ async def read_document_status(
         **KG_VERSION_NOT_ACTIVE,
         **NOT_IMPLEMENTED,
     },
+    dependencies=[require_permission(RESOURCE_DOCUMENT, ACTION_READ)],
 )
 async def read_document_graph(
     document_id: UUID,
@@ -304,6 +315,7 @@ async def read_document_graph(
         "产物缺失或其中无该 `chunk_id` → 404 `NOT_FOUND`。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **CHUNK_NOT_FOUND},
+    dependencies=[require_permission(RESOURCE_DOCUMENT, ACTION_READ)],
 )
 async def read_document_chunk(
     document_id: UUID,
