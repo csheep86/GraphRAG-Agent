@@ -178,15 +178,19 @@ uv run python scripts/eval_acceptance.py --live --criteria c2_c_citation_coverag
 
 ### E2.6 chunk 数漂移（230 vs 224）的处置：**不改写历史数字**
 
-用户问「探测出的漂移要不要改原脚本」——我的结论是**改，但不是把 230 改成 224**：
+用户问「探测出的漂移要不要改原脚本」——**最终结论 = 撤**（改过一版 `a7495cfd`，已 `git revert` 为 `dd2a56c`）：
 
 - 230 **不是笔误**，是 2026-09-30 那次 `probe_e0_active.py` 的**实测留痕**
   （旁证：`tests/test_langextract_chunks.py` 记「230 chunks → 去重后 205」）；
   把它改成 224 = **伪造那次 probe 的记录**。
 - 但它会被**误用**：TBD-7 的阈值推演拿它当分母。
-- ⇒ 处置：注释处**补一行**（230 = 历史值 / 当前 224 / 一律读 `MANIFEST.json`），
-  并把 MANIFEST 立为**单一真源**（补 `documents=15 / entities=2987 / measured_at /
-  is_single_source_of_truth=true`）。
+- ⇒ **最终处置（撤）**：脚本**恢复原样**；改为
+  ① MANIFEST 立为**单一真源**（补 `documents=15 / entities=2987 / measured_at /
+  `is_single_source_of_truth=true`）；
+  ② **防误用的警示落在可改处**——`config.py` 的 `eval_single_doc_token_ceiling`
+  注释（E3 落地）明写「只准读 MANIFEST 的 224，脚本里的 230 是历史值、不可当分母」。
+  **为什么不留那笔**：本批红线明写「不改该脚本」，留它等于用「注释无害」为由放宽红线；
+  而目的（防 230 被当分母）已由 ② 等价达成。详见 §9 **L2**。
 
 ### E2.7 ✅ 用户拍板后：**重建演示数据 + 核对 gold id 空间 ⇒ 三条判据拿到真值**
 
@@ -256,13 +260,55 @@ MinerU 侧排队极慢（进程 18 分钟只用了 2.8 秒 CPU）⇒ **停掉**�
 
 ## §E3 — TBD-7 落 config + 判据接线 + 文档回填
 
-**状态：未开工，待回填。**
+### E3.1 `config.py` 字段 + **消费者**（2026-10-03 落地）
 
-回填时必须包含：① `config.py` 字段与**消费者代码行**（文件:行号）；② `.env.example` 同步行；
-③ `check_seams.py` ERROR 0（**settings.* 有消费者**判据）；
-④ **红线复核证据**：`git diff --stat specs/m6-ontology-incremental.md` ⇒ **应为空**（§3.4 一字未改）；
-⑤ 矩阵 §5.1 / DR-D10 / `dev-doc-status.md` 的回填位置与 A1–A7 新编号；
-⑥ 前端 `gen:api` + `typecheck` + `lint` 结果（**零 diff**）。
+| 项 | 落点 |
+|---|---|
+| 字段 | `backend/app/core/config.py` → `eval_single_doc_token_ceiling: int = Field(default=32_000, gt=0)` |
+| **消费者 ①** | `backend/app/evaluation/runner.py::resolve_cost_ceiling()`（C3-a 阈值与来源） |
+| **消费者 ②** | `backend/app/evaluation/runner.py::eval_single_doc_cost()`（判据带出 `threshold` / `threshold_source`） |
+| **消费者 ③** | `backend/scripts/eval_acceptance.py::_calibrate()`（打印当前 ceiling + **当场判一次**实测均值 vs 阈值） |
+| `.env.example` | 新增 `EVAL_SINGLE_DOC_TOKEN_CEILING=32000`（含 provisional 说明 + 校准命令 + 「230 不可当分母」警示） |
+
+**为什么阈值来源要分两档**（`resolve_cost_ceiling`）：
+``Settings`` 分不出「默认值」与「人显式设的值」，而这两者在验收时分量完全不同——
+env 显式设置 ⇒ `env-override`（人工裁决过 ⇒ 判定可给真 PASS / FAIL）；
+否则 ⇒ `provisional`（⇒ 只给 `PASS(provisional)`，不构成 TBD-7 收敛证据）。
+实测两档都验过：`27500 vs 32000 ⇒ PASS(provisional)`、`env=25000 ⇒ FAIL`。
+
+### E3.2 D3 复核：C3-b 阈值**不落 config**
+- `metrics.py::COST_RATIO_SIGNIFICANT = 1.00`（来源：矩阵 §5.1「显著 < 1.00」，人工裁决定值）。
+- 理由照旧：与 spec §6 的 `COST_RATIO_ALERT_THRESHOLD` 撞名 + **无真实消费者**（无增量重算）
+  ⇒ 落 config 即**幽灵配置**。
+- 它由 `runner.eval_incremental_cost_ratio` **读取并带进判据** ⇒ 常量**不是孤儿**。
+
+### E3.3 判据接线（不做孤儿脚本）
+- `docs/acceptance-traceability-matrix.md` §5.1：新增「**可执行命令**」列（指到
+  `scripts/eval_acceptance.py`），8 行状态按本批**实测**刷新（C2-a 1.00 / C2-b 0.00 /
+  C2-c 1.00 / 其余 `BLOCKED` / `UNKNOWN` 并写明缺什么）。
+- `docs/delivery-requirements-and-guardrails.md` **DR-D10** 行：状态由「⏳ 评测脚本待建」
+  ⇒ 「🟡 已建」，依据列回填脚本路径 + 实测数值。
+- `docs/dev-doc-status.md`：新增 **§10 评测口径增补登记 A1–A9**（**新章节、只追加**，
+  守 **R5**），含每条缺陷的处置与证据路径。
+
+### E3.4 红线复核（**证据**）
+```bash
+git diff --stat 820e6f57 HEAD -- specs/ contracts/
+# ⇒ **空**。spec §3.4 与契约一字未改（本批未新增 / 未改任何端点）
+uv run python scripts/check_seams.py        # ERROR 0 / WARN 0 / OK 10（新字段有消费者）
+uv run python scripts/export_openapi.py --check   # [OK] 零 diff
+```
+
+### E3.5 怎么接进「收尾三件套」与 `check_session_drift.py`
+- **收尾三件套**：`uv run pytest -q`（**818**）/ `ruff check` + `format --check` 全过 /
+  `check_seams.py` ERROR 0 / `export_openapi.py --check` 零 diff。
+- **`check_session_drift.py` 的接线**：本批新增的 `settings.*` 字段 ⇒ 由 **S3** 拦
+  （`.env.example` 必须同步）；新增 `app/evaluation/*` 模块 ⇒ 由 **S5** 拦
+  （必须被 `scripts/eval_acceptance.py` 真实 import，本批已满足）。
+  ⚠️ 跑之前**必须 `git add -N`** 新文件，否则 S5 等于没跑（见 §E1.5）。
+- **CI 接线建议（本批未做，登记）**：把 `uv run python scripts/eval_acceptance.py --offline`
+  加进 CI 的 backend job——它**不依赖 LLM / 网络 / Neo4j**，且两次运行报告逐字一致
+  （幂等契约已有单测钉住）。这是让"判据状态"进入 CI 的最小一步，属下一批。
 
 ---
 
@@ -274,9 +320,16 @@ MinerU 侧排队极慢（进程 18 分钟只用了 2.8 秒 CPU）⇒ **停掉**�
 
 ### L2（E2.2）chunk 数**数字漂移**：230 vs 224
 - **依据**：`scripts/eval_controlled_qset.py` docstring 写「`attendance-demo-v1` 230 chunks」；2026-10-03 实测 Neo4j 为 **224**。
-- **处置（已闭环）**：原脚本注释里 **230 保留**（那是 2026-09-30 那次 probe 的**历史留痕**，改它等于伪造那条记录），
-  改在**该处补一行**：声明 230 是历史值、当前实测 **224**，并指向 `data/eval/MANIFEST.json`
-  （**"当前 chunk 数"的单一真源**）。MANIFEST 同步补 `documents=15 / entities=2987 / measured_at`。
+- **处置（已闭环，2026-10-03 定稿 = **撤**）**：原脚本注释里的 **230 原样保留**——
+  ① 它是 2026-09-30 那次 probe 的**历史留痕**（旁证：`tests/test_langextract_chunks.py`
+  记「230 → 去重后 205」），改成 224 = **伪造那条记录**；
+  ② 本批红线（`proposal` §2 Non-goals + `tasks.md`「开工前必读（红线）」第 4 条）
+  明写**不改该脚本**。
+  我曾改过一版（补指向注释，`a7495cfd`），**已 `git revert`（`dd2a56c`）**——
+  越界就是越界：留它等于用「注释无害」为由放宽红线，下次就有先例可援引。
+- **防误用改落在可改处**：`config.py` 的 `eval_single_doc_token_ceiling` 字段注释
+  （E3 落地）明写「chunk 数一律读 `MANIFEST.json`；脚本里的 230 是历史值、不可当分母」；
+  MANIFEST 同步补 `documents=15 / entities=2987 / measured_at / is_single_source_of_truth=true`。
 - **连带影响**：TBD-7 的 32 000 阈值推演用了「230 × 23% ≈ 13 chunk/文档」，按 224 重算仍约 13 ⇒ 阈值**不变**，但**仍须** `--calibrate` 实测。
 
 ### L3（E2.4 → **已闭环**）演示数据随 PG 容器丢失
@@ -290,15 +343,44 @@ MinerU 侧排队极慢（进程 18 分钟只用了 2.8 秒 CPU）⇒ **停掉**�
 - **处置**：gold 改用 `node_ids` + 声明共享节点不算成员 + `verified=true`；新增
   `app/evaluation/affiliation.py` 归一化（7 条单测 + 真机 9 条快照）。详见 §E2.7 ②。
 
-### L3（E2.4）演示数据随 PG 容器丢失 ⇒ live 判据拿不到数字
-- **依据**：PG 13 张表行数全 0；`agent/query` 恒 501（无 ready `kg_version`）。
-- **处置**：不重建、不冒充 ⇒ C2-c / 多跳 / C1 分子 **实测 `UNKNOWN`**。
-- **是否需要用户裁决**：**是** —— 若希望本批拿到真值，需批准「重建演示数据」（会跑 ingestion，涉及 LLM 调用成本）。
+### ~~L3（E2.4）演示数据随 PG 容器丢失~~ —— **已被上文「L3（E2.4 → 已闭环）」取代**
+- 本节是**当时的开口项**（等待用户裁决），**保留为历史**，勿再按它行动：
+  用户已拍板重建 ⇒ 已闭环（见上文 L3 已闭环条目 + §E2.7）。
+- 原记录：PG 13 张表行数全 0；`agent/query` 恒 501 ⇒ C2-c / 多跳 / C1 分子 **实测 `UNKNOWN`**
+  （不重建、不冒充）。
 
-### L4（E2）C2-a / C2-b 的 gold **实体 id 空间未与真机核对**
-- **依据**：`gold-affiliation-v1.json` 用 `supplier_id`（`demo/affiliation/suppliers.csv`），而真机疑点输出的 id 空间**尚未取样确认**。
-- **处置**：数据文件置 `verified_against_live_output=false` ⇒ 执行器**不出数**（避免 0 命中被读成"召回为 0"⇒ 误触发反证 F2）。
-- **是否需要用户裁决**：**是** —— 需先跑一次 M4 疑点检测取真机输出样本，确认 id 空间后把该标志位置 `true`。
+### ~~L4（E2）C2-a / C2-b 的 gold 实体 id 空间未核对~~ —— **已被上文「L4（E2 → 已闭环）」取代**
+- 同样是**当时的开口项**，保留为历史：真机取样后已核对并**发现初版是错的**
+  （`supplier_id` 只是节点属性）⇒ 已改为真机 id 空间 + `verified=true`（见上文 L4 已闭环条目）。
+
+### L7（E2.7）PG 元数据：**核心已补；剩余部分登记到「演示 / 换版前」再补**
+- **已补（本批）**：`kg_versions` 两条均已 **ready**（`ingest_attendance_csv.py` +
+  `ingest_affiliation_sources.py`，**¥0**）⇒ 判据链路恢复（C2-c 实测 **1.00**）。
+- **关键实测（反直觉）**：4 份 docx 的 **chunk 从未丢失**——Neo4j 侧
+  `attendance-demo-v1` = **224 chunks / 15 docs / 2987 entities**，与"重建"前**一致**。
+  丢的只是 **PG 元数据**。PG 现状：`documents` **1 行**（摄入中断留下的行）、
+  `kg_versions` **2 行 ready**、PG **无 chunks 表**（chunk 在 Neo4j）。
+- **不现在补 docx 的三条理由**：① 问答链路已实测可用（C2-c = 1.00，引用带 `doc_id`）
+  ⇒ 对本批任何判据**零增量**；② MinerU 云解析排队极慢（实测 18 分钟只用了 2.8 秒 CPU）
+  且要花 LLM 成本；③ 它的收益是 `documents` 表完整（前端列表 / 演示观感），**不是判据**。
+- **何时补**：**演示验收前**，或**受控问题集换版（v4）前**——换版要按 active 语料重出题，
+  那时才真需要重抽。命令：`uv run python scripts/ingest_attendance_policies.py`
+  （脚本有「复用 Document 行」逻辑，可续跑）。
+- **恢复清单（PG 容器重建后）**：只需两条 ¥0 脚本即可恢复判据链路 ⇒
+  `ingest_attendance_csv.py` + `ingest_affiliation_sources.py`（**无需**重跑 docx 抽取）。
+
+### L8（E2.7）C2-c 实测中的 **1 条拒答误伤**（Q8）—— **不在本批修，按事实登记**
+- **现象**：Q8「标准工时制岗位的核心在岗时段是什么时候？」期望回答、**实际拒答**；
+  另 2 条拒答（Q13 / Q14）是**预期**拒答的库外题 ⇒ 误伤 **1 / 14**。
+- **它属于哪条判据**：**不是** C2-c（引用覆盖率实测 1.00 ⇒ PASS），
+  而是 Sprint 6 §5.3 验收第 1 条的「**拒答 0 误伤**」——两条判据**不能互相顶替**。
+- **什么时候修**：**立独立批次**（建议 `P0-m6` 之后的 `P0-refusal`，或并入 M3 检索修复批）。
+  ① 修它 = 动 M3 检索 / 路由 / 拒答策略 ⇒ **越过本批 Non-goals**（本批只建评测体系，
+  不改被测链路）；② 修之前先做 **¥0 取证**（`scripts/eval_controlled_qset.py --diagnose`，
+  只复算候选集、不调 LLM）⇒ 先分清是「候选集没召回」还是「闸门 / 阈值把答案拒掉」，
+  否则修的是猜的那一个。
+- **本批做了什么**：只**按事实登记**（报告 `detail.refusal_mismatches` 可查，含期望值与实际值），
+  **没有**顺手改链路。
 
 ### L6（E2）改 `MANIFEST.json` 时把 JSON 写坏了（**自己的教训**）
 - **现象**：在 `chunks_note` 里写了未转义的英文双引号 ⇒ `json.JSONDecodeError` ⇒ **11 条测试连带变红**（数据集是多个判据的公共上游）。

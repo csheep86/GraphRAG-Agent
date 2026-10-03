@@ -56,7 +56,7 @@
       "documents_in_neo4j": 15,
       "entities_in_neo4j": 2987,
       "measured_at": "2026-10-03（重建演示数据后复测；与重建前一致 ⇒ 224 是当前稳定值）",
-      "chunks_note": "⚠️ **数字漂移已处置**：`backend/scripts/eval_controlled_qset.py` docstring 写「230 chunks」，那是 **2026-09-30 那次 probe 的历史值**；2026-10-03 复测为 **224**（历史另有「230 → 去重后 205」的记录，见 `tests/test_langextract_chunks.py`）。处置方式 = **不改写历史数字**，改在该注释处补一行指向本文件（**本文件是「当前 chunk 数」的单一真源**）。",
+      "chunks_note": "⚠️ **数字漂移已处置（2026-10-03 定稿）**：`backend/scripts/eval_controlled_qset.py` docstring 写「230 chunks」，那是 **2026-09-30 那次 probe 的历史值**（旁证：`tests/test_langextract_chunks.py` 记「230 → 去重后 205」）；2026-10-03 复测为 **224**。处置方式 = **两个都不改**：① 脚本里的 230 **保留**（改它 = 伪造那次 probe 的记录；且本批红线明写「不改该脚本」——曾改过一版并已 `git revert`）；② **本文件是「当前 chunk 数」的单一真源**，防误用的警示落在可改处：`backend/app/core/config.py` 的 `eval_single_doc_token_ceiling` 字段注释（TBD-7 推算只准读本文件的 224）。",
       "is_single_source_of_truth": true
     },
     "affiliation": {

@@ -120,7 +120,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **DR-D7** | **R22：`question` 参与检索** | ⏳ 未做 | 风险 R22 | 检索不再只靠实体 |
 | **DR-D8** | **`list_in_flight_task_ids()` 覆盖 `affiliation_tasks`**（现只扫 `documents`） | ⏳ 未做 | 缺口 S7.2-2 | 任务回收完整 |
 | **DR-D9** | **SSO / AD / LDAP（接缝 1 第二实现）** | ⏳ 未做 → **2026-10-01 裁决：提前进 MVP** | P1-9 / 风险 R8 / **用户裁决** | **窗口由 Post-v2.0.0 提前**：企业客户通常第一个就要 AD 域账号登录 ⇒ 不提前则 `v2.0.0` **对首个企业客户不可交付**（R8）。**纪律**：接入时**先扩写 ADR-0004 §2.1 登记行、再改 `check_seams.py`**（G-2 拦） |
-| **DR-D10** | **MVP 准入线 C1–C3 评测**：图谱增益 ≥10% / 召回 ≥0.80 / 误报 ≤0.15 / 引用覆盖 100% | ⏳ 评测脚本待建 | PRD H11 / H12 | 终局判据 |
+| **DR-D10** | **MVP 准入线 C1–C3 评测**：图谱增益 ≥10% / 召回 ≥0.80 / 误报 ≤0.15 / 引用覆盖 100% | 🟡 **评测脚本已建（2026-10-03，批次 `changes/P0-m6-eval/`）**：`backend/scripts/eval_acceptance.py`（`--offline` 默认 / `--live` / `--criteria` / `--out` / `--compare` / `--calibrate`）+ `backend/app/evaluation/`（指标纯函数 / 四态状态机 / 双模式执行器 / 报告）+ `backend/data/eval/`（版本化数据集 5 件）。**实测**：C2-c = **1.00**、C2-a 召回 = **1.00**、C2-b 误报 = **0.00**（均为演示语料 ⇒ `measured_provisional`）；C1 分母（`BLOCKED`，A1）/ C3-a·C3-b（`BLOCKED`，P5-M6）/ 多跳（`UNKNOWN`，待人工判分 A3）。**TBD-7 阈值已落** `EVAL_SINGLE_DOC_TOKEN_CEILING=32000`（provisional，非达标线，须 `--calibrate` 校准） | PRD H11 / H12 | 终局判据：全量语料 + gold 扩标后，各判据由 `UNKNOWN`/`BLOCKED` 升为 `MEASURED`；口径缺陷登记见 `docs/dev-doc-status.md` §10（A1–A9） |
 
 ### E 组 · 运维与迁移
 

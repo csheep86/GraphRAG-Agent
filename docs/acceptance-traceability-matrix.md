@@ -195,18 +195,23 @@
 
 ### 5.1 准入线 C1–C3（PRD §4 H11 / `02-product-outline.md` 附录 C）
 
-| 指标 | 准入线 | 锚点 / 来源 | 判据 | 承接 | 状态 |
-|---|---|---|---|---|---|
-| **C1** 图谱相对 RAG 增益 | **≥ 10%** | M4 §3 验收 6；`02` 附录 C | 同一数据集跑图谱版与 RAG 基线，`(图谱 − 基线) / 基线` | S13 | ⏳ 评测脚本**待建** |
-| **C2-a** 隐性关联召回 | **≥ 0.80** | M4 §3 验收 6；`01-research` §1.4 P3 | 正确识别数 / 实际植入数（gold 关系人工植入） | S13 | ⏳ |
-| **C2-b** 误报率 | **≤ 0.15** | M4 §3 验收 6 | 错误识别数 / 识别出总数 | S13 | ⏳ |
-| **C2-c** 引用覆盖率 | **= 1.00**（硬约束） | M3 §3 验收 2；M4 §3 验收 4 | 含可回溯 span 的答案数 / 总答案数 | S6 → S10 | 🟡 **S6 达标于受控问题集**（14 问 = 1.00）；**M4 侧 10 / 10 疑点含证据 = 1.00**（演示数据集，见 §3.3 验收 4）；S10 用全量问题集终判；**C1 / C2-a / C2-b 仍未测量** → S13 |
-| **多跳答对率** | **≥ 0.80** | M3 §3 验收 1 | 3 跳内正确回答数 / 总多跳问题数 | S10 | ⏳ |
-| **C3-a** 单文档处理成本 | 落入阈值（**TBD-7**） | M6 §3 验收 8；`02` 附录 C | `token_usage_total / doc_count`（每日聚合） | S13 | ⏳ |
-| **C3-b** 增量 / 全量成本比 | **显著 < 1.00** | M6 §3 验收 8 | `incremental_cost / full_rebuild_cost` | S13 | ⏳ |
-| **M6-b** GUI 人工确认语义 | **不得降级** | M6 §3 验收 1 / 2 | 未确认 schema **不写入** `ontology_schemas` | S12 | ⏳ |
+| 指标 | 准入线 | 锚点 / 来源 | 判据 | **可执行命令（`P0-m6-eval`）** | 承接 | 状态 |
+|---|---|---|---|---|---|---|
+| **C1** 图谱相对 RAG 增益 | **≥ 10%** | M4 §3 验收 6；`02` 附录 C | 同一数据集跑图谱版与 RAG 基线，`(图谱 − 基线) / 基线` | `uv run python scripts/eval_acceptance.py --live --criteria c1_graph_gain` | S13 | ⏳ **分母不存在**：RAG 基线未实现 ⇒ 判据 `BLOCKED(blocked_by="baseline-not-implemented")`（登记 **A1**） |
+| **C2-a** 隐性关联召回 | **≥ 0.80** | M4 §3 验收 6；`01-research` §1.4 P3 | 正确识别数 / 实际植入数（gold 关系人工植入） | `--live --criteria c2_a_hidden_relation_recall` | S13 | 🟡 演示语料**实测 1.00**（gold 9 / 检出 9 / 命中 9）⇒ **PASS(provisional)** —— **A8**：语料仅 8/60/30/9 组，不足 spec 的 200/500/100/20 ⇒ **不构成验收结论** |
+| **C2-b** 误报率 | **≤ 0.15** | M4 §3 验收 6 | 错误识别数 / 识别出总数 | `--live --criteria c2_b_false_positive_rate` | S13 | 🟡 演示语料**实测 0.00**（误报 0 / 检出 9）⇒ **PASS(provisional)**（同 A8） |
+| **C2-c** 引用覆盖率 | **= 1.00**（硬约束） | M3 §3 验收 2；M4 §3 验收 4 | 含可回溯 span 的答案数 / 总答案数 | `--live --criteria c2_c_citation_coverage` | S6 → S10 | 🟡 演示语料**实测 1.00**（14 题，11 条作答全部有引用；含 span 口径亦 1.00）⇒ **PASS**；⚠️ 同批发现 **1 条拒答误伤**（Q8）——属「拒答 0 误伤」判据缺口，**已登记未修** |
+| **多跳答对率** | **≥ 0.80** | M3 §3 验收 1 | 3 跳内正确回答数 / 总多跳问题数 | `--live --criteria multihop_accuracy --judgements <file> --judged-by <人>` | S10 | ⏳ **待人工判分**（**A3**：脚本不做关键词判分，否则假达标）⇒ 当前 `UNKNOWN`，**不是 0** |
+| **C3-a** 单文档处理成本 | 落入阈值（**TBD-7**） | M6 §3 验收 8；`02` 附录 C | `token_usage_total / doc_count`（单位 **token/文档**） | `--criteria c3_a_single_doc_cost`；校准：`--calibrate --cost-records <file>` | S13 | ⏳ **阈值已落** `EVAL_SINGLE_DOC_TOKEN_CEILING = 32 000`（`config.py` + `.env.example`，**有消费者**），来源 provisional；**值**待 P5-M6 落 `cost_metrics` ⇒ 当前 `BLOCKED` |
+| **C3-b** 增量 / 全量成本比 | **显著 < 1.00** | M6 §3 验收 8 | `incremental_cost / full_rebuild_cost` | `--criteria c3_b_incremental_cost_ratio` | S13 | ⏳ 待 P5-M6 增量重算；阈值按矩阵定值（`metrics.COST_RATIO_SIGNIFICANT`，**D3：不落 config**——无消费者即幽灵配置） |
+| **M6-b** GUI 人工确认语义 | **不得降级** | M6 §3 验收 1 / 2 | 未确认 schema **不写入** `ontology_schemas` | **不适用**（人工确认语义，非评测脚本范畴） | S12 | ⏳ |
 
 > **TBD-7 阈值**由 plan §20.1 批次 D 在 S13 收敛（决议 **O-4**，见倒推文档 §7）。收敛前 C3 只能判"趋势"，不能判"达标"。
+>
+> **上表命令的出处**：`backend/scripts/eval_acceptance.py`（批次 `changes/P0-m6-eval/`，2026-10-03）。
+> **实测证据**：`backend/reports/eval/`（运行产物，**已 gitignore**）；过程与遗留见
+> `changes/P0-m6-eval/integration-log.md` §E2.7 / §E3。
+> **口径纪律**：`BLOCKED` / `UNKNOWN` 的 `value` **恒为 `null`**（不是 0——0 会被读成"召回为 0"，误触发反证 **F2**）。
 
 ### 5.2 反证条件 F1–F5（`01-research.md` §3.3）
 

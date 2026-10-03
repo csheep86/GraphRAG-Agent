@@ -353,3 +353,26 @@
 ---
 
 > **本表与 [`docs/prd-mvp-takeup.md`](./prd-mvp-takeup.md)（原 plan §15）+ [`docs/delivery-requirements-and-guardrails.md`](./delivery-requirements-and-guardrails.md)（DR / G）共同构成"上线 gate 三件套"**（~~原 `docs/v1.1.0-demo-mvp-plan.md` §15 / §3.2 B 段 / §20.3 已随该计划全废~~）。任一**阶段（P1~P6）**收尾时**必须**对照本表与承接表更新状态。
+
+---
+
+## 10. 评测口径增补登记 **A1–A9**（批次 `P0-m6-eval`，2026-10-03）
+
+> **为什么单列一节**：`specs/m6-ontology-incremental.md` §3.4 的 C1–C3 判据原文
+> 是**红线（本批不得改）**。实测发现的**口径缺陷**一律登记在此，**只追加、不重排**（守 **R5**），
+> 由用户在后续批次裁决是否回写 spec。登记项**不改判据本身**，只改"怎么算 / 能不能判"。
+
+| # | 口径缺陷（spec §3.4 未定义） | 本批处置 | 证据 / 落点 |
+|---|---|---|---|
+| **A1** | **C1 的「RAG 基线」未定义**（纯向量 / BM25 / 同 chunk 池 / 是否重排？）⇒ 增益不可归因 | 出 `BaselineRunner` 协议 + fixture 基线（**显式 `provided=false`**，不含任何基线测量值）；C1 分母 = `BLOCKED` | `app/evaluation/runner.py`、`data/eval/baselines/fixture-baseline-v1.json` |
+| **A2** | **C2-a / C2-b 匹配口径未定**（按 ID / `canonical_name` / 三元组？方向敏感？去重？） | 指标函数**参数化**三档，默认三元组 + 方向敏感 + 保序去重，报告带 `match_rule` | `app/evaluation/metrics.py` + `tests/test_evaluation_metrics.py` |
+| **A3** | **答对率判分 rubric 未定**（既有纪律：脚本不做关键词判分）⇒ 两次运行不可比 | rubric 写死进 `MANIFEST.json`（标注人 / 日期 / 规则）；判分结果带 `judged_by`；gold 全 `correct=null` | `data/eval/MANIFEST.json`、`gold-multihop-v1.json` |
+| **A4** | **C3-a 单位未定**（§3.4 计算式是 `token/doc`，§4.3 字段名又称"成本"） | 报告**强制带** `unit="token/doc"`；config 名含 `TOKEN` 钉死单位 | `metrics.UNIT_TOKEN_PER_DOC`、`config.eval_single_doc_token_ceiling` |
+| **A5** | **`doc_count` 去重口径未定**（重算 / 重试算几次？） | 参数化三档，默认 `last_success`，报告带 `dedup_rule` | `metrics.dedupe_document_costs` |
+| **A6** | **C2-c 分母是否含拒答未定**（矩阵写"总答案数"，现脚本实测**排除拒答**）⇒ 字面与实现不一致，**真缺陷** | 指标**显式两档**并同时输出；**不改**现脚本行为 | `metrics.citation_coverage(include_refused=...)` |
+| **A7** | **零除 / 空集怎么算未定** | 一律 `None` + `reason`，**严禁** 0 或 `inf`；单测钉住 | `tests/test_evaluation_metrics.py`（空集 / 零除） |
+| **A8** | **C2-a / C2-b 语料规模缺口**：spec 要 200/500/100/**20 组**，演示语料仅 8/60/30/**9 组**，且 README 明示「**不宣称**召回 ≥0.80 / 误报 ≤0.15」 | 数据集与 gold 均写死该 caveat；阈值走 **provisional** ⇒ 即便实测 1.00 / 0.00 也只给 **PASS(provisional)**，**不作验收结论** | `data/eval/MANIFEST.json`、`changes/P0-m6-eval/integration-log.md` §E2.7 |
+| **A9** | **gold 标注单元与 M4 输出单元不同构**：M4 疑点是「**一组**主体 + 类型」（4 环 = 1 条），非二元组 ⇒ 按二元组拆会让召回被算成 1/4 | 指标层另立**组级**单元 `Finding(type, entity_ids)` 与二元组 `Relation` **并存**；共享证据节点（`ADDRESS:`/`PHONE:`/`LEGALPERSON:`）**不算成员** | `app/evaluation/affiliation.py`、`tests/test_evaluation_affiliation.py`（含真机 9 条输出快照） |
+
+**本批证据路径**：`changes/P0-m6-eval/`（`proposal.md` §6 与本文同源 / `tasks.md` / `integration-log.md`）；
+运行产物 `backend/reports/eval/`（**已 gitignore**，不入库）。

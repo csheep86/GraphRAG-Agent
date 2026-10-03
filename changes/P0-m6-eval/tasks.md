@@ -4,8 +4,9 @@
 > 每子任务收尾跑「收尾三件套」（见文末）；**只删 xfail、测试没真通过 —— 不算转正**。
 > 事后实测证据与遗留记 [`integration-log.md`](./integration-log.md)（本文件是事前计划，两者不可互相替代）。
 
-**状态（2026-10-03）**：**E1 / E2 已完成**（证据见 `integration-log.md` §E1 / §E2，pytest 733 → 777 → **806**）；**E3 未开工**。
-⚠️ **E2 实测**：判据**一个数字都没拿到**（live 链路 14/14 失败 = 501，PG 演示数据丢失；gold id 空间未核对）⇒ 全部 `UNKNOWN` / `BLOCKED`，**未用 fixture 冒充**（详见日志 §E2.4）。
+**状态（2026-10-03）**：**E1 / E2 / E3 均已完成**（证据见 `integration-log.md` §E1 / §E2 / §E3，pytest 733 → 777 → 814 → **818**）。
+⚠️ **E2 实测（第一次）**：重建数据前判据**一个数字都没拿到**（14/14 = 501，PG 演示数据丢失）⇒ 全部 `UNKNOWN` / `BLOCKED`，**未用 fixture 冒充**；
+**（第二次，用户拍板重建 + 核对 gold id 空间后）**：**C2-c = 1.00 / C2-a 召回 = 1.00 / C2-b 误报 = 0.00** 拿到真值（详见日志 §E2.7）。
 ⚠️ **跑 `check_session_drift.py` 前必须 `git add -N <新文件>`**——脚本只读 `git diff`，
 **未跟踪文件不在 diff 里** ⇒ 否则它会回「没有改动」，S5 等于没跑（详见日志 §E1.5）。
 
@@ -86,18 +87,19 @@
 
 ## E3 — TBD-7 落 config + 判据接线 + 文档回填
 
-- [ ] **E3.1** `backend/app/core/config.py` 新增 **`eval_single_doc_token_ceiling: int = Field(default=32_000, gt=0)`**
-      - [ ] 注释写死：**单位 = token/文档**（不是元）；**来源**（演示语料推算，provisional）；**非达标线**；校准命令
-      - [ ] **消费者明确**：`scripts/eval_acceptance.py` 读它判 `PASS / FAIL / PASS(provisional)`
-- [ ] **E3.2** `backend/.env.example` 同步（**缺它即 `check_session_drift.py` S3 命中**）
-- [ ] **E3.3** **D3 复核**：C3-b 阈值**不落** config（无消费者 ⇒ 幽灵配置）；常量写在 `metrics.py` 并注明来源
-- [ ] **E3.4** 判据接线（不做孤儿脚本）
-      - [ ] `docs/acceptance-traceability-matrix.md` §5.1：各行「判据」列改为**可执行命令**（指到 `eval_acceptance.py`）；状态列按本批实测刷新
-      - [ ] `docs/delivery-requirements-and-guardrails.md` **DR-D10** 行：回填脚本路径与当前状态
-      - [ ] `docs/dev-doc-status.md`：登记 **A1–A7**（**新编号，只追加不重排**，守 **R5**）+ 本批证据路径
-      - [ ] `integration-log.md` 写明怎么接进收尾三件套与 `check_session_drift.py`
-- [ ] **E3.5** **红线复核**：全仓 grep 确认 **spec §3.4 一字未改**（`git diff --stat specs/m6-ontology-incremental.md` 应为**空**）
-- [ ] **E3.6** 收尾三件套（全量）
+- [x] **E3.1** `backend/app/core/config.py` 新增 **`eval_single_doc_token_ceiling: int = Field(default=32_000, gt=0)`**
+      - [x] 注释写死：**单位 = token/文档**（不是元）；**来源**（演示语料推算，provisional）；**非达标线**；校准命令；**+「chunk 数一律读 MANIFEST，脚本里的 230 是历史值、不可当分母」**
+      - [x] **消费者明确**（3 处，非幽灵配置）：`runner.resolve_cost_ceiling()`（阈值 + 来源）/ `runner.eval_single_doc_cost()`（判据带出阈值）/ `scripts/eval_acceptance.py::_calibrate()`（打印并**当场判一次**）
+      - [x] 阈值来源**分两档**：env 显式设置 ⇒ `env-override`（可真判 PASS / FAIL）；默认 ⇒ `provisional`（只给 `PASS(provisional)`）——实测两档都验过
+- [x] **E3.2** `backend/.env.example` 同步（**缺它即 `check_session_drift.py` S3 命中**）
+- [x] **E3.3** **D3 复核**：C3-b 阈值**不落** config（无消费者 ⇒ 幽灵配置）；常量 `metrics.COST_RATIO_SIGNIFICANT = 1.00` 写在 `metrics.py` 并注明来源（矩阵「显著 < 1.00」），由 `eval_incremental_cost_ratio` 读取 ⇒ 常量非孤儿
+- [x] **E3.4** 判据接线（不做孤儿脚本）
+      - [x] `docs/acceptance-traceability-matrix.md` §5.1：新增「**可执行命令**」列（指到 `eval_acceptance.py`）；状态列按本批实测刷新
+      - [x] `docs/delivery-requirements-and-guardrails.md` **DR-D10** 行：回填脚本路径与当前状态
+      - [x] `docs/dev-doc-status.md`：新增 **§10** 登记 **A1–A9**（**新章节，只追加不重排**，守 **R5**）+ 本批证据路径
+      - [x] `integration-log.md` §E3.5 写明怎么接进收尾三件套与 `check_session_drift.py`（S3 / S5 + **必须 `git add -N`**）+ CI 接线建议（登记未做）
+- [x] **E3.5** **红线复核**：`git diff --stat 820e6f57 HEAD -- specs/ contracts/` ⇒ **空**（spec §3.4 与契约一字未改）
+- [x] **E3.6** 收尾三件套（全量）：pytest **818** / ruff 全过 / `check_seams` ERROR 0 / `export_openapi` 零 diff / 前端零 diff
 
 ---
 
