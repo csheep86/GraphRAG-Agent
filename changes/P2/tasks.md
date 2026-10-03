@@ -150,10 +150,33 @@ cd backend && uv run python scripts/check_startup_readiness.py
 > 必须先把它登记进 `test_guardrails.py::USERS_CONSUMER_MODULES` 并交代四件事（见 A3 / 日志 §1.4），
 > 否则 `test_g18_users_consumers_are_registered` 会红。
 
-- [ ] `roles` 表（全局字典表，**RLS 显式豁免**，须在 Code Review 显式确认）
+**规格来源（唯一真源 —— 先读，再动手）**
+- `specs/m5-permission-audit.md`：**§4.2 `roles`**（`id / name / description`）、
+  **§4.3 `user_roles`**（`org_id / user_id / role_id / doc_scope / scene_scope / granted_by / granted_at`）、
+  **§3 验收 1**（行为判据：无权限 ⇒ **403 + `FORBIDDEN`** + `audit_log` 的 `action=permission.denied`）
+- **三粒度** = 角色（`role_id`）+ 文档（`doc_scope`）+ 场景（`scene_scope`），
+  出处 `docs/02-product-outline.md` §3.2 第 1 条「RBAC + ABAC 最小组合」
+
+- [ ] `roles` 表（全局字典表，**RLS 显式豁免**）⇒ 📌 **按 2026-10-03 履行方式裁决（用户选 A）**：
+      **代码内显式声明 + 机械断言 + 事后 CR 抽检**（本批无人值守 ⇒ 过程中无人类 CR，故变更履行载体），
+      三条断言见 `specs/m5-permission-audit.md` §4.2；`ADR-0003` §4.1 表与 `ADR-0006` 已同步登记
 - [ ] `user_roles` 表（含 `doc_scope` / `scene_scope` JSONB，`org_id` 打头索引）
-- [ ] 路由层**强制校验入口**（依赖 / 中间件）—— 没有它，权限只是库里的一列装饰
-- [ ] 出口：`test_g24_rbac_three_granularity_matrix` 转正
+- [ ] 路由层**强制校验入口**（依赖 / 中间件）—— **没有它，权限只是库里的一列装饰**
+- [ ] 拒绝时写 `audit_log`（`action=permission.denied`）—— §3 验收 1 的**显式要求**；
+      **只返 403 而不留痕 = 未完成**
+- [ ] 出口：`test_g24_rbac_three_granularity_matrix` 转正（**先真通过，再摘 xfail**）
+
+**实施边界（无人值守 ⇒ 先把自由度钉死，防自由发挥）**
+
+| 边界 | 规定 |
+|---|---|
+| **角色集合** | **只允许** §4.2 的 4 种预置角色 `admin / auditor / analyst / viewer`；**不得**新增角色名 |
+| **资源清单** | 只能取自**契约中已存在的端点**（`contracts/openapi.yaml`）；**不得**凭空造资源类型 |
+| **契约** | **必须零 diff**——`403 FORBIDDEN` **已在契约里**（`contracts/openapi.yaml` 38 处引用，且 `test_openapi_contract.py::ADR_REQUIRED_CODES` 已含它）⇒ **复用现有错误码**，**不加新端点、不加新错误码** |
+| **矩阵内容** | **G-24 只断言**「矩阵**存在** + 强制校验入口**存在**」，**不断言**具体权限值 ⇒ 具体赋权属实现决策，**必须在 `integration-log.md` 登记并写明理由** |
+| **迁移** | 两张表**必须**带可幂等 Alembic 迁移（**DR-E1**）；**禁手工改客户库** |
+| **不碰 RLS** | 本批**不做** RLS 策略（DR-B4 归 **P3**）；只做 `roles` 的**豁免登记**，`user_roles` 仅补 `org_id` 与索引 |
+| **不改 ADR 原文** | 守 **R5**：新增 / 变更一律**追加登记**，不删改历史记述 |
 
 ## P2-C — DR-D9 SSO / AD
 
