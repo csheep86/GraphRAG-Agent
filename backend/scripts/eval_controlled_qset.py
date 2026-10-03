@@ -11,8 +11,15 @@
 冻结口径：`kg_version = v-s71a-fe1c4dc3`（换版基准，语料再变即作废需重出）。
 
 **问题集换版（2026-09-30，v3）**：v2 冻结的 `v-s71a-fe1c4dc3` **在 Neo4j 上已无 chunk**
-（`probe_e0_active.py` 实测：图上只剩 `attendance-demo-v1` 230 chunks 与
+（`probe_e0_active.py` 实测：**当时**图上只剩 `attendance-demo-v1` 230 chunks 与
 `affiliation-demo-v1` 128 chunks；该版本仅剩 SQLite 一行 `ready` 记录）。
+
+> ⚠️ **230 是 2026-09-30 那次 probe 的历史值，不是当前值**
+> （2026-10-03 复测：`attendance-demo-v1` = **224** chunks / 15 docs / 2987 entities，
+> `affiliation-demo-v1` = 128 chunks / 176 entities）。
+> **凡需要"当前 chunk 数"的地方，一律读 `backend/data/eval/MANIFEST.json`**（单一真源），
+> **不要**抄本行的 230 —— 它是历史留痕，改它等于伪造那次 probe 的记录；
+> 而拿它做阈值推演（如 TBD-7 的单文档 token ceiling）会用错分母。
 ⇒ v2 题集**全部不同源，直接跑必然全拒答**，会得出「召回坏了」的**假结论**
 （与 v1→v2 同族）。故按当前 active 语料重出 14 题：4 份考勤制度 docx + 9 张考勤 CSV，
 出处均经 `:Chunk` 正文核对（2026-09-30 实测）。
