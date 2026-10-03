@@ -11,6 +11,53 @@
 > 原「签单优先」在无客户阶段失效 ⇒ 改**风险优先**；**P2-C 因此后移到 P3 之后**（它需自建 IdP 真机验证，
 > mock 不算完成）。🔒 另叠加**「零缺口」裁决**：正式版门槛 = `check_startup_readiness.py` 所有 G 进 🟢，
 > 不做带缺口的发布（五项清零方式见 `docs/delivery-requirements-and-guardrails.md` §5 📌）。
+
+---
+
+## ⛳ 开工前置（2026-10-03 补 —— **无人值守 / 新对话开工必读**）
+
+> 这一段专为「换一个新对话直接开工」准备：**上下文不会带过来**，缺任一条都会让第一步**假失败**
+> （看起来像代码坏了，其实是环境没起来）。
+
+### 1. 本机必须先起 PostgreSQL —— 否则 pytest **全红**
+
+`backend/tests/conftest.py` 已把测试库写死为 PG 上的固定库
+（`postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test`，用 `setdefault` 注入），
+**不再用 SQLite**（**G-8** 已转正：SQLite 既无 RLS 也无 `SET LOCAL` ⇒ 在它上面跑通的隔离**什么都不证明**）。
+
+```bash
+docker run -d --rm --name graphrag-pg \
+  -e POSTGRES_USER=graphrag -e POSTGRES_PASSWORD=graphrag -e POSTGRES_DB=graphrag_test \
+  -p 5432:5432 postgres:16-alpine
+# 必须等就绪再跑测试，否则前几秒 connection refused ⇒ 会被误读成代码错误
+until docker exec graphrag-pg pg_isready -U graphrag -d graphrag_test; do sleep 1; done
+```
+
+> CI **不需要**这段——`ci.yml` 的 backend job 自带 `postgres:16-alpine` service。
+> **本机样例状态（2026-10-03）**：`graphrag-pg` Up（11h）、`kg-poc-neo4j` Up（10h）。
+> Windows / PowerShell 下请把上面的 shell 片段换成等价命令。
+
+### 2. 先跑开工自检，再动手
+
+```bash
+cd backend && uv run python scripts/check_startup_readiness.py
+```
+
+它输出「**已生效 / 部分生效 / 挂起 / 开工地雷**」四档 ⇒ **先看挂起与地雷里有没有本批要动的那条**，
+再决定能不能开工（P2-A 开工时正是这么用的，见 `integration-log.md` §0 / 本文件 P2-A 的 A0）。
+⚠️ 注意它**恒退 0**（只报告、非门禁）⇒ **别把它的输出当"通过"**，要自己读数字。
+
+### 3. P2-B 的两个**机械**闸门（不是人工约定，红了就是没做到）
+
+| 闸门 | 位置与现状 | 触发条件 |
+|---|---|---|
+| `USERS_CONSUMER_MODULES` 登记 | `backend/tests/test_guardrails.py`，当前 = **空集** | `app/` 下**任一模块引用 `User`** 却未登记 ⇒ `test_g18_users_consumers_are_registered` 红；**反向也拦**——登记了却查不到引用（僵尸登记）同样红 |
+| **G-24** 转正 | `test_g24_rbac_three_granularity_matrix`，当前 **xfail 挂起** | 出口 = 摘 xfail，**但必须先让它真通过**（proposal 行动指引第 2 条：**只删标记不算转正**） |
+
+### 4. 迁移纪律（**DR-E1**）
+
+新增 `roles` / `user_roles` **必须带可幂等 Alembic 迁移**（基线已由 P1 建立：`00f44b912817`）；
+**禁手工改客户库**。
 事后实测证据与遗留事项记 [`integration-log.md`](./integration-log.md)
 （本文件是事前计划，两者不可互相替代）。
 
