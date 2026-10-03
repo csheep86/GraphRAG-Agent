@@ -182,6 +182,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **G-22** | 🆕 **插件规范校验** | **DR-A2** | `plugins/<id>/plugin.yaml` 必含最小字段集 `id` / `version` / `entry_point` / `seam` / `base_version` | 🟡 **部分就位**（2026-10-01）：主断言当前**恒绿**（`plugins/` 不存在）⇒ 按 **R-9** 另立 `test_g22_plugin_source_exists` 守卫并挂起。`seam` 是否属八接缝由 **R-1 / `check_seams.py`** 把关，此处不重复实现。**🔒 GA 硬门槛（零缺口）**：同 G-14 —— `plugins/` 必须有**真插件**（P2.5 由推迟改必做），空壳不算 |
 | **G-23** | 🆕 **License 子系统专项** | **DR-C1** | 静态侧：六项资产齐备（`licenses` 表 / `LicenseProvider` / **纯 ASGI** `LicenseMiddleware` / 6 个 `LICENSE_*` 契约码 / `GET /license/status` / `license-cli fingerprint`）；行为侧：移除 license ⇒ 受保护端点 **403 `LICENSE_MISSING`** 且**拒绝落审计** | 🟡 **骨架已就位**（`test_g23_license_assets_exist` + `test_g23_missing_license_blocks_requests`，均 xfail 挂起）。**实测**：ADR-0006 零代码。"拒绝落审计"是硬要求——否则客户到期打不开系统时，我们拿不出证据区分"License 到期"与"系统故障" |
 | **G-24** | 🆕 **RBAC 三粒度矩阵** | **DR-B9** | **角色 × 资源 × 操作**矩阵存在，且路由层有**强制校验入口**（依赖 / 中间件） | 🟡 **骨架已就位**（`test_g24_rbac_three_granularity_matrix`，xfail 挂起）。**实测**：RBAC 未落地，且前置 `users` 表不存在（DR-B13 / G-18）。**判据要点**：只建角色表不算 RBAC——**端点不强制校验**的话，权限只是数据库里的一列装饰 |
+| **G-25** | 🆕 **评测判据进 CI（C2-a / C2-b 真门禁）** | **DR-D10** | ① CI 的 backend job 起 `neo4j` service；② 导入**受控、可复现**的种子语料；③ 跑 `--live --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate` **出真值**（非恒绿）；④ CI **只判「不退化」**（基线 delta + 容差），**不判达标**；⑤ 配**空图守卫**（空图 ⇒ 检测到 0 疑点 ⇒ 召回 0 ⇒ 假红，此时必须 **fail**，不许 PASS） | ⏳ **零代码（2026-10-03 新增登记，待建）**：CI 无 `neo4j` service、无种子数据、无对应测试。**可行性已实测**（2026-10-03）：C2-a / C2-b 真跑 Neo4j **耗时 2.72 秒、零 token**（`AffiliationService().detect` **只读图**，不调 LLM、不调 HTTP）⇒ 进 CI 成本可忽略。⚠️ **与 G-9 图谱侧共用同一工程项**（同一个 `neo4j` service + 同一份种子数据），但**护栏登记两条**——对应需求不同（**DR-B11 隔离** vs **DR-D10 评测**），合并成一条会导致「一条绿了分不清哪半绿」。**不得怎样**：❌ 用**真机输出快照离线复算**冒充（输入固化 ⇒ 只拦得住「指标函数被改坏」，**拦不住「检出能力退化」** ⇒ 又一种假绿，违反 **R-9**）；❌ 拿 **provisional 语料**（8/60/30/9 vs spec 的 200/500/100/20）的值判「达标」；❌ 给 CI 加 LLM key 让 B 类判据（C2-c / 多跳）进 CI——LLM 输出非确定性 ⇒ **flaky 门禁比恒绿门禁更伤** |
 
 ---
 
@@ -272,6 +273,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 - 🟡 **骨架已就位（xfail 挂起 ⇒ CI 绿但**尚未生效**）**：G-10 / G-12 / G-14 / **G-22 / G-23 / G-24** ⇒ **其对应需求仍不得宣称完成**（G-18 已于 P2-A 转出本行）
 - 📄 **仅文档就绪**：DR-A1~A8、DR-B10、DR-C2、DR-B5（口径）——**规格已写，代码零行**
 - ⏳ **零代码（需求侧）**：DR-B4（RLS）、DR-B7（T2 并发）、DR-C1（License）、**DR-A 组其余**（`deploy/variants/` 尚不存在）
+- ⏳ **零代码（护栏侧，2026-10-03 新增登记）**：**G-25**（评测判据进 CI：C2-a / C2-b 真门禁）——CI 无 `neo4j` service、无受控种子数据、无对应测试；可行性已实测（真跑图 **2.72 秒 / 零 token**）。与 G-9 图谱侧**共用同一工程项**，见 §3 与 §8
 - ✅ **2026-10-01 清偿**：**CI 的 pytest 已跑在 PostgreSQL 16.x 上**（`ci.yml` 的 backend job 起 `postgres:16-alpine` + job 级 `DATABASE_URL`；`conftest.py` 不再用 SQLite 临时文件，改用固定库 `graphrag_test`）。原「B 组全部需求的绿都是假的」这条最高 blocker **已解除**。
 - 📌 **2026-10-01 补一条边界**：G-9 转正**只**代表应用层 `org_id` 过滤在 PG 上生效，**不代表** RLS 落地（DR-B4 仍归 P3）；`documents` / `qa_logs` / `storage_key` 与图谱侧同样仍未补齐。
 - 📌 **2026-10-01 更正（不粉饰）**：本基线 **DR-D6（`qa_logs` 建表）原写「⏳ 未建表」是错误口径**——实为 **2026-09-26 已建并已写**（真机累计 16 行）。**错因**：摘抄 `dev-doc-status` 的历史记录而**未回代码核实**。**教训入册**：本文档每条「未做 / 已做」标注**必须以代码或真机证据为准**，历史文档记录**只能作为线索、不能作为结论**。
@@ -296,7 +298,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
   |---|---|---|
   | **G-12**（variant ≥ 2） | `deploy/variants/` 落 **demo（内部演示）+ default（基线）** 两个**真实部署形态** | ❌ 为凑数捏造第二个客户；❌ 把启用条件放宽成 ≥1（等于拆护栏） |
   | **G-14 / G-22**（恒绿失效） | **P2.5 由「推迟」改「GA 必做」**：`plugins/` 产出**第 1 个真插件**（现有能力插件化） | ❌ 为转护栏而造空壳插件 |
-  | **图谱侧隔离**（G-9 含图谱） | **给 `ci.yml` 的 backend job 加 `neo4j` service**（现只有 `postgres`）⇒ 由「独立环境留证」升格为**真 CI 必过** | ❌ 继续以「CI 无 Neo4j」为由停在留证，却宣称已验证 |
+  | **图谱侧隔离**（G-9 含图谱） | **给 `ci.yml` 的 backend job 加 `neo4j` service**（现只有 `postgres`）⇒ 由「独立环境留证」升格为**真 CI 必过**（📌 **2026-10-03 追加**：本项与 **G-25** 共用同一 `neo4j` service + 同一份受控种子数据，**一次建设两处受益**） | ❌ 继续以「CI 无 Neo4j」为由停在留证，却宣称已验证 |
   | **C3 单位成本 + 安装验收签署**（DR-D10 / E2 / E3 / E4） | **内部当「第一个客户」完整跑一遍**：`deployment-spec.md` §10 的 10 项清单（脚本化）+ 恢复演练 + 升级回滚，独立环境留证 | ❌ 事后把**内部演练**当作「已客户现场验收」对外表述 |
   | **SSO / AD 真机**（DR-D9） | **起自建 IdP 做真机验证**：OIDC 用 Keycloak / Dex；**AD 起 Samba AD DC 容器**做 LDAP 绑定 | ❌ 以 mock 跑通宣称完成（研发阶段无真实 IdP 不是借口） |
 
