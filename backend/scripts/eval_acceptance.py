@@ -9,6 +9,12 @@
     uv run python scripts/eval_acceptance.py --compare A.json B.json
     uv run python scripts/eval_acceptance.py --calibrate --cost-records path.json
 
+    # **G-25 CI 门禁**（P3-E）：只判「不退化」，不判达标（C2-a / C2-b 只读 Neo4j）
+    uv run python scripts/eval_acceptance.py --live \
+      --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate --gate
+    # 首次 / 刻意重设刻度时才用（⚠️ 用退化后的值刷基线 = 把门禁调成恒绿）
+    uv run python scripts/eval_acceptance.py --live --criteria <同上> --update-baseline
+
 **三条纪律（不要改掉）**：
 
 1. ``--offline`` **不产出判据数字**。断网跑出来的"召回 0.8"必然是假的；
@@ -38,7 +44,16 @@ if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - 仅 Windows 生效
 
 from app.evaluation.criteria import (  # noqa: E402
     THRESHOLD_PROVISIONAL,
+    CriterionResult,
     judge,
+)
+from app.evaluation.gate import (  # noqa: E402
+    BASELINE_DIR,
+    DEFAULT_BASELINE_FILE,
+    DEFAULT_TOLERANCE,
+    build_baseline,
+    evaluate_gate,
+    load_baseline,
 )
 from app.evaluation.metrics import (  # noqa: E402
     DocumentCostRecord,
@@ -192,6 +207,27 @@ def main() -> int:
         "--calibrate", action="store_true", help="TBD-7 校准：只输出建议值"
     )
     parser.add_argument("--cost-records", help="--calibrate 用的文档成本打点 JSON")
+    # --- **G-25（P3-E）**：CI 门禁（只判不退化）---
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="按**不退化**判门禁（G-25）：value 缺失 / 基线缺项 / 空图 / 退化超容差 ⇒ 退出码 1",
+    )
+    parser.add_argument(
+        "--baseline",
+        help=f"基线 JSON（默认 data/eval/baselines/{DEFAULT_BASELINE_FILE}）",
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=DEFAULT_TOLERANCE,
+        help=f"退化容差（绝对差值，默认 {DEFAULT_TOLERANCE}）",
+    )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="**重写**基线为本次实测值（⚠️ 用退化后的值刷基线 = 把门禁调成恒绿）",
+    )
     args = parser.parse_args()
 
     if args.compare:
@@ -236,12 +272,76 @@ def main() -> int:
     print(render(report))
     print(f"\n报告已落盘: {out}")
 
+    # --- **G-25 门禁**（只判不退化；不加 --gate 时行为与以前一致）---
+    if args.update_baseline:
+        return _update_baseline(results, ctx.git_hash, args.tolerance, args.baseline)
+    if args.gate:
+        return _gate(results, baseline_path=args.baseline, tolerance=args.tolerance)
+
     #: 退出码：**有 FAIL 才非 0**。BLOCKED / UNKNOWN **不算失败**（它们不是"没达标"，
     #: 是"没测出来"——把它当失败会逼人用假数据凑绿）。
     failed = [r.criterion for r in results if r.verdict and r.verdict.value == "FAIL"]
     if failed:
         print(f"\n[FAIL] 未达标判据: {', '.join(failed)}")
         return 1
+    return 0
+
+
+def _update_baseline(
+    results: list[CriterionResult],
+    git_hash_value: str,
+    tolerance: float,
+    baseline_path: str | None,
+) -> int:
+    """**写**基线（实测值）。刻意做成独立命令且**打印警告**：刷基线会掩盖退化。"""
+    baseline = build_baseline(results, git_hash=git_hash_value, tolerance=tolerance)
+    if not baseline["criteria"]:
+        print("[FAIL] 本次没有任何实测值 ⇒ 拒绝写基线（空基线 = 门禁缺项恒红）")
+        return 1
+    target = (
+        Path(baseline_path) if baseline_path else (BASELINE_DIR / DEFAULT_BASELINE_FILE)
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(baseline, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"[OK] 基线已写入 {target}")
+    for name, value in baseline["criteria"].items():
+        print(f"  {name}: {value}")
+    print(
+        "\n⚠️ **刷基线即重设门禁刻度**：若本次值本身是退化后的值，"
+        "写进去等于把门禁调成「退化了也绿」。请确认这些值是**受控语料上的真值**。"
+    )
+    return 0
+
+
+def _gate(
+    results: list[CriterionResult],
+    *,
+    baseline_path: str | None,
+    tolerance: float,
+) -> int:
+    """按「不退化」判门禁（G-25 ④ / ⑤）。"""
+    try:
+        baseline = load_baseline(baseline_path)
+    except FileNotFoundError as error:
+        print(f"[FAIL] 基线文件不存在：{error.filename}")
+        print("      先实测一次并写基线：--live --criteria <…> --update-baseline")
+        return 1
+
+    outcome = evaluate_gate(results, baseline=baseline, tolerance=tolerance)
+    if outcome.compared:
+        print("\n[gate] 与基线比对：")
+        for line in outcome.compared:
+            print(f"  {line}")
+    for warning in outcome.warnings:
+        print(f"[warn] {warning}")
+    if not outcome.ok:
+        print(f"\n[FAIL] 门禁不通过（{len(outcome.failures)} 项）：")
+        for failure in outcome.failures:
+            print(f"  - {failure}")
+        return outcome.exit_code
+    print("\n[OK] 门禁通过（**只判不退化**，不判达标）")
     return 0
 
 
