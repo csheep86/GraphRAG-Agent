@@ -289,6 +289,61 @@ def test_g26_3b_session_replays_guc_on_every_transaction() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 判据 8：**跑过 SET LOCAL 之后**，未绑 org 的查询必须是「0 行」而不是「报错」
+#         （P3-C，2026-10-04：P3-B 做 T1 补齐时实测踩到）
+# --------------------------------------------------------------------------- #
+def test_g26_8_unbound_query_after_bound_txn_is_zero_rows_not_error() -> None:
+    """同一条连接**跑过一次绑 org 的事务之后**，不绑 org 的查询 ⇒ **0 行**，不得抛错。
+
+    **踩到的坑**：``app.current_org`` 是**自定义** GUC，而自定义 GUC 在被
+    ``SET LOCAL`` 用过之后，事务结束时会还原到它的 **reset 值**——那是**空串**
+    ``''``，**不是**"未设置"（那才是 NULL）。谓词若是裸 ``::uuid``，空串会直接抛
+
+        ERROR 22P02: invalid input syntax for type uuid: ""
+
+    于是「ADR-0003 §3.3 承诺的 fail-closed（0 行）」变成 **500**，而且只在
+    **该连接跑过一次绑 org 的事务之后**才出现 ⇒ **首次请求正常、第二次起崩**，
+    是最难复现的那一类故障（P3-B 做 `qa_logs` 的 T1 时撞上）。
+
+    故谓词须为 ``nullif(current_setting(...), '')::uuid``：空串与 NULL 语义相同
+    （都表示"当前没有租户上下文"）⇒ 统一退化成 NULL ⇒ 0 行，不报错。
+
+    ⚠️ 本条**刻意**沿用判据 3b 里那个"看似无害"的 ``in (None, "")``：
+    当初它只被用来断言"GUC 已失效"，而空串与 NULL 在这里**后果完全不同**——
+    这就是本条存在的原因。
+    """
+    doc_a = _seed_document(_ORG_A)
+    engine = _restricted_engine()
+    try:
+        with engine.connect() as connection:
+            # 事务 1：绑 org A（应用的正常路径）
+            connection.exec_driver_sql(
+                "SELECT set_config(%s, %s, true)", (ORG_GUC, str(_ORG_A))
+            )
+            bound = connection.execute(text("SELECT count(*) FROM documents")).scalar()
+            assert bound >= 1, "正向对照失败：绑了 org 却一行都看不到 ⇒ 用例自身失效"
+            connection.commit()
+
+            # 事务 2：**同一条连接**、不绑 org（系统路径 / 运维脚本 / 漏绑的通道）
+            guc = connection.execute(
+                text(f"SELECT current_setting('{ORG_GUC}', true)")
+            ).scalar()
+            assert guc == "", (
+                f"PG 16 上自定义 GUC 在 SET LOCAL 的事务结束后应还原为**空串**，实际 "
+                f"{guc!r}。若 PG 行为已变（例如回到 NULL），请同步更新本条与 "
+                "app/db/rls.py 的谓词注释——但 0 行这条断言**无论如何都要成立**"
+            )
+            unbound = connection.execute(
+                text("SELECT count(*) FROM documents")
+            ).scalar()
+    finally:
+        engine.dispose()
+        _delete_documents([doc_a])
+
+    assert unbound == 0, f"没绑 org 却看到 {unbound} 行 ⇒ 隔离失效（fail-closed 破口）"
+
+
+# --------------------------------------------------------------------------- #
 # 判据 4：应用账号不是 bypass / 不是 owner
 # --------------------------------------------------------------------------- #
 def test_g26_4_app_account_is_not_bypassrls() -> None:

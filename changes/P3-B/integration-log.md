@@ -134,7 +134,7 @@ Session B（同一个池化连接、不设 org）:
 
 | # | 事项 | 级别 | 处置 |
 |---|---|---|---|
-| 1 | `SET_LOCAL` 后 GUC 变空串 ⇒ `''::uuid` 报错（§5） | **高** | 归 P3-C 或 hotfix；修法见 §5 |
+| 1 | ~~`SET_LOCAL` 后 GUC 变空串 ⇒ `''::uuid` 报错（§5）~~ | ✅ **已修（2026-10-04，P3-C）** | 见 `changes/P3-C/`：谓词改 `nullif(current_setting(...), '')::uuid` + 迁移 `b7c4e1f9a2d3` + **G-26 判据 8**（去掉 `nullif` ⇒ 判红，实测报错原文 `psycopg.errors.InvalidTextRepresentation: invalid input syntax for type uuid: ""`） |
 | 2 | 图谱查询 org 过滤的 fail-open 写法（无 `org_id` 的节点会被放行） | 低 | 登记观察，无真缺口前不动 |
 | 3 | **G-25 本体**（受控种子语料 / `--live` 出真值 / 只判不退化 / 空图守卫） | 中 | 归 **P3-C**：共用的 `neo4j` service 工程项已由本批建好 |
 | 4 | 本地开发仍需自起 Neo4j（本批只在 CI 与本纪要做 snapshot） | 低 | 复现命令见 §7 |

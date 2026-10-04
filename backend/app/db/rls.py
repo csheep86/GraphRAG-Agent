@@ -12,8 +12,14 @@
 
 1. ``ENABLE`` **且** ``FORCE``：不 ``FORCE`` 则表 owner 绕过策略 ⇒ RLS 形同虚设；
 2. 策略表达式不得为 ``USING (true)``（那是「假装有隔离」，比没有更危险）；
-3. 未设 ``app.current_org`` ⇒ ``current_setting(..., true)`` 返回 NULL ⇒ 比较为
-   NULL ⇒ **一行都查不到**（fail-closed，不是 fail-open）。
+3. 未设 ``app.current_org`` ⇒ 比较为 NULL ⇒ **一行都查不到**（fail-closed）。
+      ⚠️ **"未设"有两种形态，两种都必须退化为 NULL**（2026-10-04 P3-C 实测修正）：
+      - 从未设置过 ⇒ ``current_setting(..., true)`` 返回 **NULL**；
+      - **跑过一次 ``SET LOCAL`` 之后** ⇒ 事务结束时自定义 GUC 被还原到 **reset 值**，
+        那是**空串 ``''``**（不是"未设置"）。若谓词直接 ``::uuid``，空串会抛
+        ``22P02 invalid input syntax for type uuid: ""`` ⇒ **500**，且只在"该连接跑过
+        一次绑 org 的事务之后"才出现（首次正常、第二次起崩）。
+      故谓词用 ``nullif(..., '')`` 把**两者统一**成 NULL。**不要**改回裸 ``::uuid``。
 """
 
 from __future__ import annotations
@@ -87,8 +93,18 @@ TENANT_TABLES: frozenset[str] = frozenset(tenant_tables())
 
 
 def _policy_predicate() -> str:
-    """策略谓词：未设 org ⇒ ``current_setting(..., true)`` 为 NULL ⇒ 一行不命中。"""
-    return f"org_id = current_setting('{ORG_GUC}', true)::uuid"
+    """策略谓词：**未设 org ⇒ 一行不命中**（fail-closed），且不抛错。
+
+    ``nullif(..., '')`` 是**必须的**，不是防御性冗余（P3-C，2026-10-04 实测）：
+
+    - 从未设置的连接 ⇒ ``current_setting(..., true)`` 为 NULL ⇒ 比较 NULL ⇒ 0 行；
+    - **跑过一次 ``SET LOCAL`` 的连接** ⇒ 事务结束后 GUC 被还原成 **空串** ⇒
+      裸 ``::uuid`` 会抛 ``22P02``（**500**），且只在第二次起才出现，极难复现。
+
+    空串与 NULL 在这里**语义相同**（都表示"当前没有租户上下文"）⇒ 统一退化成 NULL，
+    两种形态都回到「0 行」而不是「报错」。
+    """
+    return f"org_id = nullif(current_setting('{ORG_GUC}', true), '')::uuid"
 
 
 def enable_statements(table: str) -> tuple[str, ...]:
