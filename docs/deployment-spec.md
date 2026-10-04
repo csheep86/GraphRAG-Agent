@@ -12,14 +12,14 @@
 ## 0. 当前缺口（写在最前，不粉饰）
 
 2026-09-27 实测：**当前仓库不具备私有化交付能力**，两处硬缺口必须补上。
-**进展（2026-09-30）**：**D-2 迁移基线已在 Sprint 9.7 兑现**；**D-1 拆两半**——「compose 起全套」**已在 Sprint 10.3 兑现**（backend / frontend / Neo4j 三服务 `up` 全 `healthy`，PG 位留空，**P1 切 PG（DR-B1）时一并就位**），**离线镜像包归 P1**（DR-A6）。
+**进展（2026-09-30）**：**D-2 迁移基线已在 Sprint 9.7 兑现**；**D-1 拆两半**——「compose 起全套」**已在 Sprint 10.3 兑现**（backend / frontend / Neo4j 三服务 `up` 全 `healthy`，PG 位留空，**P1 切 PG（DR-B1）时一并就位** ⇒ ✅ **P1-B 已就位**：四服务 `up`），**离线镜像包归 P1**（DR-A6）。
 
 **进展（2026-10-01 裁决，三笔）**：① **交付形态修订**——客户通常购买**云主机、有出网** ⇒ §1.1 由「完全离线」改为 **registry 默认 / 离线 tar 保留**双模式；② **部署单元**明确为「**一套 compose = 一个租户**」（ADR-0007 §3.3）；③ **数据库**——切 **PostgreSQL 16.x**，开发 / 测试 / 生产一律，废止 SQLite「开发态替身」定位（ADR-0003 §3.6.2）。三者共同构成 **`ADR-0007` 插件式交付规格**的背景，补丁纪律见 §7.2.1。
 ⇒ 判据不变：**在 D-1 的镜像包补齐前，对外仍不得承诺"可私有化交付"**（不能拿"能起来"冒充"能交付"）。
 
 | # | 缺口 | 实测证据 | 后果 |
 |---|---|---|---|
-| **D-1** | **无容器化产物**：全仓无 `Dockerfile`、无 `docker-compose.yml` | `search_file *ockerfile*` = 0 命中 | 客户现场只能手工装 Python / Node / Neo4j / PG，**不可交付**。🔀 **部分兑现（2026-09-30，Sprint 10.3）**：`backend/Dockerfile` + `frontend/Dockerfile` + `deploy/docker-compose.yml` 就位，**三服务 `up` 实测全 `healthy`**（`/api/v1/health`=200、前端 200）；**离线镜像包未做**（⏳ **P1**，DR-A6）；**PG 位留空**（当前后端连 SQLite，**P1 切 PG** 时补——不起没人连的空容器冒充"全套"） |
+| **D-1** | **无容器化产物**：全仓无 `Dockerfile`、无 `docker-compose.yml` | `search_file *ockerfile*` = 0 命中 | 客户现场只能手工装 Python / Node / Neo4j / PG，**不可交付**。🔀 **部分兑现（2026-09-30，Sprint 10.3）**：`backend/Dockerfile` + `frontend/Dockerfile` + `deploy/docker-compose.yml` 就位，**三服务 `up` 实测全 `healthy`**（`/api/v1/health`=200、前端 200）；**离线镜像包未做**（⏳ **P1**，DR-A6）；**PG 位留空 ⇒ ✅ P1-B 已就位**（彼时后端连 SQLite，**P1 切 PG** 时补——不起没人连的空容器冒充"全套"） |
 | **D-2** | **无数据库迁移**：全仓无 Alembic，建表靠启动时 `create_all` | `backend/app/db/models.py:17`「**无 Alembic**：建表靠启动时的 `create_all`」；`main.py:33` 的"Sprint 3 接入 Alembic 后移除"注释**至今未兑现** | `create_all` **只建新表、不 ALTER 旧表** ⇒ 客户现场升级后旧库缺列，**运行时才炸**，且无法回滚 |
 
 > 这两条是 PRD §1.2「大型企业私域部署优先」与 H6「数据不出内网」的**兑现前提**。在 D-1 / D-2 补齐前，**对外不得承诺"可私有化交付"**。
@@ -75,7 +75,7 @@
 
 > **端口不对外**：除 frontend 与 backend 的反向代理端口外，PG / Neo4j **禁止**暴露到业务网络。
 >
-> **PG 状态（2026-10-01 裁决）**：后端当前仍连 SQLite，**P1 切 PG**（`ADR-0003` §3.6.2 / DR-B1）——届时开发 / 测试 / 生产**一律 PostgreSQL 16.x**，不再以 SQLite 作为"开发态替身"。Sprint 10.3 交付的 compose 中 PG 位**刻意留空**（不起没人连的空容器冒充"全套"），切 PG 时一并就位。
+> **PG 状态（2026-10-01 裁决）**：后端当前仍连 SQLite，**P1 切 PG**（`ADR-0003` §3.6.2 / DR-B1）——届时开发 / 测试 / 生产**一律 PostgreSQL 16.x**，不再以 SQLite 作为"开发态替身"。Sprint 10.3 交付的 compose 中 PG 位**刻意留空**（当时正确——不起没人连的空容器冒充全套）；**P1-B 已按 D-L 当年防的顺序补上**：**先**让 backend 默认连 PG 并实测跑通，**才**引入 PG 服务 ⇒ ✅ **现已就位且真有应用连**（`postgres:16-alpine` + `pg_data`；`config.py` 的 `database_url` 默认已是 `postgresql+psycopg://...`，**G-20 已生效**）（不起没人连的空容器冒充"全套"），切 PG 时一并就位。
 
 ---
 
@@ -347,7 +347,7 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 | 项 | 时点 | 状态 |
 |---|---|---|
 | 本文档定稿 | 2026-09-27 | ✅ |
-| **D-1a** 容器化：Dockerfile + compose **起全套** | **S10.3** | ✅ **已兑现**（2026-09-30：backend / frontend / Neo4j 三服务 `up` 全 `healthy`；**PG 位留空待 P1 切 PG（DR-B1）**，不凑数） |
+| **D-1a** 容器化：Dockerfile + compose **起全套** | **S10.3** | ✅ **已兑现**（2026-09-30：backend / frontend / Neo4j 三服务 `up` 全 `healthy`；**PG 位留空待 P1 切 PG（DR-B1）**，不凑数）⇒ ✅ **PG 已于 P1-B 就位**（四服务 `up`） |
 | **D-1b** 离线镜像包（`docker save`）/ 私有 registry | **P1**（DR-A6） | ⏳ |
 | **D-2** 数据库迁移（Alembic 引入 + 首版迁移脚本） | **P6**（DR-E1） | 🔀 **基线已完成**（2026-09-28：alembic 主依赖 + 基线迁移 `00f44b912817` 十表 + 等价性测试钉死「加表必写迁移」）；**逐版本可幂等迁移纪律 / PG 实测 / 升级演练归 P6**（DR-E1 纪律 + DR-E3 演练） |
 | 备份 / 恢复脚本 | **P6**（DR-E2） | ⏳ |
