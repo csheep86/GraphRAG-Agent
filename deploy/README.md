@@ -7,22 +7,42 @@
 
 ```bash
 cd deploy
-cp .env.example .env        # 然后填 NEO4J_PASSWORD（≥8 位）
+cp .env.example .env        # 然后**两个都填**：NEO4J_PASSWORD（≥8 位）+ POSTGRES_PASSWORD
 docker compose up -d        # 首次会构建 backend / frontend 两个镜像
-docker compose ps           # 期望三个服务全 healthy
+docker compose ps           # 期望**四个**服务全 healthy（含 postgres）
 docker compose logs -f backend
 docker compose down         # 停；数据卷保留
 ```
 
-## 起的三个服务
+⚠️ **`docker compose build` 也需要 `.env`**（2026-10-04 实测踩到）：
+compose 里 `POSTGRES_PASSWORD` / `NEO4J_PASSWORD` 写作 `${VAR:?}` 必填形式，
+而 compose 在**解析阶段**就校验 ⇒ 没填的话**连构建都起不来**，报错是
+`required variable POSTGRES_PASSWORD is missing a value`。
+只想构建不想建 `.env` 时，可用临时环境变量顶上（**勿把真密钥写进命令行历史**）：
+
+```bash
+POSTGRES_PASSWORD=build-only NEO4J_PASSWORD=build-only docker compose build backend
+```
+
+## 起的四个服务
 
 | 服务 | 宿主端口 | 说明 |
 |---|---|---|
 | `neo4j` | `127.0.0.1:7474` / `127.0.0.1:7687` | 图存储；只绑回环（§2：不暴露业务网） |
+| `postgres` | **不映射**（内部 5432） | PG 16.x（**DR-B1**）；§2「禁止暴露业务网络」⇒ 不映射端口。需直连：`docker compose exec postgres psql -U graphrag -d graphrag` |
 | `backend` | `127.0.0.1:8000` | FastAPI + uvicorn；契约健康端点 **`/api/v1/health`** |
 | `frontend` | `127.0.0.1:3000` | `next start`（**非** `next dev`） |
 
-**为什么没有 PG**（裁决 D-L）：CP-D0 字面要求「起全套 Neo4j / PG / backend / frontend」，但当前后端实际连的是 **SQLite**（`backend/.env`），PG 切换在 S11。起一个没人连接的 PG 就是**假组件**（PRD §7.2 零假数据 + A16 诚实可核）。宁可 3/4 显式登记待补，不凑满容器冒充全套。**S11 切 PG 时在此补 `pg_data` 卷与服务。**
+**PG 已就位——裁决 D-L 已于 2026-10-01 作废**（以下为历史记述，**保留不删**，当前事实以
+`docker compose ps` 与 `backend/app/core/config.py` 为准）：
+
+> 原裁决 D-L：不引入 PG 容器，理由是「起一个没有任何组件连接的 PG 就是**假组件**」
+> （PRD §7.2 零假数据 + A16 诚实可核）；当时后端实际连的是 SQLite，PG 切换在 S11。
+>
+> **该前提已被 DR-B1 推翻**：**开发 / 测试 / 生产一律 PostgreSQL 16.x**，不再用 SQLite 作替身。
+> 切换严格按 D-L 当年防的那个顺序完成——**先**让 backend 默认连 PG 并实测跑通
+> （`config.py` + `.env.example`），**才**在本文件引入 PG 服务 ⇒
+> 这个 PG 是**真有应用连的**，不是假组件。SQLite 配置与 `sqlite_data` 卷已一并清除。
 
 ## 本机端口冲突（**必读**）
 
@@ -36,13 +56,14 @@ docker stop <那个容器>
 
 ## 冒烟边界（**不伪装**）
 
-compose 起的是**全新空 Neo4j**，无演示数据；LLM 需出网 ⇒ 本批冒烟**止于**：
+compose 起的是**全新空 Neo4j + 空 PostgreSQL**，无演示数据；LLM 需出网 ⇒ 本批冒烟**止于**：
 
-- `docker compose ps` 三服务 `healthy`
+- `docker compose ps` **四服务** `healthy`（含 `postgres`）
 - `curl -i http://127.0.0.1:8000/api/v1/health` = 200
 - `curl -i http://127.0.0.1:3000` = 200
 
-`deployment-spec.md` §10 的第 4~7 项（上传建图 / 问答溯源 / 审计留痕 / RLS）依赖 **PG + 数据 + License**，属 **S11 安装验收**，本批不碰、不宣称。
+`deployment-spec.md` §10 的第 4~7 项（上传建图 / 问答溯源 / 审计留痕 / RLS）依赖 **数据 + License + RLS**，属**安装验收**，本批不碰、不宣称。
+（📌 **2026-10-04 订正**：PG 本身已就位并真被 backend 连接，此处缺的是 **RLS**——归 **P3**，不再笼统写成"依赖 PG"。）
 
 ## 前端 Mock 红线
 
