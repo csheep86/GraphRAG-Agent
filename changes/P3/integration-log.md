@@ -23,19 +23,19 @@ RLS 零实现：backend/ 下 CREATE POLICY / ROW LEVEL SECURITY / SET LOCAL / cu
 ### 1.2 收束
 
 ```
-878 passed / 3 skipped / 3 xfailed        # uv run pytest（连跑 3 轮一致）
+879 passed / 3 skipped / 3 xfailed        # uv run pytest（连跑 3 轮一致）
 uv run ruff check .           → All checks passed!
 uv run ruff format --check .  → 217 files left unchanged
 uv run python scripts/check_seams.py → 接缝 OK 10（ERROR 0）
 uv run python scripts/export_openapi.py --check → 零漂移
-uv run python scripts/check_startup_readiness.py → G-26 已生效 [OK]（10 条）、G-10 已生效 [OK]
+uv run python scripts/check_startup_readiness.py → G-26 已生效 [OK]（11 条）、G-10 已生效 [OK]
 ```
 
-**差值来源（+25 / xfailed −1）**：
+**差值来源（+26 / xfailed −1）**：
 
 | 变化 | 条数 | 说明 |
 |---|---|---|
-| 新增 G-26 | +23 | `tests/test_guardrails_rls.py`：六条判据 + 3b + 迁移一致性 + **真跑迁移** + 14 张表逐表参数化 |
+| 新增 G-26 | +24 | `tests/test_guardrails_rls.py`：六条判据 + 3b + **判据 7（部署形态）** + 迁移一致性 + **真跑迁移** + 14 张表逐表参数化 |
 | 新增 A5 行为用例 | +1 | 执行体的 org 来自 `TaskSpec`（非默认租户） |
 | G-10 摘 xfail | +1 passed / −1 xfailed | 见 §8 |
 
@@ -45,7 +45,8 @@ uv run python scripts/check_startup_readiness.py → G-26 已生效 [OK]（10 �
 |---|---|---|
 | 1 | `04f17f5c` | A1/A2/A3/A4/A5/A6/A7 + A9/A10 的测试侧（迁移、逐事务 GUC、依赖图、系统通道、任务 org、受控探测、破损用例逐个修） |
 | 2 | `aa43269f` | G-26 新增 + G-10 转正 + CI 双角色 + 需求基线登记 + `.env.example` |
-| 3 | （本条之后） | 勾选 `tasks.md` 56 项 + 写本日志 |
+| 3 | `4aeb8339`→`cf2f4306` | 勾选 `tasks.md` 56 项 + 写本日志 |
+| 4 | （本条之后） | **部署形态收口**：compose 的 `db-init` 一次性服务 + backend 切 `app_rls` + 镜像 `COPY scripts`；G-26 **判据 7**；顺带修 `init_rls_roles.py` 在**空库**上的两个真 bug（见 §13） |
 
 ### 1.4 一次偶发（如实登记）
 
@@ -279,7 +280,7 @@ G-26 判据 4 就是拦住这件事的（用超级用户连接 ⇒ 该断言必�
 
 | # | 事项 | 等级 | 说明与建议 |
 |---|---|---|---|
-| 1 | **`deploy/docker-compose.yml` 仍以超级用户 `graphrag` 作为应用连库账号** | **高** | 超级用户**绕过一切 RLS** ⇒ 按当前 compose 部署，**RLS 在生产形态下等于没装**。本批未动 compose（不在 P3-A 的 Non-goals 内、且会牵动部署单元）。**建议下批**：compose 增加一次 `scripts/init_rls_roles.py`（或用 init 容器），backend 的 `DATABASE_URL` 切到 `app_rls`。在改之前，"部署形态已隔离"**不得宣称**。 |
+| 1 | ~~`deploy/docker-compose.yml` 仍以超级用户 `graphrag` 作为应用连库账号~~ | ✅ **已解决（2026-10-04 同日补完）** | 见 §13：新增 `db-init` 一次性服务 + backend 改连 `app_rls` + 镜像 `COPY backend/scripts`，并由 **G-26 判据 7** 机械盯住（四种破坏各自判红）。改动落在**部署单元**（compose / Dockerfile / `.env.example` / 部署文档），未触碰业务代码与契约。 |
 | 2 | 图谱侧（Neo4j）未隔离 | 高（已知） | P3-B；本批不覆盖，G-26 判据也只覆盖 PG 侧 |
 | 3 | A7 白名单扩到 3 张表 | 中 | 契约驱动（§6.4），已登记 + 断言跟随；若日后契约去掉 403 语义，应**反向收窄**白名单 |
 | 4 | `rls_probe` 带 `BYPASSRLS` | 中 | §6.3 论证了必要性（`FORCE` 使 owner 也受约束）；已收窄到 `NOLOGIN` + 两个函数 + 3 张表；G-26 判据 6 点名盯住 |
@@ -313,3 +314,56 @@ uv run python scripts/check_startup_readiness.py
 ```bash
 uv run alembic upgrade head       # 迁移 8210590e76a5 内含 ENABLE + FORCE + 策略
 ```
+
+---
+
+## 13. 部署形态收口（2026-10-04，P3-A 之后补）
+
+> 起因：§11 第 1 条——库里的策略已落，但 compose 里 backend 仍以**超级用户**连库，
+> 而超级用户绕过一切 RLS ⇒ **部署形态下等于没装**。本批只动**部署单元**。
+
+### 13.1 改动
+
+| 落点 | 改动 |
+|---|---|
+| `deploy/docker-compose.yml` | 新增**一次性** `db-init` 服务（复用 backend 镜像，跑 `scripts/init_rls_roles.py --create-tables`）；backend `DATABASE_URL` 改连 `app_rls`；backend 以 `service_completed_successfully` 依赖 `db-init`；两个服务共用 `x-backend-build` 锚点（避免 `context` 写两份而漂移） |
+| `backend/Dockerfile` | 增加 `COPY backend/scripts ./scripts`（否则 `db-init` 在容器里找不到脚本） |
+| `deploy/.env.example` | 新增必填 `APP_OWNER_PASSWORD` / `APP_RLS_PASSWORD`（`:?` 必填插值 ⇒ 缺失时**解析阶段**就报错，不会静默用默认口令） |
+| 文档 | `deploy/README.md`（服务表 + `db-init` 说明）、`docs/deployment-spec.md` §1.1 / §7.2、需求基线 DR-B4 行与 G-26 行 |
+
+### 13.2 实测证据
+
+1. `docker compose config` **实测通过**（锚点解析、`depends_on` 条件合法）；
+   `docker compose config --services` ⇒ `postgres / db-init / neo4j / backend / frontend`。
+2. **空库冒烟**（真 PG 16，脚本即 compose 那条命令）：
+
+   | 步骤 | 实测 |
+   |---|---|
+   | 建空库 → 跑 `init_rls_roles.py --create-tables` | 退出码 **0**，14 张表落 `ENABLE + FORCE + 策略` |
+   | 受限角色 **不设 org** 查 `documents` | **0 行**（fail-closed） |
+   | 以 org A 插一行 | 成功 |
+   | org A 查 | 1 行 |
+   | org B 查 | **0 行** |
+   | GUC=A 却插 `org_id=B` 的行 | **被拦**：`new row violates row-level security policy` |
+
+3. **G-26 判据 7 的反向验证**（四种破坏各自判红，见 §7 表末行）。
+
+### 13.3 ⚠️ 收口过程中踩到并修掉的两个**真 bug**（`init_rls_roles.py`）
+
+| # | 症状 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | **空库**上跑 init 直接 `UndefinedTable` | 受控函数体引用 `documents` / `affiliation_tasks`，而 PG 在 `CREATE FUNCTION` / `GRANT` 时就会**解析到真实的表**（`check_function_bodies` 默认 on）⇒ 表还没建 | 重排为四阶段：角色 → **建表（空库或 `--create-tables`）** → 函数 / 授权 / 属主归并 → 落策略；并在建函数时 `SET LOCAL check_function_bodies = off` |
+| 2 | 空库上 owner 建表 `permission denied` | PG 15 起 `public` schema 不再对 PUBLIC 开放 `CREATE`，而 owner 通常**不是**库属主 | 授权阶段加 `GRANT CREATE, USAGE ON SCHEMA public TO app_owner` |
+
+⇒ **CI 也受益**：CI 的「建 RLS 角色」步骤同样是在**空库**上跑，这两条修掉之前它必红
+（本地只在「表已存在」的库上验过 ⇒ 没暴露）。
+
+### 13.4 影响面（**不隐瞒**）
+
+- **既有部署升级**：`.env` 需补 `APP_OWNER_PASSWORD` / `APP_RLS_PASSWORD`，否则 compose
+  在**解析阶段**报错（`required variable … is missing a value`）——**响亮失败**，不是静默降级。
+- **既有库**：表已存在 ⇒ `db-init` 只做角色 / 函数 / 策略（不重建表）；口令每次 `ALTER ROLE`
+  ⇒ 改 `.env` 即轮换。
+- **未做真容器端到端**：未 `docker compose up` 全量（构建镜像耗时长）。已验证的是
+  `compose config` 解析 + **同一条命令在真 PG 空库上的行为**。首个现场部署时应按
+  `deploy/README.md` 确认 `db-init` 为 `Exited (0)`。

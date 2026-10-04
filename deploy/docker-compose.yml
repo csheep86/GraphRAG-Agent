@@ -25,6 +25,19 @@
 
 name: graphrag-agent
 
+# **backend 镜像的构建参数（`db-init` 与 `backend` 共用同一份）**。
+# 用锚点是**刻意**的：两处各写一份 `context: ..` 的话，哪天改 Dockerfile 路径
+# 只改一处 ⇒ 另一处变成"能构建、但构建的是旧配置"，而 compose 不会报错。
+x-backend-build: &backend-build
+  # ✅ **context 改为仓库根（2026-10-04，P2.5 / E3）**：插件目录 `plugins/` 在仓库根，
+  #    而 `backend/Dockerfile` 要 `COPY plugins ./plugins` 才能把插件烘焙进镜像
+  #    （ADR-0007 §3.1：构建期烘焙）⇒ context 留在 `backend/` 的话该 COPY **无源**。
+  # ⚠️ **副作用已处置**：`backend/.dockerignore` 随 context 变更而失效（Docker 只认
+  #    context 根的 `.dockerignore`）⇒ 已新建**仓库根 `.dockerignore`** 接管，
+  #    且必须含 `.env` 排除（`deployment-spec.md` §3 密钥禁入镜像）。
+  context: ..
+  dockerfile: backend/Dockerfile
+
 services:
   neo4j:
     # tag 固定（D-N）：`:latest` 是不可复现的同义词——本机曾靠它占了 1.14GB 却没人在用
@@ -67,16 +80,44 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # **P3-A 收口（2026-10-04）：建 RLS 角色 / 受控函数 / 落策略的一次性服务**。
+  #
+  # **为什么必须有它**：RLS 生效的前提是「应用账号**不是**表 owner、且 `NOBYPASSRLS`」
+  # （ADR-0003 §3.2 要求 2），而这个前提**只能由超级用户建立一次**——应用自己建不出来。
+  # 本服务就是那"一次"：以 PG 超级用户连进去，建 `app_owner`（建表 / 迁移）与
+  # `app_rls`（受限，`NOBYPASSRLS`）、建 A6 / A7 的受控系统函数、建表（首次）、
+  # 并对 14 张租户表落 `ENABLE` + `FORCE` + 策略。
+  #
+  # ⚠️ **少了它会发生什么**：`backend` 仍会照常起来（连通性没问题），但库里**没有
+  # 任何策略**，而此时它连库的身份若是超级用户 ⇒ **绕过一切 RLS**，症状为零。
+  # 这是"看起来部署完成、其实隔离没装"的典型，故必须有（G-26 的部署形态断言盯住）。
+  #
+  # 幂等：角色 / 函数 / 策略 / 建表全部可重复跑 ⇒ 每次 `up` 都执行，二次起只是 no-op。
+  db-init:
+    build: *backend-build
+    image: graphrag-agent/backend:1.6.0
+    command:
+      - python
+      - scripts/init_rls_roles.py
+      # 超级用户连串：只在**这一个一次性服务**里出现（backend 用的是受限角色）
+      - --admin-url
+      - postgresql+psycopg://graphrag:${POSTGRES_PASSWORD}@postgres:5432/graphrag
+      # 首次部署时建表（owner 身份）。已存在则 no-op；**升级**仍走
+      # `alembic upgrade head`（deployment-spec §7.2），本服务不改迁移历史。
+      - --create-tables
+    environment:
+      # 【密钥】这两个口令**不写进镜像**（§3），由现场 `.env` / Secrets 注入。
+      # 脚本每次都会 `ALTER ROLE … PASSWORD` ⇒ 改这里即可轮换，无需进库操作。
+      APP_OWNER_PASSWORD: ${APP_OWNER_PASSWORD:?APP_OWNER_PASSWORD 必填，见 .env.example}
+      APP_RLS_PASSWORD: ${APP_RLS_PASSWORD:?APP_RLS_PASSWORD 必填，见 .env.example}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # 一次性：`restart: "no"`。它退出 0 后 `backend` 才起（`service_completed_successfully`）
+    restart: "no"
+
   backend:
-    build:
-      # ✅ **context 改为仓库根（2026-10-04，P2.5 / E3）**：插件目录 `plugins/` 在仓库根，
-      #    而 `backend/Dockerfile` 要 `COPY plugins ./plugins` 才能把插件烘焙进镜像
-      #    （ADR-0007 §3.1：构建期烘焙）⇒ context 留在 `backend/` 的话该 COPY **无源**。
-      # ⚠️ **副作用已处置**：`backend/.dockerignore` 随 context 变更而失效（Docker 只认
-      #    context 根的 `.dockerignore`）⇒ 已新建**仓库根 `.dockerignore`** 接管，
-      #    且必须含 `.env` 排除（`deployment-spec.md` §3 密钥禁入镜像）。
-      context: ..
-      dockerfile: backend/Dockerfile
+    build: *backend-build
     # DR-A6（G-19）：版本化镜像。保留 build: 的同时声明 image: ⇒ 构建产物自动打此 tag，
     # 现场即可 pull 升级 / 改 tag 回滚。tag **必须固定小版本**（`:latest` 是不可复现的同义词，D-N）。
     # ⚠️ 此 tag 与 `backend/app/core/config.py` 的 `app_version`（当前 1.6.0）**无自动
@@ -86,7 +127,12 @@ services:
     environment:
       # DR-B1：连本文件的 `postgres` 服务。**必须写服务名**，不能写 localhost——
       # 容器里的 localhost 是容器自己；写错的表现是连不上，而 healthcheck 报得很含糊。
-      DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD}@postgres:5432/graphrag
+      #
+      # **P3-A（2026-10-04）：连库账号必须是受限角色 `app_rls`**（`NOBYPASSRLS`）。
+      # 原先这里是 `graphrag`——PG 的 `POSTGRES_USER` **就是超级用户**，而超级用户
+      # **绕过一切 RLS** ⇒ 用它连库，等于把 P3-A 落的 14 张表策略当成装饰品，
+      # 且**没有任何症状**（业务照常跑）。角色由上面的 `db-init` 建立。
+      DATABASE_URL: postgresql+psycopg://app_rls:${APP_RLS_PASSWORD}@postgres:5432/graphrag
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       # 必须全大写：`case_sensitive=False` 让小写写法（`NEO4J_password`）侥幸可用，
@@ -102,6 +148,11 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      # **P3-A**：必须等 `db-init` **成功退出**（而不是"起来了"）——
+      # 它在建角色 / 落策略，backend 若先跑起来就是"没装 RLS 也在对外服务"。
+      # `service_completed_successfully` 保证：init 非 0 退出 ⇒ backend **不会**启动。
+      db-init:
+        condition: service_completed_successfully
     healthcheck:
       # 契约路径是 `/api/v1/health`（不是 /health）：backend/app/api/v1/routes/health.py
       test:

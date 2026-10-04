@@ -31,6 +31,12 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY backend/app ./app
 COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./
+# **P3-A 收口（2026-10-04）**：镜像里必须能跑 `scripts/init_rls_roles.py`——
+# RLS 的角色 / 受控函数 / 策略**只能由超级用户建一次**，而部署侧负责这一步的是
+# compose 的 `db-init` 一次性服务（它复用本镜像）。少了这一行，`db-init` 会在
+# 容器里报 `No such file or directory`，而 backend 仍会**照常起来**——
+# 于是"部署已完成、其实库里根本没装 RLS"（超级用户绕过一切策略，症状全无）。
+COPY backend/scripts ./scripts
 
 # **构建期烘焙插件**（ADR-0007 §3.1 / DR-A3）：manifest 进镜像后，镜像内即可自证
 # 「这一版烘焙了哪些插件」——ADR-0007 §4 列的负面项正是「半年后无人知道客户 B 的

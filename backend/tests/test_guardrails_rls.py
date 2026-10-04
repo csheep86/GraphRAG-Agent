@@ -53,6 +53,9 @@ from app.db.session import open_session, session_scope
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
+#: **部署形态**的唯一安装入口（判据 7 会拿它实测）
+COMPOSE = BACKEND_ROOT.parent / "deploy" / "docker-compose.yml"
+DOCKERFILE = BACKEND_ROOT / "Dockerfile"
 SCRATCH_PREFIX = "graphrag_rls"
 
 #: 受控函数的**登记调用点**（G-26 判据 6 会拿源码实测与之比对）
@@ -550,4 +553,102 @@ def test_g26_per_table_policy_present(table: str) -> None:
     enabled, forced = rows[0]
     assert enabled and forced, (
         f"租户表 {table}：ENABLE={enabled} / FORCE={forced}——两者都必须为真"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 判据 7：**部署形态**——compose 的应用账号必须是受限角色（2026-10-04 补）
+# --------------------------------------------------------------------------- #
+
+
+def _compose_command(service: dict) -> list[str]:
+    """compose 的 ``command`` 既可能是字符串也可能是列表，统一成词表。"""
+    command = service.get("command")
+    if isinstance(command, str):
+        return command.split()
+    return [str(part) for part in command or []]
+
+
+def test_g26_7_deploy_compose_uses_restricted_db_role() -> None:
+    """**交付物里写死的连库账号**也必须是受限角色（否则库里的策略是装饰品）。
+
+    **为什么连编排文件都要判**：PG 里**超级用户绕过一切 RLS**，而 compose 用
+    ``POSTGRES_USER`` 起出来的账号**正是超级用户**。于是「策略已落库」与
+    「隔离已生效」之间还差一个连库身份——差的那一段**没有任何症状**：
+    业务照常跑、T1 / T2 在测试库里照样绿。本判据就是把这一段也钉死。
+
+    四条判据：
+
+    1. ``backend`` 的 ``DATABASE_URL`` 账号 **必须**是 ``APP_ROLE``（``app_rls``），
+       且**不得**是任何 PG 服务的超级用户；
+    2. 必须存在**执行 init 脚本**的一次性服务（建角色 / 受控函数 / 落策略）——
+       应用账号自己建不出来这些；
+    3. ``backend`` 必须以 ``service_completed_successfully`` 依赖该服务：
+       只写「起来了」的话，init 失败时 backend 照样对外服务（**没装 RLS 也在服务**）；
+    4. backend 镜像必须 ``COPY`` 了 ``scripts/``：否则 init 服务在容器里找不到
+       ``init_rls_roles.py``，而这一条**只有真起容器才看得出**。
+
+    ⚠️ 本断言**只看交付物**（编排文件 / Dockerfile），不证明运行时真连的是它——
+    那是判据 4（连库实测 ``rolbypassrls``）的事。
+    """
+    import yaml
+
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8")) or {}
+    services = compose.get("services") or {}
+    backend = services.get("backend")
+    assert isinstance(backend, dict), f"{COMPOSE.name} 无 backend 服务"
+
+    # 1) 连库账号 = 受限角色，且不得是 PG 超级用户
+    url = str((backend.get("environment") or {}).get("DATABASE_URL", ""))
+    user = url.split("://", 1)[-1].split(":", 1)[0] if "://" in url else ""
+    superusers = {
+        str((service.get("environment") or {}).get("POSTGRES_USER", ""))
+        for service in services.values()
+        if isinstance(service, dict)
+    } - {""}
+    assert user == APP_ROLE, (
+        f"compose 的 backend 连库账号是 {user or '（空）'}，须为受限角色 {APP_ROLE}"
+    )
+    assert user not in superusers, (
+        f"compose 的 backend 正以 PG 超级用户 {user} 连库 ⇒ 超级用户绕过一切 RLS，"
+        "库里的策略形同装饰（且**没有任何症状**）"
+    )
+
+    # 2) 一次性 init 服务
+    init_services = [
+        name
+        for name, service in sorted(services.items())
+        if isinstance(service, dict)
+        and any("init_rls_roles.py" in part for part in _compose_command(service))
+    ]
+    assert init_services, (
+        f"{COMPOSE.name} 里没有任何服务执行 scripts/init_rls_roles.py ⇒ "
+        "角色 / 受控函数 / 策略无人建立（受限账号自己建不出来）"
+    )
+
+    # 3) backend 必须等它**成功退出**
+    depends_on = backend.get("depends_on") or {}
+    waited = [
+        name
+        for name in init_services
+        if (depends_on.get(name) or {}).get("condition")
+        == "service_completed_successfully"
+    ]
+    assert waited, (
+        f"backend 未以 service_completed_successfully 依赖 init 服务 {init_services}"
+        f"（实际 {depends_on}）⇒ init 失败时 backend 仍会起来，"
+        "等于对外提供「没装 RLS」的服务"
+    )
+
+    # 4) 镜像里有 scripts/（否则 init 服务在容器里找不到脚本）
+    #    ⚠️ 只认**真正的 COPY 指令**：注释里提一句 `backend/scripts` 不算——
+    #    Dockerfile 里"说了但没做"比不说更危险（看着像已处置）。
+    copied = [
+        line
+        for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("COPY") and "backend/scripts" in line
+    ]
+    assert copied, (
+        f"{DOCKERFILE.name} 没有 `COPY backend/scripts` 指令 ⇒ init 服务在容器里找不到 "
+        "init_rls_roles.py；该失败只有真起容器才看得出来（注释里提到不算数）"
     )

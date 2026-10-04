@@ -7,12 +7,27 @@
 
 ```bash
 cd deploy
-cp .env.example .env        # 然后**两个都填**：NEO4J_PASSWORD（≥8 位）+ POSTGRES_PASSWORD
+cp .env.example .env        # 然后**四个都填**：NEO4J_PASSWORD（≥8 位）+ POSTGRES_PASSWORD
+                            #                + APP_OWNER_PASSWORD + APP_RLS_PASSWORD
 docker compose up -d        # 首次会构建 backend / frontend 两个镜像
-docker compose ps           # 期望**四个**服务全 healthy（含 postgres）
+docker compose ps           # 期望 backend / frontend / neo4j / postgres 四个**常驻**服务
+                            # healthy；`db-init` 是**一次性**服务，退出码 0 属正常（见下）
 docker compose logs -f backend
 docker compose down         # 停；数据卷保留
 ```
+
+### `db-init`：一次性建库服务（**P3-A，2026-10-04 起**）
+
+RLS 生效的前提是「应用账号**不是**表 owner、且 `NOBYPASSRLS`」，而这个前提**只能由
+超级用户建立一次**。compose 里干这件事的是 `db-init`：它以 PG 超级用户连进去，建
+`app_owner`（建表 / 迁移）与 `app_rls`（受限，应用连库用的就是它）、建受控系统函数、
+建表（首次）并对 14 张租户表落 `ENABLE` + `FORCE` + 策略，然后退出。
+
+- **幂等**：每次 `up` 都跑，二次起是 no-op；改 `.env` 里的两个口令即可轮换。
+- **`backend` 依赖它是 `service_completed_successfully`** ⇒ init 失败时 backend **不会**起来
+  （避免出现"没装 RLS 也在对外服务"）。
+- ⚠️ 因此 `docker compose ps` 看到 `db-init` 处于 `Exited (0)` 是**预期状态**，不是故障；
+  若是 `Exited (1)`，看 `docker compose logs db-init`。
 
 ⚠️ **`docker compose build` 也需要 `.env`**（2026-10-04 实测踩到）：
 compose 里 `POSTGRES_PASSWORD` / `NEO4J_PASSWORD` 写作 `${VAR:?}` 必填形式，
@@ -24,13 +39,14 @@ compose 里 `POSTGRES_PASSWORD` / `NEO4J_PASSWORD` 写作 `${VAR:?}` 必填形�
 POSTGRES_PASSWORD=build-only NEO4J_PASSWORD=build-only docker compose build backend
 ```
 
-## 起的四个服务
+## 起的服务（四个常驻 + 一个一次性）
 
 | 服务 | 宿主端口 | 说明 |
 |---|---|---|
 | `neo4j` | `127.0.0.1:7474` / `127.0.0.1:7687` | 图存储；只绑回环（§2：不暴露业务网） |
 | `postgres` | **不映射**（内部 5432） | PG 16.x（**DR-B1**）；§2「禁止暴露业务网络」⇒ 不映射端口。需直连：`docker compose exec postgres psql -U graphrag -d graphrag` |
-| `backend` | `127.0.0.1:8000` | FastAPI + uvicorn；契约健康端点 **`/api/v1/health`** |
+| `db-init` | — | **一次性**（`restart: "no"`）：建 RLS 角色 / 受控函数 / 建表 / 落策略。复用 backend 镜像（P3-A） |
+| `backend` | `127.0.0.1:8000` | FastAPI + uvicorn；契约健康端点 **`/api/v1/health`**。**以受限角色 `app_rls` 连库** |
 | `frontend` | `127.0.0.1:3000` | `next start`（**非** `next dev`） |
 
 **PG 已就位——裁决 D-L 已于 2026-10-01 作废**（以下为历史记述，**保留不删**，当前事实以
