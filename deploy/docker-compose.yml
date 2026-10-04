@@ -69,9 +69,14 @@ services:
 
   backend:
     build:
-      # context 用 backend/ 自身（不是仓库根）：COPY 路径即 Dockerfile 内所写，`.dockerignore` 也生效
-      context: ../backend
-      dockerfile: Dockerfile
+      # ✅ **context 改为仓库根（2026-10-04，P2.5 / E3）**：插件目录 `plugins/` 在仓库根，
+      #    而 `backend/Dockerfile` 要 `COPY plugins ./plugins` 才能把插件烘焙进镜像
+      #    （ADR-0007 §3.1：构建期烘焙）⇒ context 留在 `backend/` 的话该 COPY **无源**。
+      # ⚠️ **副作用已处置**：`backend/.dockerignore` 随 context 变更而失效（Docker 只认
+      #    context 根的 `.dockerignore`）⇒ 已新建**仓库根 `.dockerignore`** 接管，
+      #    且必须含 `.env` 排除（`deployment-spec.md` §3 密钥禁入镜像）。
+      context: ..
+      dockerfile: backend/Dockerfile
     # DR-A6（G-19）：版本化镜像。保留 build: 的同时声明 image: ⇒ 构建产物自动打此 tag，
     # 现场即可 pull 升级 / 改 tag 回滚。tag **必须固定小版本**（`:latest` 是不可复现的同义词，D-N）。
     # ⚠️ 此 tag 与 `backend/app/core/config.py` 的 `app_version`（当前 1.6.0）**无自动

@@ -1,3 +1,10 @@
+# ⚠️ **本文件当前不生效（2026-10-04，P2.5 / E3）**
+#    `deploy/docker-compose.yml` 的 backend `build.context` 已改为**仓库根**
+#    （为让 `COPY plugins ./plugins` 有源），而 Docker **只认 context 根目录的
+#    `.dockerignore`** ⇒ 实际生效的是**仓库根 `.dockerignore`**。
+#    本文件**保留不删**（守 R5），供日后 backend 单独构建时参考；
+#    若再改 backend 的构建方式，请同步检查这两份是否都对。
+#
 # 密钥禁入镜像（deployment-spec §3）
 .env
 .env.*

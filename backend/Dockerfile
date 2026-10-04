@@ -21,14 +21,22 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.14 /uv /usr/local/bin/uv
 WORKDIR /app
 
 # 依赖先行分层：只拷清单，代码变了不必重装依赖
-COPY pyproject.toml uv.lock ./
+# ⚠️ 路径带 `backend/` 前缀（2026-10-04，P2.5 / E3）：compose 的 `build.context`
+#    已改为**仓库根**（为让 `COPY plugins` 有源）⇒ Dockerfile 内的相对路径全部要加前缀。
+COPY backend/pyproject.toml backend/uv.lock ./
 # `--no-install-project`：本项目是**应用**不是库，代码以 COPY 进镜像，
 # 免得 uv_build 去找并不存在的 `backend/` 包目录（项目名与代码目录不同名）
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY app ./app
-COPY migrations ./migrations
-COPY alembic.ini ./
+COPY backend/app ./app
+COPY backend/migrations ./migrations
+COPY backend/alembic.ini ./
+
+# **构建期烘焙插件**（ADR-0007 §3.1 / DR-A3）：manifest 进镜像后，镜像内即可自证
+# 「这一版烘焙了哪些插件」——ADR-0007 §4 列的负面项正是「半年后无人知道客户 B 的
+# 镜像里烘焙了什么」。插件**实现**仍在 `app/` 里（`entry_point` 指向既有类），
+# 此处 COPY 的是清单（B 类插件将来还会带契约片段与前端资源）。
+COPY plugins ./plugins
 
 # 非 root 运行；/data 承载 SQLite（`DATABASE_URL` 由 compose 指向此处）
 RUN useradd -m -u 10001 appuser \

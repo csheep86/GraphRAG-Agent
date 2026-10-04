@@ -1,0 +1,24 @@
+# 插件清单（ADR-0007 §3.6 / DR-A2）—— **A 类插件**：纯配置，不碰契约、零前端改动。
+#
+# 本插件是 P2.5 的**第 1 个真插件**（GA 硬门槛：`plugins/` 必须有真插件，空壳不算）：
+# `entry_point` 指向**已投产**的导出实现 `JsonCsvExportSink`
+# （ADR-0004 §2.1 第 6 行在册，是接缝 6 登记集合里**唯一**的实现类）。
+# ⇒ 本文件**不新增任何业务代码**，只是给既有能力补一份「交付形态声明」。
+#
+# ⚠️ 为什么 `entry_point` 指向 `app/` 里的类，而不是 `plugins/` 下的代码：
+#    ADR-0007 §3.6 的示例本身就是 `app.services.auth.ldap:LdapAuthProvider` ⇒
+#    实现类住在 `app/` 里是 ADR 本意，`plugins/` 只放清单（B 类才另带契约片段 / 前端）。
+#    这也让 `check_seams.py` 的判据 1 / 4 **不受影响**——没有新增实现类，登记集合未变。
+
+id: json-csv-export
+version: 1.0.0
+base_version: "1"                                             # 兼容基座大版本；跨大版本需重做（ADR-0007 裁决 8）
+class: A                                                      # A = 纯配置 / B = 带 UI 与新端点
+seam: "6"                                                     # ADR-0004 接缝 6「数据输出」ExportSink
+                                                              # ⚠️ 必须写**字符串**：G-22 判据要求
+                                                              #    `isinstance(value, str)`；ADR-0007 §3.6
+                                                              #    示例写的是裸数字 `seam: 1`，会被判为「缺字段」
+                                                              #    ⇒ 此处取字符串，差异登记在 changes/P2.5/
+entry_point: app.services.export.json_csv:JsonCsvExportSink
+config_schema: null                                           # DR-A5（动态表单）已降级 ⇒ 暂不驱动
+openapi_fragment: null                                        # 仅 B 类才填；A 类不碰契约 ⇒ 契约零 diff

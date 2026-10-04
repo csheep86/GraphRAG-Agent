@@ -39,7 +39,7 @@ until docker exec graphrag-pg pg_isready -U graphrag -d graphrag_test; do sleep 
 
 ## E1 / DR-A2 — `plugins/json-csv-export/plugin.yaml`
 
-- [ ] 建目录与清单，字段取 ADR-0007 §3.6 全量（G-22 只强制其中 5 个，其余按 ADR 补）：
+- [x] 建目录与清单，字段取 ADR-0007 §3.6 全量（G-22 只强制其中 5 个，其余按 ADR 补）：
 
 ```yaml
 id: json-csv-export
@@ -52,13 +52,13 @@ config_schema: null       # DR-A5 已降级 ⇒ 暂不驱动动态表单
 openapi_fragment: null    # 仅 B 类才填
 ```
 
-- [ ] **入口真实性（本批新增，针对 GA 硬门槛「不许造空壳」）**：
+- [x] **入口真实性（本批新增，针对 GA 硬门槛「不许造空壳」）**：
       G-22 只验 5 个字段非空 ⇒ **写一句假 `entry_point` 也能转绿**——那是标准的空壳假绿。
       ⇒ 加一条断言：`entry_point` 的**模块可导入且类存在**（按 `模块:类名` 解析）。
       建议落点：`tests/test_guardrails_delivery.py`，与 `test_g22_plugin_manifests_are_valid` 同组。
-- [ ] 出口：**先**让 `test_g22_plugin_source_exists` **真通过**，**再**摘 xfail
+- [x] 出口：**先**让 `test_g22_plugin_source_exists` **真通过**，**再**摘 xfail
       ⚠️ 只删 xfail 标记不算转正（本仓反复强调的一条）
-- [ ] 登记：`docs/delivery-requirements-and-guardrails.md` 的 G-22 行同步为「部分 → 已生效（1 个真插件）」
+- [x] 登记：`docs/delivery-requirements-and-guardrails.md` 的 G-22 行同步为「部分 → 已生效（1 个真插件）」
 
 ⚠️ **不搬实现代码**：`entry_point` 指向既有的 `app/services/export/json_csv.py`
 （ADR-0007 §3.6 的示例 `app.services.auth.ldap:LdapAuthProvider` 就是同款写法）
@@ -68,12 +68,12 @@ openapi_fragment: null    # 仅 B 类才填
 
 ## E2 / DR-A1 — `deploy/variants/baseline.yaml`
 
-- [ ] 建 `deploy/variants/baseline.yaml`，按 ADR-0007 §3.2 示例：只描述「启用什么」，**不含业务代码**
-- [ ] `customer: baseline`（文件名与 `customer` 值**都用** `baseline`——实测契约 0 次，不会假红）
-- [ ] 顶层**不写** `id` 字段（避免与 `_customer_tokens()` 的 `id` 取值口径混淆）
-- [ ] ⚠️ **只产 1 个变体** —— G-12 启用条件写死 `≥ 2`，本批**不凑第二个**
+- [x] 建 `deploy/variants/baseline.yaml`，按 ADR-0007 §3.2 示例：只描述「启用什么」，**不含业务代码**
+- [x] `customer: baseline`（文件名与 `customer` 值**都用** `baseline`——实测契约 0 次，不会假红）
+- [x] 顶层**不写** `id` 字段（避免与 `_customer_tokens()` 的 `id` 取值口径混淆）
+- [x] ⚠️ **只产 1 个变体** —— G-12 启用条件写死 `≥ 2`，本批**不凑第二个**
       （需求基线 §300：❌ 不许为凑数捏造客户、❌ 不许放宽成 ≥1）
-- [ ] 出口：`test_g14_customer_token_source_exists` **真通过**后再摘 xfail
+- [x] 出口：`test_g14_customer_token_source_exists` **真通过**后再摘 xfail
 
 ---
 
@@ -84,23 +84,23 @@ openapi_fragment: null    # 仅 B 类才填
 ⇒ **必须先新建仓库根 `.dockerignore`**，把 backend 那份规则搬过去，**尤其要含 `.env` / `.env.*`**
 （`deployment-spec.md` §3：密钥禁入镜像）。**这一步没做完就不要动 context。**
 
-- [ ] 仓库根建 `.dockerignore`（含 `.env`、`.venv/`、`__pycache__/`、`.git/` 等）
-- [ ] `deploy/docker-compose.yml` 的 backend：`context: ..`（相对 `deploy/` ⇒ 仓库根）、`dockerfile: backend/Dockerfile`
-- [ ] `backend/Dockerfile`：COPY 路径加 `backend/` 前缀（`pyproject.toml` / `uv.lock` / `app` / `migrations` / `alembic.ini`），新增 `COPY plugins ./plugins`
-- [ ] **为什么 manifest 进镜像有意义**：ADR-0007 §4 负面列了「半年后无人知道客户 B 的镜像里烘焙了什么」
+- [x] 仓库根建 `.dockerignore`（含 `.env`、`.venv/`、`__pycache__/`、`.git/` 等）
+- [x] `deploy/docker-compose.yml` 的 backend：`context: ..`（相对 `deploy/` ⇒ 仓库根）、`dockerfile: backend/Dockerfile`
+- [x] `backend/Dockerfile`：COPY 路径加 `backend/` 前缀（`pyproject.toml` / `uv.lock` / `app` / `migrations` / `alembic.ini`），新增 `COPY plugins ./plugins`
+- [x] **为什么 manifest 进镜像有意义**：ADR-0007 §4 负面列了「半年后无人知道客户 B 的镜像里烘焙了什么」
       ⇒ manifest 进镜像后，镜像内可直接自证（可 `cat /app/plugins/*/plugin.yaml`）
-- [ ] 出口（**实测**）：`docker compose build backend` 成功。
+- [x] 出口（**实测**）：`docker compose build backend` 成功。
       ⚠️ 本机构建需拉 `python:3.11-slim` + `uv` 镜像，可能耗时/受网络影响 ⇒
       **若失败或超时，登记 `BLOCKED` 并说明，不阻塞 E1 / E2 / F**（勿让一处卡住整批）
-- [ ] G-19 复核：它只查 `image:` 与 tag，**不查 build.context** ⇒ 理论上不受影响；
+- [x] G-19 复核：它只查 `image:` 与 tag，**不查 build.context** ⇒ 理论上不受影响；
       改完仍要实跑一次 `pytest tests/test_guardrails_delivery.py -k g19` 确认
 
 ---
 
 ## F / G-14 — 基座契约纯净性（随首个插件并入）
 
-- [ ] 随 E1 / E2 落地，`_customer_tokens()` 黑名单终于非空 ⇒ 守卫条转正
-- [ ] ⚠️ **预期管理**：主断言 `test_g14_base_contract_has_no_customer_specific_fields`
+- [x] 随 E1 / E2 落地，`_customer_tokens()` 黑名单终于非空 ⇒ 守卫条转正
+- [x] ⚠️ **预期管理**：主断言 `test_g14_base_contract_has_no_customer_specific_fields`
       之后**仍然恒绿**（基座契约里没有 `baseline` 字样）——**这是预期不是缺陷**，
       它的职责是"客户标识一旦泄进契约就红"。证明"它并非从没生效过"的是转正常驻的**守卫**那条。
 

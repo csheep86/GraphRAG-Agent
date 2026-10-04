@@ -1,0 +1,19 @@
+# 变体清单（ADR-0007 §3.2 / DR-A1）—— 只描述「启用什么」，**不含业务代码**。
+#
+# ⚠️ **为什么叫 `baseline` 而不是需求基线 §300 字面的 `default` / `demo`**（2026-10-04 裁决）：
+#    `tests/test_guardrails_delivery.py::_customer_tokens()` 取**变体文件名的 stem** 与
+#    `customer` 字段值，对基座契约做**子串**匹配。实测契约词频：
+#    `default` **10 次**、`demo` **3 次**、`baseline` **0 次**
+#    （前两者都是 OpenAPI schema 关键字 / 示例，与客户无关）⇒ 按字面命名会让
+#    G-14 **结构性假红**。故本文件用 `baseline`（文件名与 `customer` 值一致）。
+#    ⇒ 需求基线 §300 原文**不改**（守 R5），差异登记在 `changes/P2.5/proposal.md` §7。
+#
+# ⚠️ **本批只产 1 个变体**：G-12 的启用条件写死 `≥ 2`，本批**不凑第二个**
+#    （需求基线 §300：❌ 不许为凑数捏造客户、❌ 不许放宽成 ≥1）。
+#    ⇒ G-12 做完本批**仍挂起**，属预期。
+
+customer: baseline
+base_ref: v1.6.0                        # 基座版本（含补丁位）；与 config.py 的 app_version 对应
+plugins:
+  - id: json-csv-export
+    version: 1.0.0

@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import importlib
+import inspect
 from pathlib import Path
 
 import pytest
@@ -72,13 +74,9 @@ def test_g14_base_contract_has_no_customer_specific_fields() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "G-14 前置：deploy/variants/ 尚不存在 ⇒ 客户标识黑名单为空 ⇒ "
-        "上面那条**恒绿**，没有在拦任何东西"
-    ),
-)
+# ✅ **已转正（2026-10-04，P2.5）**：`deploy/variants/baseline.yaml` 已落 ⇒ 黑名单非空。
+#    **转正流程**：先让本条**真通过**（strict xfail 下 XPASS ⇒ FAILED，实测到过），
+#    **再**摘 `@pytest.mark.xfail`——只删标记不算转正。
 def test_g14_customer_token_source_exists() -> None:
     """守卫：黑名单**必须有来源**——否则上一条会退化成"从没生效过"。
 
@@ -102,8 +100,9 @@ def test_g14_customer_token_source_exists() -> None:
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "G-12 / DR-A1 / DR-A3：deploy/variants/ 当前 **0 个**变体。"
-        "1 个客户时无矩阵可言；启用条件写死为 **variant ≥ 2**"
+        "G-12 / DR-A1 / DR-A3：deploy/variants/ 当前 **1 个**变体"
+        "（`baseline`，2026-10-04 P2.5 落）。启用条件写死为 **variant ≥ 2**，"
+        "本批**不凑第二个**（需求基线 §300：不许捏造客户、不许放宽成 ≥1）"
     ),
 )
 def test_g12_variant_matrix_builds() -> None:
@@ -249,10 +248,8 @@ def test_g22_plugin_manifests_are_valid() -> None:
     assert not problems, "插件清单不合规（DR-A2）：\n  - " + "\n  - ".join(problems)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="G-22 前置：plugins/ 目录不存在 ⇒ 上面那条**恒绿**，没有在拦任何东西",
-)
+# ✅ **已转正（2026-10-04，P2.5）**：`plugins/json-csv-export/plugin.yaml` 已落 ⇒ 有插件可校验。
+#    **转正流程**：先真通过（strict xfail 下 XPASS ⇒ FAILED，实测到过），再摘 xfail。
 def test_g22_plugin_source_exists() -> None:
     """守卫（纪律 **R-9「恒绿即失效」**）：必须**至少有一个**插件可校验。"""
     assert PLUGIN_ROOT.is_dir(), (
@@ -260,3 +257,40 @@ def test_g22_plugin_source_exists() -> None:
         "test_g22_plugin_manifests_are_valid 只是恒绿，没在拦东西"
     )
     assert _plugins(), f"{PLUGIN_ROOT} 存在但没有 */plugin.yaml"
+
+
+def test_g22_plugin_entry_points_are_importable() -> None:
+    """`entry_point` 必须**真的指向存在的类**（GA 硬门槛「不许造空壳」的机械保证）。
+
+    **为什么必须另立这一条**：G-22 的主断言只验 5 个字段**非空** ⇒
+    写一句 `entry_point: nonexistent.module:Whatever` 也能**全绿**——
+    那是标准的空壳假绿，恰好是需求基线 §300 明令禁止的「为转护栏而造空壳插件」。
+
+    ⚠️ **不是**要求实现代码搬到 `plugins/` 下：ADR-0007 §3.6 的示例本身就是
+    `app.services.auth.ldap:LdapAuthProvider` ⇒ 实现类住在 `app/` 里是 ADR 本意，
+    `plugins/` 只放清单。这里验的是「清单指的那个人**真的存在**」。
+    """
+    problems: list[str] = []
+    for path, data in _plugins():
+        if data.get("__error__"):
+            continue
+        spec = data.get("entry_point")
+        # 缺字段 / 非字符串由 test_g22_plugin_manifests_are_valid 管，此处不重复报
+        if not isinstance(spec, str) or not spec.strip():
+            continue
+        module_name, _, attr = spec.partition(":")
+        if not module_name or not attr:
+            problems.append(f"{path}：entry_point 不是 `模块:类名` 形式 —— {spec}")
+            continue
+        try:
+            target = getattr(importlib.import_module(module_name), attr)
+        except Exception as exc:  # 导入失败 / 类不存在，都要说清是哪个插件
+            problems.append(f"{path}：entry_point 无法解析 —— {spec}（{exc!r}）")
+            continue
+        if not inspect.isclass(target):
+            problems.append(f"{path}：entry_point 指向的不是类 —— {spec}")
+
+    assert not problems, (
+        "插件清单的 entry_point 指向了不存在的目标（空壳插件）：\n  - "
+        + "\n  - ".join(problems)
+    )
