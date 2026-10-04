@@ -81,7 +81,7 @@ def _record_rate_limit_audit(
     try:
         from app.core.config import get_settings
         from app.core.middleware import ACTOR_ID_HEADER, ORG_ID_HEADER
-        from app.db.session import SessionLocal
+        from app.db.session import open_session
         from app.services.audit import record_audit_entry
         from app.services.auth import get_auth_provider
 
@@ -107,7 +107,9 @@ def _record_rate_limit_audit(
             )
             return
 
-        with SessionLocal() as session:
+        # A4 登记的系统通道（P3-A）：与 AuditMiddleware 同口径——org 来自接缝 1
+        # 解析的**认证态**，照绑；不绑 ⇒ RLS 下这条限流审计写不进去。
+        with open_session(org_id=identity.org_id) as session:
             record_audit_entry(
                 session,
                 org_id=identity.org_id,

@@ -93,6 +93,8 @@ async def detect_affiliation(
             task_type="affiliation.detect",
             payload={"affiliation_task_id": str(task.id)},
             trace_id=trace_id,
+            # A5：org 取自**认证态**（identity），不是 payload
+            org_id=identity.org_id,
         )
     )
 

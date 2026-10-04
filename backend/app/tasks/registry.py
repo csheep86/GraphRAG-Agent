@@ -44,7 +44,7 @@ from tenacity import (
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.db.models import AffiliationTask, Document, KgVersion
-from app.db.session import SessionLocal
+from app.db.session import open_session
 from app.services.affiliation import (
     mark_task_failed,
     mark_task_processing,
@@ -106,7 +106,8 @@ async def document_parse_executor(spec: TaskSpec) -> None:
     settings = get_settings()
     document_id = UUID(spec.payload["document_id"])
 
-    db: Session = SessionLocal()
+    # A5：执行体跑在请求之外 ⇒ org 只能来自 TaskSpec（任务创建时的认证态）
+    db: Session = open_session(org_id=spec.org_id)
     try:
         # 1. 推进到 processing（真实写入数据库）
         document = db.get(Document, document_id)
@@ -157,7 +158,11 @@ async def document_parse_executor(spec: TaskSpec) -> None:
             ):
                 with attempt:
                     _on_retry(attempt.retry_state)
-                    await _do_parse(document_id=document_id, payload=spec.payload)
+                    await _do_parse(
+                        document_id=document_id,
+                        payload=spec.payload,
+                        org_id=spec.org_id,
+                    )
         except RetryError as exc:
             # 重试用尽：把最后一个底层异常抛出，由外层 except 落库
             if (
@@ -194,7 +199,9 @@ async def document_parse_executor(spec: TaskSpec) -> None:
         db.close()
 
 
-async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None:
+async def _do_parse(
+    *, document_id: UUID, payload: Mapping[str, object], org_id: UUID
+) -> None:
     """真实解析：PDF → MinerU 云 API → 产物落存储层。
 
     - 产物键：``{org_id}/{doc_id}/parse/{full.md, content_list.json}``
@@ -211,7 +218,7 @@ async def _do_parse(*, document_id: UUID, payload: Mapping[str, object]) -> None
     2. ADR-0002 三段式写入（PG ``kg_versions`` 真源 → Neo4j ``MERGE``）。
     """
     settings = get_settings()
-    db: Session = SessionLocal()
+    db: Session = open_session(org_id=org_id)
     try:
         document = db.get(Document, document_id)
         if document is None:
@@ -315,7 +322,7 @@ async def document_extract_executor(spec: TaskSpec) -> None:
     settings = get_settings()
     document_id = UUID(spec.payload["document_id"])
 
-    db: Session = SessionLocal()
+    db: Session = open_session(org_id=spec.org_id)
     try:
         document = db.get(Document, document_id)
         if document is None:
@@ -361,6 +368,7 @@ async def document_extract_executor(spec: TaskSpec) -> None:
                         document_id=document_id,
                         trace_id=spec.trace_id,
                         payload=spec.payload,
+                        org_id=spec.org_id,
                     )
         except RetryError as exc:
             if (
@@ -469,11 +477,15 @@ def _apply_page_numbers(
 
 
 async def _do_extract(
-    *, document_id: UUID, trace_id: str, payload: Mapping[str, object]
+    *,
+    document_id: UUID,
+    trace_id: str,
+    payload: Mapping[str, object],
+    org_id: UUID,
 ) -> None:
     """真实抽取：读 full.md → LangExtract → 写 entities / relations / chunks JSON。"""
     storage = get_storage()
-    db: Session = SessionLocal()
+    db: Session = open_session(org_id=org_id)
     try:
         document = db.get(Document, document_id)
         if document is None:
@@ -594,7 +606,7 @@ async def kg_build_executor(spec: TaskSpec) -> None:
     settings = get_settings()
     document_id = UUID(spec.payload["document_id"])
 
-    db: Session = SessionLocal()
+    db: Session = open_session(org_id=spec.org_id)
     try:
         document = db.get(Document, document_id)
         if document is None:
@@ -659,6 +671,7 @@ async def kg_build_executor(spec: TaskSpec) -> None:
                         document_id=document_id,
                         kg_version_id=kg_version_id,
                         payload=spec.payload,
+                        org_id=spec.org_id,
                     )
         except RetryError as exc:
             if (
@@ -697,10 +710,11 @@ async def _do_kg_build(
     document_id: UUID,
     kg_version_id: UUID,
     payload: Mapping[str, object],
+    org_id: UUID,
 ) -> None:
     """真实加载：从 entities / relations JSON 读 → ThreeStageKgBuilder 写入 Neo4j。"""
     storage = get_storage()
-    db: Session = SessionLocal()
+    db: Session = open_session(org_id=org_id)
     try:
         document = db.get(Document, document_id)
         if document is None:
@@ -867,7 +881,7 @@ async def risk_detect_executor(spec: TaskSpec) -> None:
     settings = get_settings()
     document_id = UUID(spec.payload["document_id"])
 
-    db: Session = SessionLocal()
+    db: Session = open_session(org_id=spec.org_id)
     try:
         document = db.get(Document, document_id)
         if document is None:
@@ -1034,7 +1048,7 @@ async def affiliation_detect_executor(spec: TaskSpec) -> None:
     settings = get_settings()
     task_id = UUID(str(spec.payload.get("affiliation_task_id")))
 
-    db: Session = SessionLocal()
+    db: Session = open_session(org_id=spec.org_id)
     attempt_count = 0
     try:
         task = db.get(AffiliationTask, task_id)

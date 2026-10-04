@@ -37,11 +37,25 @@ from app.services.graphs import EvidenceChunk, GraphService, KgVersion
 
 @pytest.fixture
 def empty_audit_log() -> None:
-    """清空 `audit_log` —— 审计是全站中间件写的，不清空就无法断言「本次请求」的条数。"""
-    with SessionLocal() as session:
-        session.query(AuditLog).delete()
-        session.query(QaLog).delete()
-        session.commit()
+    """清空 `audit_log` —— 审计是全站中间件写的，不清空就无法断言「本次请求」的条数。
+
+    **A10**：RLS 之后「清空」是**逐租户**动作——一个会话只看见一个 org 的行，
+    只想清默认 org 就会把别的租户的历史行留在库里，而 T1 断言的正是
+    「别的租户的行不该被看到」⇒ 残留会让它**假红**。故两个 org 各清一次。
+    """
+    from uuid import UUID as _UUID
+
+    from app.db.session import session_scope
+
+    # 与 conftest 的 ``OTHER_ORG_ID`` 同值（T1 用的第二个租户）
+    for org_id in (
+        get_settings().default_org_id,
+        _UUID("00000000-0000-4000-8000-000000000002"),
+    ):
+        with session_scope(org_id=org_id) as session:
+            session.query(AuditLog).delete()
+            session.query(QaLog).delete()
+            session.commit()
 
 
 def _audit_rows() -> list[AuditLog]:

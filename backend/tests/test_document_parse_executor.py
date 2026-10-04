@@ -117,6 +117,8 @@ def _make_spec(document_id: UUID) -> TaskSpec:
         task_type="document.parse",
         payload={"document_id": str(document_id)},
         trace_id=_TRACE_ID,
+        # A5：org 必填（后台任务没有请求身份，只能由 TaskSpec 携带）
+        org_id=get_settings().default_org_id,
     )
 
 
@@ -184,7 +186,7 @@ def test_executor_skips_already_completed(
     document_id = seed_document("completed")
     calls: list[Any] = []
 
-    async def spy(*, document_id: UUID, payload: Any) -> None:
+    async def spy(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
         calls.append((document_id, payload))
 
     monkeypatch.setattr("app.tasks.registry._do_parse", spy)
@@ -212,7 +214,7 @@ def test_executor_retries_io_then_succeeds(
     document_id = seed_document("pending")
     calls: list[int] = []
 
-    async def flaky_parse(*, document_id: UUID, payload: Any) -> None:
+    async def flaky_parse(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
         calls.append(len(calls) + 1)
         if len(calls) < 3:
             raise OSError("simulated io error")
@@ -246,7 +248,7 @@ def test_executor_retries_exhausted_marks_failed(
     settings = get_settings()
     calls: list[int] = []
 
-    async def always_fail(*, document_id: UUID, payload: Any) -> None:
+    async def always_fail(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
         calls.append(len(calls) + 1)
         raise OSError("simulated permanent failure")
 
@@ -278,7 +280,7 @@ def test_executor_failed_state_records_error_code_and_detail(
     """
     document_id = seed_document("pending")
 
-    async def raise_conn(*, document_id: UUID, payload: Any) -> None:
+    async def raise_conn(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
         raise ConnectionError("upstream timeout")
 
     monkeypatch.setattr("app.tasks.registry._do_parse", raise_conn)
@@ -306,7 +308,7 @@ def test_executor_handles_missing_document_gracefully(
     document_id = uuid4()
     calls: list[Any] = []
 
-    async def spy(*, document_id: UUID, payload: Any) -> None:
+    async def spy(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
         calls.append((document_id, payload))
 
     monkeypatch.setattr("app.tasks.registry._do_parse", spy)
@@ -335,7 +337,7 @@ def test_executor_backfills_storage_key_on_completed(
 ) -> None:
     """completed 后 storage_key 非 NULL 且格式 = {org}/{doc}/{hash}。"""
 
-    async def noop(*, document_id: UUID, payload: Any) -> None:
+    async def noop(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
         return None
 
     monkeypatch.setattr("app.tasks.registry._do_parse", noop)
@@ -367,7 +369,7 @@ def test_executor_records_retry_count(
     document_id = seed_document("pending")
     calls: list[int] = []
 
-    async def flaky(*, document_id: UUID, payload: Any) -> None:
+    async def flaky(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
         calls.append(len(calls) + 1)
         if len(calls) < 3:
             raise OSError("simulated io error")
@@ -391,7 +393,7 @@ def test_executor_failed_path_records_retry_count(
     settings = get_settings()
     document_id = seed_document("pending")
 
-    async def always_fail(*, document_id: UUID, payload: Any) -> None:
+    async def always_fail(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
         raise OSError("simulated permanent failure")
 
     monkeypatch.setattr("app.tasks.registry._do_parse", always_fail)
@@ -446,7 +448,11 @@ def test_do_parse_pdf_stores_artifacts(
     monkeypatch.setattr("app.tasks.registry.MineruClient", _FakeMineruClient)
 
     asyncio.run(
-        _do_parse(document_id=document_id, payload={"document_id": str(document_id)})
+        _do_parse(
+            document_id=document_id,
+            payload={"document_id": str(document_id)},
+            org_id=settings.default_org_id,
+        )
     )
 
     # 源文件真实读取；对外文件名不含原始名（M5 §4.5）
@@ -554,7 +560,11 @@ def test_do_parse_docx_stores_artifacts_with_docx_suffix(
     monkeypatch.setattr("app.tasks.registry.MineruClient", _FakeMineruClient)
 
     asyncio.run(
-        _do_parse(document_id=document_id, payload={"document_id": str(document_id)})
+        _do_parse(
+            document_id=document_id,
+            payload={"document_id": str(document_id)},
+            org_id=settings.default_org_id,
+        )
     )
 
     assert seen["content"] == b"PK\x03\x04-fake-docx"

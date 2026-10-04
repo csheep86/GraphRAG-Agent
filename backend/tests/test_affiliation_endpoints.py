@@ -27,7 +27,7 @@ from sqlalchemy import delete
 
 from app.core.config import get_settings
 from app.db.models import AffiliationSuspicion, AffiliationTask, Document
-from app.db.session import SessionLocal, init_db
+from app.db.session import init_db, session_scope
 from app.tasks.manager import TaskManager, recover_orphan_tasks
 from app.tasks.types import TaskSpec
 
@@ -47,16 +47,19 @@ def _ensure_schema() -> None:
 def created_ids() -> list[uuid.UUID]:
     ids: list[uuid.UUID] = []
     yield ids
-    with SessionLocal() as session:
-        session.execute(
-            delete(AffiliationSuspicion).where(
-                AffiliationSuspicion.org_id.in_((ORG_A, ORG_B))
+    # A10：清理是**逐租户**动作——RLS 下一个会话只看见一个租户的行，
+    # 想清两个 org 就得绑两次（不存在「一次删全库」的合法通道）。
+    for org_id in (ORG_A, ORG_B):
+        with session_scope(org_id=org_id) as session:
+            session.execute(
+                delete(AffiliationSuspicion).where(
+                    AffiliationSuspicion.org_id == org_id
+                )
             )
-        )
-        session.execute(
-            delete(AffiliationTask).where(AffiliationTask.org_id.in_((ORG_A, ORG_B)))
-        )
-        session.commit()
+            session.execute(
+                delete(AffiliationTask).where(AffiliationTask.org_id == org_id)
+            )
+            session.commit()
 
 
 def _insert_document(*, org_id: uuid.UUID) -> uuid.UUID:
@@ -70,7 +73,8 @@ def _insert_document(*, org_id: uuid.UUID) -> uuid.UUID:
         org_id=org_id,
         trace_id=uuid.uuid4(),
     )
-    with SessionLocal() as session:
+    # A10：写哪个租户的数据就绑哪个租户（RLS 的 WITH CHECK 会拦住跨租户写）
+    with session_scope(org_id=org_id) as session:
         session.add(row)
         session.commit()
         return row.id
@@ -89,7 +93,7 @@ def _insert_task(
         status=status,
         trace_id=uuid.uuid4(),
     )
-    with SessionLocal() as session:
+    with session_scope(org_id=org_id) as session:
         session.add(row)
         session.commit()
         if created_at is not None:
@@ -129,7 +133,7 @@ def _insert_suspicion(
         status=status,
         trace_id=uuid.uuid4(),
     )
-    with SessionLocal() as session:
+    with session_scope(org_id=org_id) as session:
         session.add(row)
         session.commit()
         return row.id
@@ -174,6 +178,7 @@ def test_submit_affiliation_task_accepts_multi_document_payload(
         task_type="affiliation.detect",
         payload={"affiliation_task_id": str(task_id)},
         trace_id=str(uuid.uuid4()),
+        org_id=ORG_A,
     )
 
     returned = TaskManager(background).submit(spec)
@@ -187,6 +192,7 @@ def test_submit_unknown_affiliation_task_raises() -> None:
         task_type="affiliation.detect",
         payload={"affiliation_task_id": str(uuid.uuid4())},
         trace_id=str(uuid.uuid4()),
+        org_id=ORG_A,
     )
     with pytest.raises(LookupError):
         TaskManager(BackgroundTasks()).submit(spec)
@@ -206,7 +212,7 @@ def test_recover_reclaims_pending_affiliation_tasks(
     assert report.affiliation_reclaimed >= 1, (
         "扫不到 affiliation_tasks = 该表可能永久卡 processing"
     )
-    with SessionLocal() as session:
+    with session_scope(org_id=ORG_A) as session:
         row = session.get(AffiliationTask, task_id)
         assert row is not None
         assert row.status == "failed"
@@ -233,7 +239,7 @@ def test_post_detect_returns_202_and_persists_task(
     task_id = uuid.UUID(body["task_id"])
     created_ids.append(task_id)
 
-    with SessionLocal() as session:
+    with session_scope(org_id=ORG_A) as session:
         row = session.get(AffiliationTask, task_id)
         assert row is not None, "任务真值源必须是 PG，不是响应体里的一句话"
         assert row.status == "pending"

@@ -32,6 +32,7 @@ from app.core.auth import Identity
 from app.core.config import get_settings
 from app.core.errors import DEFAULT_MESSAGES, AppError, ErrorCode
 from app.db.models import Document, KgVersion
+from app.db.rls import tenant_row_exists
 from app.schemas.document import (
     DocumentChunkResponse,
     DocumentError,
@@ -264,6 +265,8 @@ async def create_document_upload(
                     task_type=stage,
                     payload={"document_id": str(document.id), "mime_type": mime_type},
                     trace_id=trace_id,
+                    # A5：org 取自**认证态**（identity），不是 payload
+                    org_id=identity.org_id,
                 )
             )
         else:
@@ -334,16 +337,17 @@ def get_scoped_document(
     if document is not None:
         return document
 
-    foreign = session.scalars(
-        select(Document.org_id).where(Document.id == document_id)
-    ).one_or_none()
-    if foreign is None:
+    # A7：RLS 生效后应用账号**看不到**别租户的行 ⇒ 存在性判定只能走受控通道
+    # （只返回 boolean + 表白名单 + SECURITY DEFINER，G-26 判据 6 独立断言）。
+    # 为什么必须保留这一步：契约明文要求跨租户 = **403 而非 404**
+    # （openapi.yaml:3121 / 3193 / 2867 / 1910）⇒ 改成 404 是契约破坏性变更。
+    if tenant_row_exists(session=session, table="documents", row_id=document_id):
         raise AppError(
-            ErrorCode.DOCUMENT_NOT_FOUND, detail={"document_id": str(document_id)}
+            ErrorCode.FORBIDDEN,
+            detail={"document_id": str(document_id), "reason": "cross_tenant_access"},
         )
     raise AppError(
-        ErrorCode.FORBIDDEN,
-        detail={"document_id": str(document_id), "reason": "cross_tenant_access"},
+        ErrorCode.DOCUMENT_NOT_FOUND, detail={"document_id": str(document_id)}
     )
 
 

@@ -29,7 +29,8 @@ from sqlalchemy import select, update
 
 from app.core.errors import ErrorCode
 from app.db.models import AffiliationTask, Document
-from app.db.session import SessionLocal
+from app.db.rls import list_tenant_orgs
+from app.db.session import session_scope, system_session
 from app.tasks.registry import resolve_executor
 from app.tasks.types import RecoveryReport, TaskExecutorFn, TaskSpec, TaskStatus
 
@@ -96,7 +97,8 @@ class TaskManager:
 
         # 1) 状态由调用方在创建 documents 时已经落成 pending；
         #    此处只做幂等校验，避免重复 submit
-        with SessionLocal() as session:
+        #    A5：org 来自 TaskSpec（= 任务创建时的认证态），不来自 payload
+        with session_scope(org_id=spec.org_id) as session:
             document = session.get(Document, document_id)
             if document is None:
                 raise LookupError(f"documents 不存在: id={document_id}")
@@ -122,7 +124,7 @@ class TaskManager:
 
     def _submit_affiliation(self, spec: TaskSpec, task_id: UUID) -> str:
         """affiliation 类投递（``task_id == affiliation_tasks.id``，一次任务覆盖多份文档）。"""
-        with SessionLocal() as session:
+        with session_scope(org_id=spec.org_id) as session:
             row = session.get(AffiliationTask, task_id)
             if row is None:
                 raise LookupError(f"affiliation_tasks 不存在: id={task_id}")
@@ -145,10 +147,14 @@ class TaskManager:
         ).info("task_submitted")
         return str(task_id)
 
-    def get_status(self, task_id: str | UUID) -> TaskStatus | None:
-        """读 PostgreSQL；不存在返回 ``None``。**不**读内存。"""
+    def get_status(self, task_id: str | UUID, *, org_id: UUID) -> TaskStatus | None:
+        """读 PostgreSQL；不存在返回 ``None``。**不**读内存。
+
+        ``org_id`` 必填：RLS 下不带租户的查询恒为空集——那不是「任务不存在」，
+        而是「没设租户」。把租户做成必填参数，就是要让这种误用**写不出来**。
+        """
         task_uuid = UUID(str(task_id))
-        with SessionLocal() as session:
+        with session_scope(org_id=org_id) as session:
             document = session.get(Document, task_uuid)
             if document is None:
                 return None
@@ -179,30 +185,42 @@ def recover_orphan_tasks() -> RecoveryReport:
       否则它是张「可能永远卡在 processing」的表）。
 
     由 FastAPI lifespan startup 调用；幂等，可重复执行。
-    """
-    with SessionLocal() as session:
-        result = session.execute(
-            update(Document)
-            .where(Document.status.in_(("pending", "processing")))
-            .values(
-                status="failed",
-                error_code=ErrorCode.TASK_INTERRUPTED.value,
-                error_detail="process restarted while task was in-flight",
-            )
-        )
-        document_reclaimed = result.rowcount or 0
 
-        affiliation_result = session.execute(
-            update(AffiliationTask)
-            .where(AffiliationTask.status.in_(("pending", "processing")))
-            .values(
-                status="failed",
-                error_code=ErrorCode.TASK_INTERRUPTED.value,
-                error_detail="process restarted while task was in-flight",
+    **A6（P3-A）：改为「枚举租户 → 逐租户设 org → 回收」**（2026-10-04 裁决 3）。
+    启动回收天然是**跨租户**的系统操作，但**不给应用账号开 ``BYPASSRLS``**
+    ——那是给一个常驻进程发全库豁免，比逐租户多跑几轮危险得多。
+    租户枚举走受控函数 ``app.list_tenant_orgs()``（A6 登记的系统通道，
+    只返回 org_id 集合），随后每个租户在自己的 org 下做更新。
+    """
+    document_reclaimed = 0
+    affiliation_reclaimed = 0
+    with system_session() as enumeration:
+        org_ids = list_tenant_orgs(enumeration)
+
+    for org_id in org_ids:
+        with session_scope(org_id=org_id) as session:
+            result = session.execute(
+                update(Document)
+                .where(Document.status.in_(("pending", "processing")))
+                .values(
+                    status="failed",
+                    error_code=ErrorCode.TASK_INTERRUPTED.value,
+                    error_detail="process restarted while task was in-flight",
+                )
             )
-        )
-        affiliation_reclaimed = affiliation_result.rowcount or 0
-        session.commit()
+            document_reclaimed += result.rowcount or 0
+
+            affiliation_result = session.execute(
+                update(AffiliationTask)
+                .where(AffiliationTask.status.in_(("pending", "processing")))
+                .values(
+                    status="failed",
+                    error_code=ErrorCode.TASK_INTERRUPTED.value,
+                    error_detail="process restarted while task was in-flight",
+                )
+            )
+            affiliation_reclaimed += affiliation_result.rowcount or 0
+            session.commit()
 
     reclaimed = document_reclaimed + affiliation_reclaimed
     report = RecoveryReport(
@@ -228,19 +246,31 @@ def list_in_flight_task_ids() -> tuple[UUID, ...]:
     ``affiliation_tasks`` 两张表——与 :func:`recover_orphan_tasks` 同口径
     （ADR-0001 第 73 行）：``affiliation_tasks`` 也会卡在 ``processing``，
     对账函数看不到它就是盲区。返回顺序：documents 在前、affiliation 在后。
+
+    **A4 登记的系统通道（2026-10-04）**：本函数是**跨租户对账**用途（测试 /
+    运维核对全库在途任务），RLS 下不可能在一个租户视野里看到全部 ⇒ 与
+    :func:`recover_orphan_tasks` 同口径，走「枚举租户 → 逐租户查」。
     """
-    with SessionLocal() as session:
-        document_rows = session.execute(
-            select(Document.id).where(Document.status.in_(("pending", "processing")))
-        ).all()
-        affiliation_rows = session.execute(
-            select(AffiliationTask.id).where(
-                AffiliationTask.status.in_(("pending", "processing"))
-            )
-        ).all()
-    return tuple(row[0] for row in document_rows) + tuple(
-        row[0] for row in affiliation_rows
-    )
+    with system_session() as enumeration:
+        org_ids = list_tenant_orgs(enumeration)
+
+    document_ids: list[UUID] = []
+    affiliation_ids: list[UUID] = []
+    for org_id in org_ids:
+        with session_scope(org_id=org_id) as session:
+            document_rows = session.execute(
+                select(Document.id).where(
+                    Document.status.in_(("pending", "processing"))
+                )
+            ).all()
+            affiliation_rows = session.execute(
+                select(AffiliationTask.id).where(
+                    AffiliationTask.status.in_(("pending", "processing"))
+                )
+            ).all()
+        document_ids.extend(row[0] for row in document_rows)
+        affiliation_ids.extend(row[0] for row in affiliation_rows)
+    return tuple(document_ids) + tuple(affiliation_ids)
 
 
 def new_trace_id() -> str:

@@ -159,6 +159,8 @@ def _make_spec(document_id: UUID) -> TaskSpec:
         task_type="risk.detect",
         payload={"document_id": str(document_id), "trace_id": trace_id},
         trace_id=trace_id,
+        # A5：org 必填（后台任务没有请求身份，只能由 TaskSpec 携带）
+        org_id=get_settings().default_org_id,
     )
 
 

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import Identity
 from app.core.errors import AppError, ErrorCode
 from app.db.models import AffiliationSuspicion, AffiliationTask, Document
+from app.db.rls import tenant_row_exists
 from app.services.events import DomainEvent, build_event_bus
 from app.services.events.types import RISK_SUSPECT_CREATED
 
@@ -49,7 +50,12 @@ def create_detection_task(
     for raw in doc_ids:
         document = session.get(Document, raw)
         if document is None:
-            missing.append(str(raw))
+            # A7：RLS 下「本租户看不到」≠「不存在」。跨租户必须仍是 **403**
+            # （契约 openapi.yaml:3193 明文）⇒ 用受控通道判一次存在性。
+            if tenant_row_exists(session=session, table="documents", row_id=raw):
+                foreign_count += 1
+            else:
+                missing.append(str(raw))
             continue
         if document.org_id != identity.org_id:
             foreign_count += 1
@@ -87,12 +93,11 @@ def get_task(
     if row is not None:
         return row
 
-    foreign_org = session.scalars(
-        select(AffiliationTask.org_id).where(AffiliationTask.id == task_id)
-    ).one_or_none()
-    if foreign_org is None:
-        raise AppError(ErrorCode.NOT_FOUND, detail={"task_id": str(task_id)})
-    raise AppError(ErrorCode.FORBIDDEN, detail={"task_id": str(task_id)})
+    # A7：同 documents.py::get_scoped_document——跨租户必须仍是 **403**，
+    # 存在性判定走受控通道（只返回 boolean，不返回 org_id 或任何行数据）
+    if tenant_row_exists(session=session, table="affiliation_tasks", row_id=task_id):
+        raise AppError(ErrorCode.FORBIDDEN, detail={"task_id": str(task_id)})
+    raise AppError(ErrorCode.NOT_FOUND, detail={"task_id": str(task_id)})
 
 
 def _resolve_latest_task(*, session: Session, identity: Identity) -> uuid.UUID | None:
@@ -189,16 +194,15 @@ def patch_suspicion_status(
         )
     ).one_or_none()
     if row is None:
-        foreign = session.scalars(
-            select(AffiliationSuspicion.org_id).where(
-                AffiliationSuspicion.id == suspicion_id
-            )
-        ).one_or_none()
-        if foreign is None:
+        # A7：契约 ``openapi.yaml:3055`` 明文「疑点不存在 → 404，跨租户 → **403**」。
+        # RLS 下这条记录对本租户不可见 ⇒ 存在性只能问受控通道（只回 boolean）。
+        if tenant_row_exists(
+            session=session, table="affiliation_suspicions", row_id=suspicion_id
+        ):
             raise AppError(
-                ErrorCode.NOT_FOUND, detail={"suspicion_id": str(suspicion_id)}
+                ErrorCode.FORBIDDEN, detail={"suspicion_id": str(suspicion_id)}
             )
-        raise AppError(ErrorCode.FORBIDDEN, detail={"suspicion_id": str(suspicion_id)})
+        raise AppError(ErrorCode.NOT_FOUND, detail={"suspicion_id": str(suspicion_id)})
 
     if row.status != "open":
         raise AppError(

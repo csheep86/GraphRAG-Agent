@@ -39,11 +39,21 @@ Sprint 7.1 批次 A 增 ``risk.detect``、Sprint 7.2 批次 B 增 ``affiliation.
 
 @dataclass(frozen=True, slots=True)
 class TaskSpec:
-    """提交任务的输入规格（ADR-0001 §3.1）。"""
+    """提交任务的输入规格（ADR-0001 §3.1）。
+
+    **A5（P3-A）：``org_id`` 是必填字段**——后台任务跑在请求之外（进程内
+    BackgroundTasks），拿不到请求级身份；RLS 生效后，执行体若不先设 org
+    就查不到自己那一行 ⇒ 合法任务会被误判成「记录不存在」（静默失败，坑 3）。
+
+    ``org_id`` 的可信来源**只有一个**：任务**创建时**的认证态（``identity.org_id``）。
+    不从 payload 取——payload 是业务数据，可被上层改写（ADR-0003 §3.3 同款纪律）。
+    """
 
     task_type: TaskType
     payload: dict[str, Any]
     trace_id: str
+    #: 任务所属租户（创建时从认证态取得；执行体据此在 Session 上设 org）
+    org_id: UUID
 
 
 @dataclass(frozen=True, slots=True)

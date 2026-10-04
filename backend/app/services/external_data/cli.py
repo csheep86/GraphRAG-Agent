@@ -21,7 +21,7 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import ExternalRef
-from app.db.session import SessionLocal, init_db
+from app.db.session import init_db, open_session
 from app.services.external_data.schema import load_file
 
 
@@ -75,7 +75,9 @@ def main(argv: list[str] | None = None) -> int:
     init_db()
     written = 0
     skipped = 0
-    with SessionLocal() as session:
+    # A4 登记的系统通道（P3-A）：CLI 没有请求 / 认证态，org **只能**来自
+    # ``--org-id`` 显式入参（不给默认值、不猜）——RLS 下不绑 org 就写不进去。
+    with open_session(org_id=org_id) as session:
         for record in result.records:
             # 同一 (org, 外部系统, 外部 ID) 已存在 → 幂等跳过（**不**静默覆盖：外来 ID
             # 指向变了是数据事故，得让人显式处理）

@@ -125,6 +125,8 @@ def _make_spec(document_id: UUID) -> TaskSpec:
         task_type="kg.build",
         payload={"document_id": str(document_id)},
         trace_id=str(uuid4()),
+        # A5：org 必填（后台任务没有请求身份，只能由 TaskSpec 携带）
+        org_id=get_settings().default_org_id,
     )
 
 
@@ -270,6 +272,7 @@ def test_kg_build_reuses_existing_kg_version_row(
         task_type="kg.build",
         payload={"document_id": str(document_id), "kg_version_id": str(existing_id)},
         trace_id=str(trace_id),
+        org_id=get_settings().default_org_id,
     )
     asyncio.run(kg_build_executor(spec))
 

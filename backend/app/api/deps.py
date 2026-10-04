@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import Depends, Header
@@ -12,7 +13,7 @@ from app.core.auth import Identity
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode
 from app.core.middleware import get_trace_id_value, new_trace_id
-from app.db.session import get_session
+from app.db.session import open_session
 from app.services.auth import get_auth_provider
 
 #: 契约中登记的认证方案名，前端代码生成后即为 `bearerAuth`
@@ -80,6 +81,27 @@ async def get_current_identity(
     )
 
 
+def get_tenant_session(identity: CurrentIdentity) -> Iterator[Session]:
+    """每请求一个会话，**且**已绑定认证态解析出的 org（A3 / ADR-0003 §3.3）。
+
+    org 只来自 ``identity.org_id``（认证态）——**不**读 header / body / query 的
+    租户字段。取不到 org 则由 :func:`open_session` 之前的身份解析先抛 401。
+    """
+    session = open_session(org_id=identity.org_id)
+    try:
+        yield session
+    finally:
+        session.close()
+
+
 CurrentIdentity = Annotated[Identity, Depends(get_current_identity)]
-DbSession = Annotated[Session, Depends(get_session)]
+
+#: **A3（P3-A）：``DbSession`` 必须依赖 ``CurrentIdentity``**——两个独立依赖
+#: 串成一条链，org 在**路由体执行之前**就绑到会话上。
+#:
+#: 为什么不能保持互相独立（坑 1）：RBAC（``app/services/rbac/deps.py``）在
+#: 路由体**之前**就用这个 session 去查 ``user_roles``；若在路由体里才设 org，
+#: RBAC 那次查询已经在「无 org」状态下跑完了（RLS 下 = 查不到任何角色 ⇒ 一律拒绝）。
+#: ⇒ 依赖图顺序即安全顺序，这里不许拆回两个独立依赖。
+DbSession = Annotated[Session, Depends(get_tenant_session)]
 TraceId = Annotated[str, Depends(get_trace_id)]

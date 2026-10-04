@@ -44,7 +44,7 @@ from tenacity import (
 
 from app.core.config import get_settings
 from app.db.models import QaLog
-from app.db.session import SessionLocal
+from app.db.session import open_session
 from app.prompts.prompt_loader import PromptRenderError, load_prompt
 from app.schemas.agent import (
     AgentQueryRequest,
@@ -324,7 +324,10 @@ class AgentService:
             ).warning("agent_query_tenant_leak_warn_only")
             # A12（Sprint 8.1 批次 B）：逃生阀触发必须留痕——比纯日志可核，
             # 审计页能直接看到「谁在哪个版本上被放行了越权数据」。写失败只记日志。
-            with SessionLocal() as session:
+            # A4 登记的系统通道（P3-A）：DR-B12 逃生阀审计。org 来自问答请求的
+            # 认证态入参（``org_id``），照绑 ⇒ RLS 下才写得进去、才查得到。
+            # 这是全系统**唯一**可配置关闭租户隔离的开关，留痕不许静默丢失。
+            with open_session(org_id=org_id) as session:
                 record_audit_entry(
                     session,
                     org_id=org_id,

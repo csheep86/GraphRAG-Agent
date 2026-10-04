@@ -98,6 +98,8 @@ def _make_spec(document_id: UUID) -> TaskSpec:
         task_type="document.extract",
         payload={"document_id": str(document_id)},
         trace_id=str(uuid4()),
+        # A5：org 必填（后台任务没有请求身份，只能由 TaskSpec 携带）
+        org_id=get_settings().default_org_id,
     )
 
 
@@ -207,7 +209,9 @@ def test_extract_retries_io_then_succeeds(
     document_id = seed_document("pending")
     calls: list[int] = []
 
-    async def flaky(*, document_id: UUID, trace_id: str, payload: Any) -> None:
+    async def flaky(
+        *, document_id: UUID, trace_id: str, payload: Any, org_id: UUID
+    ) -> None:
         calls.append(len(calls) + 1)
         if len(calls) < 3:
             raise OSError("simulated io error")
@@ -230,7 +234,9 @@ def test_extract_retries_exhausted_marks_stage_failed(
     settings = get_settings()
     document_id = seed_document("pending")
 
-    async def always_fail(*, document_id: UUID, trace_id: str, payload: Any) -> None:
+    async def always_fail(
+        *, document_id: UUID, trace_id: str, payload: Any, org_id: UUID
+    ) -> None:
         # LangextractError 属可重试集合（与 MineruApiError 对位）
         raise LangextractError("permanent upstream failure")
 
@@ -253,7 +259,9 @@ def test_extract_failed_state_keeps_overall_status_pending(
     """阶段级失败：只标 extract_status，整体 status 仍留给管线诊断。"""
     document_id = seed_document("pending")
 
-    async def always_fail(*, document_id: UUID, trace_id: str, payload: Any) -> None:
+    async def always_fail(
+        *, document_id: UUID, trace_id: str, payload: Any, org_id: UUID
+    ) -> None:
         raise OSError("boom")
 
     monkeypatch.setattr("app.tasks.registry._do_extract", always_fail)

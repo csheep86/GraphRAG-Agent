@@ -167,6 +167,8 @@ def test_extract_fills_document_date_from_text(
                 task_type="document.extract",
                 payload={"document_id": str(document_id)},
                 trace_id=str(uuid4()),
+                # A5：org 必填（后台任务没有请求身份，只能由 TaskSpec 携带）
+                org_id=get_settings().default_org_id,
             )
         )
     )
@@ -188,6 +190,8 @@ def test_extract_leaves_none_when_date_has_no_source(
                 task_type="document.extract",
                 payload={"document_id": str(document_id)},
                 trace_id=str(uuid4()),
+                # A5：org 必填（后台任务没有请求身份，只能由 TaskSpec 携带）
+                org_id=get_settings().default_org_id,
             )
         )
     )
@@ -209,6 +213,8 @@ def test_extract_does_not_overwrite_explicit_date(
                 task_type="document.extract",
                 payload={"document_id": str(document_id)},
                 trace_id=str(uuid4()),
+                # A5：org 必填（后台任务没有请求身份，只能由 TaskSpec 携带）
+                org_id=get_settings().default_org_id,
             )
         )
     )

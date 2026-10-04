@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 
 from app.db.models import OntologySchema
-from app.db.session import SessionLocal, init_db
+from app.db.session import init_db, session_scope
 from app.services.graphs import _resolve_category
 from app.services.ontology import entity_type_categories, extraction_type_vocabulary
 
@@ -34,7 +34,8 @@ def _seed_ontology(
     relation_types: list[dict] | None = None,
 ) -> None:
     init_db()
-    with SessionLocal() as db:
+    # A10：写哪个租户的本体就绑哪个租户（本文件每个用例用独立 org）
+    with session_scope(org_id=org_id) as db:
         db.add(
             OntologySchema(
                 org_id=org_id,
@@ -53,7 +54,7 @@ def _seed_ontology(
 
 def _categories(org_id: uuid.UUID, *, db=None) -> dict[str, str]:
     if db is None:
-        with SessionLocal() as session:
+        with session_scope(org_id=org_id) as session:
             return entity_type_categories(db=session, org_id=org_id)
     return entity_type_categories(db=db, org_id=org_id)
 
@@ -100,7 +101,8 @@ def test_superseded_ontology_is_invisible() -> None:
 def test_no_org_or_no_db_returns_empty() -> None:
     """无 db / 无 org_id ⇒ 空表（降级纪律：不抛、不阻断）。"""
     assert entity_type_categories(db=None, org_id=_ORG_A) == {}
-    assert entity_type_categories(db=SessionLocal(), org_id=None) == {}
+    with session_scope() as session:
+        assert entity_type_categories(db=session, org_id=None) == {}
     # 该 org 完全没有本体行
     assert _categories(_ORG_EMPTY) == {}
 
@@ -124,7 +126,8 @@ def test_resolve_keeps_builtin_when_ontology_silent() -> None:
 
 
 def _vocabulary(org_id: uuid.UUID) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    with SessionLocal() as session:
+    # A10：读哪个 org 的本体就绑哪个 org
+    with session_scope(org_id=org_id) as session:
         return extraction_type_vocabulary(db=session, org_id=org_id)
 
 
@@ -151,7 +154,8 @@ def test_extraction_vocabulary_reads_type_names() -> None:
 def test_extraction_vocabulary_falls_back_to_empty() -> None:
     """无本体 / 无 db ⇒ 空元组（**由调用方**回落内置枚举，本体模块不替它决策）。"""
     assert extraction_type_vocabulary(db=None, org_id=_ORG_A) == ((), ())
-    assert extraction_type_vocabulary(db=SessionLocal(), org_id=None) == ((), ())
+    with session_scope() as session:
+        assert extraction_type_vocabulary(db=session, org_id=None) == ((), ())
     assert _vocabulary(_ORG_EMPTY) == ((), ())
 
 

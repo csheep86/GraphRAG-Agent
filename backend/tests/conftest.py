@@ -19,10 +19,20 @@ os.environ["STORAGE_ROOT"] = str(_TMP_DIR / "storage")
 #: **DR-B2 / G-8**：测试库是 PostgreSQL 16.x 上的固定库 ``graphrag_test``。
 #: 不再用 SQLite 临时文件——在 SQLite 上跑通的租户隔离（T1 / T2）什么都不证明：
 #: SQLite 既没有 RLS，也没有 ``SET LOCAL``（ADR-0003 §4.1）。
-_TEST_DATABASE_URL = (
-    "postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test"
+#:
+#: **P3-A（2026-10-04）：业务测试一律走受限角色 ``app_rls``**（裁决 4）。
+#: 本机 / CI 的默认库用户往往就是**超级用户**（``docker run -e POSTGRES_USER=graphrag``
+#: ⇒ rolsuper=true），而超级用户**绕过一切 RLS** ⇒ 用它跑测试 = RLS 从未被验证。
+#: ⇒ 建表 / 迁移走 owner（``DATABASE_URL_OWNER``），业务查询走本串（受限角色）。
+#: 角色与策略由 ``scripts/init_rls_roles.py`` 建立（CI 里是 Pytest 前的独立步骤）。
+_TEST_DATABASE_URL = "postgresql+psycopg://app_rls:app_rls@localhost:5432/graphrag_test"
+
+#: 建表 / 迁移用的 **owner** 连接串（与 :mod:`pg_scratch` 同一真源）
+_TEST_OWNER_URL = (
+    "postgresql+psycopg://app_owner:app_owner@localhost:5432/graphrag_test"
 )
 
+os.environ.setdefault("DATABASE_URL_OWNER", _TEST_OWNER_URL)
 os.environ["APP_ENV"] = "test"
 os.environ["ALLOW_DEV_ORG_HEADER"] = "true"
 # 用 **setdefault** 而不是直接赋值，也不能完全不设：
@@ -71,6 +81,43 @@ from app.services.kg.versioning import KgVersioningService  # noqa: E402
 # 测试库是**持久**的（不再像 SQLite 时代那样每次换一个临时文件），因此必须显式
 # 保证它存在。`create_app()` 只建 engine 不连库，所以放在导入之后仍然来得及。
 ensure_database("graphrag_test")
+
+
+@pytest.fixture(autouse=True)
+def default_org_for_bare_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """给「直接建 Session」的用例绑定**默认租户**（A10 / 坑 8 的脚手架处置）。
+
+    **为什么必须有这条**：RLS + FORCE 之后，``SessionLocal()`` 开出来的会话若没绑
+    org，业务表**一行都看不到、一行都写不进**（fail-closed）。而既有用例里有一大批
+    是「直接建 Session 造数据 + 直接查库断言」的**单元测试形态**——它们压根不经过
+    HTTP 请求，也就没有认证态可以给 org。逐个给它们塞身份，等于把这批单元测试改写成
+    集成测试（改动量与回归风险都不可接受）。
+
+    于是这里在 ``sessionmaker`` 上预置一个 **info 默认值**：用例自己显式绑 org 的
+    （``session_scope(org_id=...)`` / ``open_session(org_id=...)``）**不受影响**，
+    没绑的落到默认租户。
+
+    ⚠️ **它不验什么**（与 ``rbac_default_actor_is_admin`` 同一类脚手架边界）：
+    它让「忘了绑 org」在测试里**不至于全红**，因此**不能**用来证明「某条应用路径
+    的租户绑定是对的」。租户绑定本身由两处机械证明：
+
+    1. **G-26 判据 3**：用**裸连接**（不经过 Session）验证「不设 org ⇒ 0 行、
+       设了 org ⇒ 只看到本 org」——绕开本脚手架，无法被它糊弄；
+    2. **A5 行为用例**：后台任务用**非默认** org 跑通，证明执行体的 org 来自
+       ``TaskSpec.org_id`` 而不是本默认值。
+
+    ⚠️ 反向风险已堵：若某用例要写**别的租户**的数据，本默认值会让 ``WITH CHECK``
+    直接拒绝（**响亮失败**，不是静默串号）⇒ 该用例必须显式绑 org。
+    """
+    from app.db.session import ORG_ID_INFO_KEY, SessionLocal
+
+    settings = get_settings()
+    # ``setitem`` 而不是直接改字典：用例结束由 monkeypatch 自动还原，
+    # 避免把「默认租户」泄漏给下一个不需要它的用例。
+    monkeypatch.setitem(
+        SessionLocal.kw, "info", {ORG_ID_INFO_KEY: settings.default_org_id}
+    )
+
 
 OTHER_ORG_ID = "00000000-0000-4000-8000-000000000002"
 
@@ -173,20 +220,37 @@ def rbac_default_actor_is_admin() -> None:
     ⚠️ **它同时意味着**：默认主体是 admin ⇒ 默认路径**验不到**拒绝分支。
     拒绝分支由 `tests/test_rbac.py` 用**另外的 actor id** 专测（见该文件）。
     """
+    from sqlalchemy import create_engine
+
     from app.core.config import get_settings
     from app.db.models import Role, UserRole
-    from app.db.session import SessionLocal, init_db
+    from app.db.rls import apply_tenant_rls, ensure_exempt_tables_unprotected
+    from app.db.session import init_db, session_scope
     from app.services.rbac import ensure_preset_roles
 
     settings = get_settings()
     # autouse 夹具跑在 `client`（建 app → lifespan → create_all）**之前**，
     # 此时测试库可能还是空的 ⇒ 先自己建表（create_all 幂等，不会覆盖已有数据）。
-    init_db()
-    with SessionLocal() as session:
-        ensure_preset_roles(session)
-        roles = {row.name: row.id for row in session.query(Role).all()}
-        admin_id = roles["admin"]
-        for org_id in (settings.default_org_id, UUID(OTHER_ORG_ID)):
+    #
+    # **P3-A**：建表与落 RLS 策略**必须走 owner**——受限角色无权 ALTER TABLE，
+    # 而策略若由业务角色建，等于让被测对象给自己发豁免（裁决 4）。
+    owner_engine = create_engine(os.environ["DATABASE_URL_OWNER"])
+    try:
+        init_db(bind=owner_engine)
+        with owner_engine.begin() as connection:
+            apply_tenant_rls(connection)
+            ensure_exempt_tables_unprotected(connection)
+        with session_scope() as session:
+            ensure_preset_roles(session)
+            roles = {row.name: row.id for row in session.query(Role).all()}
+            admin_id = roles["admin"]
+    finally:
+        owner_engine.dispose()
+
+    # `user_roles` 是**租户数据**（含 org_id）⇒ 每个 org 必须在自己的租户
+    # 视野里播种（RLS 下跨租户写会被 WITH CHECK 直接拒掉，不是静默失败）。
+    for org_id in (settings.default_org_id, UUID(OTHER_ORG_ID)):
+        with session_scope(org_id=org_id) as session:
             exists = (
                 session.query(UserRole)
                 .filter(UserRole.org_id == org_id)
@@ -205,7 +269,7 @@ def rbac_default_actor_is_admin() -> None:
                         granted_by=settings.default_actor_id,
                     )
                 )
-        session.commit()
+            session.commit()
 
 
 @pytest.fixture

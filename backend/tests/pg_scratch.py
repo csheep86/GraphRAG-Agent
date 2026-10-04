@@ -14,12 +14,19 @@
 1. 建库 / 删库必须在 **AUTOCOMMIT**（``isolation_level="AUTOCOMMIT"``）下执行；
 2. 删库前必须先把残留连接踢掉（``pg_terminate_backend``）。
 
-连接串**不在此另设第二真源**：一律由 ``app.core.config.get_settings().database_url``
-推导，只把**库名**换成目标（ maintenance 库固定用 ``postgres``）。
+连接串**不在此另设第二真源**：一律由 :func:`owner_url` 推导，只把**库名**
+换成目标（ maintenance 库固定用 ``postgres``）。
+
+**P3-A（2026-10-04）：为什么改成 owner 连接串**（裁决 4「CI 建两个角色」）
+``DATABASE_URL`` 现在是**受限业务角色**（``app_rls``，``NOBYPASSRLS``）：它没有
+``CREATEDB``，跑不了建库 / 迁移，也不该有——owner 跑业务测试会让 RLS **根本
+没被验证**（ADR-0003 §3.2 要求 2）。故建库 / 建表 / 迁移一律走
+``DATABASE_URL_OWNER``（``app_owner``），业务查询走 ``DATABASE_URL``。
 """
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -53,25 +60,32 @@ def _check_identifier(name: str) -> None:
         )
 
 
-def _maintenance_url() -> str:
-    """把运行时连接串的库名换成 maintenance 库。"""
-    # 延迟导入：本模块被 conftest 在 app.main 之前导入，此时配置尚未被读取。
-    from app.core.config import get_settings
+def owner_url() -> str:
+    """**owner** 连接串（建库 / 建表 / 迁移用）。
 
-    url = make_url(get_settings().database_url)
+    缺省值指向 ``app_owner``（由 ``scripts/init_rls_roles.py`` 创建）；
+    CI / 本地可用 ``DATABASE_URL_OWNER`` 覆盖。**不使用**业务角色跑 DDL。
+    """
+    from app.db.rls import OWNER_ROLE
+
+    default = (
+        f"postgresql+psycopg://{OWNER_ROLE}:{OWNER_ROLE}@localhost:5432/graphrag_test"
+    )
+    return os.environ.get("DATABASE_URL_OWNER", default)
+
+
+def _maintenance_url() -> str:
+    """把 owner 连接串的库名换成 maintenance 库。"""
+    # 延迟导入：本模块被 conftest 在 app.main 之前导入，此时配置尚未被读取。
+    url = make_url(owner_url())
     return url.set(database=MAINTENANCE_DATABASE).render_as_string(hide_password=False)
 
 
 def database_url_for(name: str) -> str:
-    """把运行时连接串的库名换成 ``name``（给 alembic / create_engine 用）。"""
+    """把 owner 连接串的库名换成 ``name``（给 alembic / create_engine 用）。"""
     _check_identifier(name)
-    # 延迟导入，理由同 `_maintenance_url`。
-    from app.core.config import get_settings
-
     return (
-        make_url(get_settings().database_url)
-        .set(database=name)
-        .render_as_string(hide_password=False)
+        make_url(owner_url()).set(database=name).render_as_string(hide_password=False)
     )
 
 
@@ -139,7 +153,12 @@ def ensure_database(name: str) -> None:
         raise RuntimeError(
             f"无法连上 PostgreSQL 以准备测试库 {name!r}。"
             "DR-B2 要求测试必须跑在 PostgreSQL 16.x 上，请先起一个：\n"
-            f"{_START_HINT}\n原始错误：{exc}"
+            f"{_START_HINT}\n"
+            "若库已起而仍连不上：P3-A 起业务测试走**受限角色** app_rls，"
+            "须先执行一次 `uv run python scripts/init_rls_roles.py --admin-url "
+            "postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test`"
+            "（建 app_owner / app_rls / 受控函数并落 RLS 策略）。\n"
+            f"原始错误：{exc}"
         ) from exc
 
 

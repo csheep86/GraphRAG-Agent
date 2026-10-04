@@ -24,7 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import AffiliationSuspicion, AffiliationTask, DomainEvent
-from app.db.session import SessionLocal, init_db
+from app.db.session import ORG_ID_INFO_KEY, init_db, open_session
 from app.services.affiliation import persist_detection_result
 from app.services.events import DomainEvent as DomainEventPayload
 from app.services.events import build_event_bus
@@ -35,11 +35,16 @@ from app.services.events.types import RISK_SUSPECT_CREATED
 @pytest.fixture
 def session() -> Iterator[Session]:
     init_db()  # 幂等：测试库的建表走 create_all（缺表才建，重复调用安全）
-    db = SessionLocal()
+    db = open_session()
     try:
         yield db
     finally:
         db.close()
+
+
+def _bind_org(session: Session, org_id: uuid.UUID) -> None:
+    """A10：把会话绑到本用例的 org（RLS 下必须在**首次查询之前**完成）。"""
+    session.info[ORG_ID_INFO_KEY] = org_id
 
 
 def _fake_suspicion(suspicion_type: str, suffix: str) -> Any:
@@ -90,6 +95,7 @@ def _count_events(session: Session, org_id: uuid.UUID) -> int:
 def test_suspect_created_events_persisted(session: Session) -> None:
     """每条疑点一条 ``risk.suspect_created``，落库字段可逐一断言。"""
     org_id = uuid.uuid4()
+    _bind_org(session, org_id)
     task = _new_task(session, org_id)
 
     count = persist_detection_result(
@@ -138,6 +144,7 @@ def test_bus_fans_out_to_db_and_log(
     monkeypatch.setattr(LogEventSink, "emit", lambda self, event: seen.append(event))
 
     org_id = uuid.uuid4()
+    _bind_org(session, org_id)
     build_event_bus(session).emit(
         DomainEventPayload(
             event_type=RISK_SUSPECT_CREATED,
@@ -157,6 +164,7 @@ def test_bus_fans_out_to_db_and_log(
 def test_event_not_persisted_when_business_rolls_back(session: Session) -> None:
     """db sink 不自己 commit：业务回滚时事件一并消失。"""
     org_id = uuid.uuid4()
+    _bind_org(session, org_id)
     build_event_bus(session).emit(
         DomainEventPayload(
             event_type=RISK_SUSPECT_CREATED,
@@ -174,6 +182,7 @@ def test_event_not_persisted_when_business_rolls_back(session: Session) -> None:
 def test_no_event_when_no_suspicion(session: Session) -> None:
     """没有疑点就不发事件——不发空事件凑数。"""
     org_id = uuid.uuid4()
+    _bind_org(session, org_id)
     task = _new_task(session, org_id)
 
     assert (

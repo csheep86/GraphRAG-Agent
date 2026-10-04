@@ -155,7 +155,11 @@ def test_tenant_leak_warn_writes_audit_log(
     from uuid import uuid4
 
     from app.db.models import AuditLog
-    from app.db.session import SessionLocal
+    from app.db.session import session_scope
+
+    #: A10：逃生阀审计是本租户的 ⇒ 查询与清理都**显式绑**请求里的那个 org，
+    #: 不依赖 conftest 的默认租户脚手架（脚手架只保底，不能用来解释行为）
+    org_id = get_settings().default_org_id
 
     trace_id = str(uuid4())
     try:
@@ -168,7 +172,7 @@ def test_tenant_leak_warn_writes_audit_log(
                 )
             )
 
-        with SessionLocal() as session:
+        with session_scope(org_id=org_id) as session:
             rows = (
                 session.query(AuditLog)
                 .filter(AuditLog.trace_id == UUID(trace_id))
@@ -184,7 +188,7 @@ def test_tenant_leak_warn_writes_audit_log(
             assert row.resource == f"POST {get_settings().api_prefix}/agent/query"
     finally:
         # 清理共享 test DB，避免污染其它用例对 audit_log 的计数
-        with SessionLocal() as session:
+        with session_scope(org_id=org_id) as session:
             session.query(AuditLog).filter(AuditLog.trace_id == UUID(trace_id)).delete()
             session.commit()
 

@@ -23,7 +23,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import KG_VERSION_STATUS_VALUES, KgVersion
-from app.db.session import SessionLocal, init_db
+from app.db.session import init_db, session_scope
 from app.services.kg import KgVersioningService
 
 ORG_A = uuid4()
@@ -40,9 +40,11 @@ def created_ids() -> list:
     ids: list = []
     yield ids
     if ids:
-        with SessionLocal() as session:
-            session.execute(delete(KgVersion).where(KgVersion.id.in_(ids)))
-            session.commit()
+        # A10：清理**逐租户**——一次会话只看见一个 org 的行
+        for org_id in (ORG_A, ORG_B):
+            with session_scope(org_id=org_id) as session:
+                session.execute(delete(KgVersion).where(KgVersion.id.in_(ids)))
+                session.commit()
 
 
 def _seed_row(**overrides: object) -> KgVersion:
@@ -55,7 +57,8 @@ def _seed_row(**overrides: object) -> KgVersion:
     }
     kwargs.update(overrides)
     row = KgVersion(**kwargs)  # type: ignore[arg-type]
-    with SessionLocal() as session:
+    # A10：绑的 org 就是这行的 org（覆盖传 org_id=ORG_B 的情形）
+    with session_scope(org_id=row.org_id) as session:
         session.add(row)
         session.commit()
         session.refresh(row)
@@ -68,7 +71,7 @@ def _seed_row(**overrides: object) -> KgVersion:
 
 
 def test_state_machine_pending_to_ready(created_ids: list) -> None:
-    with SessionLocal() as session:
+    with session_scope(org_id=ORG_A) as session:
         service = KgVersioningService(session)
         record = service.create_pending(
             org_id=ORG_A, version="v-ready", source_doc_ids=[uuid4()], trace_id=uuid4()
@@ -91,7 +94,7 @@ def test_state_machine_pending_to_ready(created_ids: list) -> None:
 
 
 def test_state_machine_mark_failed(created_ids: list) -> None:
-    with SessionLocal() as session:
+    with session_scope(org_id=ORG_A) as session:
         service = KgVersioningService(session)
         record = service.create_pending(
             org_id=ORG_A, version="v-failed", source_doc_ids=[], trace_id=uuid4()
@@ -108,7 +111,7 @@ def test_state_machine_mark_failed(created_ids: list) -> None:
 
 
 def test_mark_ready_clears_stale_errors(created_ids: list) -> None:
-    with SessionLocal() as session:
+    with session_scope(org_id=ORG_A) as session:
         service = KgVersioningService(session)
         record = service.create_pending(
             org_id=ORG_A, version="v-recover", source_doc_ids=[], trace_id=uuid4()
@@ -123,7 +126,7 @@ def test_mark_ready_clears_stale_errors(created_ids: list) -> None:
 
 
 def test_missing_version_raises_lookup_error() -> None:
-    with SessionLocal() as session:
+    with session_scope(org_id=ORG_A) as session:
         service = KgVersioningService(session)
         with pytest.raises(LookupError, match="kg_version 不存在"):
             service.mark_building(uuid4())
@@ -141,7 +144,16 @@ def test_get_active_returns_latest_ready_for_same_org(
 
     ``real_pg_get_active`` 用于撤销 conftest 的默认桩（本文件验的正是真源本身）。
     """
-    with SessionLocal() as session:
+    # A10：ORG_B 的行必须在 ORG_B 的租户视野里创建 / 推进（跨租户写会被
+    # WITH CHECK 拒掉，且本会话也看不见别的 org）
+    with session_scope(org_id=ORG_B) as session:
+        other = KgVersioningService(session)
+        other_org = other.create_pending(
+            org_id=ORG_B, version="v-other", source_doc_ids=[], trace_id=uuid4()
+        )
+        other.mark_ready(other_org.id, entity_count=3, relation_count=3)
+
+    with session_scope(org_id=ORG_A) as session:
         service = KgVersioningService(session)
         older = service.create_pending(
             org_id=ORG_A, version="v-old", source_doc_ids=[], trace_id=uuid4()
@@ -149,14 +161,10 @@ def test_get_active_returns_latest_ready_for_same_org(
         newer = service.create_pending(
             org_id=ORG_A, version="v-new", source_doc_ids=[], trace_id=uuid4()
         )
-        other_org = service.create_pending(
-            org_id=ORG_B, version="v-other", source_doc_ids=[], trace_id=uuid4()
-        )
         created_ids.extend([older.id, newer.id, other_org.id])
 
         service.mark_ready(older.id, entity_count=1, relation_count=1)
         service.mark_ready(newer.id, entity_count=2, relation_count=2)
-        service.mark_ready(other_org.id, entity_count=3, relation_count=3)
 
         active = service.get_active(org_id=ORG_A)
         assert active is not None
@@ -170,7 +178,7 @@ def test_get_active_none_when_only_pending_or_failed(
     created_ids: list, real_pg_get_active: None
 ) -> None:
     """只有 pending / failed 时 `get_active` 返回 `None`（不静默挑一个）。"""
-    with SessionLocal() as session:
+    with session_scope(org_id=ORG_A) as session:
         service = KgVersioningService(session)
         pending = service.create_pending(
             org_id=ORG_A, version="v-pending", source_doc_ids=[], trace_id=uuid4()
@@ -191,7 +199,7 @@ def test_get_active_none_when_only_pending_or_failed(
 
 def test_source_doc_ids_roundtrip_str_to_uuid(created_ids: list) -> None:
     doc_ids = [uuid4(), uuid4()]
-    with SessionLocal() as session:
+    with session_scope(org_id=ORG_A) as session:
         service = KgVersioningService(session)
         record = service.create_pending(
             org_id=ORG_A,
@@ -210,7 +218,7 @@ def test_source_doc_ids_roundtrip_str_to_uuid(created_ids: list) -> None:
 
 def test_check_constraint_rejects_invalid_status() -> None:
     with pytest.raises(IntegrityError):
-        with SessionLocal() as session:
+        with session_scope(org_id=ORG_A) as session:
             session.add(
                 KgVersion(
                     org_id=ORG_A,

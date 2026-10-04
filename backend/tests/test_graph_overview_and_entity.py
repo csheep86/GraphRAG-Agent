@@ -14,7 +14,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db.session import SessionLocal
+from app.db.session import session_scope
 from app.schemas.graph import (
     EntityAttribute,
     EntityDetail,
@@ -280,7 +280,7 @@ def _stats_fixture() -> object:
     from sqlalchemy import delete
 
     from app.db.models import Document, KgVersion
-    from app.db.session import SessionLocal, init_db
+    from app.db.session import init_db, session_scope
 
     init_db()
 
@@ -288,7 +288,8 @@ def _stats_fixture() -> object:
     version = f"v-stats-{uuid4().hex[:8]}"
     old_version_id = uuid4()
 
-    with SessionLocal() as session:
+    # A10：本夹具用**独立 org** ⇒ 会话必须绑到它（不是默认租户）
+    with session_scope(org_id=org_id) as session:
         row = KgVersion(
             org_id=org_id,
             version=version,
@@ -320,7 +321,7 @@ def _stats_fixture() -> object:
 
     yield org_id, version, version_id
 
-    with SessionLocal() as session:
+    with session_scope(org_id=org_id) as session:
         session.execute(delete(Document).where(Document.org_id == org_id))
         session.execute(delete(KgVersion).where(KgVersion.id == version_id))
         session.commit()
@@ -332,11 +333,12 @@ def test_overview_stats_read_from_pg_source(
     """统计值来自 PG 真源：entity/relation 取 `kg_versions`，doc 只数 active 版本。"""
     org_id, version, _version_id = _stats_fixture  # type: ignore[misc]
 
-    stats = GraphService.instance()._fetch_graph_overview_stats(
-        version=version,
-        org_id=org_id,
-        db=SessionLocal(),
-    )
+    with session_scope(org_id=org_id) as db:
+        stats = GraphService.instance()._fetch_graph_overview_stats(
+            version=version,
+            org_id=org_id,
+            db=db,
+        )
 
     assert stats == {
         "doc_count": 2,  # 3 篇中有 1 篇属历史版本、1 篇未建图 ⇒ 不计入 active 视图
@@ -362,9 +364,10 @@ def test_overview_stats_rejects_unknown_version(
     org_id, _version, _version_id = _stats_fixture  # type: ignore[misc]
 
     with pytest.raises(NoActiveKgVersionError):
-        GraphService.instance()._fetch_graph_overview_stats(
-            version="v-not-exist", org_id=org_id, db=SessionLocal()
-        )
+        with session_scope(org_id=org_id) as db:
+            GraphService.instance()._fetch_graph_overview_stats(
+                version="v-not-exist", org_id=org_id, db=db
+            )
 
 
 # --------------------------------------------------------------------------- #

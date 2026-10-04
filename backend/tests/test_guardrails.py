@@ -63,14 +63,26 @@ def _require_postgres() -> None:
 
 @pytest.fixture
 def clean_audit() -> None:
-    """清空 ``audit_log`` / ``qa_logs``——审计由全站中间件写，不清空无法断言本次。"""
-    from app.db.models import AuditLog, QaLog
-    from app.db.session import SessionLocal
+    """清空 ``audit_log`` / ``qa_logs``——审计由全站中间件写，不清空无法断言本次。
 
-    with SessionLocal() as session:
-        session.query(AuditLog).delete()
-        session.query(QaLog).delete()
-        session.commit()
+    **A10（P3-A）**：RLS 之后「清空」必须**逐租户**——一个会话只看见一个 org 的行。
+    只清默认 org 会把 org B 的历史行留在库里，而本文件的 T1 断言的正是
+    「org B 视角下不该看到 org A 的行」⇒ 残留会让它**假红**（看起来像泄漏）。
+    """
+    from uuid import UUID as _UUID
+
+    from app.db.models import AuditLog, QaLog
+    from app.db.session import session_scope
+
+    for org_id in (
+        get_settings().default_org_id,
+        # 与 conftest 的 ``OTHER_ORG_ID`` 同值（T1 用的第二个租户）
+        _UUID("00000000-0000-4000-8000-000000000002"),
+    ):
+        with session_scope(org_id=org_id) as session:
+            session.query(AuditLog).delete()
+            session.query(QaLog).delete()
+            session.commit()
 
 
 # --------------------------------------------------------------------------- #

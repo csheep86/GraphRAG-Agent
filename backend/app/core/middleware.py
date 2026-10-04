@@ -165,7 +165,7 @@ class AuditMiddleware:
         status_code: int,
     ) -> None:
         from app.core.config import get_settings
-        from app.db.session import SessionLocal
+        from app.db.session import open_session
         from app.services.audit import record_audit_entry, resolve_action
         from app.services.auth import get_auth_provider
 
@@ -190,7 +190,10 @@ class AuditMiddleware:
         resource = f"{method} {path}"
         # `failure` 覆盖 4xx 与 5xx——审计语义是「这次调用有没有成功」，
         # 与 HTTP 状态码族无关；真正的错误码在响应体里。
-        with SessionLocal() as session:
+        # A4 登记的系统通道（P3-A）：审计写库绕开请求依赖自建 Session，
+        # 但 org **照绑**——它来自接缝 1 解析出的身份（认证态），不是请求参数。
+        # 不绑 ⇒ RLS 下这条审计写不进去（WITH CHECK 恒不成立），审计静默丢失。
+        with open_session(org_id=identity.org_id) as session:
             record_audit_entry(
                 session,
                 org_id=identity.org_id,
