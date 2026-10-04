@@ -42,7 +42,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 from app.db.models import RelationExpiryPolicy  # noqa: E402
-from app.db.session import SessionLocal  # noqa: E402
+from app.db.session import open_session  # noqa: E402
 from app.services.kg.policies import (  # noqa: E402 - 常量复用，不另起一套字面量
     FALLBACK_RELATION_TYPE,
     POLICY_SINGLE_CURRENT,
@@ -76,7 +76,7 @@ def seed(
     ]
     planned.append((FALLBACK_RELATION_TYPE, POLICY_APPEND_ONLY))
 
-    db = SessionLocal()
+    db = open_session(org_id=org_id)
     try:
         existing = {
             str(row[0]): str(row[1])

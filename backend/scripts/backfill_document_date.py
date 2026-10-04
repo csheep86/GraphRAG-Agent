@@ -50,8 +50,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.core.config import get_settings  # noqa: E402
 from app.db.models import Document  # noqa: E402
-from app.db.session import SessionLocal, init_db  # noqa: E402
+from app.db.session import init_db, open_session  # noqa: E402
 from app.services.parsing.document_date import resolve_document_date  # noqa: E402
 from app.storage import build_parse_artifact_key, get_storage  # noqa: E402
 
@@ -73,7 +74,8 @@ def backfill(*, apply: bool, today: date) -> int:
     scanned = 0
     recognized = 0
 
-    with SessionLocal() as db:
+    # A4：回填脚本固定处理默认租户（要处理别租户请改这里显式传 org）
+    with open_session(org_id=get_settings().default_org_id) as db:
         documents = (
             db.query(Document)
             .filter(Document.document_date.is_(None))

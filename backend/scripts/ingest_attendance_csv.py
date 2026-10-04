@@ -83,7 +83,7 @@ from _bridge_window import (  # noqa: E402
 )
 
 from app.core.config import get_settings  # noqa: E402
-from app.db.session import SessionLocal, init_db  # noqa: E402
+from app.db.session import init_db, open_session  # noqa: E402
 from app.services.kg.versioning import KgVersioningService  # noqa: E402
 
 REPO_ROOT = BACKEND_DIR.parent
@@ -1131,7 +1131,8 @@ def register_pg_kg_version(
     ⇒ ``get_active``（取 ``ready_at`` 最新）稳定选中本版本。
     """
     init_db()
-    with SessionLocal() as db:
+    # A4：org 来自脚本入参（操作员显式给）
+    with open_session(org_id=org_id) as db:
         svc = KgVersioningService(db)
         existing = svc.get_by_version(org_id=org_id, version=version)
         if existing is None:

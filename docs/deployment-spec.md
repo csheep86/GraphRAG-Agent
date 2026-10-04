@@ -214,6 +214,15 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
    - registry 模式：docker compose pull      ← 只传变化层
    - 离线模式：docker load -i <新包>.tar
 4. 执行数据库迁移（Alembic upgrade head）
+   - **P3-A（2026-10-04）起，这一步同时落 RLS 策略**：迁移
+     `8210590e76a5` 会对 14 张租户表逐张执行 `ENABLE` + `FORCE` +
+     `tenant_isolation` 策略。**漏跑迁移 = 库里没有隔离**，且不会有任何报错。
+   - 迁移须以 **owner** 角色执行（受限角色无权 `ALTER TABLE`）；
+     应用侧连接串必须是**受限角色** `app_rls`（`NOBYPASSRLS`、非超级用户、
+     非表 owner）——超级用户会**绕过一切 RLS**，用它连库等于把 RLS 当装饰品
+     （护栏 **G-26 判据 4** 机械断言这一点）。
+   - 首次部署前建角色 / 受控函数（须一次超级用户连接）：
+     `uv run python scripts/init_rls_roles.py --admin-url <超级用户连接串>`
 5. 起服（docker compose up -d）→ 冒烟（§10 第 1~6 项）
 6. 记录：版本 / 迁移号 / 耗时 / 是否回滚
 7. 失败即回滚：改 tag 回上一版本 + 恢复备份

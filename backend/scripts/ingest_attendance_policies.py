@@ -74,7 +74,7 @@ from _bridge_window import (  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 from app.db.models import Document  # noqa: E402
-from app.db.session import SessionLocal, init_db  # noqa: E402
+from app.db.session import init_db, open_session  # noqa: E402
 from app.services.kg.versioning import KgVersioningService  # noqa: E402
 from app.storage import (  # noqa: E402
     build_extract_artifact_key,
@@ -857,7 +857,8 @@ def main(argv: list[str] | None = None) -> int:
     relation_ids: list[str] = []
     try:
         driver.verify_connectivity()
-        with SessionLocal() as db:
+        # A4：入图/登记 PG 的 org 来自脚本入参（操作员显式给）
+        with open_session(org_id=org_id) as db:
             kg_version_id = ensure_kg_version(
                 db=db, org_id=org_id, version=args.kg_version
             )

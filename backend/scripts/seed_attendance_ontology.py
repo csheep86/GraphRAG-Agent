@@ -41,7 +41,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 from app.db.models import OntologySchema  # noqa: E402
-from app.db.session import SessionLocal, init_db  # noqa: E402
+from app.db.session import init_db, open_session  # noqa: E402
 
 #: backend/scripts/ → parents[1] = backend/ → parent = 仓库根
 REPO_ROOT = BACKEND_DIR.parent
@@ -58,7 +58,8 @@ def main() -> int:
 
     init_db()
 
-    with SessionLocal() as session:
+    # A4：写哪个 org 的本体就绑哪个 org（本脚本固定写默认 org）
+    with open_session(org_id=settings.default_org_id) as session:
         existing = session.scalar(
             select(OntologySchema).where(
                 OntologySchema.org_id == settings.default_org_id,

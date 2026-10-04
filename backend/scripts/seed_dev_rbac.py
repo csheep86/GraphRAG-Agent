@@ -43,7 +43,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
 from app.db.models import Role, UserRole  # noqa: E402
-from app.db.session import SessionLocal, init_db  # noqa: E402
+from app.db.session import init_db, open_session  # noqa: E402
 from app.services.rbac.roles import PRESET_ROLES, RoleName  # noqa: E402
 from app.services.rbac.service import ensure_preset_roles  # noqa: E402
 
@@ -86,7 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"org_id               = {org_id}")
     print(f"actor_id             = {actor_id}")
 
-    with SessionLocal() as session:
+    # A4：脚本没有请求身份 ⇒ org 只能显式给（本脚本只授默认 org）
+    with open_session(org_id=org_id) as session:
         already = _report(session, org_id, actor_id)
         if check_only:
             print("\n[--] --check 模式：未写入")

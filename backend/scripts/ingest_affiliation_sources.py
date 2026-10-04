@@ -47,7 +47,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core.config import get_settings  # noqa: E402
 from app.db.models import EntityMergeCandidate, UnalignedSubject  # noqa: E402
-from app.db.session import SessionLocal, init_db  # noqa: E402
+from app.db.session import init_db, open_session  # noqa: E402
 from app.services.kg.entity_resolution import (  # noqa: E402
     MergeCandidate,
     SubjectProfile,
@@ -1452,7 +1452,8 @@ def persist_unaligned(rows: list[dict[str, Any]], *, org_id: uuid.UUID) -> int:
     """
     init_db()
     doc_ids = {row["source_doc_id"] for row in rows}
-    with SessionLocal() as db:
+    # A4：写哪个 org 的语料就绑哪个 org（来自 ``--org-id`` 入参）
+    with open_session(org_id=org_id) as db:
         if doc_ids:
             (
                 db.query(UnalignedSubject)
@@ -1489,7 +1490,8 @@ def persist_merge_candidates(
     只写**判据产生的**行：``< 0.70`` 的候选**根本不落表**（§4.5.1 第 5 条）。
     """
     init_db()
-    with SessionLocal() as db:
+    # A4：写哪个 org 的语料就绑哪个 org（来自 ``--org-id`` 入参）
+    with open_session(org_id=org_id) as db:
         (
             db.query(EntityMergeCandidate)
             .filter(EntityMergeCandidate.org_id == org_id)
@@ -1522,7 +1524,8 @@ def register_pg_kg_version(
     Neo4j 里躺着 2954 个实体，读侧却返回 ``nodes = 0``）。
     """
     init_db()
-    with SessionLocal() as db:
+    # A4：写哪个 org 的语料就绑哪个 org（来自 ``--org-id`` 入参）
+    with open_session(org_id=org_id) as db:
         svc = KgVersioningService(db)
         existing = svc.get_by_version(org_id=org_id, version=version)
         if existing is None:

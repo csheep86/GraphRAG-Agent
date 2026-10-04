@@ -44,7 +44,7 @@ from sqlalchemy import inspect, select, text  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
-from app.db.session import SessionLocal, engine  # noqa: E402
+from app.db.session import engine, open_session  # noqa: E402
 
 #: 退出码：0 = 无 FAIL；1 = 有 FAIL
 EXIT_FAIL = 1
@@ -113,7 +113,8 @@ def check_document_date(report: Report, engine_: Engine) -> None:
         return
     report.add("OK", "document_date 列", "已落地")
 
-    db = SessionLocal()
+    # A4：探测脚本固定看默认租户（要看别租户请显式传 --org-id）
+    db = open_session(org_id=get_settings().default_org_id)
     try:
         total = db.execute(text("select count(*) from documents")).scalar() or 0
         dated = (
@@ -147,7 +148,8 @@ def check_policies(report: Report, *, org_id: object) -> None:
     """
     from app.db.models import RelationExpiryPolicy
 
-    db = SessionLocal()
+    # A4：探测脚本固定看默认租户（要看别租户请显式传 --org-id）
+    db = open_session(org_id=get_settings().default_org_id)
     try:
         rows = db.execute(
             select(RelationExpiryPolicy.relation_type, RelationExpiryPolicy.policy)

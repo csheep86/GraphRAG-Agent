@@ -45,12 +45,15 @@ from sqlalchemy import delete, select
 from app.core.config import get_settings
 from app.core.errors import ErrorCode
 from app.db.models import Document
-from app.db.session import SessionLocal, init_db
+from app.db.session import init_db, session_scope
 from app.tasks.registry import document_parse_executor
 from app.tasks.types import TaskSpec
 
-#: 固定的 trace_id，便于日志回溯。
+#: 固定 trace_id，便于日志回溯。
 _TRACE_ID = "trace-test-document-parse-executor"
+
+#: **A5 用例专用**租户：刻意≠默认租户，用来证明执行体的 org 来自 ``TaskSpec``
+A5_OTHER_ORG = UUID("00000000-0000-4000-8000-0000000000a5")
 
 
 # --------------------------------------------------------------------------- #
@@ -74,11 +77,17 @@ def _insert_document(
     error_code: str | None = None,
     error_detail: str | None = None,
     mime_type: str = "application/pdf",
+    org_id: UUID | None = None,
 ) -> UUID:
-    """直接落一行 ``documents``，返回主键。"""
+    """直接落一行 ``documents``，返回主键。
+
+    ``org_id`` 缺省为默认租户；A5 用例会传**别的** org——写哪个租户的数据
+    就必须绑哪个租户（RLS 的 ``WITH CHECK`` 会拦住跨租户写）。
+    """
     settings = get_settings()
     document_id = uuid4()
-    with SessionLocal() as session:
+    target_org = org_id or settings.default_org_id
+    with session_scope(org_id=target_org) as session:
         session.add(
             Document(
                 id=document_id,
@@ -87,7 +96,7 @@ def _insert_document(
                 size_bytes=1024,
                 status=status,
                 uploaded_by=settings.default_actor_id,
-                org_id=settings.default_org_id,
+                org_id=target_org,
                 error_code=error_code,
                 error_detail=error_detail,
                 trace_id=uuid4(),
@@ -97,9 +106,9 @@ def _insert_document(
     return document_id
 
 
-def _snapshot(document_id: UUID) -> dict[str, Any]:
-    """读回一行 ``documents`` 的状态要素。"""
-    with SessionLocal() as session:
+def _snapshot(document_id: UUID, *, org_id: UUID | None = None) -> dict[str, Any]:
+    """读回一行 ``documents`` 的状态要素（默认读默认租户）。"""
+    with session_scope(org_id=org_id or get_settings().default_org_id) as session:
         document = session.get(Document, document_id)
         assert document is not None, f"document {document_id} 未落库"
         return {
@@ -135,9 +144,12 @@ def seed_document() -> Iterator[Callable[..., UUID]]:
     yield _seed
 
     if created:
-        with SessionLocal() as session:
-            session.execute(delete(Document).where(Document.id.in_(created)))
-            session.commit()
+        # A10：清理**逐租户**——测试库是共享的，一个会话只看见一个 org 的行
+        orgs = {get_settings().default_org_id, A5_OTHER_ORG}
+        for org in orgs:
+            with session_scope(org_id=org) as session:
+                session.execute(delete(Document).where(Document.id.in_(created)))
+                session.commit()
 
 
 @pytest.fixture
@@ -314,16 +326,75 @@ def test_executor_handles_missing_document_gracefully(
     monkeypatch.setattr("app.tasks.registry._do_parse", spy)
 
     # 计数基准：执行前后 ``documents`` 行数应不变
-    with SessionLocal() as session:
+    with session_scope(org_id=get_settings().default_org_id) as session:
         before = len(session.execute(select(Document.id)).all())
 
     asyncio.run(document_parse_executor(_make_spec(document_id)))  # 不应抛
 
-    with SessionLocal() as session:
+    with session_scope(org_id=get_settings().default_org_id) as session:
         after = len(session.execute(select(Document.id)).all())
 
     assert calls == [], "缺失 doc 不应触发 _do_parse"
     assert after == before, "缺失 doc 不应有 DB 副作用"
+
+
+# --------------------------------------------------------------------------- #
+# 6b. **A5（P3-A）**：执行体的 org 来自 TaskSpec，不是"默认租户"
+# --------------------------------------------------------------------------- #
+
+
+def test_executor_org_comes_from_task_spec_not_default(
+    seed_document: Callable[..., UUID],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """后台任务的 org 必须来自 ``TaskSpec.org_id``（任务**创建时**的认证态）。
+
+    后台任务跑在请求之外，拿不到请求级身份；RLS 下执行体若不先设 org 就查不到
+    自己那一行 ⇒ 合法任务被误判成「记录不存在」（**静默失败**，坑 3）。
+
+    本例同时是 conftest「默认租户绑定」脚手架的**反向守卫**：
+    若执行体的 org 是靠脚手架兜底来的，那么用**非默认 org** 的任务必然查不到
+    文档（走 missing 分支）⇒ 这里会红。
+    """
+    calls: list[tuple[UUID, UUID]] = []
+
+    async def spy(*, document_id: UUID, payload: Any, org_id: UUID) -> None:
+        calls.append((document_id, org_id))
+
+    monkeypatch.setattr("app.tasks.registry._do_parse", spy)
+
+    # 文档属于**另一个**租户
+    document_id = seed_document("pending", org_id=A5_OTHER_ORG)
+
+    asyncio.run(
+        document_parse_executor(
+            TaskSpec(
+                task_type="document.parse",
+                payload={"document_id": str(document_id)},
+                trace_id=_TRACE_ID,
+                org_id=A5_OTHER_ORG,
+            )
+        )
+    )
+
+    assert calls == [(document_id, A5_OTHER_ORG)], (
+        "执行体没有按 TaskSpec 的 org 找到文档（多半是 org 兜底到了默认租户）"
+    )
+    assert _snapshot(document_id, org_id=A5_OTHER_ORG)["status"] == "completed"
+
+    # 反向：拿一个**不属于**该文档的 org 去跑 ⇒ 必须走"缺失"分支（不串租户）
+    calls.clear()
+    asyncio.run(
+        document_parse_executor(
+            TaskSpec(
+                task_type="document.parse",
+                payload={"document_id": str(document_id)},
+                trace_id=_TRACE_ID,
+                org_id=uuid4(),
+            )
+        )
+    )
+    assert calls == [], "用别的 org 竟然也能看到这份文档 ⇒ 执行体没按 org 收敛"
 
 
 # --------------------------------------------------------------------------- #
