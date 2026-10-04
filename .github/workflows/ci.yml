@@ -76,6 +76,30 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # **P3-B（2026-10-04）：图谱侧隔离必须由 CI 真验**（基线 §303 / G-9）。
+      # 在此之前「CI 无 Neo4j」是**公开登记的事实**，图谱隔离只能靠**独立环境留证**——
+      # 而留证是不能复算的：谁都能说自己跑过。加了它，图谱侧用例才从「留证」
+      # 升格为**真 CI 必过**（本工程项与 **G-25** 共用，见 `changes/P3-B/proposal.md` §3）。
+      neo4j:
+        # tag 固定且**与 deploy/docker-compose.yml 的 neo4j 服务一致**（同 PG 的纪律）：
+        # 两侧漂移由 `test_g9_0_ci_has_neo4j_service` 判红——CI 与生产跑不同版本的图库，
+        # 等于"在另一个产品上验的隔离"。
+        image: neo4j:5.26-community
+        env:
+          # ⚠️ 这是**一次性 CI 容器**的口令，不是密钥（jobs 结束即销毁）。
+          # 与下面 job env 的 GRAPH_REAL_NEO4J_PASSWORD **必须一致**，改一处要改两处。
+          NEO4J_AUTH: neo4j/ci-graph-pw-2026
+        ports:
+          - 7687:7687
+        # Neo4j 冷启动**明显**慢于 PG（要建库 / 起 Bolt）⇒ start-period 给足，
+        # 否则 runner 会在它还没起来时就判失败，表现为整批图谱用例随机红。
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ci-graph-pw-2026 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+          --health-start-period 60s
+
     env:
       # 放 **job 级**而不是 Pytest 那一个 step：本 job 里「本地独占用例」那一步
       # 也要连库。只塞进单个 step 会让那一步悄悄退化成"看着像跑了、其实没跑"。
@@ -89,6 +113,16 @@ jobs:
       # 两个角色 + 受控系统函数由下面的「建 RLS 角色」步骤建立（须超级用户）。
       DATABASE_URL: postgresql+psycopg://app_rls:app_rls@localhost:5432/graphrag_test
       DATABASE_URL_OWNER: postgresql+psycopg://app_owner:app_owner@localhost:5432/graphrag_test
+
+      # **P3-B：图谱用例的「真连接」开关**——**刻意不用** ``NEO4J_URI``。
+      # conftest 把 ``NEO4J_URI`` 固定指向不可达端口（``bolt://127.0.0.1:1``），
+      # 让绝大多数用例**确定性降级**为"图谱不可用"；一旦在这里把它指向真 Neo4j，
+      # 上千条与图谱无关的用例会跟着去连真实图库 ⇒ 结果随外部依赖漂移（CI 必挂）。
+      # 故真图用例**单独**走这三个变量（缺任一个 ⇒ CI 上 fail，不许 skip）。
+      GRAPH_REAL_NEO4J_URI: bolt://localhost:7687
+      GRAPH_REAL_NEO4J_USER: neo4j
+      # 与上面 services.neo4j 的 NEO4J_AUTH **必须一致**（一次性容器，非密钥）
+      GRAPH_REAL_NEO4J_PASSWORD: ci-graph-pw-2026
 
     steps:
       - name: 检出代码
@@ -205,6 +239,10 @@ jobs:
             echo "    \`docker run --rm -d -e POSTGRES_USER=graphrag -e POSTGRES_PASSWORD=graphrag -e POSTGRES_DB=graphrag -p 5432:5432 postgres:16-alpine\`"
             echo "  - 建 RLS 角色与策略（P3-A：业务测试走受限角色，超级用户会绕过 RLS）:"
             echo "    \`uv run python scripts/init_rls_roles.py --admin-url postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test\`"
+            echo "  - 起图谱库（P3-B：G-9 图谱侧用例要**真** Neo4j，与 deploy 同 tag）:"
+            echo "    \`docker run --rm -d -e NEO4J_AUTH=neo4j/ci-graph-pw-2026 -p 7687:7687 neo4j:5.26-community\`"
+            echo "  - 真图用例的连接开关（缺它 ⇒ 图谱用例 skip；CI 上由 job env 注入）:"
+            echo "    \`GRAPH_REAL_NEO4J_URI=bolt://localhost:7687 GRAPH_REAL_NEO4J_PASSWORD=ci-graph-pw-2026\`"
             echo "  - \`uv run ruff check . && uv run ruff format --check .\`"
             echo "  - \`uv run python scripts/check_seams.py\`（接缝纪律门禁；Sprint 收尾用默认档 ERROR=0，\`--strict\` 属 v1.4.0 完成点）"
             echo "  - \`uv run pytest -q\`"
