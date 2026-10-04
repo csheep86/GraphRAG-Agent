@@ -41,6 +41,7 @@ from app.db.rls import (
     APP_ROLE,
     ORG_ENUMERATION_FUNCTION,
     ORG_GUC,
+    OWNER_ROLE,
     POLICY_NAME,
     PROBE_FUNCTION,
     PROBE_ROLE,
@@ -707,3 +708,105 @@ def test_g26_7_deploy_compose_uses_restricted_db_role() -> None:
         f"{DOCKERFILE.name} 没有 `COPY backend/scripts` 指令 ⇒ init 服务在容器里找不到 "
         "init_rls_roles.py；该失败只有真起容器才看得出来（注释里提到不算数）"
     )
+
+    # 5) **P3-D**：backend 还必须有 **owner 串**（迁移 / DDL 专用）
+    #    受限角色只有 DML ⇒ 用它跑 `alembic upgrade head` 直接 permission denied。
+    #    症状不是"隔离失效"，而是"**部署之后升不了级**"——平时毫无症状。
+    owner_url = str((backend.get("environment") or {}).get("DATABASE_URL_OWNER", ""))
+    owner_user = (
+        owner_url.split("://", 1)[-1].split(":", 1)[0] if "://" in owner_url else ""
+    )
+    assert owner_user == OWNER_ROLE, (
+        f"compose 的 backend 未配 `DATABASE_URL_OWNER`（当前 {owner_user or '（空）'}），"
+        f"须指向 {OWNER_ROLE}：迁移跑的是 DDL，受限角色 {APP_ROLE} 无权执行 ⇒ "
+        "`alembic upgrade head` 会 permission denied（**部署之后升不了级**）"
+    )
+
+
+def test_g26_9_alembic_uses_owner_url() -> None:
+    """**迁移必须走 owner 串**（P3-D，2026-10-04）。
+
+    `migrations/env.py` 此前只认 `settings.database_url`——而部署形态下那是受限角色
+    `app_rls`（只有 DML）⇒ `alembic upgrade head` 会在第一条 DDL 上 `permission denied`。
+    本条盯住"env.py 确实优先取 owner"这一件事（**静态**断言：真跑一遍迁移由
+    `test_g26_migration_applies_rls_on_scratch_db` 负责）。
+    """
+    import ast
+
+    env_py = BACKEND_ROOT / "migrations" / "env.py"
+    tree = ast.parse(env_py.read_text(encoding="utf-8"))
+    # ⚠️ **只看代码、不看 docstring**（用 ast 而非文本匹配）：注释里写一句
+    # "我们用 owner" 而代码仍走 database_url ⇒ 是最典型的"说了但没做"。
+    uses = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "database_url_owner"
+    ]
+    assert uses, (
+        f"{env_py.name} 的代码里没有取 `database_url_owner` ⇒ 迁移以受限角色跑 DDL，"
+        "`alembic upgrade head` 会 permission denied（部署之后升不了级）"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 判据 10：应用入口必须**显式**绑 org（P3-D，2026-10-04）
+#          —— 测试脚手架会掩盖漏绑，故必须机械盯住调用点
+# --------------------------------------------------------------------------- #
+#: 允许"不传 org_id"的位置：会话层自己（`system_session()` 刻意不绑、
+#: `session_scope()` 只是转发参数）。除此之外一律必须显式传。
+_SESSION_LAYER = BACKEND_ROOT / "app" / "db" / "session.py"
+
+
+def test_g26_10_session_entrypoints_bind_org_explicitly() -> None:
+    """``app/`` 下每个 ``open_session(`` / ``session_scope(`` 调用点**必须显式**传 ``org_id=``。
+
+    **为什么需要这条静态断言**：``tests/conftest.py`` 给 ``SessionLocal`` 塞了默认租户
+    （否则上千条用例全红），于是「漏绑 org」在测试里**看不出来**——把
+    ``open_session(org_id=identity.org_id)`` 写成 ``open_session()``，生产会得到 0 行、
+    而测试**照样绿**。判据 3 / 8 证明的是"RLS 会拦"，**证明不了"调用点传了 org"**；
+    这一段正好是两者之间唯一的缝，故由本条补上。
+
+    ⚠️ 只扫 ``app/``（不含测试）；``session.py`` 自身豁免——``system_session()``
+    **刻意**不绑，且它只调受控函数（判据 6 盯着）。
+    """
+    import ast
+
+    offenders: list[str] = []
+    for path in sorted((BACKEND_ROOT / "app").rglob("*.py")):
+        if path == _SESSION_LAYER:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name not in {"open_session", "session_scope"}:
+                continue
+            if not any(keyword.arg == "org_id" for keyword in node.keywords):
+                offenders.append(
+                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} → {name}()"
+                )
+
+    assert not offenders, (
+        "以下调用点没有显式传 org_id（生产 ⇒ 0 行，而测试因默认租户夹具**仍绿**）：\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_g26_11_system_session_really_has_no_org() -> None:
+    """``system_session()`` 在**测试里也必须真的不绑 org**。
+
+    conftest 的默认租户夹具会连带 ``system_session()`` 一起塞 org ⇒ 系统通道在测试里
+    看得到默认租户的数据，而生产是 0 行 ⇒ **脚手架掩盖错误**。故 `system_session()`
+    显式清掉 org（P3-D）：让"系统通道只调受控函数"这件事有**一致的**语义。
+    """
+    from app.db.session import ORG_ID_INFO_KEY, system_session
+
+    session = system_session()
+    try:
+        assert session.info.get(ORG_ID_INFO_KEY) is None, (
+            f"system_session() 带着 org {session.info.get(ORG_ID_INFO_KEY)} ⇒ "
+            "测试里能读到默认租户的数据、生产却是 0 行（脚手架掩盖）"
+        )
+    finally:
+        session.close()

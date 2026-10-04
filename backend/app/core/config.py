@@ -97,6 +97,17 @@ class Settings(BaseSettings):
     # 它让方言债在「反正只是开发库」的心态下持续累积（RK-2 的成因）。
     database_url: str = "postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag"
 
+    #: **owner 连接串（P3-D，2026-10-04 新增）：建表 / 迁移 / DDL 专用**。
+    #:
+    #: 为什么必须有第二串：P3-A 把应用账号切成了受限角色 ``app_rls``（``NOBYPASSRLS``，
+    #: 只有 DML）。而 **DDL 需要 owner**——``app_rls`` 跑 ``alembic upgrade head`` 会
+    #: 直接 ``permission denied``。在此之前仓库里**没有**这个配置（``DATABASE_URL_OWNER``
+    #: 只被测试侧用 ``os.environ`` 直接读）⇒ 部署形态下**升级路径是断的**，而平时没人会发现。
+    #:
+    #: 为 ``None`` 时（本地 / 老环境）回落到 ``database_url``——那通常就是超级用户，
+    #: 能跑 DDL，行为与改动前一致。
+    database_url_owner: str | None = None
+
     # -- 租户隔离（ADR-0003）--
     allow_dev_org_header: bool = False
     default_org_id: UUID = DEFAULT_ORG_ID

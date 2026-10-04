@@ -226,8 +226,15 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
    - **P3-A（2026-10-04）起，这一步同时落 RLS 策略**：迁移
      `8210590e76a5` 会对 14 张租户表逐张执行 `ENABLE` + `FORCE` +
      `tenant_isolation` 策略。**漏跑迁移 = 库里没有隔离**，且不会有任何报错。
-   - 迁移须以 **owner** 角色执行（受限角色无权 `ALTER TABLE`）；
-     应用侧连接串必须是**受限角色** `app_rls`（`NOBYPASSRLS`、非超级用户、
+   - 迁移须以 **owner** 角色执行（受限角色无权 `ALTER TABLE`）。
+     **P3-D（2026-10-04）起这条被机械接线**：新增 `Settings.database_url_owner`
+     （env `DATABASE_URL_OWNER`），`migrations/env.py` **优先**取它（缺则回落
+     `database_url`），compose 的 backend 已注入该变量 ⇒ 容器内直接跑
+     `alembic upgrade head` 即走 owner。
+     ⚠️ **在此之前它是断的**：compose 只给了受限角色的 `DATABASE_URL`，迁移跑 DDL
+     ⇒ 实测 `permission denied for schema public`。症状不是"隔离失效"，而是
+     "**部署之后升不了级**"——平时毫无症状，只在升级那一刻炸（G-26 判据 7-5 / 判据 9 盯住）。
+   - 应用侧连接串必须是**受限角色** `app_rls`（`NOBYPASSRLS`、非超级用户、
      非表 owner）——超级用户会**绕过一切 RLS**，用它连库等于把 RLS 当装饰品
      （护栏 **G-26 判据 4** 机械断言这一点）。
    - 首次部署前建角色 / 受控函数（须一次超级用户连接）：

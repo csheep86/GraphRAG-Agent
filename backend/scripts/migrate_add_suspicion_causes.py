@@ -29,9 +29,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from sqlalchemy import inspect, text  # noqa: E402
+from sqlalchemy import create_engine, inspect, text  # noqa: E402
 
-from app.db.session import engine  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
 
 TABLE = "affiliation_suspicions"
 COLUMN = "causes"
@@ -50,13 +50,33 @@ def _has_column(conn: object, table: str, column: str) -> bool:
     return column in {col["name"] for col in inspect(conn).get_columns(table)}
 
 
+def _ddl_engine():
+    """**DDL 必须以 owner 身份跑**（P3-D，2026-10-04）。
+
+    :func:`app.db.session.engine` 用的是受限角色 ``app_rls``（``NOBYPASSRLS``，
+    只有 DML）⇒ 拿它 ``ALTER TABLE`` 会直接 ``permission denied``。故优先取
+    ``database_url_owner``；**没配 owner 串时明确报错**，而不是静默用受限角色
+    去撞一个含义模糊的权限错误。
+    """
+    owner_url = get_settings().database_url_owner
+    if not owner_url:
+        print(
+            "[FAIL] 未配置 DATABASE_URL_OWNER：本脚本执行 DDL，"
+            "受限角色无权 ALTER TABLE（请指向 app_owner）",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return create_engine(owner_url)
+
+
 def main(argv: list[str]) -> int:
     check_only = "--check" in argv[1:]
-    dialect = engine.dialect.name
+    ddl_engine = _ddl_engine()
+    dialect = ddl_engine.dialect.name
     print(f"方言      : {dialect}")
     print(f"目标表    : {TABLE}")
 
-    with engine.begin() as conn:
+    with ddl_engine.begin() as conn:
         if not _table_exists(conn, TABLE):
             print(
                 f"[SKIP] 表 {TABLE} 不存在（尚未建库），由 create_all 建表时自带新结构"

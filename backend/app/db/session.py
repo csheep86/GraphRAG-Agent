@@ -90,8 +90,16 @@ def system_session() -> Session:
     它**只**用于调用受控系统函数（``app.list_tenant_orgs`` 等）——那些函数自身是
     ``SECURITY DEFINER``，不需要调用方有租户视野。除此之外的任何查询在这里
     都只会得到空集：那正是 fail-closed 该有的样子（不是"绕过"，是"看不见"）。
+
+    ⚠️ **P3-D（2026-10-04）：这里必须"显式"清掉 org，不能依赖"默认没有"这个前提**。
+    ``tests/conftest.py`` 给 ``SessionLocal`` 塞了默认租户（否则上千条用例全红），
+    于是 ``system_session()`` 在**测试里也会带上默认租户** ⇒ 脚手架会**掩盖**
+    「系统通道里混进了业务查询」这种错误（生产 0 行、测试却看得到数据）。
     """
-    return open_session()
+    session = open_session()
+    # 不依赖"默认没有 org"这个隐含前提：显式清，测试 / 生产同一个结果
+    session.info.pop(ORG_ID_INFO_KEY, None)
+    return session
 
 
 @contextmanager

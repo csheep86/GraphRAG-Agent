@@ -2,7 +2,8 @@
 
 **连接串与元数据只认两处真源**，不在本文件重复定义：
 
-- URL：``app.core.config.get_settings().database_url``（与运行时同一份配置；
+- URL：``app.core.config.get_settings()`` 的 **owner 串**（``database_url_owner``，
+  **P3-D 起**：迁移跑的是 DDL，受限角色无权执行；缺 owner 串时回落到 ``database_url``）；
   **DR-B1 起 dev / 测试 / 生产一律 PostgreSQL 16.x**，不再有第二份方言）；
 - 元数据：``app.db.models.Base.metadata``（``create_all`` 的同一真源，
   autogenerate 与它对比产生迁移）。
@@ -35,8 +36,17 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # 连接串：运行时同一份配置（alembic.ini 里不再维护第二份 URL）
+#
+# ⚠️ **必须优先用 owner 串（P3-D，2026-10-04）**：迁移执行的是 ``CREATE`` / ``ALTER``
+# 等 **DDL**，而应用账号 ``app_rls`` 是受限角色（``NOBYPASSRLS``，只有 DML）⇒
+# 用它跑迁移会直接 ``permission denied``。在此之前这里只认 ``database_url``，
+# 于是「P3-A 把应用切成受限角色」之后，**部署形态下的升级路径是断的**——
+# 而它在平时不会有任何症状，只在真正升级那一刻才炸。
 if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", get_settings().database_url)
+    settings = get_settings()
+    config.set_main_option(
+        "sqlalchemy.url", settings.database_url_owner or settings.database_url
+    )
 
 target_metadata = Base.metadata
 
