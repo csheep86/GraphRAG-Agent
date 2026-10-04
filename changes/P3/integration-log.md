@@ -286,7 +286,7 @@ G-26 判据 4 就是拦住这件事的（用超级用户连接 ⇒ 该断言必�
 | 4 | `rls_probe` 带 `BYPASSRLS` | 中 | §6.3 论证了必要性（`FORCE` 使 owner 也受约束）；已收窄到 `NOLOGIN` + 两个函数 + 3 张表；G-26 判据 6 点名盯住 |
 | 5 | 运维脚本（8 个）默认绑 `settings.default_org_id` | 低 | 单租户部署无差别；多租户下需显式传 org（已留注释） |
 | 6 | 一次未复现的迁移用例偶发红 | 低 | §1.4，登记备查 |
-| 7 | `git push` 失败（2026-10-04 收口后） | 低 | 无人值守规则允许重试一次；重试仍 `Connection was reset` / `Could not connect to github.com:443`（已知间歇性网络问题）。`6a2e445b` 与日志提交**仍在本地**，待网络恢复后推送即可，不影响门禁结论 |
+| 7 | ~~`git push` 失败（2026-10-04 收口后）~~ | ✅ **已解决** | 无人值守规则允许重试一次；重试仍 `Could not connect to github.com:443` / `Connection was reset`（已知间歇性网络问题）。**用户随后自行重试成功**：连续失败 8 次后第 9 次连通 ⇒ `cf2f4306..ba47a925 main -> main` 已推送，`git status -sb` 不再显示 `[ahead 3]`。**结论不变**：这是网络连通性问题，非门禁 / 权限问题 |
 
 ---
 
