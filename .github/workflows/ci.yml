@@ -204,19 +204,23 @@ jobs:
       # `-rs`：把 skip **原因**打进日志。只用 `-q` 时，"本地 3 skip / CI 5 skip"
       # 这种差异在日志里完全无痕——依赖未入库产物的用例会悄悄地一次都没跑过。
       #
-      # **G-25（P3-E）：导入受控种子语料**。
+      # **G-25（P3-E）+ A8（P6-A）：导入受控种子语料**。
       # 评测判据要"出真值"，前提是图库里有**可复现**的数据——用"某次真机留下的库"
-      # 不行（谁知道里面是什么）。语料是**仓库内**的 `demo/affiliation/*.csv`
-      # （入库 ⇒ 换版有 git 痕迹），导入脚本幂等（`--purge`）。
+      # 不行（谁知道里面是什么）。语料由**生成器**产出（seed 固定 ⇒ 字节级可复现）：
+      # `demo/affiliation/generated/`，规模 200 合同 / 500 发票 / 100 凭证 / 20 组植入
+      # （spec §3 验收 6；v1 手工语料只有 8/60/30/9，**统计上判不出达标**）。
       #
       # ⚠️ 少了这一步，下一个 gate 步骤会因**空图**判红——那正是 G-25 判据 ⑤ 想要的
       # （空图 ⇒ 检测到 0 疑点 ⇒ 召回 0 ⇒ 假红，此时必须 fail 而不是 pass）。
-      - name: 导入受控种子语料（G-25：评测需可复现的图数据）
+      - name: 导入受控种子语料（G-25 + A8：评测需可复现的图数据）
         env:
           # 脚本读的是 settings，不是 GRAPH_REAL_*（那三个只给**测试**用）
           NEO4J_URI: bolt://localhost:7687
           NEO4J_PASSWORD: ci-graph-pw-2026
-        run: uv run python scripts/ingest_affiliation_sources.py --purge
+        run: |
+          uv run python scripts/ingest_affiliation_sources.py --purge \
+            --corpus-dir demo/affiliation/generated \
+            --kg-version affiliation-demo-v2
 
       # DATABASE_URL 取自本 job 级 env（指向 services.postgres 的 graphrag_test）；
       # 本地复现同样需要它，命令在本 job 末尾的失败摘要里。
@@ -237,7 +241,7 @@ jobs:
           NEO4J_URI: bolt://localhost:7687
           NEO4J_PASSWORD: ci-graph-pw-2026
         run: |
-          uv run python scripts/eval_acceptance.py --live \
+          uv run python scripts/eval_acceptance.py --live --gold v2 \
             --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate \
             --gate
 
@@ -276,9 +280,9 @@ jobs:
             echo "  - 真图用例的连接开关（缺它 ⇒ 图谱用例 skip；CI 上由 job env 注入）:"
             echo "    \`GRAPH_REAL_NEO4J_URI=bolt://localhost:7687 GRAPH_REAL_NEO4J_PASSWORD=ci-graph-pw-2026\`"
             echo "  - **G-25 评测门禁**（受控语料 ⇒ 真跑 C2-a / C2-b，只判不退化）:"
-            echo "    \`uv run python scripts/ingest_affiliation_sources.py --purge\`"
-            echo "    \`uv run python scripts/eval_acceptance.py --live --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate --gate\`"
-            echo "    ⚠️ 基线值在 \`backend/data/eval/baselines/ci-c2-v1.json\`；**刷基线即重设门禁刻度**。"
+            echo "    \`uv run python scripts/ingest_affiliation_sources.py --purge --corpus-dir demo/affiliation/generated --kg-version affiliation-demo-v2\`"
+            echo "    \`uv run python scripts/eval_acceptance.py --live --gold v2 --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate --gate\`"
+            echo "    ⚠️ 基线值在 \`backend/data/eval/baselines/ci-c2-v2.json\`；**刷基线即重设门禁刻度**。"
             echo "  - \`uv run ruff check . && uv run ruff format --check .\`"
             echo "  - \`uv run python scripts/check_seams.py\`（接缝纪律门禁；Sprint 收尾用默认档 ERROR=0，\`--strict\` 属 v1.4.0 完成点）"
             echo "  - \`uv run pytest -q\`"

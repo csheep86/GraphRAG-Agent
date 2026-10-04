@@ -1,0 +1,406 @@
+{
+  "id": "gold-affiliation-v2",
+  "purpose": "C2-a 隐性关联召回 / C2-b 误报率的 gold 标注（**A8 扩标版**）",
+  "source": {
+    "implanted_groups": "由 scripts/gen_affiliation_corpus.py 生成（seed=20261004）",
+    "corpus": "demo/affiliation/generated/（contracts 200 / invoices 500 / vouchers 100）",
+    "corpus_layer": "L1",
+    "corpus_layer_note": "**L1 算法层**：合成语料，直接由 scripts/ingest_affiliation_sources.py 入图，不经过 M2 抽取链路 ⇒ 只验证算法判据，**未经端到端验证**（A8 裁决 4 / G5 声明）",
+    "text_evidence": "植入关系在**单据正文**里也有体现（contract_text / invoice_text / voucher_text）；CSV 行的逗号拼接即 :Chunk.text ⇒ 正文自动进证据链",
+    "why_not_derived": "v1 的 9 组是「从 CSV 结构化字段推导」的，算法读的正是同一批字段 ⇒ 命中必然 ⇒ 测的是推导一致性，不是发现隐藏关联 ⇒ 本版保留结构字段的同时补文本证据"
+  },
+  "unit": "组（finding group）",
+  "version": "v2-2026-10-04",
+  "kg_version": "affiliation-demo-v2",
+  "org_id": "5dea8f62-0c67-579a-9509-8b4ce98eadea",
+  "entity_id_space": {
+    "space": "graph_node_id",
+    "human_readable_key": "supplier_id（S001–S120）**仅用于人工标注 / 复核**，不参与比对",
+    "subject_id_form": "SUBJECT:<tax_id>",
+    "document_id_form": "CONTRACT:<contract_no> / INVOICE:<invoice_no> / VOUCHER:<voucher_no>",
+    "member_prefixes": [
+      "SUBJECT:",
+      "CONTRACT:",
+      "INVOICE:",
+      "VOUCHER:"
+    ],
+    "non_member_prefixes": [
+      "ADDRESS:",
+      "PHONE:",
+      "LEGALPERSON:"
+    ],
+    "member_rule": "共享节点（ADDRESS / PHONE / LEGALPERSON）不计入成员 ⇒ shared_* 的成员恒为 2 个主体",
+    "verified_against_live_output": true,
+    "verified_at": "2026-10-04",
+    "verification_note": "真机样本：AffiliationService.detect(kg_version=affiliation-demo-v2, org_id=<本文件 org_id>) 返回 **20 条**疑点，分型 {shared_legal_rep 4 / shared_address 4 / shared_phone 4 / cycle 4 / amount_mismatch 4} 与本集 **20 组逐组一致**；误报 **0 条**。成员 id 按 match_key(type_and_members) 逐条比对通过（去重排序后相等）。样本与命令见 changes/P6-A/integration-log.md §2。"
+  },
+  "findings": [
+    {
+      "type": "amount_mismatch",
+      "node_ids": [
+        "CONTRACT:HT2026-0041",
+        "INVOICE:FP2026-0041",
+        "VOUCHER:PZ2026-0041"
+      ],
+      "entity_ids": [
+        "TR-0041"
+      ],
+      "tax_ids": [],
+      "evidence": "TR-0041：合同 8900.00 / 发票 9612.00 / 凭证 8900.00 ⇒ 发票多记",
+      "text_evidence": "采购合同 HT2026-0041，交易参考号 TR-0041，甲方 北京诚机有限公司（税号 91AC6FNEB4NM9YRD2R），乙方 成都瑞造有限公司（税号 9199BP8J8AR748PJB3），合同金额 8900.00 元，签署日期 2026-05-13。备注：三方金额不一致（发票多记）。",
+      "expected_count": 1,
+      "trade_ref": "TR-0041"
+    },
+    {
+      "type": "amount_mismatch",
+      "node_ids": [
+        "CONTRACT:HT2026-0057",
+        "INVOICE:FP2026-0057",
+        "VOUCHER:PZ2026-0057"
+      ],
+      "entity_ids": [
+        "TR-0057"
+      ],
+      "tax_ids": [],
+      "evidence": "TR-0057：合同 85790.00 / 发票 74600.00 / 凭证 74600.00 ⇒ 合同多记",
+      "text_evidence": "采购合同 HT2026-0057，交易参考号 TR-0057，甲方 广州科子有限公司（税号 91YL88L4CYDKJY7JF7），乙方 深圳达造有限公司（税号 91T3YA0ANQ2MKKNG6K），合同金额 85790.00 元，签署日期 2026-09-01。备注：三方金额不一致（合同多记）。",
+      "expected_count": 1,
+      "trade_ref": "TR-0057"
+    },
+    {
+      "type": "amount_mismatch",
+      "node_ids": [
+        "CONTRACT:HT2026-0073",
+        "INVOICE:FP2026-0073",
+        "VOUCHER:PZ2026-0073"
+      ],
+      "entity_ids": [
+        "TR-0073"
+      ],
+      "tax_ids": [],
+      "evidence": "TR-0073：合同 80100.00 / 发票 80100.00 / 凭证 73692.00 ⇒ 凭证少记",
+      "text_evidence": "采购合同 HT2026-0073，交易参考号 TR-0073，甲方 杭州联子有限公司（税号 914LXXNK03T40E2KX4），乙方 上海信制有限公司（税号 91CQHUYJT7FGDWDTG4），合同金额 80100.00 元，签署日期 2026-01-17。备注：三方金额不一致（凭证少记）。",
+      "expected_count": 1,
+      "trade_ref": "TR-0073"
+    },
+    {
+      "type": "amount_mismatch",
+      "node_ids": [
+        "CONTRACT:HT2026-0092",
+        "INVOICE:FP2026-0092",
+        "VOUCHER:PZ2026-0092"
+      ],
+      "entity_ids": [
+        "TR-0092"
+      ],
+      "tax_ids": [],
+      "evidence": "TR-0092：合同 34400.00 / 发票 32336.00 / 凭证 30272.00 ⇒ 三方各异",
+      "text_evidence": "采购合同 HT2026-0092，交易参考号 TR-0092，甲方 西安中实有限公司（税号 912F23FCFJYQMHPKFL），乙方 南京华商有限公司（税号 91FDLXDT0767XNA3B5），合同金额 34400.00 元，签署日期 2026-08-08。备注：三方金额不一致（三方各异）。",
+      "expected_count": 1,
+      "trade_ref": "TR-0092"
+    },
+    {
+      "type": "cycle",
+      "node_ids": [
+        "SUBJECT:912U57YQ0FB0NY2BY5",
+        "SUBJECT:918GEWMGG68PAKE148"
+      ],
+      "entity_ids": [
+        "S032",
+        "S086"
+      ],
+      "tax_ids": [
+        "912U57YQ0FB0NY2BY5",
+        "918GEWMGG68PAKE148"
+      ],
+      "evidence": "shareholders.csv：2 环S032 → S086 → S032",
+      "text_evidence": "本公司与 成都泰贸有限公司 之间存在循环持股（2 环）",
+      "expected_count": 1
+    },
+    {
+      "type": "cycle",
+      "node_ids": [
+        "SUBJECT:9130204CUJAGC850JR",
+        "SUBJECT:91GP8KWQ97BQCHEQMW",
+        "SUBJECT:915RXKRTHRU7T6QMYL"
+      ],
+      "entity_ids": [
+        "S091",
+        "S016",
+        "S075"
+      ],
+      "tax_ids": [
+        "9130204CUJAGC850JR",
+        "91GP8KWQ97BQCHEQMW",
+        "915RXKRTHRU7T6QMYL"
+      ],
+      "evidence": "shareholders.csv：3 环S091 → S016 → S075 → S091",
+      "text_evidence": "本公司与 成都金机有限公司、杭州金发有限公司 之间存在循环持股（3 环）",
+      "expected_count": 1
+    },
+    {
+      "type": "cycle",
+      "node_ids": [
+        "SUBJECT:91HW92LB572UKWFU4P",
+        "SUBJECT:91R53C3XW3NFN9QN8W",
+        "SUBJECT:91FCU10WAK53CCN7MC",
+        "SUBJECT:91AC6FNEB4NM9YRD2R"
+      ],
+      "entity_ids": [
+        "S024",
+        "S015",
+        "S101",
+        "S041"
+      ],
+      "tax_ids": [
+        "91HW92LB572UKWFU4P",
+        "91R53C3XW3NFN9QN8W",
+        "91FCU10WAK53CCN7MC",
+        "91AC6FNEB4NM9YRD2R"
+      ],
+      "evidence": "shareholders.csv：4 环S024 → S015 → S101 → S041 → S024",
+      "text_evidence": "本公司与 杭州瑞子有限公司、北京诚制有限公司、北京诚机有限公司 之间存在循环持股（4 环）",
+      "expected_count": 1
+    },
+    {
+      "type": "cycle",
+      "node_ids": [
+        "SUBJECT:91KMDA9JKQH9W5E2QN",
+        "SUBJECT:91JPAMR6GW3UJURLD7",
+        "SUBJECT:917CUF179M5Q9LXL4P",
+        "SUBJECT:91FDLXDT0767XNA3B5"
+      ],
+      "entity_ids": [
+        "S082",
+        "S059",
+        "S088",
+        "S109"
+      ],
+      "tax_ids": [
+        "91KMDA9JKQH9W5E2QN",
+        "91JPAMR6GW3UJURLD7",
+        "917CUF179M5Q9LXL4P",
+        "91FDLXDT0767XNA3B5"
+      ],
+      "evidence": "shareholders.csv：4 环S082 → S059 → S088 → S109 → S082",
+      "text_evidence": "本公司与 南京信械有限公司、西安通子有限公司、南京华商有限公司 之间存在循环持股（4 环）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_address",
+      "node_ids": [
+        "SUBJECT:916UULFJLH0FXL67KU",
+        "SUBJECT:9199BP8J8AR748PJB3"
+      ],
+      "entity_ids": [
+        "S095",
+        "S046"
+      ],
+      "tax_ids": [
+        "916UULFJLH0FXL67KU",
+        "9199BP8J8AR748PJB3"
+      ],
+      "evidence": "suppliers.csv：address 与 S095 相同（S046 复制自 S095）",
+      "text_evidence": "与 杭州华务有限公司 的注册地址相同（杭州市解放路1094号）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_address",
+      "node_ids": [
+        "SUBJECT:91C4JBG80R6AAG9H3A",
+        "SUBJECT:91YBBCT9A3D5N27QLU"
+      ],
+      "entity_ids": [
+        "S073",
+        "S096"
+      ],
+      "tax_ids": [
+        "91C4JBG80R6AAG9H3A",
+        "91YBBCT9A3D5N27QLU"
+      ],
+      "evidence": "suppliers.csv：address 与 S073 相同（S096 复制自 S073）",
+      "text_evidence": "与 广州通贸有限公司 的注册地址相同（广州市科技园路1072号）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_address",
+      "node_ids": [
+        "SUBJECT:91RWGDPUEQXX61EA9L",
+        "SUBJECT:91CJEU8GHQXX2W0UBA"
+      ],
+      "entity_ids": [
+        "S111",
+        "S037"
+      ],
+      "tax_ids": [
+        "91RWGDPUEQXX61EA9L",
+        "91CJEU8GHQXX2W0UBA"
+      ],
+      "evidence": "suppliers.csv：address 与 S111 相同（S037 复制自 S111）",
+      "text_evidence": "与 北京瑞发有限公司 的注册地址相同（北京市解放路1110号）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_address",
+      "node_ids": [
+        "SUBJECT:91T3YA0ANQ2MKKNG6K",
+        "SUBJECT:91DE5CLXWEL5G5C8YU"
+      ],
+      "entity_ids": [
+        "S014",
+        "S116"
+      ],
+      "tax_ids": [
+        "91T3YA0ANQ2MKKNG6K",
+        "91DE5CLXWEL5G5C8YU"
+      ],
+      "evidence": "suppliers.csv：address 与 S014 相同（S116 复制自 S014）",
+      "text_evidence": "与 深圳达造有限公司 的注册地址相同（深圳市和平路1013号）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_legal_rep",
+      "node_ids": [
+        "SUBJECT:914LXXNK03T40E2KX4",
+        "SUBJECT:91QU42P2QBAT1HGWK9"
+      ],
+      "entity_ids": [
+        "S025",
+        "S020"
+      ],
+      "tax_ids": [
+        "914LXXNK03T40E2KX4",
+        "91QU42P2QBAT1HGWK9"
+      ],
+      "evidence": "suppliers.csv：legal_rep 与 S025 相同（S020 复制自 S025）",
+      "text_evidence": "与 杭州联子有限公司 的法定代表人为同一人（冯晓明 / 110101198001015827）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_legal_rep",
+      "node_ids": [
+        "SUBJECT:91CDU3NUXWQXEWQYLH",
+        "SUBJECT:91GN2QD9TWYMQR4Q00"
+      ],
+      "entity_ids": [
+        "S061",
+        "S094"
+      ],
+      "tax_ids": [
+        "91CDU3NUXWQXEWQYLH",
+        "91GN2QD9TWYMQR4Q00"
+      ],
+      "evidence": "suppliers.csv：legal_rep 与 S061 相同（S094 复制自 S061）",
+      "text_evidence": "与 北京诚电有限公司 的法定代表人为同一人（钱志强 / 110101198001019500）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_legal_rep",
+      "node_ids": [
+        "SUBJECT:91L1AMX0XTHQ2WD2WP",
+        "SUBJECT:91XCT13NMUJY437WQ0"
+      ],
+      "entity_ids": [
+        "S053",
+        "S107"
+      ],
+      "tax_ids": [
+        "91L1AMX0XTHQ2WD2WP",
+        "91XCT13NMUJY437WQ0"
+      ],
+      "evidence": "suppliers.csv：legal_rep 与 S053 相同（S107 复制自 S053）",
+      "text_evidence": "与 广州中业有限公司 的法定代表人为同一人（李海燕 / 110101198001015236）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_legal_rep",
+      "node_ids": [
+        "SUBJECT:91NM5N0MFJXRH8LUCA",
+        "SUBJECT:91PHC4Q9RMGFKDFQG0"
+      ],
+      "entity_ids": [
+        "S099",
+        "S067"
+      ],
+      "tax_ids": [
+        "91NM5N0MFJXRH8LUCA",
+        "91PHC4Q9RMGFKDFQG0"
+      ],
+      "evidence": "suppliers.csv：legal_rep 与 S099 相同（S067 复制自 S099）",
+      "text_evidence": "与 南京盛子有限公司 的法定代表人为同一人（冯秀英 / 110101198001012857）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_phone",
+      "node_ids": [
+        "SUBJECT:916FW512X3EBRKUCD7",
+        "SUBJECT:91DG6JWGC2ED6JMJCM"
+      ],
+      "entity_ids": [
+        "S119",
+        "S047"
+      ],
+      "tax_ids": [
+        "916FW512X3EBRKUCD7",
+        "91DG6JWGC2ED6JMJCM"
+      ],
+      "evidence": "suppliers.csv：phone 与 S119 相同（S047 复制自 S119）",
+      "text_evidence": "与 南京华业有限公司 的联系电话相同（010-80000118）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_phone",
+      "node_ids": [
+        "SUBJECT:91CEG9UC5TJJRRAUJM",
+        "SUBJECT:91C2J1L328ERR72Q0H"
+      ],
+      "entity_ids": [
+        "S039",
+        "S092"
+      ],
+      "tax_ids": [
+        "91CEG9UC5TJJRRAUJM",
+        "91C2J1L328ERR72Q0H"
+      ],
+      "evidence": "suppliers.csv：phone 与 S039 相同（S092 复制自 S039）",
+      "text_evidence": "与 南京远造有限公司 的联系电话相同（010-80000038）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_phone",
+      "node_ids": [
+        "SUBJECT:91R22NGLTCUG0UFL95",
+        "SUBJECT:91EPGMFAGLW9HE50H4"
+      ],
+      "entity_ids": [
+        "S083",
+        "S090"
+      ],
+      "tax_ids": [
+        "91R22NGLTCUG0UFL95",
+        "91EPGMFAGLW9HE50H4"
+      ],
+      "evidence": "suppliers.csv：phone 与 S083 相同（S090 复制自 S083）",
+      "text_evidence": "与 广州瑞技有限公司 的联系电话相同（010-80000082）",
+      "expected_count": 1
+    },
+    {
+      "type": "shared_phone",
+      "node_ids": [
+        "SUBJECT:91YL88L4CYDKJY7JF7",
+        "SUBJECT:91YLGE0A73YDBYKCWM"
+      ],
+      "entity_ids": [
+        "S033",
+        "S064"
+      ],
+      "tax_ids": [
+        "91YL88L4CYDKJY7JF7",
+        "91YLGE0A73YDBYKCWM"
+      ],
+      "evidence": "suppliers.csv：phone 与 S033 相同（S064 复制自 S033）",
+      "text_evidence": "与 广州科子有限公司 的联系电话相同（010-80000032）",
+      "expected_count": 1
+    }
+  ]
+}

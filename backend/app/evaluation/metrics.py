@@ -399,10 +399,16 @@ def findings_recall(
             options={"match_rule": match_rule},
         )
     hit, _spurious = _finding_split(gold, detected, match_rule)
+    #: A8：把 ``hit`` / 分母 **一并给出**——统计口径要算置信界，
+    #: 光有比例算不出界（n=9 与 n=200 的 1.00 完全不是一回事）。
     return MetricValue(
         metric="findings_recall",
         value=hit / len({f.match_key(match_rule) for f in gold}),
-        options={"match_rule": match_rule},
+        options={
+            "match_rule": match_rule,
+            "hit": hit,
+            "n": len({f.match_key(match_rule) for f in gold}),
+        },
     )
 
 
@@ -427,7 +433,11 @@ def findings_false_positive_rate(
     return MetricValue(
         metric="findings_false_positive_rate",
         value=spurious / len({f.match_key(match_rule) for f in detected}),
-        options={"match_rule": match_rule},
+        options={
+            "match_rule": match_rule,
+            "spurious": spurious,
+            "n": len({f.match_key(match_rule) for f in detected}),
+        },
     )
 
 

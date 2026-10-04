@@ -182,6 +182,15 @@ def main() -> int:
         "--live", action="store_true", help="打真实 HTTP 链路（需后端已起）"
     )
     parser.add_argument(
+        "--gold",
+        choices=("v1", "v2"),
+        default="v1",
+        help=(
+            "C2-a / C2-b 用哪版 gold 语料：v1 = 8/60/30/9 手工语料（**默认**，"
+            "规模不足以判达标）；v2 = **A8 扩标 200/500/100/20**（判达标必须用这版）"
+        ),
+    )
+    parser.add_argument(
         "--criteria",
         help=f"只跑指定判据（逗号分隔）；可选：{','.join(ALL_CRITERIA)}",
     )
@@ -257,6 +266,7 @@ def main() -> int:
         base_url=args.base_url or RunnerContext(mode=run_mode, git_hash="x").base_url,
         judgements=_load_judgements(Path(args.judgements)) if args.judgements else None,
         judged_by=args.judged_by,
+        gold_version=args.gold,
     )
 
     results = run(ctx, criteria=criteria)

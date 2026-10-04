@@ -230,8 +230,10 @@ def test_g25_real_graph_detection_is_not_empty(real_graph: None) -> None:
     from app.evaluation.dataset import load_affiliation_gold, load_affiliation_meta
     from app.services.kg import AffiliationService
 
-    meta = load_affiliation_meta()
-    gold = load_affiliation_gold()
+    #: **A8**：用 **v2 扩标语料**（200/500/100/20）——v1 只有 9 组，
+    #: 即便满分其 95% 下界也只有 0.717 ⇒ **判不出**达标（UNDERPOWERED）。
+    meta = load_affiliation_meta("v2")
+    gold = load_affiliation_gold("v2")
     findings = AffiliationService().detect(
         kg_version=str(meta["kg_version"]),
         org_id=UUID(str(meta["org_id"])),

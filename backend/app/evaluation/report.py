@@ -133,10 +133,26 @@ def render(report: dict[str, Any]) -> str:
     for item in report["criteria"]:
         value = item["value"]
         shown = "null" if value is None else f"{value:.4f}"
+        detail = item.get("detail") or {}
+        #: **A8**：点估计旁边必须能看到 ``n`` 与置信界——
+        #: 只打印 1.0000 而不打印 "9 组的下界 0.717" ⇒ 满分会被读成达标。
+        stats_hint = ""
+        if detail.get("n") is not None:
+            stats_hint = (
+                f"  n={detail['n']}"
+                f"  ci=[{detail.get('ci_lower')}, {detail.get('ci_upper')}]"
+            )
+        layer_hint = (
+            f"  corpus_layer={detail['corpus_layer']}"
+            if detail.get("corpus_layer")
+            else ""
+        )
         lines.append(
             f"  [{item['status']:<20}] {item['criterion']:<28} value={shown}"
             + (f"  unit={item['unit']}" if item.get("unit") else "")
             + (f"  verdict={item['verdict']}" if item.get("verdict") else "")
+            + stats_hint
+            + layer_hint
             + (f"  blocked_by={item['blocked_by']}" if item.get("blocked_by") else "")
         )
     lines.append("")

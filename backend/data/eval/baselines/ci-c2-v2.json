@@ -5,7 +5,7 @@
     "c2_b_false_positive_rate": 0.0
   },
   "tolerance": 0.02,
-  "git_hash": "4cf429fb",
-  "generated_at": "2026-10-04T12:24:17.202031+00:00",
+  "git_hash": "65704628",
+  "generated_at": "2026-10-04T13:13:41.403164+00:00",
   "note": "受控种子语料（demo/affiliation）上的实测值；**只判不退化**"
 }

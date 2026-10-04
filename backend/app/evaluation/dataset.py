@@ -25,7 +25,23 @@ MANIFEST_FILE = "MANIFEST.json"
 QSET_FILE = "controlled-qset-v3.json"
 MULTIHOP_FILE = "gold-multihop-v1.json"
 AFFILIATION_FILE = "gold-affiliation-v1.json"
+#: **A8（2026-10-04）**：gold 有了**第二版**（v2 = 扩标到 200/500/100/20）。
+#: 默认仍是 v1 ⇒ 既有结论**不因新增文件而漂移**；要判达标必须显式选 v2。
+AFFILIATION_FILES = {
+    "v1": "gold-affiliation-v1.json",
+    "v2": "gold-affiliation-v2.json",
+}
+DEFAULT_AFFILIATION_VERSION = "v1"
 FIXTURE_BASELINE_FILE = "baselines/fixture-baseline-v1.json"
+
+
+def _affiliation_file(version: str = DEFAULT_AFFILIATION_VERSION) -> str:
+    if version not in AFFILIATION_FILES:
+        raise DatasetError(
+            f"未知 gold 版本 {version!r}（可选 {sorted(AFFILIATION_FILES)}）"
+            "⇒ 换语料必须显式，不能靠默认值悄悄换"
+        )
+    return AFFILIATION_FILES[version]
 
 
 class DatasetError(RuntimeError):
@@ -128,13 +144,15 @@ def load_multihop_set() -> tuple[MultiHopItem, ...]:
     return tuple(items)
 
 
-def load_affiliation_meta() -> dict[str, Any]:
+def load_affiliation_meta(
+    version: str = DEFAULT_AFFILIATION_VERSION,
+) -> dict[str, Any]:
     """加载 gold-affiliation 的**元信息**（含实体 id 空间与是否已与真机核对）。
 
     这个标志位直接决定 C2-a / C2-b **出不出数**——未核对就比对会把"全不命中"
     读成"召回为 0"，误触发反证 F2。
     """
-    return _read(AFFILIATION_FILE)
+    return _read(_affiliation_file(version))
 
 
 def _affiliation_member_key() -> str:
@@ -149,13 +167,16 @@ def _affiliation_member_key() -> str:
     return "node_ids"
 
 
-def load_affiliation_gold() -> tuple[Finding, ...]:
+def load_affiliation_gold(
+    version: str = DEFAULT_AFFILIATION_VERSION,
+) -> tuple[Finding, ...]:
     """加载 M4 隐性关联 gold（**组**级 `Finding`，成员取真机 id 空间）。"""
-    payload = _read(AFFILIATION_FILE)
+    name = _affiliation_file(version)
+    payload = _read(name)
     key = _affiliation_member_key()
     findings: list[Finding] = []
-    for raw in _require(payload, "findings", where=AFFILIATION_FILE):
-        where = f"{AFFILIATION_FILE}#{raw.get('type')}"
+    for raw in _require(payload, "findings", where=name):
+        where = f"{name}#{raw.get('type')}"
         members = tuple(str(m) for m in _require(raw, key, where=where))
         if not members:
             raise DatasetError(

@@ -30,8 +30,11 @@ from app.evaluation.criteria import CriterionResult, Verdict
 #: （recall 1.0 / fpr 0.0），百分比容差在 0 附近会退化成"零容差"，一有抖动就红。
 DEFAULT_TOLERANCE = 0.02
 
-#: 受控种子语料的基线文件（**入库**，换版有 git 痕迹）
-DEFAULT_BASELINE_FILE = "ci-c2-v1.json"
+#: 受控种子语料的基线文件（**入库**，换版有 git 痕迹）。
+#: **A8（2026-10-04）**：基线语料由 v1（9 组）换成 **v2（200/500/100/20）**
+#: ⇒ 基线文件同步换版；v1 那份已作废删除（留着会被误用，且它对应的是
+#: "统计上判不出"的语料）。**刷基线即重设门禁刻度**，须显式执行。
+DEFAULT_BASELINE_FILE = "ci-c2-v2.json"
 BASELINE_DIR = Path(__file__).resolve().parents[2] / "data" / "eval" / "baselines"
 
 #: 判据 → 方向（``True`` = 越高越好）。**未登记的判据不得进门禁**（方向不明就没法判退化）。

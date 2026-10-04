@@ -37,6 +37,7 @@ from app.evaluation.criteria import (
     resolve_status,
 )
 from app.evaluation.dataset import (
+    DEFAULT_AFFILIATION_VERSION,
     dataset_versions,
     load_affiliation_gold,
     load_affiliation_meta,
@@ -56,6 +57,11 @@ from app.evaluation.metrics import (
     findings_false_positive_rate,
     findings_recall,
     graph_gain,
+)
+from app.evaluation.stats import (
+    DEFAULT_ALPHA,
+    clopper_pearson_lower,
+    clopper_pearson_upper,
 )
 
 #: 判据名（**唯一真源**；与矩阵 §5.1 的 C1–C3 对应）。
@@ -94,6 +100,10 @@ class RunnerContext:
     #: 人工判分：``{题号: correct}``（A3：脚本不自动判分）。
     judgements: dict[int, bool] | None = None
     judged_by: str = "architect"
+    #: **A8（2026-10-04）**：C2-a / C2-b 用哪版 gold 语料
+    #: （``v1`` = 8/60/30/9 手工语料；``v2`` = 200/500/100/20 扩标语料）。
+    #: **刻意默认 v1**：换语料会换结论 ⇒ 必须显式选，不能靠默认值悄悄换。
+    gold_version: str = DEFAULT_AFFILIATION_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +183,7 @@ def _provenance(
         #: 语料**按判据分**：C2-a / C2-b 跑的是 ``demo/affiliation`` 合成语料，
         #: 与问答类判据的 ``demo/attendance`` 不是同一份——写错了归因就错了。
         corpus=str(extra.get("corpus") or "demo/attendance（仿真演示语料）"),
+        corpus_layer=extra.get("corpus_layer"),
         rubric=str(manifest.get("rubric", {}).get("id", "rubric-v1")),
         notes=extra.get("notes"),
     )
@@ -347,7 +358,9 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
     )
 
 
-def _affiliation_blocked_by() -> tuple[str, bool]:
+def _affiliation_blocked_by(
+    version: str = DEFAULT_AFFILIATION_VERSION,
+) -> tuple[str, bool]:
     """C2-a / C2-b 的阻塞原因（``("", True)`` = 不阻塞，可出数）。
 
     **2026-10-03 已核对**：真机样本（``AffiliationService.detect``）确认
@@ -357,11 +370,11 @@ def _affiliation_blocked_by() -> tuple[str, bool]:
     保留本函数的原因：**未核对就比对 = 全不命中 = 召回被读成 0**，
     会误触发反证 F2。这条闸不能拆，只能由数据文件的标志位放行。
     """
-    space = load_affiliation_meta().get("entity_id_space", {})
+    space = load_affiliation_meta(version).get("entity_id_space", {})
     verified = bool(space.get("verified_against_live_output", False))
     if not verified:
         return (
-            f"gold-affiliation-v1 的实体 id 空间({space.get('space')})"
+            f"gold-affiliation-{version} 的实体 id 空间({space.get('space')})"
             "尚未与真机疑点输出核对（MANIFEST 登记）⇒ "
             "不比对就不出数（避免 0 命中被读成召回为 0）",
             False,
@@ -377,7 +390,7 @@ def _detect_findings(
     runner_ctx: RunnerContext,
 ) -> tuple[tuple[Finding, ...] | None, str | None]:
     """同 :func:`ask_safe` 的口径：**不抛异常**，返回 ``(疑点, 错误)``。"""
-    meta = load_affiliation_meta()
+    meta = load_affiliation_meta(runner_ctx.gold_version)
     kg_version = str(meta["kg_version"])
     org_id = str(meta["org_id"])
     key = (runner_ctx.mode, kg_version, org_id)
@@ -407,8 +420,9 @@ def _affiliation_results(
     runner_ctx: RunnerContext,
 ) -> tuple[CriterionResult, CriterionResult]:
     """C2-a 召回 + C2-b 误报（**一次检测，两个指标**）。"""
-    gold = load_affiliation_gold()
-    meta = load_affiliation_meta()
+    version = runner_ctx.gold_version
+    gold = load_affiliation_gold(version)
+    meta = load_affiliation_meta(version)
 
     if runner_ctx.mode != "live":
         blocked = "需 live 模式（M4 检测读 Neo4j 图谱）；offline 不产出判据数字"
@@ -427,15 +441,44 @@ def _affiliation_results(
 
     recall = findings_recall(gold, findings)
     fpr = findings_false_positive_rate(findings, gold)
+
+    #: **A8 统计口径**：光有点估计判不了达标——9/9 的 1.00，下界只有 0.717 < 0.80。
+    #: 故把 ``n`` 与 **95% 单侧置信界**一并算出，并**用界判定**
+    #: （C2-a 用下界；C2-b 用上界）。
+    hit = int(recall.options.get("hit", 0) or 0)
+    n_gold = int(recall.options.get("n", len(gold)) or len(gold))
+    spurious = int(fpr.options.get("spurious", 0) or 0)
+    n_detected = int(fpr.options.get("n", len(findings)) or len(findings))
+    recall_bound = clopper_pearson_lower(hit, n_gold)
+    fpr_bound = clopper_pearson_upper(spurious, n_detected)
+    #: 语料层（A8 裁决 4）：v1/v2 都是 **L1 算法层** ⇒ 不得说成端到端结论。
+    corpus_layer = str(meta.get("source", {}).get("corpus_layer") or "L1")
+    corpus_desc = str(
+        meta.get("source", {}).get("corpus")
+        or "demo/affiliation（合成演示语料，9 组植入）"
+    )
+
     status, reason = resolve_status(
-        link_ready=True, dataset_ready=True, rubric_defined=True, corpus_is_final=False
+        link_ready=True,
+        dataset_ready=True,
+        rubric_defined=True,
+        #: v2 = spec 规模（200/500/100/20）⇒ 语料**终局**；v1 仍是非终局。
+        corpus_is_final=(version == "v2"),
     )
-    #: A8：阈值来自 spec，但**语料规模不足**（8/60/30/9 vs 200/500/100/20）
-    #: ⇒ 这里的「达标」**不是** spec 验收结论 ⇒ 走 provisional，不给裸 PASS。
-    caveat = (
-        "A8：阈值取自 spec，但演示语料规模不足（README §5 明示不宣称召回 ≥ 0.80 / "
-        "误报 ≤ 0.15）⇒ 达标也只记 PASS(provisional)，不作 spec 验收结论"
-    )
+    if version == "v1":
+        caveat = (
+            "A8：语料仍是 8/60/30/9（spec 要 200/500/100/20）⇒ 规模不足以判达标；"
+            f"本次 {hit}/{n_gold} 的 95% 单侧下界 = {recall_bound:.4f}，"
+            f"误报 {spurious}/{n_detected} 的上界 = {fpr_bound:.4f}"
+            " ⇒ 达标也只记 PASS(provisional)，不作 spec 验收结论"
+        )
+    else:
+        caveat = (
+            "A8 扩标语料（200/500/100/20，L1 算法层）；"
+            f"{hit}/{n_gold} 下界 {recall_bound:.4f}、误报 {spurious}/{n_detected} "
+            f"上界 {fpr_bound:.4f} ⇒ **判定用界**（界不达标即 UNDERPOWERED）。"
+            " ⚠️ L1 = 合成语料直接入图，**未经端到端（M2 抽取）验证**"
+        )
     shared_status = status if recall.value is not None else CriterionStatus.UNKNOWN
 
     return (
@@ -445,24 +488,34 @@ def _affiliation_results(
             value=recall.value,
             provenance=_provenance(
                 runner_ctx,
-                dataset_version=str(meta.get("version") or "gold-affiliation-v1"),
+                dataset_version=str(
+                    meta.get("version") or f"gold-affiliation-{version}"
+                ),
                 kg_version=str(meta.get("kg_version")),
-                corpus="demo/affiliation（合成演示语料，9 组植入）",
+                corpus=corpus_desc,
+                corpus_layer=corpus_layer,
                 notes="; ".join(x for x in (reason, caveat) if x),
             ),
             blocked_by=None
             if recall.value is not None
             else (recall.reason or "无分母"),
             threshold=0.80,
-            threshold_source="provisional",  # A8：语料规模不足 ⇒ 达标不构成验收结论
-            verdict=judge(recall.value, threshold=0.80, threshold_source="provisional"),
+            threshold_source="provisional",  # 阈值取自 spec（未校准 ⇒ 不给裸 PASS）
+            verdict=judge(
+                recall.value,
+                threshold=0.80,
+                threshold_source="provisional",
+                ci_bound=recall_bound,
+            ),
             detail={
-                "gold_count": len(gold),
-                "detected_count": len(findings),
-                "matched": len(
-                    {f.match_key("type_and_members") for f in gold}
-                    & {f.match_key("type_and_members") for f in findings}
-                ),
+                "gold_count": n_gold,
+                "detected_count": n_detected,
+                "matched": hit,
+                "n": n_gold,
+                "ci_lower": round(recall_bound, 4),
+                "ci_upper": round(clopper_pearson_upper(hit, n_gold), 4),
+                "alpha": DEFAULT_ALPHA,
+                "corpus_layer": corpus_layer,
                 "match_rule": "type_and_members（成员为图节点 id，共享节点不计入）",
                 "detected_by_type": _by_type(findings),
             },
@@ -473,9 +526,12 @@ def _affiliation_results(
             value=fpr.value,
             provenance=_provenance(
                 runner_ctx,
-                dataset_version=str(meta.get("version") or "gold-affiliation-v1"),
+                dataset_version=str(
+                    meta.get("version") or f"gold-affiliation-{version}"
+                ),
                 kg_version=str(meta.get("kg_version")),
-                corpus="demo/affiliation（合成演示语料，9 组植入）",
+                corpus=corpus_desc,
+                corpus_layer=corpus_layer,
                 notes="; ".join(x for x in (reason, caveat) if x),
             ),
             blocked_by=None if fpr.value is not None else (fpr.reason or "无分母"),
@@ -486,14 +542,17 @@ def _affiliation_results(
                 threshold=0.15,
                 threshold_source="provisional",
                 higher_is_better=False,
+                ci_bound=fpr_bound,
             ),
             detail={
-                "gold_count": len(gold),
-                "detected_count": len(findings),
-                "spurious": len(
-                    {f.match_key("type_and_members") for f in findings}
-                    - {f.match_key("type_and_members") for f in gold}
-                ),
+                "gold_count": n_gold,
+                "detected_count": n_detected,
+                "spurious": spurious,
+                "n": n_detected,
+                "ci_lower": round(clopper_pearson_lower(spurious, n_detected), 4),
+                "ci_upper": round(fpr_bound, 4),
+                "alpha": DEFAULT_ALPHA,
+                "corpus_layer": corpus_layer,
                 "detected_by_type": _by_type(findings),
             },
         ),

@@ -47,6 +47,13 @@ class Verdict(StrEnum):
     PASS_PROVISIONAL = "PASS(provisional)"
     #: 值缺失或阈值未定 ⇒ 不判（既不是 PASS 也不是 FAIL）。
     INDETERMINATE = "INDETERMINATE"
+    #: **A8（2026-10-04）**：点估计达标，但 **95% 单侧置信界不达标** ⇒
+    #: **样本效力不足以宣称达标**，**不得**当成 PASS。
+    #:
+    #: 由来：9/9 的召回点估计 = 1.00，而它的下界只有 **0.717 < 0.80**
+    #: ⇒ "满分"根本支持不了"达标"。没有这个语义，报告会把"判不出"写成
+    #: "PASS(provisional)"——那正是 L11(b)1 登记的「报告打架」。
+    UNDERPOWERED = "UNDERPOWERED"
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,9 @@ class Provenance:
     git_hash: str
     kg_version: str | None = None
     corpus: str | None = None
+    #: **A8（2026-10-04）**：语料层（``L1`` 算法层 / ``L2`` 端到端）。
+    #: 写进归因是为了**防止把 L1 的结果说成端到端**（A8 裁决 4 / G5 声明）。
+    corpus_layer: str | None = None
     rubric: str | None = None
     notes: str | None = None
 
@@ -131,17 +141,31 @@ def judge(
     threshold: float | None,
     threshold_source: str | None = None,
     higher_is_better: bool = True,
+    ci_bound: float | None = None,
 ) -> Verdict:
     """按阈值判定；``threshold_source`` 决定是否降级为 ``PASS(provisional)``。
 
     **§5.2 第 3 条（防假绿）**：阈值来源为 ``provisional`` 时，
     即便达标也只给 ``PASS(provisional)``，并在报告中标注"不构成 TBD-7 收敛证据"。
+
+    **A8（2026-10-04）：判定用置信界**。``ci_bound`` 给的是**该用的那一侧**
+    95% 单侧界（越高越好 ⇒ 下界；越低越好 ⇒ 上界，见
+    :func:`app.evaluation.stats.one_sided_bound`）：
+
+    - 点估计不达标 ⇒ ``FAIL``（与以前一致）；
+    - 点估计达标但**界**不达标 ⇒ ``UNDERPOWERED``（**不是** PASS——
+      9/9 的 1.00 就是这么被读成达标的）；
+    - 两者都达标 ⇒ 按 ``threshold_source`` 给 PASS / PASS(provisional)。
     """
     if value is None or threshold is None:
         return Verdict.INDETERMINATE
     ok = value >= threshold if higher_is_better else value <= threshold
     if not ok:
         return Verdict.FAIL
+    if ci_bound is not None:
+        bound_ok = ci_bound >= threshold if higher_is_better else ci_bound <= threshold
+        if not bound_ok:
+            return Verdict.UNDERPOWERED
     if threshold_source == THRESHOLD_PROVISIONAL:
         return Verdict.PASS_PROVISIONAL
     return Verdict.PASS
