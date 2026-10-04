@@ -46,7 +46,7 @@ uv run python scripts/check_startup_readiness.py → G-26 已生效 [OK]（11 �
 | 1 | `04f17f5c` | A1/A2/A3/A4/A5/A6/A7 + A9/A10 的测试侧（迁移、逐事务 GUC、依赖图、系统通道、任务 org、受控探测、破损用例逐个修） |
 | 2 | `aa43269f` | G-26 新增 + G-10 转正 + CI 双角色 + 需求基线登记 + `.env.example` |
 | 3 | `4aeb8339`→`cf2f4306` | 勾选 `tasks.md` 56 项 + 写本日志 |
-| 4 | （本条之后） | **部署形态收口**：compose 的 `db-init` 一次性服务 + backend 切 `app_rls` + 镜像 `COPY scripts`；G-26 **判据 7**；顺带修 `init_rls_roles.py` 在**空库**上的两个真 bug（见 §13） |
+| 4 | `6a2e445b` | **部署形态收口**：compose 的 `db-init` 一次性服务 + backend 切 `app_rls` + 镜像 `COPY scripts`；G-26 **判据 7**；顺带修 `init_rls_roles.py` 在**空库**上的两个真 bug（见 §13） |
 
 ### 1.4 一次偶发（如实登记）
 
