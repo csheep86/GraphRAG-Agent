@@ -147,12 +147,21 @@ def render(report: dict[str, Any]) -> str:
             if detail.get("corpus_layer")
             else ""
         )
+        #: **A6**：C2-c 那行必须能看到**另一档**（含拒答）——
+        #: 只打 1.0000 而不打"含拒答 0.786" ⇒ 拒答缺陷被覆盖率盖住（L8 明令不许顶替）。
+        basis_hint = ""
+        if detail.get("coverage_including_refused") is not None:
+            basis_hint = (
+                f"  含拒答档={detail['coverage_including_refused']}"
+                f"（判据值口径={detail.get('coverage_basis')}）"
+            )
         lines.append(
             f"  [{item['status']:<20}] {item['criterion']:<28} value={shown}"
             + (f"  unit={item['unit']}" if item.get("unit") else "")
             + (f"  verdict={item['verdict']}" if item.get("verdict") else "")
             + stats_hint
             + layer_hint
+            + basis_hint
             + (f"  blocked_by={item['blocked_by']}" if item.get("blocked_by") else "")
         )
     lines.append("")

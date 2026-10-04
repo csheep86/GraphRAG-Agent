@@ -72,6 +72,10 @@ C_RECALL = "c2_a_hidden_relation_recall"
 C_FPR = "c2_b_false_positive_rate"
 C_COST = "c3_a_single_doc_cost"
 C_COST_RATIO = "c3_b_incremental_cost_ratio"
+#: **L8 / L10-A6 配套第 2 条**：拒答误伤（Sprint 6 §5.3 验收第 1 条「拒答 0 误伤」）。
+#: 刻意**不**叫 ``c2_d_*``——它不属于矩阵 §5.1 的 C1–C3 编号，编造编号会让人
+#: 误以为矩阵里有这一条；它锚定的是 Sprint 6 §5.3 的验收条款。
+C_REFUSAL = "refusal_false_refusal"
 
 ALL_CRITERIA = (
     C_GAIN,
@@ -79,6 +83,9 @@ ALL_CRITERIA = (
     C_RECALL,
     C_FPR,
     C_CITATION,
+    #: **L8**：拒答误伤紧跟 C2-c —— 它俩同源，且**不许互相顶替**
+    #: （摆在一起才看得见"1.00 旁边还挂着 1 条误伤"）
+    C_REFUSAL,
     C_COST,
     C_COST_RATIO,
 )
@@ -194,6 +201,96 @@ def _provenance(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _QaRun:
+    """一次问答全集的**结果快照**（A6 / L8：C2-c 与拒答误伤**同源**）。
+
+    为什么要它：拒答误伤立独立判据后，若两个判据**各跑一遍** M3 问答链路，
+    就要付**两倍 LLM 调用**，且两遍的拒答结果可能不一致（LLM 有抖动）
+    ⇒ 同一批答案算出两个相互矛盾的结论。既然是同源判据，就**只跑一遍**。
+    """
+
+    answers: tuple[AnswerRecord, ...]
+    #: **误伤**：本该作答却拒答（`should_refuse=False` 却 `refused=True`）——L8 的 Q8 属这一类
+    false_refusals: tuple[dict[str, Any], ...]
+    #: **漏拒**：本该拒答却作答（该拒没拒）——**不进**拒答误伤判据（方向不同，见 L8）
+    missed_refusals: tuple[dict[str, Any], ...]
+    failures: tuple[dict[str, Any], ...]
+    kg_versions: tuple[str, ...]
+    asked: int
+
+
+#: 一次运行内**只跑一遍**问答全集（同源判据共享；键含 mode，避免离线/在线串味）。
+_QA_CACHE: dict[str, _QaRun] = {}
+
+
+def _qa_run(runner_ctx: RunnerContext) -> _QaRun:
+    """跑一遍受控题集（**不抛异常**），结果进缓存供 C2-c 与拒答误伤共用。"""
+    if runner_ctx.mode in _QA_CACHE:
+        return _QA_CACHE[runner_ctx.mode]
+
+    questions = load_question_set()
+    answers: list[AnswerRecord] = []
+    false_refusals: list[dict[str, Any]] = []
+    missed_refusals: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    kg_versions: set[str] = set()
+    for item in questions:
+        response, error = ask_safe(item.question, ctx=runner_ctx)
+        if response is None:
+            failures.append(
+                {"index": item.index, "error": error, "question": item.question}
+            )
+            continue
+        kg_versions.add(str(response.get("kg_version")))
+        answers.append(_to_answer(response, correct=None, judged_by=None))
+        actual = bool(response.get("refused"))
+        if actual != item.should_refuse:
+            mismatch = {
+                "index": item.index,
+                "expected": item.should_refuse,
+                "actual": actual,
+                "question": item.question,
+            }
+            #: **方向必须分家**："不该拒却拒"（误伤）与"该拒没拒"（漏拒）后果不同
+            #: ——误伤直接吃掉 C2-c 的分子，漏拒是放行；混在一个列表里 ⇒ 判据值失真。
+            if actual and not item.should_refuse:
+                false_refusals.append(mismatch)
+            else:
+                missed_refusals.append(mismatch)
+
+    snapshot = _QaRun(
+        answers=tuple(answers),
+        false_refusals=tuple(false_refusals),
+        missed_refusals=tuple(missed_refusals),
+        failures=tuple(failures),
+        kg_versions=tuple(sorted(kg_versions)),
+        asked=len(questions),
+    )
+    _QA_CACHE[runner_ctx.mode] = snapshot
+    return snapshot
+
+
+def _qa_unavailable(
+    criterion: str, runner_ctx: RunnerContext, snapshot: _QaRun
+) -> CriterionResult:
+    """问答链路不可用 ⇒ **UNKNOWN + value=None**（0 会被读成"零误伤 / 零覆盖"）。"""
+    first = snapshot.failures[0]["error"] if snapshot.failures else "无响应"
+    return CriterionResult(
+        criterion=criterion,
+        status=CriterionStatus.UNKNOWN,
+        value=None,
+        provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v3"),
+        blocked_by=(
+            f"链路不可用：{len(snapshot.failures)}/{snapshot.asked} 题请求失败"
+            f"（首错：{first}）——常见原因：① 后端未起或 EVAL_BASE_URL 不对；"
+            "② PG 无 ready 的 kg_version（演示数据未重建）"
+        ),
+        verdict=Verdict.INDETERMINATE,
+        detail={"failures": list(snapshot.failures), "asked": snapshot.asked},
+    )
+
+
 def eval_citation_coverage(ctx: dict[str, Any]) -> CriterionResult:
     """**C2-c 引用覆盖率**（硬约束 1.00）：真跑 M3 问答链路。"""
     runner_ctx: RunnerContext = ctx["ctx"]
@@ -207,49 +304,23 @@ def eval_citation_coverage(ctx: dict[str, Any]) -> CriterionResult:
             verdict=Verdict.INDETERMINATE,
         )
 
-    questions = load_question_set()
-    answers: list[AnswerRecord] = []
-    refusals: list[dict[str, Any]] = []
-    failures: list[dict[str, Any]] = []
-    kg_versions: set[str] = set()
-    for item in questions:
-        response, error = ask_safe(item.question, ctx=runner_ctx)
-        if response is None:
-            failures.append(
-                {"index": item.index, "error": error, "question": item.question}
-            )
-            continue
-        kg_versions.add(str(response.get("kg_version")))
-        answers.append(_to_answer(response, correct=None, judged_by=None))
-        if bool(response.get("refused")) != item.should_refuse:
-            refusals.append(
-                {
-                    "index": item.index,
-                    "expected": item.should_refuse,
-                    "actual": bool(response.get("refused")),
-                    "question": item.question,
-                }
-            )
+    snapshot = _qa_run(runner_ctx)
+    answers = snapshot.answers
+    refusals = list(snapshot.false_refusals) + list(snapshot.missed_refusals)
+    failures = list(snapshot.failures)
+    kg_versions = set(snapshot.kg_versions)
 
     if not answers:
-        #: **链路不可用**：不出数（0 会被读成"覆盖率为 0"），如实标 UNKNOWN。
-        first = failures[0]["error"] if failures else "无响应"
-        return CriterionResult(
-            criterion=C_CITATION,
-            status=CriterionStatus.UNKNOWN,
-            value=None,
-            provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v3"),
-            blocked_by=(
-                f"链路不可用：{len(failures)}/{len(questions)} 题请求失败（首错：{first}）"
-                "——常见原因：① 后端未起或 EVAL_BASE_URL 不对；"
-                "② PG 无 ready 的 kg_version（演示数据未重建）"
-            ),
-            verdict=Verdict.INDETERMINATE,
-            detail={"failures": failures, "asked": len(questions)},
-        )
+        return _qa_unavailable(C_CITATION, runner_ctx, snapshot)
 
+    #: **判据值 = 排除拒答档**（L10-A6 裁决，不改行为）
     metric = citation_coverage(tuple(answers), include_refused=False)
     strict = citation_coverage(tuple(answers), include_refused=False, require_span=True)
+    #: **A6 配套第 1 条：含拒答那一档必须同时输出**（此前两处都传 False ⇒ 这档从未露过面）
+    with_refused = citation_coverage(tuple(answers), include_refused=True)
+    strict_with_refused = citation_coverage(
+        tuple(answers), include_refused=True, require_span=True
+    )
     status, reason = resolve_status(
         link_ready=True,
         dataset_ready=True,
@@ -274,9 +345,97 @@ def eval_citation_coverage(ctx: dict[str, Any]) -> CriterionResult:
             "answered": sum(1 for a in answers if not a.refused),
             "refused": sum(1 for a in answers if a.refused),
             "refusal_mismatches": refusals,
-            "request_failures": failures,
+            #: ⚠️ **口径标注**：value 走的是**排除拒答**档；含拒答档在这里**并列展示**，
+            #: 但**不是**判据值（L10-A6：含拒答 ⇒ 11/14 = 0.786 ⇒ 触发 F3 / NO-GO）。
+            "coverage_basis": "exclude_refused（判据值口径；L10-A6 裁决）",
+            "coverage_including_refused": with_refused.value,
             "coverage_require_span": strict.value,
+            "coverage_require_span_including_refused": strict_with_refused.value,
+            "false_refusals": list(snapshot.false_refusals),
+            "missed_refusals": list(snapshot.missed_refusals),
+            "request_failures": failures,
             "kg_versions": sorted(kg_versions),
+        },
+    )
+
+
+def eval_refusal_false_refusal(ctx: dict[str, Any]) -> CriterionResult:
+    """**拒答误伤**（L8 / Sprint 6 §5.3 验收第 1 条「拒答 0 误伤」）= **误伤条数**，阈值 **0**。
+
+    为什么必须独立成判据（L10-A6 配套第 2 条）：
+
+    - **误伤会直接吃掉 C2-c 的分子**——一条本该作答的题被拒答，它就没有引用，
+      于是 C2-c（排除拒答口径）**看不见它**；
+    - 反过来若把拒答塞进 C2-c 分母 ⇒ 11/14 = 0.786 ⇒ **触发 F3 / MVP NO-GO**，
+      且会**诱导"为了让覆盖率绿而放宽拒答判定"**（该拒的不拒，**比误伤更糟**）。
+
+    ⇒ 两条判据**各管一件事、不许互相顶替**：C2-c 管"给出的答案能不能回溯"，
+    本判据管"该给的有没有给"。
+
+    **只数误伤**（`should_refuse=False` 却拒答），**不数漏拒**（该拒没拒）——
+    那是另一个方向、另一个后果，混进来会让本判据的 0 阈值失去意义。
+
+    ⚠️ **当前实测 = 1 条（Q8）⇒ FAIL**，归 P6 必修（**本批只立判据、不修链路**）。
+    """
+    runner_ctx: RunnerContext = ctx["ctx"]
+    if runner_ctx.mode != "live":
+        return CriterionResult(
+            criterion=C_REFUSAL,
+            status=CriterionStatus.UNKNOWN,
+            value=None,
+            provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v3"),
+            blocked_by="需 live 模式（POST /api/v1/agent/query）；offline 不产出判据数字",
+            verdict=Verdict.INDETERMINATE,
+        )
+
+    snapshot = _qa_run(runner_ctx)
+    if not snapshot.answers:
+        return _qa_unavailable(C_REFUSAL, runner_ctx, snapshot)
+
+    false_count = len(snapshot.false_refusals)
+    status, reason = resolve_status(
+        link_ready=True,
+        dataset_ready=True,
+        rubric_defined=True,
+        corpus_is_final=False,
+    )
+    return CriterionResult(
+        criterion=C_REFUSAL,
+        status=status,
+        value=float(false_count),
+        unit="条（误伤数）",
+        provenance=_provenance(
+            runner_ctx,
+            dataset_version="controlled-qset-v3",
+            kg_version=", ".join(snapshot.kg_versions),
+            notes="; ".join(
+                x
+                for x in (
+                    reason,
+                    "口径：should_refuse=False 却拒答 ⇒ 误伤；"
+                    "Sprint 6 §5.3 验收第 1 条「拒答 0 误伤」",
+                )
+                if x
+            ),
+        ),
+        threshold=0.0,
+        threshold_source=THRESHOLD_CALIBRATED,  # 「0 误伤」是验收条款，非 provisional
+        verdict=judge(
+            float(false_count),
+            threshold=0.0,
+            threshold_source=THRESHOLD_CALIBRATED,
+            higher_is_better=False,
+        ),
+        detail={
+            "asked": snapshot.asked,
+            "answered": sum(1 for a in snapshot.answers if not a.refused),
+            "refused": sum(1 for a in snapshot.answers if a.refused),
+            "false_refusals": list(snapshot.false_refusals),
+            "missed_refusals": list(snapshot.missed_refusals),
+            "note": (
+                "与 C2-c **同源共用一遍问答**（不重复付 LLM 调用）；"
+                "C2-c 的 1.00 **不含**拒答题，误伤在这里**单独计**"
+            ),
         },
     )
 
@@ -690,6 +849,7 @@ def _register_builtin_criteria() -> None:
     """注册内置判据（**唯一真源**：新增判据必须在此登记）。"""
     for name, evaluator in (
         (C_CITATION, eval_citation_coverage),
+        (C_REFUSAL, eval_refusal_false_refusal),
         (C_MULTIHOP, eval_multihop_accuracy),
     ):
         if name not in _registered():
@@ -821,11 +981,13 @@ __all__ = [
     "C_GAIN",
     "C_MULTIHOP",
     "C_RECALL",
+    "C_REFUSAL",
     "ENV_COST_CEILING",
     "RunnerContext",
     "ask",
     "dataset_version_map",
     "eval_incremental_cost_ratio",
+    "eval_refusal_false_refusal",
     "eval_single_doc_cost",
     "gold_findings",
     "question_count",

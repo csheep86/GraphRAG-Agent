@@ -663,10 +663,12 @@ proposal §6 写的是"出 `BaselineRunner` 协议 + fixture 基线"，实际**�
    「**样本效力不足、判不出**」，而不是 PASS。
    ⇒ 两者**打架**；现在不改代码，**但 P6 补统计口径时须一并订正**
    （建议新增 `underpowered` 语义：`n` 与置信界进报告，界不达标 ⇒ 不得标 PASS）。
-2. **A6 的「两档输出」未兑现**：§E1.2 登记的是「`citation_coverage(include_refused=)` 两档**都实现、都测**」，
+2. ~~**A6 的「两档输出」未兑现**：§E1.2 登记的是「`citation_coverage(include_refused=)` 两档**都实现、都测**」，
    但 `runner.py:240-241` 的 `metric` 与 `strict` **两处都传 `include_refused=False`**
-   ——只有 `require_span` 是两档 ⇒ **「含拒答」那一档从未被输出过**（`metrics.py` 支持，runner 没调用）。
-   ⇒ 属**本批已承诺未兑现**（不是新功能），P6 第一步补一行即可；**见 L10-A6 的两档数字**。
+   ——只有 `require_span` 是两档 ⇒ **「含拒答」那一档从未被输出过**（`metrics.py` 支持，runner 没调用）。~~
+   ⇒ ✅ **已兑现（2026-10-04，P6-B）**：两档并列输出（判据值 = 排除拒答档，detail 同时给含拒答档）；
+   并按配套第 2 条把**拒答误伤立为独立判据** `refusal_false_refusal`（阈值 0，当前 FAIL = 1 条 Q8），
+   误伤与漏拒**方向分家**。见 `changes/P6-B/`。
 
 ### L12 剩余两条待裁的**落点与前置**（2026-10-03 登记；**不阻塞开工**，但**不许拖**）
 
