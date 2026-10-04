@@ -73,6 +73,7 @@
 | 2 | 基线值是 **provisional 语料**（8/60/30/9）上的值，不是 spec 的 200/500/100/20 | 中 | A8 扩标后必须**重设**基线（那时 `--update-baseline`） |
 | 3 | 一次 `test_upgrade_head_matches_metadata` 偶发红（`permission denied to terminate process`），重跑即绿 | 低 | 疑似本地残留的超级用户连接（我的临时脚本）所致；非代码缺陷。本地另有 3 个孤儿 `graphrag_mig_*` 测试库，可自行 `DROP DATABASE` |
 | 4 | TBD-7 收敛口径（本批 `--tolerance` 借用了相关脚本？否——本批独立） | 低 | 与 G-25 同批由人裁，另议 |
+| 5 | `git push` 失败（2026-10-04 本批收束后） | 低 | 无人值守规则允许重试一次；两次均 `Connection was reset` / `Could not connect to github.com:443`（已知**间歇性网络**问题，非门禁 / 权限）。提交 `47a2cf5e` 与日志提交**仍在本地**（`main...origin/main [ahead N]`）。**处理**：网络恢复后 `git push origin main`（用户上次连续重试第 9 次成功） |
 
 ## 7. 复现命令
 
