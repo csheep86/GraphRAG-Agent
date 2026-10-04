@@ -79,7 +79,16 @@ jobs:
     env:
       # 放 **job 级**而不是 Pytest 那一个 step：本 job 里「本地独占用例」那一步
       # 也要连库。只塞进单个 step 会让那一步悄悄退化成"看着像跑了、其实没跑"。
-      DATABASE_URL: postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test
+      #
+      # **P3-A（2026-10-04）：业务测试一律走受限角色 ``app_rls``**（裁决 4）。
+      # 服务容器里的 ``POSTGRES_USER=graphrag`` 是**超级用户**，超级用户**绕过一切
+      # RLS** ⇒ 用它跑业务测试，等于 T1 / T2 / G-26 全部在"没装 RLS"的前提下
+      # 通过——绿得毫无意义。故：
+      #   - ``DATABASE_URL``        = app_rls（受限，NOBYPASSRLS）跑业务；
+      #   - ``DATABASE_URL_OWNER``  = app_owner 建表 / 迁移 / 落策略。
+      # 两个角色 + 受控系统函数由下面的「建 RLS 角色」步骤建立（须超级用户）。
+      DATABASE_URL: postgresql+psycopg://app_rls:app_rls@localhost:5432/graphrag_test
+      DATABASE_URL_OWNER: postgresql+psycopg://app_owner:app_owner@localhost:5432/graphrag_test
 
     steps:
       - name: 检出代码
@@ -100,6 +109,17 @@ jobs:
 
       - name: 同步依赖（严格使用 uv.lock）
         run: uv sync --all-groups --frozen
+
+      # P3-A（2026-10-04 / 裁决 4）：RLS 的**前提**只能由超级用户建立一次——
+      # 应用账号不是表 owner、且 ``NOBYPASSRLS``，它自己既建不出角色也改不了表。
+      # 本步骤就是那"一次"：建 owner / 受限角色 / A6-A7 受控系统函数，并落策略。
+      #
+      # ⚠️ 少了这一步，业务测试会以超级用户身份跑 ⇒ RLS 从未被验证，
+      # 而 G-26 判据 4 会把它叫住（rolbypassrls / rolsuper 断言）。
+      - name: 建 RLS 角色与受控系统函数（须超级用户）
+        run: |
+          uv run python scripts/init_rls_roles.py \
+            --admin-url postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test
 
       - name: Ruff 静态检查
         run: uv run ruff check .
@@ -183,6 +203,8 @@ jobs:
             echo "  - \`uv sync --all-groups\`"
             echo "  - 起测试库（G-8 要求 PostgreSQL 16.x，本地与 CI 同 tag）:"
             echo "    \`docker run --rm -d -e POSTGRES_USER=graphrag -e POSTGRES_PASSWORD=graphrag -e POSTGRES_DB=graphrag -p 5432:5432 postgres:16-alpine\`"
+            echo "  - 建 RLS 角色与策略（P3-A：业务测试走受限角色，超级用户会绕过 RLS）:"
+            echo "    \`uv run python scripts/init_rls_roles.py --admin-url postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test\`"
             echo "  - \`uv run ruff check . && uv run ruff format --check .\`"
             echo "  - \`uv run python scripts/check_seams.py\`（接缝纪律门禁；Sprint 收尾用默认档 ERROR=0，\`--strict\` 属 v1.4.0 完成点）"
             echo "  - \`uv run pytest -q\`"

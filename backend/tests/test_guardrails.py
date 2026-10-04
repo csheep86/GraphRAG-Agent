@@ -29,7 +29,10 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID as _UUID
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,6 +40,9 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from app.core.config import Settings, get_settings
+
+#: T1 / T2 用的第二个租户（与 conftest 的 ``OTHER_ORG_ID`` 同值）
+OTHER_ORG_ID = "00000000-0000-4000-8000-000000000002"
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
@@ -319,10 +325,6 @@ def test_g9_t1_cross_org_read_returns_empty(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="G-10 / DR-B7 / DR-B8：T2 并发串租户，须在 PG 上跑并覆盖连接池复用路径",
-)
 def test_g10_t2_concurrent_requests_do_not_cross_tenants(
     client: TestClient,
     dev_headers: dict[str, str],
@@ -334,23 +336,83 @@ def test_g10_t2_concurrent_requests_do_not_cross_tenants(
     **为什么要并发**：``SET LOCAL app.current_org`` 若误写成 ``SET``（会话级），
     单线程测试完全测不出来——连接一旦被归还并被下一个租户复用，org 就串了。
     因此本例必须并发，且要让连接池**真复用**连接。
+
+    **2026-10-04（P3-A 转正）：断言口径改为「标记行」**
+    原断言是「B org 的响应 ``items == []``」。RLS 生效后**该断言恒不成立**：
+    这 24 个并发请求**本身就是 B 的请求**，中间件会在响应后为 B 各写一条审计，
+    于是靠后的 B 请求理应看到靠前的 B 请求留下的行——那是 B **自己的**数据。
+    「空」既不是隔离的目标，也不是隔离的结果；把它当判据会让本例在正确实现下
+    依然红（也就是永远转不了正）。
+
+    故改为：并发前给两个 org 各插一条**可区分的标记行**，
+    判据是「每个响应**必须**看到本 org 的标记、**绝不能**看到对方的标记」——
+    这既判「串没串」，也不依赖并发调度的偶然顺序。
     """
     _require_postgres()
 
-    assert client.get("/api/v1/documents", headers=dev_headers).status_code == 200
+    org_a = get_settings().default_org_id
+    org_b = _UUID(OTHER_ORG_ID)
+    marker_a = _seed_audit_marker(org_a, "tenant.marker.a")
+    marker_b = _seed_audit_marker(org_b, "tenant.marker.b")
+    try:
 
-    def probe(headers: dict[str, str]) -> tuple[int, dict]:
-        response = client.get("/api/v1/audit", headers=headers)
-        return response.status_code, response.json()
+        def probe(headers: dict[str, str]) -> tuple[int, dict]:
+            response = client.get("/api/v1/audit", headers=headers)
+            return response.status_code, response.json()
 
-    plan = [dev_headers if i % 2 == 0 else cross_tenant_headers for i in range(24)]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(probe, plan))
+        plan = [dev_headers if i % 2 == 0 else cross_tenant_headers for i in range(24)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(probe, plan))
 
-    for headers, (status, body) in zip(plan, results, strict=True):
-        assert status == 200
-        if headers is cross_tenant_headers:
-            assert body["items"] == [], (
-                "并发下 B org 看到了 A org 的数据 ⇒ 连接池串租户"
+        for headers, (status, body) in zip(plan, results, strict=True):
+            assert status == 200
+            actions = {item["action"] for item in body["items"]}
+            own, foreign = (
+                ("tenant.marker.a", "tenant.marker.b")
+                if headers is dev_headers
+                else ("tenant.marker.b", "tenant.marker.a")
+            )
+            assert own in actions, (
+                f"并发下本 org 竟看不到自己的标记行（{own}）——"
+                "审计写入丢了租户？那样 T2 就成了空跑"
+            )
+            assert foreign not in actions, (
+                f"并发下看到了对方 org 的标记行（{foreign}）⇒ 连接池串租户"
                 "（多为 SET LOCAL 误写成会话级 SET，见 DR-B8）"
             )
+    finally:
+        _delete_audit_markers([marker_a, marker_b])
+
+
+def _seed_audit_marker(org_id: _UUID, action: str) -> _UUID:
+    """给某个 org 插一条**只属于它**的审计行（T2 的判据锚点）。"""
+    from app.db.models import AuditLog
+    from app.db.session import session_scope
+
+    with session_scope(org_id=org_id) as session:
+        row = AuditLog(
+            org_id=org_id,
+            ts=datetime.now(UTC),
+            action=action,
+            actor_id=get_settings().default_actor_id,
+            actor_ip="testclient",
+            resource="POST /api/v1/__tenant_marker__",
+            status="success",
+            trace_id=uuid4(),
+            detail={"marker": True},
+        )
+        session.add(row)
+        session.commit()
+        return row.id
+
+
+def _delete_audit_markers(row_ids: list[_UUID]) -> None:
+    from sqlalchemy import delete
+
+    from app.db.models import AuditLog
+    from app.db.session import session_scope
+
+    for org_id in (get_settings().default_org_id, _UUID(OTHER_ORG_ID)):
+        with session_scope(org_id=org_id) as session:
+            session.execute(delete(AuditLog).where(AuditLog.id.in_(row_ids)))
+            session.commit()
