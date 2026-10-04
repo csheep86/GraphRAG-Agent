@@ -52,20 +52,26 @@ CONTRACT = REPO_ROOT / "contracts" / "openapi.yaml"
 #: 契约里**唯一**不登记资源的路径（探针，不承载业务对象）
 HEALTH_PATH = "/api/v1/health"
 
-#: **受 RBAC 强制校验的端点**（模块内相对路径；与路由声明逐字对应，
+#: **受 RBAC 强制校验的端点**（模块内相对路径 → HTTP 方法；与路由声明逐字对应，
 #: 新增 / 删除受保护端点必须同步这里）
-PROTECTED_PATHS = {
-    "/affiliation/detect",
-    "/affiliation/suspicions/{suspicion_id}",
-    "/audit",
-    "/audit/trace/{trace_id}",
-    "/documents",
-    "/documents/upload",
-    "/documents/{document_id}/chunks/{chunk_id}",
-    "/documents/{document_id}/graph",
-    "/documents/{document_id}/status",
-    "/graph/versions/{version}/activate",
+#:
+#: ⚠️ **为什么要带 method**：它同时是下面两条**参数化拒绝测试**的输入 ⇒
+#: 新增一个受保护端点，会**自动**获得「无授权 ⇒ 403」的拒绝用例
+#: （外加写端点自动获得「有角色但无该权限 ⇒ 403」）。
+#: 于是「端点被保护了但没人验过拒绝」这种假绿**不可能**悄悄出现。
+PROTECTED_ENDPOINTS: dict[str, str] = {
+    "/affiliation/detect": "POST",
+    "/affiliation/suspicions/{suspicion_id}": "PATCH",
+    "/audit": "GET",
+    "/audit/trace/{trace_id}": "GET",
+    "/documents": "GET",
+    "/documents/upload": "POST",
+    "/documents/{document_id}/chunks/{chunk_id}": "GET",
+    "/documents/{document_id}/graph": "GET",
+    "/documents/{document_id}/status": "GET",
+    "/graph/versions/{version}/activate": "POST",
 }
+PROTECTED_PATHS = set(PROTECTED_ENDPOINTS)
 
 
 def _iter_api_routes(router):
@@ -254,6 +260,70 @@ def test_admin_actor_passes_the_same_endpoint(
 ) -> None:
     """同一端点换 admin ⇒ 放行（证明上一条的 403 来自 RBAC，不是端点坏了）。"""
     assert client.get("/api/v1/audit", headers=dev_headers).status_code == 200
+
+
+def _sample_request(path: str) -> tuple[str, str]:
+    """把端点模板变成可发的 ``(method, url)``——路径参数一律填随机 uuid。
+
+    **为什么可以不带 body**：RBAC 依赖**先于**请求体校验执行
+    （实测：无授权时 `POST /affiliation/detect` 不带 body 返回 **403** 而非 400），
+    所以这里不构造合法请求体也能验到拒绝分支。
+    """
+    url = "/api/v1" + path.format(
+        document_id=uuid4(),
+        chunk_id=uuid4(),
+        suspicion_id=uuid4(),
+        trace_id=uuid4(),
+        version="v-not-exist",
+    )
+    return PROTECTED_ENDPOINTS[path], url
+
+
+@pytest.mark.parametrize("path", sorted(PROTECTED_ENDPOINTS))
+def test_every_protected_endpoint_denies_unassigned_actor(
+    client: TestClient, empty_audit: None, path: str
+) -> None:
+    """**每个**受保护端点都必须拦得住「没有任何授权」的主体（fail-closed）。
+
+    参数化 ⇒ 新增受保护端点**自动**获得一条拒绝用例（端点登记在
+    :data:`PROTECTED_ENDPOINTS`）⇒ 「挂了校验却从没验过拒绝」这种假绿
+    **不可能**悄悄出现——它正是 P2-B 收尾时暴露出来的那个缺口
+    （当时 3 个写端点只有放行侧、没有拒绝侧）。
+    """
+    actor = uuid4()
+    method, url = _sample_request(path)
+
+    response = client.request(method, url, headers=_headers(actor))
+
+    assert response.status_code == 403, f"{method} {url} 未被拦住：{response.text}"
+    assert response.json()["detail"]["reason"] == REASON_NO_ROLE
+    assert len(_denied_rows(actor)) == 1, "拒绝必须留痕（§3 验收 1 的后半边）"
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(
+        path
+        for path, method in PROTECTED_ENDPOINTS.items()
+        if method in {"POST", "PATCH"}
+    ),
+)
+def test_write_endpoints_deny_a_role_without_that_permission(
+    client: TestClient, grant_role, empty_audit: None, path: str
+) -> None:
+    """写端点：有角色但**没有该资源的写权限** ⇒ 403 `action_not_permitted`。
+
+    与「无任何授权」分开验是有意的：前者只证明"查不到角色时不会放行"，
+    这条才证明**矩阵在拦**——`viewer` 有角色、有读权限，就是没有写权限。
+    """
+    actor = uuid4()
+    grant_role(actor=actor, role=RoleName.VIEWER)
+    method, url = _sample_request(path)
+
+    response = client.request(method, url, headers=_headers(actor))
+
+    assert response.status_code == 403, f"{method} {url} 未被拦住：{response.text}"
+    assert response.json()["detail"]["reason"] == REASON_ACTION_NOT_PERMITTED
 
 
 def test_unassigned_actor_is_denied_fail_closed(

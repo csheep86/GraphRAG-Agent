@@ -322,3 +322,107 @@ ADR-0003 §4.1 要求的"显式声明"本体），指向 spec §4.2 与 ADR-0003
    `upgrade → downgrade → upgrade → upgrade`；契约零漂移是
    `export_openapi.py --check` 实跑；G-24 三档是 `check_startup_readiness.py` 实跑
    （它恒退 0 ⇒ 我读的是四档数字，不是把输出当"通过"）。
+
+---
+---
+
+# P2-B 收尾补做（2026-10-04，按用户裁决逐条执行）
+
+> §11 末尾列了两条待裁，用户批复「按建议来」。本段是**补做部分**的实测记录。
+> ⚠️ 其中 §13.1 是 **P2-B 汇报时漏报的一条**，先讲它。
+
+## 13.1 演示库实测 —— P2-B 的「落地即副作用」（**漏报补正**）
+
+**问题**：P2-B 给 10 个端点挂上 RBAC 强制校验，而 conftest 播的那份 admin
+**只落在测试库 `graphrag_test`** ⇒ 演示库 `graphrag` 的 `user_roles` 是空的
+⇒ dev 主体一上来就 403 ⇒ **演示直接打不开**。
+这是我从代码路径**推**出来的，按红线「不许编造」没有当成结论报，
+用 `changes/P2/probe_rbac_dev_actor.py` 实测换成结论：
+
+| 阶段 | `roles` | `user_roles` | `GET /documents` | `GET /audit` | `POST /affiliation/detect` |
+|---|---|---|---|---|---|
+| **播种前** | 4 | **0** | **403** | **403** | **403** |
+| **播种后** | 4 | 1 | **200** | **200** | **400**（过了 RBAC，进请求体校验） |
+
+三次 403 的 `detail.reason` 均为 `no_role_assignment`。
+⇒ **推理被证实**：演示库不播种就是全 403。
+
+**为什么 P2-B 当时没发现**：所有验证都在测试库上做，而测试库那份授权是夹具播的——
+**测试环境的完备性掩盖了产品环境的缺失**。这类"测试库能跑 ⇒ 以为产品也能跑"的缺口，
+只能靠**换一个库实测**才暴露。
+
+## 13.2 dev 授权播种脚本（裁决第 1 项）
+
+`backend/scripts/seed_dev_rbac.py`，两道锁 + 幂等，逐条实测：
+
+| 锁 / 性质 | 实测 |
+|---|---|
+| ① `ALLOW_DEV_ORG_HEADER` 必须 `true` | 置 `false` 跑 ⇒ `[NG] 拒绝执行`，**exit=1** ✅ |
+| ② 只授默认 org（不碰跨租户） | 输出 `org_id = ...0001`（默认 org），与 conftest 那份「两个 org 都授」**互不复用** |
+| 幂等 | `--check` 未授权时 exit=1；播种后重复跑 ⇒ `已存在，未重复插入` ✅ |
+| 不播进迁移 | 迁移只播 `roles` 四档；`user_roles` **一行不播**（红线：迁移会跑到客户库） |
+
+已登记到 `backend/CODEBUDDY.md` §5 常用命令 + `changes/P2/tasks.md` 开工前置第 1 节
+（否则下一个人照样踩"起完 PG 还打不开"）。
+
+## 13.3 `roles` 的 RLS 豁免 —— CR 抽检（裁决第 2 项，**至此三条件齐**）
+
+裁决 A 要求三条，P2-B 只落地了前两条 ⇒ 当时是**部分履行**。第 3 条抽检结论：
+
+| # | 抽检项 | 证据 | 结论 |
+|---|---|---|---|
+| ① | `roles` 无租户业务列 | `app/db/models.py::Role` 无 `org_id`；断言 ① 已盯 | ✅ 通过 |
+| ② | **有无代码路径往 `roles` 写租户数据** | 全仓 grep `\bRole\s*\(|INSERT INTO roles` 命中 **3 处**：迁移的 `INSERT INTO roles`（值来自 `PRESET_ROLES`）、`service.py:85` 的 `session.add(Role(...))`、`models.py` 的类定义 | ✅ **无任何业务写入** |
+| ③ | 豁免清单仍是 `{roles}` 一个 | `RLS_EXEMPT_TABLES` 与 `__rls_exempt__` 双向断言 | ✅ 通过 |
+
+**顺带把 ② 机械化**（这是抽检里唯一原本只剩"人眼看"的一条）：
+新增 `test_g24_role_writes_are_centralized` —— 构造 `Role(...)` 必须落在
+白名单 `ROLE_WRITE_MODULES`（当前只有 `app/services/rbac/service.py`）。
+
+> **为什么 `ck_roles_name` 不够**：它只钉住 `name` 四档，**钉不住 `description`**——
+> `description` 是自由文本，正是"往全局字典表塞业务数据"的入口。
+> 迁移侧那句 raw SQL 扫不到，但由 `test_migration_seeds_preset_roles_and_is_replayable`
+> 盯住（断言 `roles` 行数 **==** 预置角色数 ⇒ 多插一行就红）。
+
+## 13.4 假绿防护（裁决第 3 项：**接受 admin 脚手架，但加两道护栏**）
+
+**(a) 看得见**（沿用 P2-A 给 G-18 做的 RK-4 先例）：`check_startup_readiness.py` 的
+`SCOPE_CAVEATS` 加 `"G-24"`，实测已在 G-24 绿灯**正下方**打印：
+
+```
+⚠️ 只验「矩阵存在 + 强制校验入口存在」，不验具体权限值（属实现决策）；
+   且测试默认主体是 admin ⇒ 默认路径验不到拒绝分支，
+   拒绝分支只由 tests/test_rbac.py 用非默认 actor 验；
+   另：RLS 策略归 P3，本条绿灯不代表租户隔离完成
+```
+
+**(b) 拦得住**：`PROTECTED_ENDPOINTS`（路径 → method）升级为**参数化拒绝测试**的输入 ⇒
+新增受保护端点**自动**获得拒绝用例。新增两条：
+
+| 测试 | 覆盖 | 条数 |
+|---|---|---|
+| `test_every_protected_endpoint_denies_unassigned_actor` | **全部 10 个**端点 × 无授权主体 ⇒ 403 `no_role` + 留痕 | 10 |
+| `test_write_endpoints_deny_a_role_without_that_permission` | **4 个写端点** × `viewer`（有角色、只有读权限）⇒ 403 `action_not_permitted` | 4 |
+
+⚠️ **这条补做暴露了一个真实缺口**：P2-B 汇报时，3 个写端点
+（`POST /documents/upload`、`POST /affiliation/detect`、`POST /graph/versions/{v}/activate`）
+**只有放行侧、没有拒绝侧**——写权限恰恰是最该验拒绝的。现已补齐。
+
+## 13.5 收尾数字
+
+| 检查 | P2-B 汇报时 | 收尾补做后 |
+|---|---|---|
+| `pytest -q` | 835 passed / 3 skipped / 6 xfailed | **850 passed / 3 skipped / 6 xfailed**（+15：参数化拒绝 14 条 + G-24 写入集中化 1 条；**无失败**） |
+| G-24 组内 | 3 项 | **4 项**（新增 `test_g24_role_writes_are_centralized`） |
+| `ruff check .` / `ruff format --check .` | 双绿（213 files） | 双绿（**214** files） |
+| `export_openapi.py --check` | 零漂移 | 零漂移（本段**未**改任何路由/模型） |
+| `check_startup_readiness.py` | 已生效 10 组 | 已生效 **10 组**；G-24 由 3 项 → **4 项**，且绿灯下方新增 caveat（§13.4a） |
+
+## 13.6 挂账
+
+- **`users.status` 未参与判定**（P2-B 遗留 1）⇒ 已挂进 `changes/P2/tasks.md` 的 **P2-C**，
+  并写明「一旦 `app/` 引用 `User`，必须先登记 `USERS_CONSUMER_MODULES`」这条硬闸门。
+- **真实授权链路**（P2-B 遗留 2）⇒ 同样挂进 P2-C，并点明当前只有两个播种源
+  （`seed_dev_rbac.py` / conftest 夹具）。
+
+⛔ **已无阻塞待裁项**：§11 提的两条均已在 §13.2 / §13.3 / §13.4 处置完毕。

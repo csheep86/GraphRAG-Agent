@@ -39,6 +39,11 @@ SCRIPTS_ROOT = BACKEND_ROOT / "scripts"
 MODELS = APP_ROOT / "db" / "models.py"
 CONTRACT = REPO_ROOT / "contracts" / "openapi.yaml"
 
+#: **`roles` 的写入白名单**（G-24 断言：`test_g24_role_writes_are_centralized`）。
+#: 当前只有 `ensure_preset_roles`（播 4 种系统预置角色）。新增写入点必须先改这里
+#: **并**说明理由（spec §4.2：全局字典表禁止写入租户业务数据）。
+ROLE_WRITE_MODULES = {"app/services/rbac/service.py"}
+
 #: 遍历时必须跳过——``backend/.venv`` 有几千个文件，不排会拖垮整轮测试。
 SKIP_DIRS = {
     ".venv",
@@ -251,6 +256,40 @@ def test_g24_roles_rls_exemption_is_declared_and_bounded() -> None:
     assert declared == set(RLS_EXEMPT_TABLES), (
         f"RLS 豁免登记 {sorted(RLS_EXEMPT_TABLES)} 与模型实际声明 {sorted(declared)} "
         "不一致——新增豁免必须同时改两处（ADR-0003 §3.1 / spec §4.2）"
+    )
+
+
+def test_g24_role_writes_are_centralized() -> None:
+    """`roles` 的**写入点必须集中**（spec §4.2 CR 抽检第 ② 条的机械化版本）。
+
+    原文要求「`roles` 仅允许存放系统预置角色，**禁止**写入任何租户业务数据」。
+    断言 ②（`ck_roles_name`）只钉得住 `name` 四档，**钉不住 `description`**——
+    它是自由文本，正是"往全局字典表塞业务数据"的入口。
+
+    所以这里把**所有构造 `Role(...)` 的模块**收敛到登记集合：
+    新增一个写入点（哪怕在业务服务里顺手 `session.add(Role(...))`）⇒ 红 ⇒
+    逼人到这里显式登记并说明为什么。
+
+    ⚠️ **只扫 `app/`**：迁移里那句 `INSERT INTO roles` 是 raw SQL，扫不到，
+    但它由 `tests/test_rbac.py::test_migration_seeds_preset_roles_and_is_replayable`
+    盯住（断言 `roles` 行数 **==** 预置角色数 ⇒ 多插一行就红）。
+    两侧合起来才是"没有第二条写入路径"。
+    """
+    offenders: list[str] = []
+    for path, text in _load_tree(APP_ROOT).items():
+        # 排除 `class Role(Base)` 这类定义（负向后视），只抓真正的构造调用
+        if not re.search(r"(?<!class )\bRole\s*\(", text):
+            continue
+        rel = path.relative_to(BACKEND_ROOT).as_posix()
+        if rel in ROLE_WRITE_MODULES:
+            continue
+        offenders.append(rel)
+
+    assert not offenders, (
+        "`roles` 的写入点未登记（spec §4.2：禁止写入租户业务数据）：\n  - "
+        + "\n  - ".join(sorted(offenders))
+        + "\n⇒ 确属必要就加进 ROLE_WRITE_MODULES 并说明理由；否则改回走 "
+        "`app/services/rbac/service.py::ensure_preset_roles`"
     )
 
 

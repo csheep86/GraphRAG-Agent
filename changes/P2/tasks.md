@@ -37,6 +37,19 @@ until docker exec graphrag-pg pg_isready -U graphrag -d graphrag_test; do sleep 
 > **本机样例状态（2026-10-03）**：`graphrag-pg` Up（11h）、`kg-poc-neo4j` Up（10h）。
 > Windows / PowerShell 下请把上面的 shell 片段换成等价命令。
 
+> 🆕 **2026-10-04 补（P2-B 收尾实测）**：起完 PG **还不够**——
+> P2-B 起 10 个端点走 RBAC 强制校验，而演示库 `graphrag` 的 `user_roles` 默认是空的
+> ⇒ dev 主体一上来就是 `403 no_role_assignment`（实测三个端点全 403，
+> 证据见 `integration-log.md` §13 / `probe_rbac_dev_actor.py`）。
+> **演示库首次启动前必须跑一次**：
+>
+> ```bash
+> cd backend && uv run alembic upgrade head && uv run python scripts/seed_dev_rbac.py
+> ```
+>
+> （该脚本**只在 `ALLOW_DEV_ORG_HEADER=true` 时允许执行**，生产关掉开关即自动不可用；
+> 幂等，可重复跑；`--check` 只报告不写。）
+
 ### 2. 先跑开工自检，再动手
 
 ```bash
@@ -193,6 +206,13 @@ cd backend && uv run python scripts/check_startup_readiness.py
 - [ ] **`先`扩写 `docs/adr/0004-integration-seams.md` §2.1 接缝 1 登记行**，再改 `get_auth_provider()`
       （漏改任一侧 CI 必红）
 - [ ] 外部身份字段（`issuer` / `subject`）进 `users` + 自带迁移
+- [ ] **🆕 接上 `users.status` 到 RBAC 判定**（P2-B 遗留 1，2026-10-03 挂账）：
+      当前判定只读 `(org_id, user_id)` ⇒ **`disabled` 账号只要 `user_roles` 还在就仍有权限**。
+      ⚠️ 一旦 `app/` 里引用 `User`，**必须先登记**
+      `test_guardrails.py::USERS_CONSUMER_MODULES` 并交代四件事（否则 CI 红）
+- [ ] **🆕 真实授权链路**（P2-B 遗留 2）：`user_roles` 目前只有两个播种源——
+      `backend/scripts/seed_dev_rbac.py`（dev，受 `ALLOW_DEV_ORG_HEADER` 约束）与
+      `tests/conftest.py` 夹具（测试库）。**授权管理界面 / 真实账号授权归本批**
 - [ ] 出口：`check_seams.py` 接缝 1 实现集合 == 登记集合；AD / OIDC 登录可用
 
 ---

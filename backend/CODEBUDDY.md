@@ -166,6 +166,10 @@
 ```bash
 uv sync                                        # 安装依赖（提交 uv.lock）
 uv run uvicorn app.main:app --reload           # 本地启动
+uv run python scripts/seed_dev_rbac.py         # 本地/演示库首次启动前必跑：给 dev 主体授 admin
+                                               # （P2-B 起受保护端点走 RBAC 强制校验，
+                                               #  演示库的 user_roles 默认是空的 ⇒ 全 403。
+                                               #  只在 ALLOW_DEV_ORG_HEADER=true 时可用；幂等）
 uv run python scripts/export_openapi.py        # 导出契约
 uv run python scripts/export_openapi.py --check # 校验契约是否漂移
 uv run python scripts/check_seams.py           # 接缝纪律门禁（实现集合 / 配置消费者 / 预留字段）
