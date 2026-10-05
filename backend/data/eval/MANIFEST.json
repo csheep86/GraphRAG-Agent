@@ -4,14 +4,22 @@
   "annotator": "架构师（本批 E2）",
   "annotated_at": "2026-10-03",
   "rubric": {
-    "id": "rubric-v1",
+    "id": "rubric-v2",
+    "supersedes": {
+      "id": "rubric-v1",
+      "correct_rule": "①②③ 全部满足 ⇒ true；任一不满足 ⇒ false",
+      "why_changed": "v1 把『出处 / 算式 / 附加条件』这类**补充要点**与主体答案等权 ⇒ 答对主体、漏了出处即判 false（P6-I 实测 Q5「依据劳动法第四十一条」、Q7「已履行审批」均属此类）⇒ **系统性低估**。详见 changes/P6-I/proposal.md §3.2。",
+      "applies_to_numbers": "rubric-v1 下 C1 = 0.0294（graph 35/40 vs baseline 34/40）；该数字属于 v1，**不得与 rubric-v2 的结果混用**。"
+    },
     "note": "**A3**：脚本不做关键词判分（关键词命中会把答非所问读成达标）⇒ 答对率只能人工判；本 rubric 写死判分规则，使两次运行可比。",
     "per_question": [
       "① 拒答判定与 should_refuse 一致；",
-      "② 答案覆盖 expected_points 的**全部**要点；",
+      "② 答案覆盖 **core 要点**（core = expected_points − secondary_points；未标注 secondary_points 的数据集，其全部要点一律为 core）；",
       "③ 无与语料矛盾的事实（幻觉）。"
     ],
-    "correct_rule": "①②③ 全部满足 ⇒ correct=true；任一不满足 ⇒ correct=false；未判分 ⇒ correct=null（**不入分母**，不是 0）。",
+    "correct_rule": "①②③ 全部满足 ⇒ correct=true；任一不满足 ⇒ correct=false；未判分 ⇒ correct=null（**不入分母**，不是 0）。secondary 要点**缺失不扣主分**，可另记「答案完整度」子指标，但不参与本判据。",
+    "tier_rule": "core = 直接回答问题的主体；secondary = 出处 / 算式 / 枚举细节 / 附加条件 / 例外情形。分级必须写在题集 JSON 的 secondary_points 字段里（**显式、可复核**），不得临场裁量。",
+    "monotonicity_note": "core ⊆ expected_points ⇒ 较之 v1，本规则**只会把 false 翻成 true，不会反向**（单调放宽）。换 rubric 时因此**只需重判当时判为 false 的题**——这是 P6-I 实测得出的 80 → 11 条降本依据。",
     "judged_by_rule": "判分人必须写入 judged_by，禁止匿名判分。"
   },
   "datasets": [

@@ -57,6 +57,10 @@ class Question:
     should_refuse: bool
     source_doc: str
     expected_points: tuple[str, ...]
+    #: **rubric-v2（P6-I）**：其中的「补充要点」（出处 / 算式 / 枚举 / 附加条件）。
+    #: ``core = expected_points − secondary_points``；缺省为空 ⇒ 全部要点都是 core。
+    #: 判分时只要求覆盖 core，secondary 缺失不扣主分。
+    secondary_points: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,7 @@ def load_question_set() -> tuple[Question, ...]:
                 should_refuse=bool(_require(raw, "should_refuse", where=where)),
                 source_doc=str(raw.get("source_doc", "")),
                 expected_points=tuple(str(p) for p in raw.get("expected_points", ())),
+                secondary_points=tuple(str(p) for p in raw.get("secondary_points", ())),
             )
         )
     if not items:

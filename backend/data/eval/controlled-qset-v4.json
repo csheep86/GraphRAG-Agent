@@ -21,6 +21,9 @@
       "expected_points": [
         "每名员工每月补卡不超过 3 次",
         "超出按事假处理"
+      ],
+      "secondary_points": [
+        "超出按事假处理"
       ]
     },
     {
@@ -31,6 +34,9 @@
       "expected_points": [
         "晚于排班上班时间 30 分钟以内记迟到",
         "超过 30 分钟按事假半天"
+      ],
+      "secondary_points": [
+        "超过 30 分钟按事假半天"
       ]
     },
     {
@@ -40,6 +46,9 @@
       "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第一章 第一条",
       "expected_points": [
         "因公外出（外勤）或出差期间",
+        "无法按常规方式打卡的员工"
+      ],
+      "secondary_points": [
         "无法按常规方式打卡的员工"
       ]
     },
@@ -52,6 +61,10 @@
         "不能",
         "门禁仅覆盖公司自有场所",
         "不得以无门禁记录否定出勤"
+      ],
+      "secondary_points": [
+        "门禁仅覆盖公司自有场所",
+        "不得以无门禁记录否定出勤"
       ]
     },
     {
@@ -61,6 +74,9 @@
       "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第二章 第四条",
       "expected_points": [
         "每月不得超过 36 小时",
+        "依据劳动法第四十一条"
+      ],
+      "secondary_points": [
         "依据劳动法第四十一条"
       ]
     },
@@ -72,6 +88,9 @@
       "expected_points": [
         "不认定为加班",
         "须经审批"
+      ],
+      "secondary_points": [
+        "须经审批"
       ]
     },
     {
@@ -82,6 +101,9 @@
       "expected_points": [
         "不定时工作制",
         "已履行审批"
+      ],
+      "secondary_points": [
+        "已履行审批"
       ]
     },
     {
@@ -91,7 +113,8 @@
       "source_doc": "《工时制实施细则》HR-WTS-2026-002 第四章 第十二条",
       "expected_points": [
         "核心在岗时段 10:00 至 16:00"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 9,
@@ -101,7 +124,8 @@
       "expected_points": [
         "售后部",
         "售后工程师"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 10,
@@ -110,7 +134,8 @@
       "source_doc": "employees.csv（首行 E001,张伟,售后部,售后工程师,综合计算工时制）",
       "expected_points": [
         "综合计算工时制"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 11,
@@ -120,7 +145,8 @@
       "expected_points": [
         "病假",
         "3 天"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 12,
@@ -129,6 +155,9 @@
       "source_doc": "work_orders.csv（首行 SO-2026-0912,E001,武汉光谷希尔顿酒店,武汉光谷）",
       "expected_points": [
         "武汉光谷希尔顿酒店",
+        "武汉光谷"
+      ],
+      "secondary_points": [
         "武汉光谷"
       ]
     },
@@ -139,7 +168,8 @@
       "source_doc": "（库外）刻意选语料中完全不存在的主体，验证拒答出口不被误伤",
       "expected_points": [
         "应拒答"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 14,
@@ -148,7 +178,8 @@
       "source_doc": "（库外）刻意选语料中完全不存在的主体，验证拒答出口不被误伤",
       "expected_points": [
         "应拒答"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 15,
@@ -158,6 +189,9 @@
       "expected_points": [
         "须按排班时段打卡",
         "每日上下班各打卡一次"
+      ],
+      "secondary_points": [
+        "须按排班时段打卡"
       ]
     },
     {
@@ -167,6 +201,9 @@
       "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第二章 第五条",
       "expected_points": [
         "当日打卡记录不完整记为一次缺卡",
+        "仅有上班打卡、仅有下班打卡或当日无任何打卡记录均属缺卡"
+      ],
+      "secondary_points": [
         "仅有上班打卡、仅有下班打卡或当日无任何打卡记录均属缺卡"
       ]
     },
@@ -178,6 +215,9 @@
       "expected_points": [
         "缺卡发生之日起 3 个工作日内提交",
         "说明理由并附证明材料"
+      ],
+      "secondary_points": [
+        "说明理由并附证明材料"
       ]
     },
     {
@@ -187,6 +227,9 @@
       "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第四章 第十一条",
       "expected_points": [
         "请假须事前提交申请并经审批",
+        "病假须提供医疗机构证明"
+      ],
+      "secondary_points": [
         "病假须提供医疗机构证明"
       ]
     },
@@ -198,7 +241,8 @@
       "expected_points": [
         "每日工作 8 小时",
         "每周工作 40 小时"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 20,
@@ -207,6 +251,9 @@
       "source_doc": "《工时制实施细则》HR-WTS-2026-002 第二章 第二节 第六条",
       "expected_points": [
         "月标准工时 174 小时",
+        "月计薪天数 21.75 天 × 8 小时"
+      ],
+      "secondary_points": [
         "月计薪天数 21.75 天 × 8 小时"
       ]
     },
@@ -218,7 +265,8 @@
       "expected_points": [
         "仅在月累计工时超过月标准工时后超出部分才计为加班",
         "某一休息日出勤不当然构成加班，须结合当月累计工时判定"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 22,
@@ -227,7 +275,8 @@
       "source_doc": "《工时制实施细则》HR-WTS-2026-002 第二章 第三节 第十条",
       "expected_points": [
         "须经劳动行政部门审批后方可实施"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 23,
@@ -236,6 +285,9 @@
       "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第三章 第九条",
       "expected_points": [
         "调休应在加班所在季度内完成",
+        "逾期未调休的按小时工资 200% 计付"
+      ],
+      "secondary_points": [
         "逾期未调休的按小时工资 200% 计付"
       ]
     },
@@ -247,6 +299,9 @@
       "expected_points": [
         "休息日加班优先安排调休",
         "已安排调休的不再计付 200% 加班工资"
+      ],
+      "secondary_points": [
+        "已安排调休的不再计付 200% 加班工资"
       ]
     },
     {
@@ -256,7 +311,8 @@
       "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第三章 第七条",
       "expected_points": [
         "法定休假日安排工作不低于小时工资的 300%"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 26,
@@ -265,7 +321,8 @@
       "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第四章 第十二条",
       "expected_points": [
         "预警等级为高时部门负责人须在 5 个工作日内提交处置方案"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 27,
@@ -275,7 +332,8 @@
       "expected_points": [
         "由系统按第四条所列证据自动取证",
         "系统自动完成补卡"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 28,
@@ -284,6 +342,9 @@
       "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第三章 第七条",
       "expected_points": [
         "不占用月度补卡次数",
+        "员工无需手工提交补卡申请"
+      ],
+      "secondary_points": [
         "员工无需手工提交补卡申请"
       ]
     },
@@ -295,7 +356,8 @@
       "expected_points": [
         "认定为出勤",
         "计入工时累计"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 30,
@@ -307,7 +369,8 @@
         "工单或任务闭环记录",
         "移动应用定位轨迹",
         "门禁刷卡记录"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 31,
@@ -317,7 +380,8 @@
       "expected_points": [
         "生产部",
         "产线操作工"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 32,
@@ -326,7 +390,8 @@
       "source_doc": "employees.csv 同行的 work_time_system 字段",
       "expected_points": [
         "综合计算工时制"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 33,
@@ -337,7 +402,8 @@
         "E027",
         "年休假",
         "3 天"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 34,
@@ -347,7 +413,8 @@
       "expected_points": [
         "6.0 小时",
         "休息日加班"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 35,
@@ -357,7 +424,8 @@
       "expected_points": [
         "武汉光谷（武汉）",
         "2026-10-16 至 2026-10-18"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 36,
@@ -366,7 +434,8 @@
       "source_doc": "work_orders.csv（SO-2026-0913 的 fault_type 字段）",
       "expected_points": [
         "同批次设备复检"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 37,
@@ -377,7 +446,8 @@
         "进厂 08:49",
         "出厂 17:40",
         "厂区东门"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 38,
@@ -387,7 +457,8 @@
       "expected_points": [
         "09:00 至 18:00",
         "计划工时 8.0 小时"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 39,
@@ -396,7 +467,8 @@
       "source_doc": "库外（语料完全无上市 / 保荐机构信息）",
       "expected_points": [
         "应拒答"
-      ]
+      ],
+      "secondary_points": []
     },
     {
       "index": 40,
@@ -405,7 +477,9 @@
       "source_doc": "库外（语料完全无体育赛事信息）",
       "expected_points": [
         "应拒答"
-      ]
+      ],
+      "secondary_points": []
     }
-  ]
+  ],
+  "points_tier_note": "expected_points 仍是**全部**要点；secondary_points 是其中的「补充要点」（出处 / 算式 / 枚举 / 附加条件），判分按 rubric-v2：**core 覆盖即 true**，core = expected_points − secondary_points。注意 gold-multihop-v1 等其它数据集未标注 ⇒ 其全部要点一律按 core 处理。"
 }

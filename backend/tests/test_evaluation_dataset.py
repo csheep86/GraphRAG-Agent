@@ -78,6 +78,40 @@ def test_question_set_shape_and_no_duplicate_index() -> None:
         assert item.expected_points, f"Q{item.index} 缺期望要点（判分无据）"
 
 
+def test_secondary_points_are_a_proper_subset_of_expected() -> None:
+    """**rubric-v2 的分级标注必须自洽**（见 P6-I）。
+
+    两条断言各自挡一类事故：
+
+    1. ``secondary ⊆ expected`` —— 防止手滑把一条**不存在的**要点写进 secondary
+       （那样 core 计算会静默忽略，判分人就对着一份虚假的要点清单判）；
+    2. ``secondary ≠ expected`` —— 防止把某题的要点**全部**标成 secondary
+       ⇒ 那题将失去 core ⇒ **任何答案都能通过**，等于偷偷删除了一道题。
+
+    另外要求至少有题带标注且至少有题不带：全带说明标过头，全不带说明这套分级没真正用上。
+    """
+    with_items = 0
+    for item in load_question_set():
+        expected = set(item.expected_points)
+        #: ``secondary_points`` 是可选字段（旧数据集没有它 ⇒ 全部按 core 处理）
+        secondary = set(getattr(item, "secondary_points", ()) or ())
+        assert secondary <= expected, (
+            f"Q{item.index} 的 secondary_points 含非 expected_points 项："
+            f"{secondary - expected}"
+        )
+        assert secondary != expected, (
+            f"Q{item.index} 全部要点都被标成 secondary ⇒ 该题没有 core ⇒ 任何答案都判对"
+        )
+        if secondary:
+            with_items += 1
+
+    total = len(load_question_set())
+    assert 0 < with_items < total, (
+        f"secondary 标注异常：{with_items}/{total} 题带标注"
+        "（全带 ⇒ 标过头；全不带 ⇒ 分级形同虚设）"
+    )
+
+
 def test_qset_sensitivity_stays_within_budget() -> None:
     """**灵敏度预算**：单题翻转 = 1/题数，必须 ≤ 2.5pp。
 
