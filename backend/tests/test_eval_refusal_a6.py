@@ -247,4 +247,38 @@ def test_refusal_criterion_is_registered() -> None:
     runner._register_builtin_criteria()
     assert C_REFUSAL in runner._registered()
     #: 紧跟 C2-c ⇒ 报告里两行挨着，看得见"1.00 旁边挂着误伤"
+
+
+# --------------------------------------------------------------------------- #
+# 四、**归因必须随实测反推**（P6-D 的 corpus_layer，2026-10-05 补接 C2-c / 拒答）
+# --------------------------------------------------------------------------- #
+def test_both_criteria_report_corpus_layer(
+    qa_stub: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """这两条判据的报告必须自带 ``corpus_layer``，且值来自**实测**而非写死。
+
+    为什么单独钉这条：本判据要拿去说"Q8 在 **L2** 上如何如何"。若报告里的
+    ``corpus_layer`` 是空的（或某个常量），那句话就**没有任何机器证据**支撑——
+    改一行常量就能把 L1 的实测说成 L2。
+    """
+    import app.evaluation.runner as runner
+
+    monkeypatch.setattr(runner, "_detect_layer", lambda versions, org: "L2")
+    qa_stub([(False, False), (True, True)])
+
+    citation, _ = _run_citation(None, qa_stub)  # type: ignore[arg-type]
+    refusal = _run_refusal()
+    assert citation.provenance.corpus_layer == "L2"
+    assert refusal.provenance.corpus_layer == "L2"
+
+
+def test_corpus_layer_is_none_when_layer_undetected(
+    qa_stub: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """判不出层 ⇒ **空着**，不许兜底成 L1/L2（猜出来的层号就是假绿入口）。"""
+    import app.evaluation.runner as runner
+
+    monkeypatch.setattr(runner, "_detect_layer", lambda versions, org: None)
+    qa_stub([(False, False), (True, True)])
+    assert _run_refusal().provenance.corpus_layer is None
     assert ALL_CRITERIA.index(C_REFUSAL) == ALL_CRITERIA.index(C_CITATION) + 1

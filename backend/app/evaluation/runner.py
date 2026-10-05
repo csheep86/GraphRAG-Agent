@@ -361,6 +361,7 @@ def eval_citation_coverage(ctx: dict[str, Any]) -> CriterionResult:
             runner_ctx,
             dataset_version="controlled-qset-v3",
             kg_version=", ".join(sorted(kg_versions)),
+            corpus_layer=_detect_layer(kg_versions, runner_ctx.org_id),
             notes=reason,
         ),
         blocked_by=None if metric.value is not None else (metric.reason or "无分母"),
@@ -434,6 +435,7 @@ def eval_refusal_false_refusal(ctx: dict[str, Any]) -> CriterionResult:
             runner_ctx,
             dataset_version="controlled-qset-v3",
             kg_version=", ".join(snapshot.kg_versions),
+            corpus_layer=_detect_layer(snapshot.kg_versions, runner_ctx.org_id),
             notes="; ".join(
                 x
                 for x in (
