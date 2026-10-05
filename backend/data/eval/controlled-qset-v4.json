@@ -1,0 +1,411 @@
+{
+  "id": "controlled-qset-v4",
+  "version": "v4-2026-10-05",
+  "kg_version": "attendance-demo-v1",
+  "question_count": 40,
+  "in_corpus": 36,
+  "out_of_corpus": 4,
+  "supersedes": "controlled-qset-v3（14 题；本报告全部历史数字均在该版本上测得）",
+  "source": {
+    "single_source_of_truth": "backend/scripts/eval_controlled_qset.py::QUESTIONS",
+    "note": "本文件由 QUESTIONS 投影生成（前 14 题沿用 v3 逐字内容，旧题一字未改）；一致性由 tests/test_eval_qset_parity.py 钉死，题数取自 MANIFEST 而非硬编码。",
+    "corpus": "demo/attendance/（6 份考勤制度 policies/*.md + 9 张考勤 CSV），出处经源文逐条核对（2026-10-05）",
+    "sensitivity_note": "单题翻转灵敏度 = 1/40 = 2.5pp（v3 为 1/14 = 7.14pp）；扩容目的见 changes/P6-H/proposal.md §1"
+  },
+  "items": [
+    {
+      "index": 1,
+      "question": "每名员工每月的补卡次数上限是多少？",
+      "should_refuse": false,
+      "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第三章 第八条",
+      "expected_points": [
+        "每名员工每月补卡不超过 3 次",
+        "超出按事假处理"
+      ]
+    },
+    {
+      "index": 2,
+      "question": "迟到是怎么认定的？超过 30 分钟怎么算？",
+      "should_refuse": false,
+      "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第二章 第六条",
+      "expected_points": [
+        "晚于排班上班时间 30 分钟以内记迟到",
+        "超过 30 分钟按事假半天"
+      ]
+    },
+    {
+      "index": 3,
+      "question": "外勤与出差考勤补充规定适用于哪些员工？",
+      "should_refuse": false,
+      "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第一章 第一条",
+      "expected_points": [
+        "因公外出（外勤）或出差期间",
+        "无法按常规方式打卡的员工"
+      ]
+    },
+    {
+      "index": 4,
+      "question": "能不能因为没有门禁刷卡记录就认定外勤员工未出勤？",
+      "should_refuse": false,
+      "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第二章 第三条",
+      "expected_points": [
+        "不能",
+        "门禁仅覆盖公司自有场所",
+        "不得以无门禁记录否定出勤"
+      ]
+    },
+    {
+      "index": 5,
+      "question": "每月加班时间不得超过多少小时？",
+      "should_refuse": false,
+      "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第二章 第四条",
+      "expected_points": [
+        "每月不得超过 36 小时",
+        "依据劳动法第四十一条"
+      ]
+    },
+    {
+      "index": 6,
+      "question": "员工自愿延长在岗时间、未经审批的，算加班吗？",
+      "should_refuse": false,
+      "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第一章 第二条",
+      "expected_points": [
+        "不认定为加班",
+        "须经审批"
+      ]
+    },
+    {
+      "index": 7,
+      "question": "销售经理适用哪种工时制？",
+      "should_refuse": false,
+      "source_doc": "《工时制实施细则》HR-WTS-2026-002 第三章 岗位适用表",
+      "expected_points": [
+        "不定时工作制",
+        "已履行审批"
+      ]
+    },
+    {
+      "index": 8,
+      "question": "标准工时制岗位的核心在岗时段是什么时候？",
+      "should_refuse": false,
+      "source_doc": "《工时制实施细则》HR-WTS-2026-002 第四章 第十二条",
+      "expected_points": [
+        "核心在岗时段 10:00 至 16:00"
+      ]
+    },
+    {
+      "index": 9,
+      "question": "张伟在哪个部门、担任什么岗位？",
+      "should_refuse": false,
+      "source_doc": "employees.csv（首行 E001,张伟,售后部,售后工程师,综合计算工时制）",
+      "expected_points": [
+        "售后部",
+        "售后工程师"
+      ]
+    },
+    {
+      "index": 10,
+      "question": "张伟适用哪种工时制？",
+      "should_refuse": false,
+      "source_doc": "employees.csv（首行 E001,张伟,售后部,售后工程师,综合计算工时制）",
+      "expected_points": [
+        "综合计算工时制"
+      ]
+    },
+    {
+      "index": 11,
+      "question": "E004 在 2026 年 10 月 25 日请的是什么假，共几天？",
+      "should_refuse": false,
+      "source_doc": "leave_requests.csv（首行 LV0001,E004,病假,2026-10-25,2026-10-27,3）",
+      "expected_points": [
+        "病假",
+        "3 天"
+      ]
+    },
+    {
+      "index": 12,
+      "question": "工单 SO-2026-0912 的处理地点在哪里？",
+      "should_refuse": false,
+      "source_doc": "work_orders.csv（首行 SO-2026-0912,E001,武汉光谷希尔顿酒店,武汉光谷）",
+      "expected_points": [
+        "武汉光谷希尔顿酒店",
+        "武汉光谷"
+      ]
+    },
+    {
+      "index": 13,
+      "question": "比亚迪 2025 年新能源汽车销量是多少？",
+      "should_refuse": true,
+      "source_doc": "（库外）刻意选语料中完全不存在的主体，验证拒答出口不被误伤",
+      "expected_points": [
+        "应拒答"
+      ]
+    },
+    {
+      "index": 14,
+      "question": "《红楼梦》中贾宝玉的妻子是谁？",
+      "should_refuse": true,
+      "source_doc": "（库外）刻意选语料中完全不存在的主体，验证拒答出口不被误伤",
+      "expected_points": [
+        "应拒答"
+      ]
+    },
+    {
+      "index": 15,
+      "question": "员工每日需要打卡几次？",
+      "should_refuse": false,
+      "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第二章 第三条",
+      "expected_points": [
+        "须按排班时段打卡",
+        "每日上下班各打卡一次"
+      ]
+    },
+    {
+      "index": 16,
+      "question": "什么情况会被认定为缺卡？",
+      "should_refuse": false,
+      "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第二章 第五条",
+      "expected_points": [
+        "当日打卡记录不完整记为一次缺卡",
+        "仅有上班打卡、仅有下班打卡或当日无任何打卡记录均属缺卡"
+      ]
+    },
+    {
+      "index": 17,
+      "question": "员工缺卡后应在多长时间内提交补卡申请？",
+      "should_refuse": false,
+      "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第三章 第七条",
+      "expected_points": [
+        "缺卡发生之日起 3 个工作日内提交",
+        "说明理由并附证明材料"
+      ]
+    },
+    {
+      "index": 18,
+      "question": "员工请假需要什么手续？病假有什么额外要求？",
+      "should_refuse": false,
+      "source_doc": "《员工考勤管理制度（2026 版）》HR-ATD-2026-001 第四章 第十一条",
+      "expected_points": [
+        "请假须事前提交申请并经审批",
+        "病假须提供医疗机构证明"
+      ]
+    },
+    {
+      "index": 19,
+      "question": "标准工时制下每日和每周的工作时间是多少？",
+      "should_refuse": false,
+      "source_doc": "《工时制实施细则》HR-WTS-2026-002 第二章 第一节 第三条",
+      "expected_points": [
+        "每日工作 8 小时",
+        "每周工作 40 小时"
+      ]
+    },
+    {
+      "index": 20,
+      "question": "月标准工时是多少小时？",
+      "should_refuse": false,
+      "source_doc": "《工时制实施细则》HR-WTS-2026-002 第二章 第二节 第六条",
+      "expected_points": [
+        "月标准工时 174 小时",
+        "月计薪天数 21.75 天 × 8 小时"
+      ]
+    },
+    {
+      "index": 21,
+      "question": "综合计算工时制下，某个月的一个休息日出勤，是否构成加班？",
+      "should_refuse": false,
+      "source_doc": "《工时制实施细则》HR-WTS-2026-002 第二章 第二节 第七条",
+      "expected_points": [
+        "仅在月累计工时超过月标准工时后超出部分才计为加班",
+        "某一休息日出勤不当然构成加班，须结合当月累计工时判定"
+      ]
+    },
+    {
+      "index": 22,
+      "question": "不定时工作制在实施前需要履行什么程序？",
+      "should_refuse": false,
+      "source_doc": "《工时制实施细则》HR-WTS-2026-002 第二章 第三节 第十条",
+      "expected_points": [
+        "须经劳动行政部门审批后方可实施"
+      ]
+    },
+    {
+      "index": 23,
+      "question": "调休应在什么期限内完成？逾期如何处理？",
+      "should_refuse": false,
+      "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第三章 第九条",
+      "expected_points": [
+        "调休应在加班所在季度内完成",
+        "逾期未调休的按小时工资 200% 计付"
+      ]
+    },
+    {
+      "index": 24,
+      "question": "休息日加班后，公司优先怎么处理？已调休的还要付加班工资吗？",
+      "should_refuse": false,
+      "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第三章 第八条",
+      "expected_points": [
+        "休息日加班优先安排调休",
+        "已安排调休的不再计付 200% 加班工资"
+      ]
+    },
+    {
+      "index": 25,
+      "question": "法定休假日安排工作的，加班工资按什么标准计付？",
+      "should_refuse": false,
+      "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第三章 第七条",
+      "expected_points": [
+        "法定休假日安排工作不低于小时工资的 300%"
+      ]
+    },
+    {
+      "index": 26,
+      "question": "合规预警等级为『高』时，部门负责人须在多长时间内处置？",
+      "should_refuse": false,
+      "source_doc": "《加班与调休管理办法》HR-OTC-2026-003 第四章 第十二条",
+      "expected_points": [
+        "预警等级为高时部门负责人须在 5 个工作日内提交处置方案"
+      ]
+    },
+    {
+      "index": 27,
+      "question": "员工在外勤或出差期间产生缺卡的，怎么处理？",
+      "should_refuse": false,
+      "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第三章 第六条",
+      "expected_points": [
+        "由系统按第四条所列证据自动取证",
+        "系统自动完成补卡"
+      ]
+    },
+    {
+      "index": 28,
+      "question": "外勤缺卡的自动补卡，是否占用每月 3 次的补卡次数？",
+      "should_refuse": false,
+      "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第三章 第七条",
+      "expected_points": [
+        "不占用月度补卡次数",
+        "员工无需手工提交补卡申请"
+      ]
+    },
+    {
+      "index": 29,
+      "question": "出差期间遇到休息日且员工实际提供了劳动，如何认定？",
+      "should_refuse": false,
+      "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第四章 第九条",
+      "expected_points": [
+        "认定为出勤",
+        "计入工时累计"
+      ]
+    },
+    {
+      "index": 30,
+      "question": "认定外勤出勤的证据有哪几类，优先级如何排序？",
+      "should_refuse": false,
+      "source_doc": "《外勤与出差考勤补充规定》HR-FWA-2026-004 第二章 第四条",
+      "expected_points": [
+        "出差审批单",
+        "工单或任务闭环记录",
+        "移动应用定位轨迹",
+        "门禁刷卡记录"
+      ]
+    },
+    {
+      "index": 31,
+      "question": "李静在哪个部门、担任什么岗位？",
+      "should_refuse": false,
+      "source_doc": "employees.csv（E002,李静,生产部,产线操作工）",
+      "expected_points": [
+        "生产部",
+        "产线操作工"
+      ]
+    },
+    {
+      "index": 32,
+      "question": "李静适用哪种工时制？",
+      "should_refuse": false,
+      "source_doc": "employees.csv 同行的 work_time_system 字段",
+      "expected_points": [
+        "综合计算工时制"
+      ]
+    },
+    {
+      "index": 33,
+      "question": "LV0002 是谁的请假申请，请的是什么假，共几天？",
+      "should_refuse": false,
+      "source_doc": "leave_requests.csv（LV0002,E027,年休假,2026-10-16,2026-10-18,3）",
+      "expected_points": [
+        "E027",
+        "年休假",
+        "3 天"
+      ]
+    },
+    {
+      "index": 34,
+      "question": "E004 在 2026 年 10 月 11 日加班了多少小时，属于哪种加班类型？",
+      "should_refuse": false,
+      "source_doc": "overtime_records.csv（OT0001,E004,2026-10-11,6.0,rest_day）",
+      "expected_points": [
+        "6.0 小时",
+        "休息日加班"
+      ]
+    },
+    {
+      "index": 35,
+      "question": "出差单 BT-2026-0017 的目的地和起止日期是什么？",
+      "should_refuse": false,
+      "source_doc": "business_trips.csv（BT-2026-0017,E001,武汉,武汉光谷,2026-10-16,2026-10-18）",
+      "expected_points": [
+        "武汉光谷（武汉）",
+        "2026-10-16 至 2026-10-18"
+      ]
+    },
+    {
+      "index": 36,
+      "question": "工单 SO-2026-0913 报修的是什么故障？",
+      "should_refuse": false,
+      "source_doc": "work_orders.csv（SO-2026-0913 的 fault_type 字段）",
+      "expected_points": [
+        "同批次设备复检"
+      ]
+    },
+    {
+      "index": 37,
+      "question": "E001 在 2026 年 10 月 1 日的门禁进出时间是几点，走的是哪个门？",
+      "should_refuse": false,
+      "source_doc": "access_records.csv（AC000001,E001,2026-10-01,08:49,17:40,厂区东门）",
+      "expected_points": [
+        "进厂 08:49",
+        "出厂 17:40",
+        "厂区东门"
+      ]
+    },
+    {
+      "index": 38,
+      "question": "E001 在 2026 年 10 月 1 日的排班时段是什么，计划工时多少？",
+      "should_refuse": false,
+      "source_doc": "shifts.csv（S00001,E001,2026-10-01,正常班,09:00,18:00,8.0）",
+      "expected_points": [
+        "09:00 至 18:00",
+        "计划工时 8.0 小时"
+      ]
+    },
+    {
+      "index": 39,
+      "question": "本公司在科创板上市的保荐机构是哪家券商？",
+      "should_refuse": true,
+      "source_doc": "库外（语料完全无上市 / 保荐机构信息）",
+      "expected_points": [
+        "应拒答"
+      ]
+    },
+    {
+      "index": 40,
+      "question": "2026 年世界杯亚洲区预选赛的出线规则是什么？",
+      "should_refuse": true,
+      "source_doc": "库外（语料完全无体育赛事信息）",
+      "expected_points": [
+        "应拒答"
+      ]
+    }
+  ]
+}

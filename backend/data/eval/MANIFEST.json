@@ -1,5 +1,5 @@
 {
-  "manifest_version": "v1-2026-10-03",
+  "manifest_version": "v2-2026-10-05",
   "batch": "changes/P0-m6-eval（F4 · M6 出口判据评测体系）",
   "annotator": "架构师（本批 E2）",
   "annotated_at": "2026-10-03",
@@ -21,6 +21,21 @@
       "path": "controlled-qset-v3.json",
       "kg_version": "attendance-demo-v1",
       "items": 14,
+      "status": "historical",
+      "note": "**归档，自 v4 起停止加载**。C1 的历史数字 0.0909（graph 12/14 vs baseline 11/14）**只在本版本上成立**——分母变了，不得与 v4 的结果直接比较。保留本条目是为了让 dataset_versions() 仍查得到它的版本号 ⇒ 历史报告的归因不失真。",
+      "source": "backend/scripts/eval_controlled_qset.py::QUESTIONS（逐字投影，由 test_eval_qset_parity 钉死）"
+    },
+    {
+      "id": "controlled-qset-v4",
+      "version": "v4-2026-10-05",
+      "path": "controlled-qset-v4.json",
+      "kg_version": "attendance-demo-v1",
+      "items": 40,
+      "in_corpus": 36,
+      "out_of_corpus": 4,
+      "supersedes": "controlled-qset-v3",
+      "sensitivity_per_item_pp": 2.5,
+      "note": "**当前生效版本**。v3 的 14 题**一字未改**且保留原顺序，其后追加 26 道新题（24 制度条文 + 12 CSV 事实 + 4 库外拒答）。单题翻转灵敏度 1/40=**2.5pp**（v3 为 1/14=7.14pp）⇒ 这是阶段⑤阈值校准的前置，理由见 changes/P6-H/proposal.md §1。",
       "source": "backend/scripts/eval_controlled_qset.py::QUESTIONS（逐字投影，由 test_eval_qset_parity 钉死）"
     },
     {

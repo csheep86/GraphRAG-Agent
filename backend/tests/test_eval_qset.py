@@ -30,13 +30,38 @@ def _load(name: str) -> Any:
 QSET = _load("eval_controlled_qset")
 
 
-def test_questions_structure_12_in_corpus_plus_2_out() -> None:
-    """12 库内 + 2 库外：与 v1 同规模，换版前后结论才可比。"""
+def _manifest_current_qset() -> dict:
+    """从 **MANIFEST** 读当前题集的题数与配额（**题数的单一真源，不写死**）。
+
+    P6-H 把 14 → 40 题时，仓库里有**三处**写死的题数副本（本文件、parity 测试、
+    test_evaluation_dataset），前两处都改了、第三处忘了 ⇒ 测试红。
+    那是哨兵该响的时候，但更该做的是**让它不再需要人改**：现在全部改为读 MANIFEST。
+    """
+    import json
+
+    from app.evaluation.dataset import DATA_DIR
+
+    manifest = json.loads((DATA_DIR / "MANIFEST.json").read_text(encoding="utf-8"))
+    for entry in manifest["datasets"]:
+        if entry["id"] == "controlled-qset-v4":
+            return entry
+    raise AssertionError("MANIFEST 里找不到 controlled-qset-v4 条目")
+
+
+def test_questions_structure_matches_manifest_quota() -> None:
+    """题库配额必须与 MANIFEST 登记一致（36 库内 + 4 库外）。
+
+    为什么库外题**必须存在**：库外题是拒答出口的反面证据 —— 没有它，
+    「模型全答 refusenone ⇒ 覆盖率 100%」这种刷绿也能过（F3 反面用例）。
+    """
     refuses = [flag for _, flag in QSET.QUESTIONS]
-    assert len(QSET.QUESTIONS) == 14
-    assert refuses.count(False) == 12
-    assert refuses.count(True) == 2
-    # 库外两问必须排在末尾（读代码时的口径约定）
+    entry = _manifest_current_qset()
+    assert len(QSET.QUESTIONS) == int(entry["items"])
+    assert refuses.count(False) == int(entry["in_corpus"])
+    assert refuses.count(True) == int(entry["out_of_corpus"])
+    # 库外问必须排在**末尾**（读代码时的口径约定）。
+    # 注意这只约束「结尾」：v3 遗留的 Q13/Q14 位于序列中间——换版不许改动旧题顺序，
+    # 因此库外问在 v4 里并非全部连续聚集于末尾，此处沿用原有的「末尾两问」约定。
     assert refuses[-2:] == [True, True]
 
 
@@ -54,6 +79,10 @@ def test_qset_version_and_frozen_corpus_registered() -> None:
     ``attendance-demo-v1``（换版依据见 ``eval_controlled_qset.py`` docstring）。
     注意：active 版本名是**语义名**（``attendance-demo-v1``）而非 ``v-`` 前缀，
     故这里钉「== 冻结值」，**不**再钉 ``v-`` 前缀——钉前缀会把合法换版误判为破坏。
+
+    **v4（2026-10-05，P6-H）**：14 → 40 题（旧 14 题一字未改，追加 26 道）。
+    换版原因是**灵敏度**：14 题 ⇒ 单题翻转 ±7.14pp，而 C1 离 10% 阈值只差 0.9pp
+    ⇒ 那种分母上校准阈值没有意义。40 题 ⇒ ±2.5pp。
     """
-    assert QSET.QSET_VERSION == "v3-2026-09-30"
+    assert QSET.QSET_VERSION == "v4-2026-10-05"
     assert QSET.QSET_KG_VERSION == "attendance-demo-v1"

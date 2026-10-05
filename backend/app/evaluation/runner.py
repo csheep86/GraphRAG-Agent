@@ -308,7 +308,7 @@ def _qa_unavailable(
         criterion=criterion,
         status=CriterionStatus.UNKNOWN,
         value=None,
-        provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v3"),
+        provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v4"),
         blocked_by=(
             f"链路不可用：{len(snapshot.failures)}/{snapshot.asked} 题请求失败"
             f"（首错：{first}）——常见原因：① 后端未起或 EVAL_BASE_URL 不对；"
@@ -327,7 +327,7 @@ def eval_citation_coverage(ctx: dict[str, Any]) -> CriterionResult:
             criterion=C_CITATION,
             status=CriterionStatus.UNKNOWN,
             value=None,
-            provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v3"),
+            provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v4"),
             blocked_by="需 live 模式（POST /api/v1/agent/query）；offline 不产出判据数字",
             verdict=Verdict.INDETERMINATE,
         )
@@ -361,7 +361,7 @@ def eval_citation_coverage(ctx: dict[str, Any]) -> CriterionResult:
         value=metric.value,
         provenance=_provenance(
             runner_ctx,
-            dataset_version="controlled-qset-v3",
+            dataset_version="controlled-qset-v4",
             kg_version=", ".join(sorted(kg_versions)),
             corpus_layer=_detect_layer(kg_versions, runner_ctx.org_id),
             notes=reason,
@@ -412,7 +412,7 @@ def eval_refusal_false_refusal(ctx: dict[str, Any]) -> CriterionResult:
             criterion=C_REFUSAL,
             status=CriterionStatus.UNKNOWN,
             value=None,
-            provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v3"),
+            provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v4"),
             blocked_by="需 live 模式（POST /api/v1/agent/query）；offline 不产出判据数字",
             verdict=Verdict.INDETERMINATE,
         )
@@ -435,7 +435,7 @@ def eval_refusal_false_refusal(ctx: dict[str, Any]) -> CriterionResult:
         unit="条（误伤数）",
         provenance=_provenance(
             runner_ctx,
-            dataset_version="controlled-qset-v3",
+            dataset_version="controlled-qset-v4",
             kg_version=", ".join(snapshot.kg_versions),
             corpus_layer=_detect_layer(snapshot.kg_versions, runner_ctx.org_id),
             notes="; ".join(
@@ -922,7 +922,7 @@ def _c1_unknown(
         criterion=C_GAIN,
         status=CriterionStatus.UNKNOWN,
         value=None,
-        provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v3"),
+        provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v4"),
         blocked_by=blocked_by,
         verdict=Verdict.INDETERMINATE,
         threshold=C1_GAIN_THRESHOLD,
@@ -1108,7 +1108,7 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
         value=metric.value,
         provenance=_provenance(
             runner_ctx,
-            dataset_version="controlled-qset-v3",
+            dataset_version="controlled-qset-v4",
             kg_version=", ".join(snapshot.kg_versions),
             #: **随实测反推**（P6-D）：图里有 M2 抽取产物 ⇒ L2，只有直灌数据 ⇒ L1，
             #: 图不可用 ⇒ None（宁可空着，不许填一个漂亮的层号）。

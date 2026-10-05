@@ -42,6 +42,7 @@ def test_manifest_lists_all_datasets() -> None:
     ids = {entry["id"] for entry in manifest["datasets"]}
     assert {
         "controlled-qset-v3",
+        "controlled-qset-v4",
         "gold-multihop-v1",
         "gold-affiliation-v1",
         "fixture-baseline-v1",
@@ -52,16 +53,44 @@ def test_manifest_lists_all_datasets() -> None:
         )
 
 
+def _current_qset_entry() -> dict:
+    """当前生效题集在 MANIFEST 里的登记条目（**题数的单一真源**，不写死）。"""
+    manifest = load_manifest()
+    for entry in manifest["datasets"]:
+        if entry["id"] == "controlled-qset-v4":
+            return entry
+    raise AssertionError("MANIFEST 里找不到 controlled-qset-v4 条目")
+
+
 def test_question_set_shape_and_no_duplicate_index() -> None:
+    entry = _current_qset_entry()
+    expected_total = int(entry["items"])
+    # 库外题刻意保留，用于验证拒答出口不被误伤
+    expected_refuse = int(entry["out_of_corpus"])
+
     items = load_question_set()
-    assert len(items) == 14
-    assert len({item.index for item in items}) == 14
-    # 12 库内 + 2 库外（库外题刻意保留，用于验证拒答出口不被误伤）
-    assert sum(1 for item in items if item.should_refuse) == 2
+    assert len(items) == expected_total
+    assert len({item.index for item in items}) == expected_total
+    assert sum(1 for item in items if item.should_refuse) == expected_refuse
     for item in items:
         assert item.question
         assert item.source_doc, f"Q{item.index} 缺出处（出处缺失 ⇒ 判分无法复核）"
         assert item.expected_points, f"Q{item.index} 缺期望要点（判分无据）"
+
+
+def test_qset_sensitivity_stays_within_budget() -> None:
+    """**灵敏度预算**：单题翻转 = 1/题数，必须 ≤ 2.5pp。
+
+    这条的存在理由（P6-H）：14 题时单题就是 ±7.14pp，而 C1 离 10% 阈值只差 0.9pp
+    ⇒ 结论比噪声还小，那种分母上校准阈值毫无意义。故把 40 题的下限钉成机器判据：
+    以后若有人为了省事裁题，这条会红。
+    """
+    items = load_question_set()
+    sensitivity_pp = 100.0 / len(items)
+    assert sensitivity_pp <= 2.5, (
+        f"题数 {len(items)} ⇒ 单题翻转 {sensitivity_pp:.2f}pp，超出 2.5pp 预算；"
+        "扩容是为了阶段⑤阈值校准有意义，不得随意裁题"
+    )
 
 
 def test_multihop_all_items_are_really_multihop() -> None:

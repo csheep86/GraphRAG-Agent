@@ -22,7 +22,7 @@ from app.evaluation.metrics import Finding
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "eval"
 
 MANIFEST_FILE = "MANIFEST.json"
-QSET_FILE = "controlled-qset-v3.json"
+QSET_FILE = "controlled-qset-v4.json"
 MULTIHOP_FILE = "gold-multihop-v1.json"
 AFFILIATION_FILE = "gold-affiliation-v1.json"
 #: **A8（2026-10-04）**：gold 有了**第二版**（v2 = 扩标到 200/500/100/20）。
