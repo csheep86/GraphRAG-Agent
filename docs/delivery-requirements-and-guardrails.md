@@ -167,8 +167,8 @@ cd backend && uv run python scripts/check_startup_readiness.py
 |---|---|---|---|---|
 | **G-8** | **CI 起 PostgreSQL，pytest 跑在 PG 上** | DR-B1 / DR-B2 | CI 新增 `services.postgres`（固定 tag）；`DATABASE_URL` 指向 PG；**去掉 SQLite 作为测试库**；并核对 `server_version` 为 **16.x** | ✅ **已转正（2026-10-01，P1-C）**：`ci.yml` 的 backend job 起 `postgres:16-alpine`（job 级 `DATABASE_URL` 指向 `graphrag_test`），`tests/conftest.py` 不再用 SQLite 临时文件，`test_g8_test_database_is_postgres` 已摘 xfail。全量 **707 passed / 3 skipped / 8 xfailed**（原 SQLite 基线 705 / 3 / 10，差值=本条与 G-9 转正）。⚠️ **追加两条判据**：① 真连一次取 `SHOW server_version`，首段须为 `16`——只判 URL 前缀的话 CI 被换成 15 / 17 照样绿；② `tests/test_migrations_baseline.py` 由临时 SQLite 文件改为 PG 临时库（迁移等价性自此**在 PG 上成立**） |
 | **G-9** | **T1 跨 org 越权** | DR-B6 / **DR-B11** | A org 查 B org 的 `documents` / `audit_log` / `qa_logs` / `storage_key` → 空或 403；**图谱侧**：跨 org 子图 / Cypher 直读 ⇒ **403 `KG_TENANT_LEAK`** | ✅ **PG 侧（`audit_log`）已转正（2026-10-01，P1-C）**：测试库切到 PG 后本例由 `XPASS(strict)` 转常驻门禁（留在 xfail 里 CI 会一直红）。⚠️ **不许外推**：这**只**证明「**应用层 `org_id` 过滤**在 PG 上拦住了跨 org 读」——即 ADR-0003 §3.7 的**常设防线**；**不代表** RLS 已落地（DR-B4 仍归 P3）。仍待 P3 补齐：`documents` / `qa_logs` / `storage_key` 与**图谱侧**。CI 必过，**禁止**标 `local_only`。骨架内置的 `_require_postgres()` 保留——非 PG 直接 fail，**避免"在 SQLite 上跑通的隔离"被误当成证据**。⚠️ **图谱侧仍为集成测试**：CI 无 Neo4j 服务 ⇒ 图谱侧用例须起 Neo4j 容器才能真实断言；**在 CI 起 Neo4j 之前，该部分不得声称"已由 CI 验证"**，须独立环境留证。**✅ 该前提已被 P3-B 解除（2026-10-04）**：`ci.yml` 的 backend job 已起 `neo4j:5.26-community`（与 `deploy/docker-compose.yml` 同 tag），新增 `tests/test_guardrails_graph.py`（**9 条**，模块归属 G-9）⇒ 图谱侧跨 org 由 **CI 真验**，四个对象（`documents` / `audit_log` / `qa_logs` / `storage_key`）**全部齐全**。**它不覆盖什么**（必读）：Neo4j 社区版**没有 RLS**，裸 Cypher 直读**确实能**跨 org 读到（`test_g9_5_…` 把这条**断言成事实**）⇒ 隔离完全依赖应用层过滤 + fail-closed 校验两道**软件**防线，**不得**因 G-9 绿而宣称"图谱侧有强隔离"。CI 未起 Neo4j / tag 漂移 / 口令两处不一致 ⇒ `test_g9_0_…` 判红（三种失败都表现为"用例静默 skip"，极具迷惑性） |
-| **G-10** | **T2 并发串租户** | DR-B7 / DR-B8 | 多 org 并发请求，每个请求只看到自己 org 的数据；**须覆盖连接池复用路径** | 🟡 **骨架已就位**（2026-10-01，`test_g10_t2_concurrent_requests_do_not_cross_tenants`，xfail 挂起）：**24 请求 / 8 并发**交替租户，逼连接池**真复用**。CI 必过，**禁止**标 `local_only`。**最易产出静默跨租户泄露的组合**——`SET LOCAL` 误写成会话级 `SET` **只有并发才测得出来** |
-| **G-11** | **接缝签名快照** | DR-C2 / PRD H16 / **§7 版本语义** | 提取八个接缝公开接口签名（`module.Class.method` → 参数名 / 默认值 / 注解）存 JSON；**打 PATCH / MINOR ⇒ 快照逐字相同**；仅 bump **MAJOR** 允许改且须注明 `breaking`。**冻结集排除尚未实现的接缝**（如接缝 9 `LicenseProvider` 当前无实现）——实现后并入，避免给一个尚不存在的接口冻结签名 | ✅ **已建**（2026-10-01）：`backend/scripts/extract_seam_signatures.py`（`--check` / `--update`）+ 快照 `backend/tests/snapshots/seam_signatures.json` + `tests/test_seam_signature_snapshot.py`。冻结集 = **三个已存在**的接口（`AuthProvider` / `EventSink` / `ExportSink`）；接缝 2 `IngestionSource`（0 实现）与接缝 9 `LicenseProvider`（未落地）**排除**，实现后并入（并入本身即 MAJOR 级变更）。兑现"**V2.0 才需重做插件**"的商业承诺 |
+| **G-10** | **T2 并发串租户** | DR-B7 / DR-B8 | 多 org 并发请求，每个请求只看到自己 org 的数据；**须覆盖连接池复用路径** | ✅ **已生效（P3-A 转正，2026-10-04；2026-10-05 P7-A 全量对账实跑复核通过）**：`test_g10_t2_concurrent_requests_do_not_cross_tenants`（`tests/test_guardrails.py:328`）**已无 xfail**。**24 请求 / 8 并发**交替租户，逼连接池**真复用**。判据为「**必须**看到本 org 的标记行 + **绝不能**看到对方的标记行」（2026-10-04 修正：原断言「B 的 `items == []`」在**正确实现下恒不成立**——那 24 个请求本身就是 B 的）。CI 必过、**未标** `local_only`、用例首行 `_require_postgres()`。📌 **2026-10-05 订正**：本行此前仍写「🟡 骨架已就位 / xfail 挂起」，与代码现状矛盾（§3.1 的 B7 行早已记为 ✅，明细行漏同步） |
+| **G-11** | **接缝签名快照** | DR-C2 / PRD H16 / **§7 版本语义** | 提取八个接缝公开接口签名（`module.Class.method` → 参数名 / 默认值 / 注解）存 JSON；**打 PATCH / MINOR ⇒ 快照逐字相同**；仅 bump **MAJOR** 允许改且须注明 `breaking`。**冻结集排除尚未实现的接缝**（如接缝 9 `LicenseProvider` 当前无实现）——实现后并入，避免给一个尚不存在的接口冻结签名 | ✅ **已建**（2026-10-01）：`backend/scripts/extract_seam_signatures.py`（`--check` / `--update`）+ 快照 `backend/tests/snapshots/seam_signatures.json` + `tests/test_seam_signature_snapshot.py`。冻结集 = **三个已存在**的接口（`AuthProvider` / `EventSink` / `ExportSink`）；接缝 2 `IngestionSource`（0 实现）与接缝 9 `LicenseProvider`（未落地）**排除**，实现后并入（并入本身即 MAJOR 级变更）。兑现"**V2.0 才需重做插件**"的商业承诺。📌 **2026-10-05 P7-A 补注**：主用例 `test_seam_signatures_match_frozen_snapshot` 带的是**条件 xfail** `xfail(not SNAPSHOT.exists(), strict=False)`（`:26`）——快照一旦丢失，它会**静默转 XFAIL（绿）**而非判红，是典型的 R-9 形态；但同文件的 `test_frozen_snapshot_is_committed`（`:45`）断言了快照存在 ⇒ **快照丢了第二条必红**，整条护栏不会静默失效，故判定为**有兜底、不构成缺口**。⚠️ 小登记（未修）：该用例名写 `is_committed`，实际只断言 `exists()`，**未校验是否真的 git 入库** |
 | **G-12** | **variant 矩阵构建** | DR-A1 / DR-A3 | 一次基座改动 ⇒ CI 遍历**全部** `deploy/variants/*.yaml` 构建成功 | 🟡 **骨架已就位**（2026-10-01，`tests/test_guardrails_delivery.py::test_g12_variant_matrix_builds`，xfail 挂起）：`deploy/variants/` 当前 **1 个**（`baseline`，2026-10-04 P2.5 落；启用条件仍写死 **≥2** ⇒ 本条仍挂起）。骨架阶段只判「yaml 可解析 + 顶层是映射」；**真实镜像构建待 deploy 侧构建流程落地后升级**——在那之前**不得**宣称已验证"构建成功"。**启用条件写死**：variant ≥ 2 即必须转常驻门禁。**🔒 GA 硬门槛（零缺口，2026-10-01）**：不再允许「0 客户 ⇒ 标不适用」，变体来源 = **demo（内部演示）+ default（基线）两个真实部署形态**（**不许**为凑数捏客户、**不许**放宽成 ≥1）；绿灯**只**代表矩阵构建机制可跑，**不代表**多客户交付已验证 |
 | **G-13** | **插件契约片段校验** | DR-A4 | 每个 `contracts/plugins/<id>.yaml` 单独过 `export_openapi.py --check` | ❌ **随 DR-A4 作废（触发式）**——无 B 类插件即无片段可校验 |
 | **G-14** | **基座契约纯净性** | PRD H15 | 断言 `contracts/openapi.yaml` 中**无任何客户专属字段**（不得出现客户名 / 插件 id / 客户定制端点） | ✅ **已生效（2026-10-04，P2.5 转正）**：断言基座契约不含客户标识（黑名单取自 `deploy/variants/*.yaml`）。**历史**：2026-10-01 时黑名单为空 ⇒ 主断言恒绿，故**另立** `test_g14_customer_token_source_exists`（xfail 挂起）专守"来源为空"——防止整条退化成"从没生效过"（G-2 同款教训）。✅ **变体目录已建立（2026-10-04，P2.5 转正）**：`deploy/variants/baseline.yaml` 已落 ⇒ 黑名单非空，`test_g14_customer_token_source_exists` 由 xfail **转正常驻**（先 XPASS 后摘标记）。⚠️ **变体名为 `baseline`，非本节 §300 字面的 `default` / `demo`**——实测契约词频 `default` **10 次** / `demo` **3 次** / `baseline` **0 次**，而 `_customer_tokens()` 取文件名 stem 做**子串**匹配 ⇒ 按字面命名会**结构性假红**；差异登记在 `changes/P2.5/proposal.md` §7，**§300 原文不改**（守 R5）。⚠️ **主断言仍恒绿属预期**——基座契约本就该干净，它只在客户标识泄进契约时才该红。**🔒 GA 硬门槛已达成（恒绿失效解除）** |
@@ -180,10 +180,10 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **G-20** | 🆕 **PG 就位** | **DR-B1** | 断言 `database_url` **默认值**以 `postgresql` 开头，且 `deploy/docker-compose.yml` 含**固定 tag** 的 PG 服务 | ✅ **已生效（P1-B 转正）**：`test_g20_postgres_is_in_place` 由 xfail 转常驻门禁。**实测已达成**：`config.py` 的 `database_url` 默认已是 `postgresql+psycopg://...`；compose 含固定 tag 的 `postgres:16-alpine` 服务 + `pg_data` 卷（📌 **2026-10-04 补记**：本行此前仍写「骨架已就位 / 无 PG 服务」，与代码现状矛盾，已订正；B 组汇总行早已是 ✅，明细行漏同步） |
 | **G-21** | 🆕 **清除 SQLite 兜底** | **DR-B3** | 四判据：`session.py` 无 `check_same_thread` 方言特判 / `database_url` 默认非 sqlite / `.env.example` 非 sqlite / `app/db/__init__.py` 无"兜底"口径 | ✅ **已生效（P1-B 转正）**：`test_g21_no_sqlite_fallback_in_code` 由 xfail 转常驻门禁，原「实测命中 4 处」的 SQLite 残留**已清理完毕**。📌 **2026-10-04 补记**：本行此前仍写「骨架已就位」，与代码现状矛盾，已订正。另配 `test_g21_production_sqlite_guard_still_present` **反向守卫（始终通过）**——清理时极易把 `_guard_production_sqlite` 当成"SQLite 残留"一并误删，那条是**最后的底线** |
 | **G-22** | 🆕 **插件规范校验** | **DR-A2** | `plugins/<id>/plugin.yaml` 必含最小字段集 `id` / `version` / `entry_point` / `seam` / `base_version` | 🟡 **部分就位**（2026-10-01）：主断言当前**恒绿**（`plugins/` 不存在）⇒ 按 **R-9** 另立 `test_g22_plugin_source_exists` 守卫并挂起。`seam` 是否属八接缝由 **R-1 / `check_seams.py`** 把关，此处不重复实现。**✅ 已生效（2026-10-04，P2.5 转正）**：`plugins/json-csv-export/plugin.yaml` 落地（接缝 6 `JsonCsvExportSink`——**已在登记集合内的真实实现**，非新造），`test_g22_plugin_source_exists` 由 xfail **转正常驻**（先 XPASS 后摘标记）；**另加** `test_g22_plugin_entry_points_are_importable` 断言 `entry_point` **真的可导入**——只验字段非空的话，写一句假 `entry_point` 照样全绿，那是标准的空壳假绿。⚠️ `seam` 须写**字符串**（判据要求 `isinstance(str)`；ADR-0007 §3.6 示例的裸数字会被判为缺字段）。**🔒 GA 硬门槛已达成：`plugins/` 有真插件，不是为转护栏造的空壳** |
-| **G-23** | 🆕 **License 子系统专项** | **DR-C1** | 静态侧：六项资产齐备（`licenses` 表 / `LicenseProvider` / **纯 ASGI** `LicenseMiddleware` / 6 个 `LICENSE_*` 契约码 / `GET /license/status` / `license-cli fingerprint`）；行为侧：移除 license ⇒ 受保护端点 **403 `LICENSE_MISSING`** 且**拒绝落审计** | 🟡 **骨架已就位**（`test_g23_license_assets_exist` + `test_g23_missing_license_blocks_requests`，均 xfail 挂起）。**实测**：ADR-0006 零代码。"拒绝落审计"是硬要求——否则客户到期打不开系统时，我们拿不出证据区分"License 到期"与"系统故障" |
+| **G-23** | 🆕 **License 子系统专项** | **DR-C1** | 静态侧：六项资产齐备（`licenses` 表 / `LicenseProvider` / **纯 ASGI** `LicenseMiddleware` / 6 个 `LICENSE_*` 契约码 / `GET /license/status` / `license-cli fingerprint`）；行为侧：移除 license ⇒ 受保护端点 **403 `LICENSE_MISSING`** 且**拒绝落审计** | 🟡 **骨架已就位**（`test_g23_license_assets_exist` + `test_g23_missing_license_blocks_requests`，均 xfail 挂起）。**实测**：ADR-0006 零代码。"拒绝落审计"是硬要求——否则客户到期打不开系统时，我们拿不出证据区分"License 到期"与"系统故障"。📌 **2026-10-05 P7-A 补注（R-9 恒绿失效）**：实测 `backend/app/services/license/` **不存在** ⇒ 校验对象尚未诞生，**此刻摘 xfail 也只是空跑、转正无意义**；正确顺序是**先建真子系统，再摘标记**。故 DR-C1 **不得宣称任何进度**，直至六项资产与行为侧 403 落地 |
 | **G-24** | 🆕 **RBAC 三粒度矩阵** | **DR-B9** | **角色 × 资源 × 操作**矩阵存在，且路由层有**强制校验入口**（依赖 / 中间件） | ✅ **已生效（2026-10-03，P2-B 转正）**：`test_g24_rbac_three_granularity_matrix` 由 xfail 转常驻门禁，**判据同时补强**（具体落点，不是"源码里出现过字样"）。另加两条：`test_g24_roles_rls_exemption_is_declared_and_bounded`（spec §4.2 的 RLS 豁免三条机械断言）、`test_g24_role_name_set_is_frozen`（角色集合封闭四档）。行为侧由 `tests/test_rbac.py`（14 条）按**路由对象**逐条核对「强制校验入口真的挂在这些端点上」，并断言拒绝 ⇒ 403 `FORBIDDEN` + `permission.denied` 留痕。**判据要点未变**：只建角色表不算 RBAC——**端点不强制校验**的话，权限只是数据库里的一列装饰。⚠️ **本条不断言具体权限值**（赋权属实现决策） |
 | **G-26** | 🆕 **RLS 策略机械断言**（2026-10-04，P3-A 新增登记） | **DR-B4** / **DR-B8** | ① 每张租户表 `relrowsecurity` **且** `relforcerowsecurity` 为真；② 策略谓词**不得**为 `USING (true)`；③ 行为：受限角色**不设 org ⇒ 0 行**，设了 org ⇒ 只看到本 org；④ 应用账号 `rolbypassrls=false`（且非超级用户、非表 owner）；⑤ 豁免集合**恰好** = `RLS_EXEMPT_TABLES`（只有 `roles`）；⑥ 受控绕过**足够窄**（只有登记的受控函数 / 只认表白名单 / 只有登记的调用点）；⑦ **部署形态**：compose 的 backend 连库账号**必须**是受限角色 `app_rls`（**不得**是 PG 超级用户），且必须存在一次性 init 服务并以 `service_completed_successfully` 依赖它，backend 镜像必须 `COPY backend/scripts`；⑧ **「跑过一次 `SET LOCAL` 之后」未绑 org 的查询必须是 0 行而不是报错**（2026-10-04 P3-C 新增，对应谓词的 `nullif(..., '')`）；⑨ **迁移必须走 owner 串**（2026-10-04 P3-D 新增）：`migrations/env.py` 必须优先取 `database_url_owner`，compose 的 backend 必须配 `DATABASE_URL_OWNER`——受限角色只有 DML，用它跑 `alembic upgrade head` 会 `permission denied for schema public`（**症状是"部署之后升不了级"，平时毫无症状**；实测证据见 `changes/P3-D/integration-log.md`）；⑩ **应用入口必须显式绑 org**（P3-D）：`app/` 下每个 `open_session(` / `session_scope(` 调用点必须显式传 `org_id=`——conftest 给 `SessionLocal` 塞了默认租户，**漏绑在生产是 0 行、在测试照样绿**，只有这条静态断言能钉住；⑪ **`system_session()` 必须真的不绑 org**（P3-D）：它是唯一"刻意不绑"的通道，只调受控函数。另加：迁移清单 ↔ 元数据一致、**真跑一遍 `alembic upgrade head`** 后策略在库里 | ✅ **已生效（2026-10-04，P3-A）**：`tests/test_guardrails_rls.py`（**28 条**，含 14 张表逐表参数化）。**判据 7 管的是交付物**（编排文件 / Dockerfile），判据 4 管运行时；两者缺一都会出现「库里装了策略、但连库的是超级用户 ⇒ 绕过一切」且**毫无症状**。判据 7 的反向验证：连库账号改回 `graphrag` / init 服务不跑脚本 / 依赖降级为 `service_started` / 去掉 `COPY backend/scripts` ⇒ **四种破坏各自判红**。**判据 3 刻意用裸连接**（不经过 `Session`）⇒ 绕开 conftest 的「默认租户绑定」测试脚手架，**不可能被脚手架糊弄**。反向验证已做（见 `changes/P3/integration-log.md`）：拆掉 14 张表的 RLS ⇒ 判据 1/2/3 + 逐表断言**全红**；停掉 GUC 下发 ⇒ 全文件红。**为什么必须有它**：T1 / T2 通过**不等于** RLS 生效——应用层 `org_id` 过滤本身就足以让 T1 / T2 全绿；没有独立断言，「RLS 已落地」无法机械证明。⚠️ **不覆盖图谱侧**（P3-B） |
-| **G-25** | 🆕 **评测判据进 CI（C2-a / C2-b 真门禁）** 📌 **落点 = 随 P3**（2026-10-03 订正，见 L13：与 G-9 图谱侧共用同一工程项，按更早的排） | **DR-D10** | ① CI 的 backend job 起 `neo4j` service；② 导入**受控、可复现**的种子语料；③ 跑 `--live --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate` **出真值**（非恒绿）；④ CI **只判「不退化」**（基线 delta + 容差），**不判达标**；⑤ 配**空图守卫**（空图 ⇒ 检测到 0 疑点 ⇒ 召回 0 ⇒ 假红，此时必须 **fail**，不许 PASS） | ✅ **已生效（2026-10-04，P3-E）**：`ci.yml` 新增两步（**导入受控种子语料** `demo/affiliation/*.csv` → **跑 `--gate`**）；`app/evaluation/gate.py` + `tests/test_eval_ci_gate.py`（**11 条**）。实测：种子导入 176 entity / 173 relation；`recall=1.0000 / fpr=0.0000`（与 P0-m6-eval 一致 ⇒ 语料可复现）；**清空种子后 `--gate` 判红**（空图守卫生效，退出码 1）；5 条规则各自反向验证判红。**它不判什么**：**不判达标**（归 P6 + A8 扩标后），基线随 A8 扩标**换版**为 `backend/data/eval/baselines/ci-c2-v2.json`（2026-10-04 P6-A；v1 那份已作废删除），**刷基线即重设门禁刻度**。⚠️ **验收判据是实跑出来的**：真 Neo4j 跑 `detect()`，不是读代码得出的。**可行性已实测**（2026-10-03）：C2-a / C2-b 真跑 Neo4j **耗时 2.72 秒、零 token**（`AffiliationService().detect` **只读图**，不调 LLM、不调 HTTP）⇒ 进 CI 成本可忽略。⚠️ **与 G-9 图谱侧共用同一工程项**（同一个 `neo4j` service + 同一份种子数据），但**护栏登记两条**——对应需求不同（**DR-B11 隔离** vs **DR-D10 评测**），合并成一条会导致「一条绿了分不清哪半绿」。**不得怎样**：❌ 用**真机输出快照离线复算**冒充（输入固化 ⇒ 只拦得住「指标函数被改坏」，**拦不住「检出能力退化」** ⇒ 又一种假绿，违反 **R-9**）；❌ 拿 **provisional 语料**（8/60/30/9 vs spec 的 200/500/100/20）的值判「达标」；❌ 给 CI 加 LLM key 让 B 类判据（C2-c / 多跳）进 CI——LLM 输出非确定性 ⇒ **flaky 门禁比恒绿门禁更伤** |
+| **G-25** | 🆕 **评测判据进 CI（C2-a / C2-b 真门禁）** 📌 **落点 = 随 P3**（2026-10-03 订正，见 L13：与 G-9 图谱侧共用同一工程项，按更早的排） | **DR-D10** | ① CI 的 backend job 起 `neo4j` service；② 导入**受控、可复现**的种子语料；③ 跑 `--live --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate` **出真值**（非恒绿）；④ CI **只判「不退化」**（基线 delta + 容差），**不判达标**；⑤ 配**空图守卫**（空图 ⇒ 检测到 0 疑点 ⇒ 召回 0 ⇒ 假红，此时必须 **fail**，不许 PASS） | ✅ **已生效（2026-10-04，P3-E）**：`ci.yml` 新增两步（**导入受控种子语料** `demo/affiliation/*.csv` → **跑 `--gate`**）；`app/evaluation/gate.py` + `tests/test_eval_ci_gate.py`（**11 条**）。实测：种子导入 176 entity / 173 relation；`recall=1.0000 / fpr=0.0000`（与 P0-m6-eval 一致 ⇒ 语料可复现）；**清空种子后 `--gate` 判红**（空图守卫生效，退出码 1）；5 条规则各自反向验证判红。**它不判什么**：**不判达标**（归 P6 + A8 扩标后），基线随 A8 扩标**换版**为 `backend/data/eval/baselines/ci-c2-v2.json`（2026-10-04 P6-A；v1 那份已作废删除），**刷基线即重设门禁刻度**。⚠️ **验收判据是实跑出来的**：真 Neo4j 跑 `detect()`，不是读代码得出的。**可行性已实测**（2026-10-03）：C2-a / C2-b 真跑 Neo4j **耗时 2.72 秒、零 token**（`AffiliationService().detect` **只读图**，不调 LLM、不调 HTTP）⇒ 进 CI 成本可忽略。⚠️ **与 G-9 图谱侧共用同一工程项**（同一个 `neo4j` service + 同一份种子数据），但**护栏登记两条**——对应需求不同（**DR-B11 隔离** vs **DR-D10 评测**），合并成一条会导致「一条绿了分不清哪半绿」。**不得怎样**：❌ 用**真机输出快照离线复算**冒充（输入固化 ⇒ 只拦得住「指标函数被改坏」，**拦不住「检出能力退化」** ⇒ 又一种假绿，违反 **R-9**）；❌ 拿 **provisional 语料**（8/60/30/9 vs spec 的 200/500/100/20）的值判「达标」；❌ 给 CI 加 LLM key 让 B 类判据（C2-c / 多跳）进 CI——LLM 输出非确定性 ⇒ **flaky 门禁比恒绿门禁更伤**。📌 **2026-10-05 P7-A 补注（本地盲区）**：其中两条真图判据（`tests/test_eval_ci_gate.py:220` / `tests/test_eval_corpus_a8.py:306`）带 `skipif(not _REAL_GRAPH)` ⇒ **本地没起 Neo4j 时静默 skip**。实测差值：有图 **930 passed / 3 skipped**，无图 **923 passed / 10 skipped**（差 7 条 = G-25 两条 + G-9 图谱侧五条）。其表现是「本地跑不起来图库时照样全绿」⇒ 与 G-9 图谱侧属同一个盲区，已登记待办（**P7-B**：给 readiness 脚本补 `skipif` / fixture-skip 档位识别） |
 
 ---
 
@@ -192,7 +192,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | 需求组 | 依赖护栏 | 缺口 |
 |---|---|---|
 | A 组（交付形态） | **G-11 ✅ / G-15 ✅** / G-12 🟡 / **G-14 ✅ / G-19 ✅ / G-22 ✅** / G-13 ❌作废 | **已非"全部待建"**：**2026-10-04 更新（P2.5）**：G-14 / G-22 已转正，G-19 亦已生效（原写 🟡 属漏同步，已订正）⇒ **A 组缺口收窄到 G-12 一条**（需 ≥2 个真实变体）。**逐条点名见 §3.2** |
-| B 组（数据与隔离） | G-7 ✅ / G-17 ✅ / **G-8 ✅ / G-9 ✅（PG 侧）** / G-10 🟡 / **G-18 ✅** / **G-20 ✅ / G-21 ✅** / **G-24 ✅** | **2026-10-03 更新（P2-B）**：G-18（`users` 表）与 G-24（RBAC 三粒度）均已转正常驻门禁。**缺口收窄到 G-10（T2 并发串租户，须先有 RLS）一条，归 P3**。**逐条点名见 §3.1** |
+| B 组（数据与隔离） | G-7 ✅ / G-17 ✅ / **G-8 ✅ / G-9 ✅（PG 侧 + 图谱侧）** / **G-10 ✅** / **G-18 ✅** / **G-20 ✅ / G-21 ✅** / **G-24 ✅** / **G-26 ✅** | **2026-10-05 全量对账（P7-A）更新**：**B 组机械护栏已零缺口**——G-10 已于 P3-A 转正（本行原写 🟡 属漏同步，已订正），G-26 于 P3-A 新增。剩余三类均为**不可能机械判**的性质：B5（需逐 Query 审 `org_id`）靠 CR 清单、B10（信创降级）与 E 组演练靠**人工留证**、B12 已由 **G-17** 拦住。**逐条点名见 §3.1** |
 | C 组（商业化） | **G-11 ✅ / G-15 ✅** / **G-23 🟡** | G-11 / G-15 已建并生效；DR-C1 的 License 专项 = **G-23**（骨架已就位，挂起） |
 | D 组（功能欠债） | G-1~G-7（已有） | 已有护栏可覆盖 |
 | E 组（运维） | G-6（已有）+ 演练类人工判据 | 演练属**人工判据**，须在验收时留证据 |
@@ -206,19 +206,29 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | B3（清 SQLite 兜底） | **G-21** ✅ | **已达成（2026-10-01 P1-B）**：原实测命中的 4 处（`session.py` 方言特判 / `config.py` 默认值 / `.env.example` / `app/db/__init__.py` 口径）已全部清理。**反向守卫**防 `_guard_production_sqlite` 被误删 |
 | B4（RLS 全量） | 🆕 **G-26** ✅ + **G-9 / G-10** 间接覆盖 | **2026-10-04（P3-A）PG 侧已达成**：新增 **G-26**（RLS 策略机械断言，六条判据）补齐原「**无独立断言**」缺口——T1 / T2 通过**不等于** RLS 生效（应用层 `org_id` 过滤本身就能让它们全绿）。14 张租户表 `ENABLE` + `FORCE` + 策略落库（迁移 `8210590e76a5`），应用账号改受限角色 `app_rls`（`NOBYPASSRLS`）。⚠️ **不含图谱侧**（P3-B） |
 | B5（应用层常设防线） | ⚠️ **仅人工判据** | 无法机械判"新增查询都带 `org_id`" ⇒ **靠 CR 清单**，**不宣称**有护栏 |
-| B6（T1，PG 侧） | **G-9** ✅ | **PG 侧 + `audit_log` 已达成（2026-10-01 P1-C）**：应用层 `org_id` 过滤在 PG 上拦住跨 org 读。仍缺 `documents` / `qa_logs` / `storage_key`（P3 补齐） |
+| B6（T1，PG 侧） | **G-9** ✅ | **四个对象已全部达成（PG 侧 P1-C 起步 `audit_log` ⇒ P3-B 补齐其余三个）**：`audit_log`（`tests/test_guardrails.py:293`）/ `documents`（`test_guardrails_graph.py:512`）/ `qa_logs`（`:425`）/ `storage_key`（`:491`）。📌 **2026-10-05 P7-A 实测订正**：本行原写"仍缺 `documents` / `qa_logs` / `storage_key`（P3 补齐）"——**P3-B 已补齐且与 G-9 图谱侧共用同一 `neo4j` service**，这四处与图谱侧在 PG **16.15** + 受限角色 `app_rls` 上实跑**全 pass**；且**未标 `local_only`**、随 CI 必过跑（ADR-0003 §4.1 三条裁定均满足） |
 | B7（T2） | **G-10** ✅ | **2026-10-04（P3-A）已转正**：摘 xfail（先 XPASS 后摘），并把断言口径改为「**标记行**」——原断言「B org 的响应 `items == []`」在**正确实现下恒不成立**（并发请求本身就是 B 的请求，中间件会为 B 各写一条审计，靠后的 B 请求理应看到靠前的 B 行；那是 B **自己的**数据）。现判据：每个响应**必须**看到本 org 的标记行、**绝不能**看到对方的标记行 |
 | B8（`SET LOCAL`） | **G-10** ✅ + **G-26 判据 3b** | **2026-10-04（P3-A）已达成**：`app/db/session.py` 的 `after_begin` 事件在**每个新事务**重放 `set_config('app.current_org', …, is_local=true)`（= `SET LOCAL` 语义，可绑定参数）。判据 3b 另判「`commit()` 之后 GUC 必须失效」——那是区分 `SET LOCAL` 与会话级 `SET` 的关键（后者**只有并发才测得出来**） |
 | B9（RBAC 三粒度） | **G-24** ✅ | **已达成（2026-10-03，P2-B）**：`roles` / `user_roles` + 矩阵 + 路由层强制校验入口（8 个受保护端点）+ 拒绝落 `permission.denied` 审计。**仍缺**：RLS 策略（P3）、真实授权链路（P2-C） |
 | B10（信创降级） | **人工判据** | 显式登记 + 告知客户 ⇒ **留证据**，非 CI |
-| B11（图谱侧） | **G-9（图谱侧部分）** | 待建；**集成测试**（CI 无 Neo4j） |
-| B12（fail-open 围栏） | **G-17** | 待建 |
+| B11（图谱侧） | **G-9（图谱侧部分）** | ✅ **CI 已真验（P3-B，2026-10-04）**：`ci.yml` 的 backend job 起 `neo4j:5.26-community`（同 `deploy/docker-compose.yml` tag），`tests/test_guardrails_graph.py` 5 条图谱侧判据进 CI 必过；连不上图库时 CI 上为 **`pytest.fail`**（本地 skip）。⚠️ **本地无 Neo4j ⇒ 这 5 条静默 skip**：有图 930 passed / 无图 923 passed，差 7 条（图谱 5 + G-25 真图 2），而 `check_startup_readiness.py` 两次输出相同 ⇒ 见 §8 登记的脚本盲区 |
+| B12（fail-open 围栏） | **G-17** ✅ | **已达成（2026-10-01）**：`config.py::_guard_agent_fail_open` + `tests/test_guardrails.py:135/145/156` 三条（默认 fail-closed / 显式登记才可破例 / 默认非 False）。📌 **2026-10-05 订正**：本行原写「待建」，与 G-17 早已生效的现状矛盾 |
 | B13（`users` 表） | **G-18** ✅ | ✅ **2026-10-01 达成（P2-A）**：表 + 迁移入库，G-18 转正常驻门禁。**只解除前置阻塞**——本表**仍 0 消费者**：SSO / RBAC / License 分属 P2-C / P2-B / P4 |
 
-> **不粉饰**（2026-10-01 更新）：**B1 / B2 / B3 / B6（PG 侧）的护栏已转正常驻门禁**；
-> **B9 / B10 / B13 仍只有人工判据或未建的骨架**；**B5 只能靠人工 CR**。
-> ⇒ 在这些护栏转正常驻门禁前，**对应条目不得宣称「已完成」**——这正是 §3 标题那句话的直接含义。
-> ⇒ 在这些护栏转正常驻门禁前，**对应条目不得宣称「已完成」**——这正是 §3 标题那句话的直接含义。
+> **不粉饰**（**2026-10-05 P7-A 全量对账后重写**）：
+>
+> | 形态 | 条目 | 含义 |
+> |---|---|---|
+> | **机械护栏已生效** | B1 / B2 / B3 / B4（PG 侧）/ B6 / B7 / B8 / B9 / B11 / B12 / B13 | 测试红就是它拦的 ⇒ 可宣称该条已完成（**除各自明文登记的边界外不许外推**） |
+> | **只能靠人工** | **B5**（应用层常设防线）、**B10**（信创降级） | ⚠️ **不宣称有护栏**——B5 靠下方 CR 清单逐 Query 勾选，B10 靠「登记 + 告知客户」留证 |
+> | **仍未脱贫** | —— | B 组已无未脱贫条目；A 组剩 **G-12**，C 组剩 **G-23** |
+>
+> ⇒ **在护栏转正常驻门禁前，对应条目不得宣称「已完成」**——这正是 §3 标题那句话的直接含义。
+> ⇒ **外推禁令**（逐条，防止"护栏绿 ⇒ 需求成"的错觉）：
+> G-18 绿 **≠** 账号体系落地（`users` 仍 **0 消费者**）；
+> G-24 绿 **≠** 租户隔离已完成（那是 RLS / **G-26** + 图谱侧应用层过滤，两条线）；
+> G-9 绿 **≠** 图谱侧有强隔离（Neo4j **无 RLS**，`test_g9_5` 把"裸 Cypher 确实能跨 org 读"**断言成事实**）；
+> G-17 绿 **≠** 客户侧不存在 fail-open（它拦的是"**无声**"降级，显式登记 + 告知后仍可破例）。
 
 #### B5 的人工 CR 清单（**无法机械判 ⇒ 显式列出，评审逐项勾选**）
 
@@ -268,16 +278,24 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 ## 5. 现状与不粉饰声明
 
-**截至 2026-10-01，本文档中：**
+**截至 2026-10-05（P7-A 全量对账后），本文档中：**
 
-- ✅ **已达成（护栏，已生效）**：G-1 ~ G-7（既有）；**G-11 / G-15 / G-17**（2026-10-01 新建）；**G-19 / G-20 / G-21（P1-A / P1-B 转正）**；**G-8 / G-9（PG 侧，`audit_log` 部分）（P1-C 转正）**；**G-18 / DR-B13（P2-A 转正，2026-10-01）**；**G-24 / DR-B9（P2-B 转正，2026-10-03）**；**G-14 / G-22（P2.5 转正，2026-10-04：第 1 个真插件 `json-csv-export` + 变体 `baseline`）**；`test_g21_production_sqlite_guard_still_present`（**反向守卫**）；DR-B10 文档侧；DR-E1 基线部分
-- ✅ **2026-10-04（P3-A）新增 / 转出**：**G-26 / DR-B4（PG 侧）已达成**、`test_g10_…` **已摘 xfail 转正**（先 XPASS 后摘）⇒ G-10 移出本行
-- 🟡 **骨架已就位（xfail 挂起 ⇒ CI 绿但**尚未生效**）**：G-12 / **G-23** ⇒ **其对应需求仍不得宣称完成**（G-18 已于 P2-A 转出本行，G-24 已于 P2-B 转出本行，G-14 / G-22 已于 P2.5 转出本行，**G-10 已于 P3-A 转出本行**）（G-18 已于 P2-A 转出本行，G-24 已于 P2-B 转出本行，G-14 / G-22 已于 P2.5 转出本行）
+> ⚠️ **本节于 2026-10-05 由 P7-A 做了一次全量实测对账**（此前每批只 delta 更新自己动的那一两行 G）。
+> 对账方式：重建本地 `postgres:16-alpine`（实测 `server_version 16.15`）+ 受限角色 `app_rls` +
+> 真 `neo4j:5.26-community`，跑两遍全量 pytest。**有图 930 passed / 3 skipped / 3 xfailed**；
+> **无图 923 passed / 10 skipped / 3 xfailed**（收集 936）。明细见 `changes/P7-A/integration-log.md` §3。
+> **`3 xfailed` = G-12（1）+ G-23（2）**，与 `check_startup_readiness.py` 报的「挂起 2 条」逐条吻合 ⇒
+> **没有第四条隐藏的挂起护栏**。
+
+- ✅ **已达成（护栏，已生效）**：G-1 ~ G-7（既有；**G-5 前端 lint/tsc 本次未实测，不下结论**）；**G-11 / G-15 / G-17**；**G-19 / G-20 / G-21**；**G-8 / G-9（PG 侧四对象 + 图谱侧，P1-C 起步 → P3-B 补齐）**；**G-18 / DR-B13**；**G-24 / DR-B9**；**G-14 / G-22（P2.5）**；**G-10（P3-A 转正，本行于 2026-10-05 由 🟡 订正为 ✅）**；**G-26 / DR-B4（PG 侧，P3-A）**；**G-25（P3-E，11+1 条真图门禁）**；`test_g21_production_sqlite_guard_still_present`（**反向守卫**，本次复跑仍绿）；DR-B10 文档侧；DR-E1 基线部分
+- ✅ **2026-10-04（P3-A）新增 / 转出**：**G-26 / DR-B4（PG 侧）已达成**、`test_g10_…` **已摘 xfail 转正** ⇒ G-10 移出本行
+- 🟡 **骨架已就位（xfail 挂起 ⇒ CI 绿但**尚未生效**）**：G-12（**GA 五项缺口的最后一项**：需第 2 个真实部署形态变体；⚠️ 命名有地雷——`default` / `demo` 在基座契约里出现 10 / 3 次，而 `_customer_tokens()` 按子串匹配 ⇒ 照字面命名会让 G-14 结构性假红） / **G-23（且属「恒绿失效」：校验对象尚未诞生，此刻摘标记只是空跑，按 R-9 **转正无意义**）** ⇒ **其对应需求仍不得宣称完成**（G-18 P2-A、G-24 P2-B、G-14 / G-22 P2.5、G-10 P3-A 均已转出本行）
+- 🟡 **部分**：**G-16**（接缝侧由 G-2 拦，**文档登记侧无任何机械判据**，靠流程）
 - 📄 **仅文档就绪**：DR-A1~A8、DR-B10、DR-C2、DR-B5（口径）——**规格已写，代码零行**
-- ⏳ **零代码（需求侧）**：DR-B4 **仅剩图谱侧**（PG 侧已于 2026-10-04 P3-A 达成）、DR-B7（T2 并发）已于 P3-A 达成、DR-C1（License）、**DR-A 组其余**（`deploy/variants/` 尚不存在）
-- ⏳ **零代码（护栏侧，2026-10-03 新增登记）**：**G-25**（评测判据进 CI：C2-a / C2-b 真门禁）——CI 无 `neo4j` service、无受控种子数据、无对应测试；可行性已实测（真跑图 **2.72 秒 / 零 token**）。与 G-9 图谱侧**共用同一工程项**，见 §3 与 §8
+- ⏳ **零代码（需求侧）**：DR-C1（License，且 G-23 **恒绿失效** ⇒ 转正无意义）、**DR-A 组其余**（`deploy/variants/` 仅 1 个 ⇒ G-12 仍挂起）
+- ✅ **2026-10-04（P3-E）已转出零代码**：**G-25**（评测判据进 CI）已落地——`ci.yml` 起 `neo4j:5.26-community` + 受控种子语料 + `eval_acceptance.py --live --gate`（**只判不退化**）。📌 **2026-10-05 补限定语**：其中 2 条真图判据带 `skipif` ⇒ **本地无 Neo4j 时静默 skip**，属应在 P7-B 修的脚本盲区
 - ✅ **2026-10-01 清偿**：**CI 的 pytest 已跑在 PostgreSQL 16.x 上**（`ci.yml` 的 backend job 起 `postgres:16-alpine` + job 级 `DATABASE_URL`；`conftest.py` 不再用 SQLite 临时文件，改用固定库 `graphrag_test`）。原「B 组全部需求的绿都是假的」这条最高 blocker **已解除**。
-- 📌 **2026-10-01 补一条边界**：G-9 转正**只**代表应用层 `org_id` 过滤在 PG 上生效，**不代表** RLS 落地（DR-B4 仍归 P3）；`documents` / `qa_logs` / `storage_key` 与图谱侧同样仍未补齐。
+- 📌 **2026-10-01 补一条边界**（**2026-10-05 后半句已作废，保留原文仅为留痕**）：G-9 转正**只**代表应用层 `org_id` 过滤在 PG 上生效，**不代表** RLS 落地（DR-B4 当时归 P3）；~~`documents` / `qa_logs` / `storage_key` 与图谱侧同样仍未补齐~~ ⇒ **该后半句已由 P3-B 补齐**（2026-10-05 实跑四对象 + 图谱侧全 pass），RLS 则由 **G-26**（P3-A）独立机械盯住。
 - 📌 **2026-10-01 更正（不粉饰）**：本基线 **DR-D6（`qa_logs` 建表）原写「⏳ 未建表」是错误口径**——实为 **2026-09-26 已建并已写**（真机累计 16 行）。**错因**：摘抄 `dev-doc-status` 的历史记录而**未回代码核实**。**教训入册**：本文档每条「未做 / 已做」标注**必须以代码或真机证据为准**，历史文档记录**只能作为线索、不能作为结论**。
 - 📌 **2026-10-01 补入**：**图谱侧（Neo4j）没有 RLS**，租户隔离只能靠应用层 ⇒ ADR-0003 §3.7「应用层过滤为常设防线」在图谱侧**不是冗余防线，而是唯一防线**。原 B 组只覆盖 PG，已补 **DR-B11** 并将 T1 扩展至图谱侧。
 - 📌 **2026-10-01（P2-A）`users` 表的三条登记**（守 **R5**：不篡改 ADR 原文，登记在此）：
@@ -422,3 +440,30 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | 9 | **P1** | **文档状态漂移**：护栏建完后 §3 仍写「A 组全部待建」、§5 仍写「已达成 G-1~G-7」 | ✅ 同步为 **G-11 / G-15 / G-17 已生效** + 7 条骨架挂起 |
 | 10 | **P1** | **DR-A6 零护栏**：实测 `deploy/docker-compose.yml` 的 `backend` / `frontend` 仍为 `build:` 且**无 `image:`**——而 A6 是**补丁流程的唯一前提**（§5 依赖 1） | ✅ 补 **G-19** 并挂起；新增 **§3.2 A 组逐条**点名 A2 / A6 缺口 |
 | 11 | **P2** | **`deploy/variants/` 不存在**：G-12 无对象可校验 | ✅ 骨架就位，**启用条件写死 variant ≥ 2**，不假装它在拦 |
+
+### 8.1 2026-10-05 全量对账（**P7-A**）
+
+> **性质**：盘点批次，**零产品代码改动**。明细与每一格的证据路径 = `changes/P7-A/integration-log.md`。
+
+| # | 级别 | 发现 | 处置 |
+|---|---|---|---|
+| 12 | **P1** | **G-10 状态列说谎**：§2.2 仍写「🟡 骨架已就位 / xfail 挂起」，而 `test_g10_…` **早已无 xfail**（P3-A 转正）；§3.1 的 B7 行是对的，**明细行漏同步** | ✅ §2.2 G-10 订正为 ✅；2026-10-05 在 PG 16.15 + 受限角色上**实跑复核通过** |
+| 13 | **P1** | **§3.1 B6 / B11 两行过期**：B6 仍写「仍缺 `documents` / `qa_logs` / `storage_key`」、B11 仍写「CI 无 Neo4j」 | ✅ 两行均按 P3-B 现状订正；2026-10-05 实测 **T1 四对象齐全**（含图谱侧 5 条），图谱侧进 CI 真验 |
+| 14 | **P1** | **`check_startup_readiness.py` 识别不到 `skipif` / fixture-skip**：本地无 Neo4j 时 7 条（G-9 图谱侧 5 + G-25 真图 2）**静默 skip**，而脚本两次输出**一模一样**是 `[OK]`——机器结论本身在这一格失真 | ⚠️ **不在本批修**（改脚本会改 CI 报告口径 + 需连带自测）⇒ 登记为独立批次 **P7-B**，优先级 **P1** |
+| 15 | **P2** | **G-11 主用例是条件 xfail**（`not SNAPSHOT.exists()`）：快照丢失会静默转 XFAIL | ✅ 判定**有旁立守卫**（`test_frozen_snapshot_is_committed` 断言快照存在 ⇒ 必红）；另登记小瑕疵：用例名写 `is_committed` 却只断言 `exists()`，**未修** |
+| 16 | **P2** | **G-23 的「挂起」属「恒绿失效」**：`backend/app/services/license/` **不存在**（实测），此刻摘 xfail 只是空跑 | ✅ 补限定语（**转正无意义，先建真子系统**）；DR-C1 **不得宣称任何进度** |
+| 17 | **P2** | **§5 的 pytest 基数过期**：仍写 P1-C 时代的 **707 passed** | ✅ 刷新为 **930 / 923 passed**（有图 / 无图） |
+
+**剩余缺口的优先级结论**（详细排序见 `changes/P7-A/integration-log.md` §6）：
+
+| 优先级 | 项 | 转正动作 |
+|---|---|---|
+| **P0** | **G-12 第 2 个真实变体**（GA 五项缺口的**最后一项**；⚠️ 命名勿照 §300 字面，详见 §5 该行） | 落成 ⇒ 测试真通过 ⇒ 摘 xfail |
+| **P1** | **P7-B：readiness 脚本补 skipif / fixture-skip 档位** | 改脚本 + 给脚本加自测（含反向验证） |
+| **P2** | **G-23 / DR-C1 License 真子系统** | 六项资产 + 行为侧 403 落地后摘 2 处 xfail |
+| **P3** | **G-16 文档登记侧的机械判据** | 与 PRD 附录 C.0 联动后再定 |
+
+**对后续批次顺序的结论**：阶段 ② A1 向量基线 → ③ L2 → ④ Q8 拒答误伤 → ⑤ TBD-7
+**维持不变**。理由：按"宣称了但欠着优先于还没做"的判据，④ 的 `refusal_false_refusal`
+当前 FAIL 本应提前；但 **A1 会改动检索路径本身，而 Q8 误伤正是沿该路径产生** ⇒
+先修 Q8 等于在即将变动的管线上调参。附加约束：② / ③ 落地后**必须记录 Q8 误伤条数的"变化前 / 变化后"**，不得只报修好之后那一次。
