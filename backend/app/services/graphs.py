@@ -90,10 +90,17 @@ if TYPE_CHECKING:  # 仅类型检查：运行时走函数内延迟导入，避�
 #: 取 32 而非更省的 20：20 靠 7 条余量侥幸覆盖制度文档，32 是「保底 2 条 + 仍有余量」，
 #: 换语料时更不易塌。字符 9.6k（20）→ 15.0k（32），远低于 52 条的 30.0k。
 #:
-#: 反面教材（别再改回去）：本架构下 ``question`` **不参与检索**（候选集是结构性
-#: 窗口），依据进不来就**没有任何补救路径**。换语料后文档数会变
+#: 反面教材（别再改回去）：**只抬条数治不了**排序问题（Q09「张伟」在 40 条的组内
+#: 排第 19，靠抬保底要注入到 204 条 / 13 万字符）。换语料后文档数会变
 #: （保底 = limit // 文档数），须重跑 ``eval_controlled_qset.py --diagnose`` 与
 #: ``changes/Sprint10.2/probe_e16_doc_order.py`` 复核，别把 32 当普适值。
+#:
+#: **P6-J（2026-10-05）修订**：上文原来写的是「本架构下 ``question`` **不参与检索**，
+#: 依据进不来就没有任何补救路径」——**这句已经不成立**，故改掉而不是留着误导后人：
+#: 本批起 :func:`select_evidence_chunks` 多了一层「词面命中优先」（见其 docstring
+#: 第 0 条），``question`` 参与**排序**了。仍然不变的那一半是：**候选集本身
+#: 仍是结构性窗口**（子图采样不看 question）⇒ 目标片段若**不在候选里**，重排
+#: 也救不回来。这条区别别丢。
 _EVIDENCE_CHUNK_LIMIT = 32
 
 #: **A1（2026-10-05，P6-C）**：图侧注入上限的**对外可读别名**。
@@ -105,6 +112,30 @@ EVIDENCE_CHUNK_LIMIT = _EVIDENCE_CHUNK_LIMIT
 #: **不含** ``text``）的上限。与 ``_GRAPH_NODE_LIMIT`` 同思路——索引行很便宜，
 #: 取满可达集合才能"按文档保底"；真正贵的是 :data:`_EVIDENCE_CHUNK_LIMIT` 条全文。
 _EVIDENCE_CHUNK_INDEX_LIMIT = 1000
+
+#: **P6-J（2026-10-05）**：索引行里额外带回的**打分用片段**长度（字符数）。
+#:
+#: 为什么必须带文本：``changes/P6-J/proposal.md`` §1 已坐实「``question`` **从头到尾
+#: 不参与检索**」⇒ Q20 / Q22 / Q26 这三道**纯概念性提问**（句中没有员工号 / 单号 /
+#: 日期等实体锚点）的目标 chunk 明明在候选里，却排不进 32 条。要让 ``question`` 参与，
+#: 就**必须**拿得到文本——索引原先**刻意不带** ``text``（见 :data:`_QUERY_EVIDENCE_CHUNK_INDEX`
+#: 上方注释：全文是最大字段，全量回传纯属浪费），这个取舍本身没错，
+#: 但它把「词面重排」这条路一起堵死了 ⇒ 本批**只补片段、不补全文**。
+#:
+#: 为什么不干脆回传全文：取满可达集合是为了"按文档保底"，上限是
+#: :data:`_EVIDENCE_CHUNK_INDEX_LIMIT` = 1000 ⇒ 全量回传是 **1000 × 全文**
+#: （本语料实测全文 p50 ≈ 881 / max 1204 字符 ⇒ 单次问答 ≈ 1.2MB），
+#: 而词面重排只需要知道"**碰没碰上**"，不需要整段。
+#:
+#: 400 是**实测选的，不是取整**：本批实测过 200 / 400 两档（见
+#: ``changes/P6-J/integration-log.md`` §2）。三条目标的关键字落点分别是第 24 字
+#: （Q26「5 个工作日」）、第 257 字（Q22「劳动行政部门」）、第 **489** 字
+#: （Q20「174」——**两档都在窗外**，它靠的是同段里「标准工时 / 工时制」这类
+#: 词面命中，不是靠数字本身）⇒ 本语料上**两档结果相同**（三条都进 32），
+#: 分值差异是 Q20 0.333→0.444 / Q22 0.294→0.353 / Q26 0.545→0.545。
+#: 取 400 只为给更长的 chunk 留余量。**换语料（chunk 变长 / 答案落在后半段）后
+#: 必须重跑复现脚本复核**，别把 400 当普适值。
+_EVIDENCE_CHUNK_SNIPPET_CHARS = 400
 
 #: **A1（2026-10-05，P6-C）**：基线候选池的**防御性上限**——整池要先向量化再召回，
 #: 成本随 chunk 数线性增长；这里是"跑得起"的量级护栏，**不是**召回质量参数。
@@ -488,7 +519,10 @@ RETURN
 #: 拆成：
 #: 1. :data:`_QUERY_EVIDENCE_CHUNK_INDEX` —— 只回 ``chunk_id / doc_id / mentions / spans``
 #:    的**轻量索引**（**不带** ``text``：全文是最大字段，全量回传纯属浪费）；
-#: 2. :func:`select_evidence_chunks` —— Python 侧按「每文档保底 + 余量 span 优先」选；
+#:    **P6-J 追加**第六列 ``snippet``（前 :data:`_EVIDENCE_CHUNK_SNIPPET_CHARS` 字），
+#:    仅供词面重排打分用——理由与取舍见该常量的注释；
+#: 2. :func:`select_evidence_chunks` —— Python 侧按「每文档保底 + 余量 span 优先」选
+#:    （**P6-J 起**前置一层「词面命中优先」）；
 #: 3. :data:`_QUERY_EVIDENCE_CHUNKS_BY_IDS` —— 只按选中的 id 取**全文**。
 _QUERY_EVIDENCE_CHUNK_INDEX = """
 MATCH (e:Entity {kg_version: $kg_version})
@@ -504,7 +538,8 @@ RETURN
   size([(c)-[:MENTIONS]->(:Entity {kg_version: $kg_version}) | 1]) AS mentions,
   size([(c)-[:MENTIONS]->(e2:Entity {kg_version: $kg_version})
         WHERE e2.char_start IS NOT NULL | 1]) AS spans,
-  coalesce(c.char_start, 0) AS char_start
+  coalesce(c.char_start, 0) AS char_start,
+  substring(coalesce(c.text, ''), 0, $snippet_chars) AS snippet
 LIMIT $index_limit
 """
 
@@ -530,14 +565,83 @@ ORDER BY chunk_id
 """
 
 
+def _bigrams(text: str) -> frozenset[tuple[str, str]]:
+    """字符 **bigram** 集合（去重、忽略标点空白、字母小写）。
+
+    **为什么是字符 bigram 而不是词**：中文没有空格分词，而本批的硬约束是
+    **不引入任何第三方依赖**（proposal §5 第 4 条：给图侧装分词器 / embedding
+    就等于把 M1 做成 M2）⇒ 只能用**无依赖**的近似。bigram 对中文是
+    「两字滑窗」，「月标准工时」会被拆成 ``月标 / 标准 / 准工 / 工时``，
+    与「标准工时制」自然重叠；单字则太粗（「的」「是」到处命中）。
+
+    **为什么去重成集合**：不去重 ⇒ 长片段靠重复词刷高分数，那是长度偏置，
+    不是相关性。
+    """
+    chars = [ch.lower() for ch in text if ch.isalnum()]
+    if len(chars) < 2:
+        return frozenset()
+    return frozenset(zip(chars, chars[1:], strict=False))
+
+
+def _lexical_overlap(question: str, snippet: str) -> float:
+    """``question`` 的词面被 ``snippet`` **覆盖的比例**（``[0.0, 1.0]``）。
+
+    :returns: ``|q_bigrams ∩ s_bigrams| / |q_bigrams|``；任一侧不足 2 个有效字符
+        ⇒ ``0.0``（**不是** NaN：NaN 会把排序打乱成不确定顺序）。
+
+    ⚠️ 这是**排序**用的分数，**不是**达标判定：它只回答"这一条比那一条更值得
+    占一个名额"，不回答"这一条足以作答"。把它当门槛用 ⇒ 等于把拒答逻辑塞进
+    检索层，那是另一件事。
+    """
+    question_bigrams = _bigrams(question)
+    if not question_bigrams:
+        return 0.0
+    snippet_bigrams = _bigrams(snippet)
+    if not snippet_bigrams:
+        return 0.0
+    return len(question_bigrams & snippet_bigrams) / len(question_bigrams)
+
+
+def _lexical_scores(
+    rows: Sequence[tuple[str, str | None, int, int, int]],
+    *,
+    question: str | None,
+    snippets: Mapping[str, str] | None,
+) -> dict[str, float]:
+    """逐候选算词面分；**不具备打分条件时返回空 dict**（⇒ 完全退化为纯结构排序）。"""
+    if not question or not snippets:
+        return {}
+    question_bigrams = _bigrams(question)
+    if not question_bigrams:
+        return {}
+    scores: dict[str, float] = {}
+    for chunk_id, _doc_id, _mentions, _spans, _char_start in rows:
+        if chunk_id in scores:
+            continue
+        snippet = snippets.get(chunk_id) or ""
+        scores[chunk_id] = (
+            len(question_bigrams & _bigrams(snippet)) / len(question_bigrams)
+            if snippet
+            else 0.0
+        )
+    return scores
+
+
 def select_evidence_chunks(
     rows: Sequence[tuple[str, str | None, int, int, int]],
     limit: int,
+    *,
+    question: str | None = None,
+    snippets: Mapping[str, str] | None = None,
 ) -> list[str]:
     """**问答该注入哪些证据片段**（Sprint 10 批次 C 残留缺口，五方案实测定案）。
 
     口径（真机实测得来，见 ``changes/Sprint10.2/probe_c4_chunk_quota.py``）：
 
+    0. **P6-J（2026-10-05）新增：词面命中优先**（``question`` + ``snippets``
+       同时给出时生效）——按 :func:`_lexical_overlap` 降序，**并列 / 零命中时
+       落到下面第 1~3 条的结构口径**（即 **无命中 ⇒ 完全退化为本批之前的行为**，
+       这是刻意的：不因为加了重排就让纯结构场景的结果漂移）；
     1. 按 ``doc_id`` 分组，**每篇文档保底** ``limit // 文档数`` 条 —— 不让某一份
        大表（CSV 派生 chunk 占全图 77%）吃满名额；
     2. 组内按 **MENTIONS 数降序 + char_start 升序 + chunk_id 升序** ——
@@ -545,6 +649,16 @@ def select_evidence_chunks(
        见下方"并列退化"）；chunk_id 只作最后一道确定性兜底；
        3. 保底没用满的名额，优先给**带 span** 的片段（引用能被精确定位到句），
           其余按 MENTIONS 热度补齐。
+
+    **为什么必须加第 0 条（根因，不是优化）**：``question`` 原先**从头到尾不
+    参与检索**——候选集是纯结构性窗口（子图采样按实体类型 + 度数，本函数按
+    文档保底 + MENTIONS 热度）⇒ Q20 / Q22 / Q26 这三道**纯概念性提问**的目标
+    条文**在候选里却排不进 32 条**（实测：目标 chunk 分别排在其文档桶的
+    3/4、4/4、4/4 名，而保底只有 2 ⇒ 必被切掉）。它们句中没有员工号 / 单号 /
+    日期这类实体锚点，结构性采样没有任何凭据可依。
+    ⚠️ 代价要记账：``question`` 一参与，图侧就不再纯粹是"图结构" ⇒
+    ``RETRIEVER_GRAPH`` 标识已随之改名，旧数字不得与本批混用
+    （见 :mod:`app.evaluation.baseline` 与 ``changes/P6-J/proposal.md`` §2）。
 
     **并列退化（批次 E 实测，这次修的就是它）**：CSV 派生文档的片段
     ``MENTIONS`` **大量并列**（demo 语料 employees 表 40 条片段全是 1）⇒
@@ -568,10 +682,21 @@ def select_evidence_chunks(
 
     :param rows: ``(chunk_id, doc_id, mentions, spans, char_start)`` 五元组
     :param limit: 片段上限（**不放**大——全文进 Prompt，放大即撑爆 token）
+    :param question: 本轮提问（给了才做词面重排；``None`` ⇒ 纯结构口径，与本批之前一致）
+    :param snippets: ``{chunk_id: 片段文本}``（:data:`_EVIDENCE_CHUNK_SNIPPET_CHARS` 字）。
+        刻意**不并入** ``rows`` 的元组：五元组是既有契约（既有单测与诊断脚本都按它
+        构造输入），且"**没有片段 ⇒ 退化为纯结构排序**"必须是一个显式、可单测的
+        状态，而不是靠元组长度去猜。
     :returns: 选中的 chunk_id（有序、去重）
     """
     if limit <= 0 or not rows:
         return []
+
+    scores = _lexical_scores(rows, question=question, snippets=snippets)
+
+    def _rank(item: tuple[str, int, int, int]) -> tuple[float, int, int, str]:
+        """词面分降序 → 热度降序 → 文档原始顺序 → chunk_id（最后一道确定性兜底）。"""
+        return (-scores.get(item[0], 0.0), -item[1], item[3], item[0])
 
     buckets: dict[str, list[tuple[str, int, int, int]]] = {}
     for chunk_id, doc_id, mentions, spans, char_start in rows:
@@ -581,8 +706,9 @@ def select_evidence_chunks(
             (chunk_id, mentions, spans, char_start)
         )
     for group in buckets.values():
-        # 并列（mentions 相同）时按 char_start —— 见 docstring「并列退化」
-        group.sort(key=lambda item: (-item[1], item[3], item[0]))
+        # 词面分并列（常见：候选与提问零重叠 ⇒ 全为 0.0）时落到
+        # 热度 → char_start（文档原始顺序）→ chunk_id，即既有的结构口径
+        group.sort(key=_rank)
 
     floor = max(limit // len(buckets), 1) if buckets else limit
     chosen: list[tuple[str, int, int, int]] = []
@@ -590,17 +716,18 @@ def select_evidence_chunks(
         chosen.extend(buckets[_doc][:floor])
 
     if len(chosen) > limit:
-        # 文档数 > 名额（极端情形）：按**热度**截断，宁可少覆盖一篇也别让
+        # 文档数 > 名额（极端情形）：按**词面 + 热度**截断，宁可少覆盖一篇也别让
         # 每篇只进半条——片段是整段注入的，切半没有意义。
-        chosen.sort(key=lambda item: (-item[1], item[3], item[0]))
+        chosen.sort(key=_rank)
         return [item[0] for item in chosen[:limit]]
 
-    chosen.sort(key=lambda item: (-item[1], item[3], item[0]))
+    chosen.sort(key=_rank)
     if len(chosen) < limit:
         taken = {item[0] for item in chosen}
         filler = sorted(
             (r for r in rows if r[0] not in taken),
             key=lambda r: (
+                -scores.get(r[0], 0.0),
                 0 if r[3] > 0 else 1,  # 带 span 的片段优先（引用可精确定位）
                 -r[2],
                 r[4],  # 并列时同样按文档原始顺序
@@ -1244,6 +1371,7 @@ class GraphService:
         entity_ids: Sequence[str] = (),
         doc_id: UUID | None = None,
         limit: int = _EVIDENCE_CHUNK_LIMIT,
+        question: str | None = None,
     ) -> list[EvidenceChunk]:
         """取证据片段（Sprint 6 批次 B）：``:Chunk`` 文本 + 页码 + 字符区间。
 
@@ -1255,6 +1383,9 @@ class GraphService:
 
         两者都为空 → 返回空列表（**不**全量扫描 chunk，避免把无关原文喂给 LLM）。
 
+        :param question: **P6-J**：本轮提问，只用于 ``entity_ids`` 路径的**词面重排**
+            （``single_doc`` 路径本来就限定在某一篇文档内，没有"选哪些"的问题）。
+            不传 ⇒ 与 P6-J 之前完全一致。
         :raises GraphUnavailableError: Neo4j 不可用，或原始数据与投影契约不符
             （沿用设计要点 5：失败即显式暴露，**不**静默返回空列表——
             空片段会让上层误判为「图谱里没有证据」而拒答）。
@@ -1271,10 +1402,21 @@ class GraphService:
                 "limit": limit,
             }
         elif entity_ids:
-            # ① 轻量索引 → ② Python 侧按「每文档保底 + 余量 span 优先」选 → ③ 只取选中全文
+            # ① 轻量索引（含打分片段）→ ② Python 侧按「词面命中 + 每文档保底
+            #    + 余量 span 优先」选 → ③ 只取选中全文
             org_param = str(org_id) if org_id else None
             try:
                 with self._session() as session:
+                    raw_index = list(
+                        session.run(
+                            _QUERY_EVIDENCE_CHUNK_INDEX,
+                            kg_version=kg_version,
+                            org_id=org_param,
+                            entity_ids=list(entity_ids),
+                            index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT,
+                            snippet_chars=_EVIDENCE_CHUNK_SNIPPET_CHARS,
+                        )
+                    )
                     index = [
                         (
                             str(row["chunk_id"]),
@@ -1283,15 +1425,15 @@ class GraphService:
                             int(row["spans"] or 0),
                             int(row["char_start"] or 0),
                         )
-                        for row in session.run(
-                            _QUERY_EVIDENCE_CHUNK_INDEX,
-                            kg_version=kg_version,
-                            org_id=org_param,
-                            entity_ids=list(entity_ids),
-                            index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT,
-                        )
+                        for row in raw_index
                     ]
-                    selected = select_evidence_chunks(index, limit)
+                    snippets = {
+                        str(row["chunk_id"]): str(row["snippet"] or "")
+                        for row in raw_index
+                    }
+                    selected = select_evidence_chunks(
+                        index, limit, question=question, snippets=snippets
+                    )
                     if not selected:
                         return []
                     records = list(

@@ -963,7 +963,8 @@ def _detect_layer(kg_versions: Any, org_id: str) -> str | None:
 
 
 def _graph_spec(runner_ctx: RunnerContext, pool_ref: Any) -> Any:
-    """图侧的共因清单（``retriever = graph_mentions``）。"""
+    """图侧的共因清单（``retriever`` 取 :data:`RETRIEVER_GRAPH`，
+    P6-J 起 = ``graph_mentions+lexical_rerank``）。"""
     from app.evaluation.baseline import graph_side_spec  # noqa: PLC0415
 
     return graph_side_spec(pool=pool_ref, judged_by=runner_ctx.judged_by)

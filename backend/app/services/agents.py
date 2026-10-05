@@ -375,6 +375,12 @@ class AgentService:
                 org_id=org_id,
                 entity_ids=entity_ids,
                 doc_id=request.doc_id,
+                #: **P6-J**：把 ``question`` 一路传下去 —— 上面这条 ``entity_ids``
+                #: 来自子图采样（按实体类型保底 + 度数降序），**同样不含 question
+                #: 信息** ⇒ 若这里不传，32 条名额就纯按结构分配，Q20 / Q22 / Q26
+                #: 这类「句中没有实体锚点」的概念性提问永远抢不到名额
+                #: （根因与修法见 changes/P6-J/proposal.md）。子图部分本批**不动**。
+                question=request.question,
             )
         except GraphUnavailableError as exc:
             logger.bind(trace_id=trace_id, reason=str(exc)).error(

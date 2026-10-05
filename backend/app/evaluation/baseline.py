@@ -42,7 +42,15 @@ from app.prompts.prompt_loader import load_prompt
 from app.services.graphs import EVIDENCE_CHUNK_LIMIT, EvidenceChunk
 
 #: 两侧检索方式的稳定标识（进报告；改名会让历史结论无法比对）
-RETRIEVER_GRAPH = "graph_mentions"
+#:
+#: **P6-J（2026-10-05）改名**：``graph_mentions`` ⇒ ``graph_mentions+lexical_rerank``。
+#: 为什么要改：本批让 ``question`` 参与了图侧排序（词面 bigram 重排），
+#: 而「question 参不参与」原本正是两侧**唯一被锁定的变量** ⇒ 图侧从此沾上了
+#: query 相关性，C1 测的东西变了。改名是**让这个变化显式化**：
+#: ``graph_mentions`` 名下的数字（rubric-v1 0.0294 / rubric-v2 0.0882）
+#: **一律不得与本标识下的数字混用**（与 P6-D 删 ``QSET_CORPUS_LAYER`` 常量同理：
+#: 换个名字就能把一件东西说成另一件，而没有任何机器能证伪）。
+RETRIEVER_GRAPH = "graph_mentions+lexical_rerank"
 RETRIEVER_BASELINE = "dense_top_k"
 
 #: **A3**：判分口径标识（人按 MANIFEST 的 rubric 判，脚本不自动判分）
