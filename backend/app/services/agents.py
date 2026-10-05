@@ -533,6 +533,19 @@ class AgentService:
         if SystemMessage is None or HumanMessage is None:
             raise AgentUnavailableError("LangChain messages 不可用")
 
+        #: **装配必须在这里兜住**（P6-G，2026-10-05 欠债归还）。
+        #:
+        #: 以前这里直接用 ``self._chat``，而 ``_ensure_chat()`` 全仓唯一调用点在
+        #: :meth:`answer` 里 ⇒ **绕过 HTTP 路由**直接调本方法时 ``_chat`` 还是 ``None``，
+        #: 炸的是 ``AttributeError: 'NoneType' object has no attribute 'ainvoke'``——
+        #: 它不是 ``AgentUnavailableError`` ⇒ 路由层的 501 映射、评测侧的 ``blocked_by``
+        #: 全都读不出真因（P6-F 首次跑 C1 时为此排查了一整轮）。
+        #:
+        #: 幂等 ⇒ 对既有路径**零行为变化**：``_ensure_chat`` 首行就是
+        #: ``if self._chat is not None: return self._chat``，HTTP 链路（已在 ``answer()``
+        #: 装配过）这次调用是无操作，不会重新读 KEY、不会重新建客户端。
+        self._ensure_chat()
+
         settings = get_settings()
 
         def _on_retry(retry_state) -> None:  # noqa: ANN001

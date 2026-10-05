@@ -384,19 +384,6 @@ async def answer_with_dense(
         values["as_of_source"] = ""
 
     agent = AgentService()
-    #: **P6-F（2026-10-05）**：必须先**显式装配** LLM 客户端。
-    #:
-    #: 产品侧 ``_invoke_chat_with_retry`` 直接用 ``self._chat``，却**从不**调用幂等的
-    #: ``_ensure_chat()`` ⇒ 经 HTTP 路由时没事（路由层已 ensure 过），
-    #: 但在**评测进程**里直接调用会炸 ``AttributeError: 'NoneType' object has no attribute
-    #: 'ainvoke'``，且这个异常不是 ``AgentUnavailableError`` ⇒ 上层完全读不出真原因。
-    #:
-    #: ⚠️ **根因留在产品侧未修**（本批 Non-goals 第 6 条：不动被测链路），
-    #: 已在集成日志登记为待修缺陷：**任何绕开 HTTP 路由的调用都会踩到**。
-    #: 此处补装配 ⇒ 失败时抛 ``AgentUnavailableError``，能被 translated 成可读的
-    #: ``blocked_by``，而不是 AttributeError。
-    agent._ensure_chat()
-
     raw_answer, _token_usage = await agent._invoke_chat_with_retry(
         system_prompt=template.render(**values),
         question=question,
