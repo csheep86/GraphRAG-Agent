@@ -211,6 +211,16 @@ class OpenAICompatibleEmbedder:
             base_url=self._base_url or None,
             api_key=self._api_key,
             timeout=self._timeout_seconds,
+            #: **必须关掉**（P6-F 实测）：默认为 ``True`` 时 langchain 会先用 tiktoken
+            #: 把文本切成一个个 token id，再把**这笔 token id 数组**当 ``input`` 发给
+            #: ``/embeddings``。OpenAI 自家服务认这个格式，但**OpenAI 兼容网关普遍不认**
+            #: （本批实测本地服务直接 ``422 Input should be a valid string``）。
+            #:
+            #: 关掉它还有一个**更安全**的副作用：原本超过上下文长度的文本会被 langchain
+            #: **静默跳过** ⇒ 返回条数会少于输入条数，而 chunk_id 是按位置对齐的
+            #: ⇒ 整批向量会**错位**。关掉后超长文本整段发给服务端由服务端处理，
+            #: 少条数的情况会由 :func:`EmbedderUnavailable` 显式炸出来，**不会静默错位**。
+            check_embedding_ctx_length=False,
         )
         vectors = client.embed_documents(list(texts))
         if vectors:
@@ -373,7 +383,21 @@ async def answer_with_dense(
     if "as_of_source" in declared:
         values["as_of_source"] = ""
 
-    raw_answer, _token_usage = await AgentService()._invoke_chat_with_retry(
+    agent = AgentService()
+    #: **P6-F（2026-10-05）**：必须先**显式装配** LLM 客户端。
+    #:
+    #: 产品侧 ``_invoke_chat_with_retry`` 直接用 ``self._chat``，却**从不**调用幂等的
+    #: ``_ensure_chat()`` ⇒ 经 HTTP 路由时没事（路由层已 ensure 过），
+    #: 但在**评测进程**里直接调用会炸 ``AttributeError: 'NoneType' object has no attribute
+    #: 'ainvoke'``，且这个异常不是 ``AgentUnavailableError`` ⇒ 上层完全读不出真原因。
+    #:
+    #: ⚠️ **根因留在产品侧未修**（本批 Non-goals 第 6 条：不动被测链路），
+    #: 已在集成日志登记为待修缺陷：**任何绕开 HTTP 路由的调用都会踩到**。
+    #: 此处补装配 ⇒ 失败时抛 ``AgentUnavailableError``，能被 translated 成可读的
+    #: ``blocked_by``，而不是 AttributeError。
+    agent._ensure_chat()
+
+    raw_answer, _token_usage = await agent._invoke_chat_with_retry(
         system_prompt=template.render(**values),
         question=question,
         trace_id=trace_id or uuid4().hex,
@@ -394,6 +418,9 @@ async def answer_with_dense(
         ),
         correct=None,
         judged_by=None,
+        #: **判分留证**（P6-F）：与图侧同口径，不参与任何判据计算。
+        #: 注意这里是 ``parsed.answer``（清洗后的作答正文），**不是**未经解析的 raw。
+        answer_text=parsed.answer,
     )
 
 

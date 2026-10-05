@@ -194,6 +194,8 @@ def _to_answer(
         citations=citations,
         correct=correct,
         judged_by=judged_by,
+        #: **判分留证**（P6-F）：不参与任何判据计算，只为了让判分人对着原文判。
+        answer_text=str(response.get("answer") or ""),
     )
 
 
@@ -892,6 +894,26 @@ def _judged_answers(
     )
 
 
+def _awaiting_judgement(
+    answers: tuple[AnswerRecord, ...], indices: tuple[int, ...]
+) -> list[dict[str, Any]]:
+    """把**待判分**的答案原文摊开（A3：人不该盲判）。
+
+    为什么必须给原文：判分表一旦写下去就决定了 C1 的数字。若判分时只能看到
+    ``refused / citations 数``，事后谁也复核不了某题当初答了什么 ⇒ 判据不可信。
+    （P6-F：``answer_text`` 因此进了 :class:`AnswerRecord`。）
+    """
+    return [
+        {
+            "index": index,
+            "refused": answer.refused,
+            "citations": len(answer.citations),
+            "answer": answer.answer_text,
+        }
+        for index, answer in zip(indices, answers, strict=False)
+    ]
+
+
 def _c1_unknown(
     runner_ctx: RunnerContext, blocked_by: str, **detail: Any
 ) -> CriterionResult:
@@ -1038,14 +1060,20 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
             runner_ctx,
             "A3：图侧没有一题被人工判分（用 --judgements 提供）；"
             "脚本不自动判分 ⇒ 不判就等于没跑",
+            #: **把两侧原文一并摊出来**：免得"先判图侧、再判基线侧"要跑两趟才知道答了什么
+            awaiting_graph=_awaiting_judgement(
+                snapshot.answers, snapshot.answered_indices
+            ),
+            awaiting_baseline=_awaiting_judgement(baseline_answers, baseline_indices),
         )
     if baseline_error is not None:
         return _c1_unknown(runner_ctx, f"基线侧不可用：{baseline_error}")
     if baseline_metric.value is None:  # type: ignore[union-attr]
         return _c1_unknown(
             runner_ctx,
-            "A3：基线侧没有一题被人工判分（用 --judgements-baseline 提供）；"
+            "A3：基线侧没有一题被人工判分（用 --baseline-judgements 提供）；"
             "只判图谱侧 ⇒ 增益无从计算",
+            awaiting_baseline=_awaiting_judgement(baseline_answers, baseline_indices),
         )
 
     #: 可比性前置断言（此处才装 embedder：缺 key ⇒ 上面会先以 baseline_error 返回）

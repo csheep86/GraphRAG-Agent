@@ -88,6 +88,10 @@ class AnswerRecord:
     #: 由人按 `MANIFEST.json` 的 rubric 判，判分人记入 `judged_by`。
     correct: bool | None = None
     judged_by: str | None = None
+    #: **答案原文**（P6-F）。**只作判分留证，不参与任何指标计算**——
+    #: 此前没有它，人只能对着结构化记录（refused / citations 计数）判分，等于盲判，
+    #: 事后也无法复核某题当初到底答了什么。默认为空 ⇒ 既有构造点**全部**不受影响。
+    answer_text: str = ""
 
 
 @dataclass(frozen=True)

@@ -86,8 +86,42 @@ def _default_out(mode: str) -> Path:
 
 
 def _load_judgements(path: Path) -> dict[int, bool]:
+    """读人工判分 JSON。
+
+    **判分文件必须能自解释**：判分表决定了 C1 的数字，而一份裸的
+    ``{"5": false}`` 三个月后**无人能复核**——不知道用的哪套 rubric、谁判的、
+    为什么判错。故允许 **下划线开头**的元信息键（``_rubric`` / ``_judged_by`` /
+    ``_note``），它们被跳过不进判分表。
+
+    其余非题号键**照样报错**：那多半是手滑把 rubric 说明写成了普通键，
+    或是题号写错 ⇒ 静默放行会让某题"从未被判分"却看不出来。
+    """
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return {int(k): bool(v) for k, v in payload.items()}
+    table: dict[int, bool] = {}
+    for key, value in payload.items():
+        if str(key).startswith("_"):
+            continue
+        try:
+            index = int(key)
+        except ValueError as exc:
+            raise ValueError(
+                f"判分文件 {path} 的键必须是题号（元信息键请用下划线开头），收到 {key!r}"
+            ) from exc
+        table[index] = bool(value)
+    return table
+
+
+def distinct_judgement_tables(graph_path: Path, baseline_path: Path) -> None:
+    """**A1 裁决 3 的机器守卫**：两张判分表**不得**是同一个文件。
+
+    抽成独立函数是为了**可测**——内联在 ``main()`` 里就只能靠跑 CLI 覆盖，
+    而这里是核心？的假绿防线，必须能被单点测试反复 exercising。
+    """
+    if graph_path.resolve() == baseline_path.resolve():
+        raise ValueError(
+            f"--judgements 与 --baseline-judgements 指向同一个文件（{graph_path}）："
+            "A1 裁决 3 要求两侧各判各的，共用一张表 ⇒ 替基线预设答案 ⇒ 增益无意义"
+        )
 
 
 def _percentile(values: list[int], pct: float) -> float:
@@ -197,7 +231,19 @@ def main() -> int:
     parser.add_argument("--out", help="报告落点 JSON（默认 backend/reports/eval/）")
     parser.add_argument(
         "--judgements",
-        help="人工判分 JSON（{题号: true/false}）——A3：脚本不自动判分",
+        help=(
+            "**图侧**人工判分 JSON（{题号: true/false}）——A3：脚本不自动判分。"
+            "（C1 还需另给 --baseline-judgements）"
+        ),
+    )
+    parser.add_argument(
+        "--baseline-judgements",
+        help=(
+            "**基线侧**人工判分 JSON（同一份 rubric、同一批改分人）。"
+            "⚠️ **A1 裁决 3：必须是另一张表**——两侧答案由不同检索产出，同一题在两侧"
+            "对错可以不同；共用一张表等于替基线「预设答案」⇒ 增益失去意义。"
+            "与 --judgements 指向同一文件时本脚本直接报错退出。"
+        ),
     )
     parser.add_argument(
         "--judged-by", default="architect", help="判分人（写入 provenance）"
@@ -260,11 +306,31 @@ def main() -> int:
         if args.criteria
         else ALL_CRITERIA
     )
+    graph_judgements_path = Path(args.judgements) if args.judgements else None
+    baseline_judgements_path = (
+        Path(args.baseline_judgements) if args.baseline_judgements else None
+    )
+    #: **A1 裁决 3 的机器守卫**：两张表落在同一个文件 ⇒ 直接拒绝执行。
+    #: 只写在 help 里不够——万一人手滑传同一份，出来的增益值看着很正常，实则等于
+    #: 拿图侧的答案预先替基线判了卷，这条判据从此失效。
+    if graph_judgements_path and baseline_judgements_path:
+        try:
+            distinct_judgement_tables(graph_judgements_path, baseline_judgements_path)
+        except ValueError as exc:
+            parser.error(str(exc))
+
     ctx = RunnerContext(
         mode=run_mode,  # type: ignore[arg-type]
         git_hash=git_hash(),
         base_url=args.base_url or RunnerContext(mode=run_mode, git_hash="x").base_url,
-        judgements=_load_judgements(Path(args.judgements)) if args.judgements else None,
+        judgements=(
+            _load_judgements(graph_judgements_path) if graph_judgements_path else None
+        ),
+        baseline_judgements=(
+            _load_judgements(baseline_judgements_path)
+            if baseline_judgements_path
+            else None
+        ),
         judged_by=args.judged_by,
         gold_version=args.gold,
     )
