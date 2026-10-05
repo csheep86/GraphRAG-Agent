@@ -21,8 +21,14 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Literal
+from uuid import UUID
 
 from app.evaluation.affiliation import DEFAULT_NON_MEMBER_PREFIXES
+from app.evaluation.corpus_layer import (
+    LAYER_ALGORITHM,
+    LAYER_END_TO_END,
+    detect_corpus_layer,
+)
 from app.evaluation.criteria import (
     THRESHOLD_CALIBRATED,
     THRESHOLD_ENV_OVERRIDE,
@@ -81,9 +87,10 @@ C_REFUSAL = "refusal_false_refusal"
 #: ⇒ 即便达标也只能给 ``PASS(provisional)``，**不给裸 PASS**（§5.2 第 3 条）。
 C1_GAIN_THRESHOLD = 0.10
 
-#: 语料层标识（**A8 裁决 4**）：受控题集跑的是演示语料 ⇒ **L1 算法层**，
-#: **不得**被说成端到端结论。
-QSET_CORPUS_LAYER = "L1"
+#: ⚠️ **本常量已删除（P6-D，2026-10-05）**：原先写死 ``QSET_CORPUS_LAYER = "L1"``，
+#: 意味着即便链路已经打通到 L2，报告**照样标 L1**；反之改一行常量就能把 L1 说成 L2，
+#: 而没有任何机器证据能证伪 ⇒ 属**假绿入口**。
+#: 现改为按图内实测判定：:func:`app.evaluation.corpus_layer.detect_corpus_layer`。
 
 ALL_CRITERIA = (
     C_GAIN,
@@ -900,6 +907,37 @@ def _c1_unknown(
     )
 
 
+def _detect_layer(kg_versions: Any, org_id: str) -> str | None:
+    """按**图内实测**判语料层（P6-D）：多版本时**取最高层**。
+
+    为什么取最高而不是取第一个：一次运行若同时碰过 L1 与 L2 的图，
+    标低的那档等于**用弱样本掩盖强样本**（反向也成立：标高会假绿）。
+    ⇒ 只有"真的跑到了 L2"才写 L2，其余按实测写 L1，**判不出来就空着**。
+    """
+    parsed_org: UUID | None = None
+    if org_id:
+        try:
+            parsed_org = UUID(org_id)
+        except ValueError:
+            parsed_org = None
+
+    layers: list[str] = []
+    for version in sorted(str(v) for v in kg_versions):
+        if not version or version == "None":
+            continue
+        try:
+            layer = detect_corpus_layer(kg_version=version, org_id=parsed_org)
+        except Exception:  # noqa: BLE001 - 归因判不出来 ⇒ 空着，不拖垮整份报告
+            return None
+        if layer:
+            layers.append(layer)
+    if LAYER_END_TO_END in layers:
+        return LAYER_END_TO_END
+    if LAYER_ALGORITHM in layers:
+        return LAYER_ALGORITHM
+    return None
+
+
 def _graph_spec(runner_ctx: RunnerContext, pool_ref: Any) -> Any:
     """图侧的共因清单（``retriever = graph_mentions``）。"""
     from app.evaluation.baseline import graph_side_spec  # noqa: PLC0415
@@ -1042,7 +1080,9 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
             runner_ctx,
             dataset_version="controlled-qset-v3",
             kg_version=", ".join(snapshot.kg_versions),
-            corpus_layer=QSET_CORPUS_LAYER,
+            #: **随实测反推**（P6-D）：图里有 M2 抽取产物 ⇒ L2，只有直灌数据 ⇒ L1，
+            #: 图不可用 ⇒ None（宁可空着，不许填一个漂亮的层号）。
+            corpus_layer=_detect_layer(snapshot.kg_versions, runner_ctx.org_id),
             notes="; ".join(
                 x
                 for x in (

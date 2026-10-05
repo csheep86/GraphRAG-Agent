@@ -184,6 +184,7 @@ def run_stage(
     *,
     task_type: str,
     doc_id: uuid.UUID,
+    org_id: str,
     extra_payload: Mapping[str, Any] | None = None,
 ) -> None:
     """同步驱动一个管线段（执行体是 async，脚本侧用 ``asyncio.run`` 直接跑）。"""
@@ -192,7 +193,16 @@ def run_stage(
         payload.update(dict(extra_payload))
     asyncio.run(
         executor(
-            TaskSpec(task_type=task_type, payload=payload, trace_id=str(uuid.uuid4()))  # type: ignore[arg-type]
+            TaskSpec(
+                task_type=task_type,
+                payload=payload,
+                trace_id=str(uuid.uuid4()),
+                #: **P6-D（2026-10-05）**：``org_id`` 现在是 ``TaskSpec`` 的**必填位**
+                #: （G-26 判据 ⑩ + ADR：应用入口必须显式绑 org）。脚本此前没传 ⇒
+                #: 一进来就 ``TypeError`` ⇒ L2 的 M1/M2 两段**根本跑不起来**
+                #: （本批正是靠它定位到：该脚本从未在当前代码上跑通过）。
+                org_id=str(org_id),
+            )
         )
     )
 
@@ -276,7 +286,12 @@ def parse_and_extract(*, db: Any, doc_id: uuid.UUID) -> str:
     settings = get_settings()
     org_id = settings.default_org_id
 
-    run_stage(document_parse_executor, task_type="document.parse", doc_id=doc_id)
+    run_stage(
+        document_parse_executor,
+        task_type="document.parse",
+        doc_id=doc_id,
+        org_id=org_id,
+    )
     assert_stage_completed(
         db=db, doc_id=doc_id, status_field="status", expected="completed"
     )
@@ -297,6 +312,7 @@ def parse_and_extract(*, db: Any, doc_id: uuid.UUID) -> str:
         document_extract_executor,
         task_type="document.extract",
         doc_id=doc_id,
+        org_id=org_id,
         # 沿条款切片（**实测**：同文档 4000 字切片只抽到 1 条 POLICY_CLAUSE，
         # 600 字切片抽到 16 条）——制度文档的抽取单元是"条"，不是"篇"
         extra_payload={"max_chars_per_chunk": CLAUSE_CHARS_PER_CHUNK},
@@ -662,6 +678,7 @@ def process_document(
         kg_build_executor,
         task_type="kg.build",
         doc_id=doc_id,
+        org_id=org_id,
         extra_payload={"kg_version_id": str(kg_version_id)},
     )
     assert_stage_completed(

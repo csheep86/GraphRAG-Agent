@@ -972,9 +972,23 @@ def import_graph(
                     for item in misses:
                         print(f"       - {item}", file=sys.stderr)
                 if not governed_rows:
-                    raise IngestError(
-                        "GOVERNED_BY 连边为 0——事实与条款未连通（R10 目标未达），"
-                        "拒绝以 active 收场"
+                    if context:
+                        raise IngestError(
+                            "GOVERNED_BY 连边为 0——事实与条款未连通（R10 目标未达），"
+                            "拒绝以 active 收场"
+                        )
+                    #: **引导阶段（P6-D 2026-10-05）**：条款语料为 0 = 制度文档**还没入图**
+                    #: （`ingest_attendance_policies.py` 未跑），而不是"连不上"——
+                    #: 原写法在此处同样硬失败 ⇒ 与制度入图器互相等待（它要 WORK_TIME_SYSTEM，
+                    #: 本脚本要条款）⇒ **死锁，演示图永远建不起来**。
+                    #: 护栏的**本意**是抓"条款明明在却连不上"；条款根本不存在时不该由它拦。
+                    #: ⇒ 此处跳过自检但**大声提示**，且**不谎报成功**：版本仍会置 active，
+                    #: 但汇合边为 0 ⇒ 补跑制度入图器之前，R10 目标**仍未达成**。
+                    print(
+                        "  [governed-by][bootstrap] 条款语料为 0 ⇒ 制度文档尚未入图，"
+                        "本轮不建汇合边（引导步骤，非连通性失败）；"
+                        "下一步跑 scripts/ingest_attendance_policies.py 完成汇合",
+                        file=sys.stderr,
                     )
 
             for batch in _batched(relation_rows, BATCH_SIZE):

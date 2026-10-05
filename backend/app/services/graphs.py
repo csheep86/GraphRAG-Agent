@@ -112,6 +112,14 @@ _CHUNK_POOL_LIMIT = 5000
 
 #: **A1（2026-10-05）**：基线候选池查询。**刻意不带 ``MENTIONS`` 偏置**（拉开池才谈得上对比），
 #: 返回键与 :data:`_QUERY_EVIDENCE_CHUNKS_BY_IDS` 一致 ⇒ 可复用 :meth:`_project_chunks`。
+#: **P6-D（2026-10-05）**：M2 抽取产物计数——``ent_`` 前缀是抽取器的产物标记。
+_QUERY_M2_ENTITY_COUNT = """
+MATCH (e:Entity {kg_version: $kg_version})
+WHERE ($org_id IS NULL OR e.org_id IS NULL OR e.org_id = $org_id)
+  AND e.id STARTS WITH 'ent_'
+RETURN count(e) AS n
+"""
+
 _QUERY_CHUNK_POOL = """
 MATCH (c:Chunk {kg_version: $kg_version})
 WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
@@ -1319,6 +1327,33 @@ class GraphService:
         return self._project_chunks(
             records, f"fetch_evidence_chunks kg_version={kg_version}"
         )
+
+    def count_m2_entities(
+        self, *, kg_version: str, org_id: UUID | None = None, limit: int = 1
+    ) -> int:
+        """**P6-D（2026-10-05）**：该版本里 **M2 抽取产物**的个数（判 ``corpus_layer`` 用）。
+
+        L1 与 L2 的分界是「语料**是否经 M2 抽取**」（A8 裁决 4）。抽取器产出的实体 id
+        带 ``ent_`` 前缀（``ingest_attendance_csv.py`` 头注释，实测 2026-10-05：
+        ``attendance-demo-v1`` = 180 个、``affiliation-demo-v2`` = 0 个）⇒ 可机判。
+
+        :param limit: 计数上限（只需要"有没有"，不必数完）
+        """
+        params: dict[str, Any] = {
+            "kg_version": kg_version,
+            "org_id": str(org_id) if org_id else None,
+            "limit": max(1, limit),
+        }
+        try:
+            with self._session() as session:
+                record = session.run(_QUERY_M2_ENTITY_COUNT, **params).single()
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"统计 M2 抽取产物失败: kg_version={kg_version}: {exc}"
+            ) from exc
+        return int(record[0]) if record else 0
 
     def fetch_chunk_pool(
         self,
