@@ -77,6 +77,14 @@ C_COST_RATIO = "c3_b_incremental_cost_ratio"
 #: 误以为矩阵里有这一条；它锚定的是 Sprint 6 §5.3 的验收条款。
 C_REFUSAL = "refusal_false_refusal"
 
+#: **C1 的阈值（10%）**——阈值**未校准**（TBD-7 未收敛 + 基线非终局）
+#: ⇒ 即便达标也只能给 ``PASS(provisional)``，**不给裸 PASS**（§5.2 第 3 条）。
+C1_GAIN_THRESHOLD = 0.10
+
+#: 语料层标识（**A8 裁决 4**）：受控题集跑的是演示语料 ⇒ **L1 算法层**，
+#: **不得**被说成端到端结论。
+QSET_CORPUS_LAYER = "L1"
+
 ALL_CRITERIA = (
     C_GAIN,
     C_MULTIHOP,
@@ -107,6 +115,10 @@ class RunnerContext:
     #: 人工判分：``{题号: correct}``（A3：脚本不自动判分）。
     judgements: dict[int, bool] | None = None
     judged_by: str = "architect"
+    #: **A1（2026-10-05）**：**基线侧**的独立判分（同一份 rubric、同一批改）。
+    #: 为什么必须是**另一份**：两侧的答案由不同检索产出，同一题在两侧对错可以不同
+    #: ⇒ 共用一张判分表等于替基线"预设答案"，那会让增益失去意义（L10-A1 条款 3）。
+    baseline_judgements: dict[int, bool] | None = None
     #: **A8（2026-10-04）**：C2-a / C2-b 用哪版 gold 语料
     #: （``v1`` = 8/60/30/9 手工语料；``v2`` = 200/500/100/20 扩标语料）。
     #: **刻意默认 v1**：换语料会换结论 ⇒ 必须显式选，不能靠默认值悄悄换。
@@ -211,6 +223,10 @@ class _QaRun:
     """
 
     answers: tuple[AnswerRecord, ...]
+    #: **A1（2026-10-05）**：与 :attr:`answers` **逐位对齐**的题号。
+    #: 为什么必须记：成功后才会 append answer，失败题被跳过 ⇒ 光有 ``answers``
+    #: 无法把人工判分（``{题号: correct}``）对回具体那一题。
+    answered_indices: tuple[int, ...]
     #: **误伤**：本该作答却拒答（`should_refuse=False` 却 `refused=True`）——L8 的 Q8 属这一类
     false_refusals: tuple[dict[str, Any], ...]
     #: **漏拒**：本该拒答却作答（该拒没拒）——**不进**拒答误伤判据（方向不同，见 L8）
@@ -231,6 +247,7 @@ def _qa_run(runner_ctx: RunnerContext) -> _QaRun:
 
     questions = load_question_set()
     answers: list[AnswerRecord] = []
+    answered_indices: list[int] = []
     false_refusals: list[dict[str, Any]] = []
     missed_refusals: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -244,6 +261,7 @@ def _qa_run(runner_ctx: RunnerContext) -> _QaRun:
             continue
         kg_versions.add(str(response.get("kg_version")))
         answers.append(_to_answer(response, correct=None, judged_by=None))
+        answered_indices.append(item.index)
         actual = bool(response.get("refused"))
         if actual != item.should_refuse:
             mismatch = {
@@ -261,6 +279,7 @@ def _qa_run(runner_ctx: RunnerContext) -> _QaRun:
 
     snapshot = _QaRun(
         answers=tuple(answers),
+        answered_indices=tuple(answered_indices),
         false_refusals=tuple(false_refusals),
         missed_refusals=tuple(missed_refusals),
         failures=tuple(failures),
@@ -845,6 +864,292 @@ def eval_incremental_cost_ratio(ctx: dict[str, Any]) -> CriterionResult:
     )
 
 
+def _judged_answers(
+    answers: tuple[AnswerRecord, ...],
+    indices: tuple[int, ...],
+    judgements: dict[int, bool] | None,
+    judged_by: str,
+) -> tuple[AnswerRecord, ...]:
+    """把人工判分贴回对应答案（**未判分的题不入分母**，A3）。"""
+    table = judgements or {}
+    return tuple(
+        AnswerRecord(
+            refused=answer.refused,
+            citations=answer.citations,
+            correct=table.get(index),
+            judged_by=judged_by if index in table else None,
+        )
+        for index, answer in zip(indices, answers, strict=True)
+    )
+
+
+def _c1_unknown(
+    runner_ctx: RunnerContext, blocked_by: str, **detail: Any
+) -> CriterionResult:
+    """C1 的「没测出来」——**value 恒为 None**，阈值照实带出（与 C3 同口径）。"""
+    return CriterionResult(
+        criterion=C_GAIN,
+        status=CriterionStatus.UNKNOWN,
+        value=None,
+        provenance=_provenance(runner_ctx, dataset_version="controlled-qset-v3"),
+        blocked_by=blocked_by,
+        verdict=Verdict.INDETERMINATE,
+        threshold=C1_GAIN_THRESHOLD,
+        threshold_source=THRESHOLD_PROVISIONAL,
+        detail=detail or None,
+    )
+
+
+def _graph_spec(runner_ctx: RunnerContext, pool_ref: Any) -> Any:
+    """图侧的共因清单（``retriever = graph_mentions``）。"""
+    from app.evaluation.baseline import graph_side_spec  # noqa: PLC0415
+
+    return graph_side_spec(pool=pool_ref, judged_by=runner_ctx.judged_by)
+
+
+def _baseline_spec(runner_ctx: RunnerContext, pool_ref: Any, embedder: Any) -> Any:
+    """基线侧的共因清单（``retriever = dense_top_k`` ⇒ 与图侧的唯一差异）。"""
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.evaluation.baseline import baseline_side_spec  # noqa: PLC0415
+
+    return baseline_side_spec(
+        pool=pool_ref,
+        embedder=embedder,
+        top_k=get_settings().eval_baseline_top_k,
+        judged_by=runner_ctx.judged_by,
+    )
+
+
+def _load_pool_and_specs(
+    runner_ctx: RunnerContext, embedder: Any
+) -> tuple[Any, Any, Any, list]:
+    """两侧共用**同一个池**：只加载一次，再由双方各自算指纹（不同 ⇒ 必是换了池）。"""
+    from uuid import UUID  # noqa: PLC0415
+
+    from app.evaluation.baseline import build_pool_ref  # noqa: PLC0415
+    from app.services.graphs import GraphService
+
+    snapshot = _qa_run(runner_ctx)
+    kg_version = next(iter(snapshot.kg_versions), "")
+    pool = GraphService.instance().fetch_chunk_pool(
+        kg_version=kg_version, org_id=UUID(runner_ctx.org_id)
+    )
+    pool_ref = build_pool_ref(
+        kg_version=kg_version, org_id=runner_ctx.org_id, chunks=pool
+    )
+    return (
+        _graph_spec(runner_ctx, pool_ref),
+        _baseline_spec(runner_ctx, pool_ref, embedder),
+        pool_ref,
+        pool,
+    )
+
+
+def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
+    """**C1 图谱相对 RAG 增益**（A1 / L10-A1）：两侧**同一批改分**才敢出数。
+
+    三条硬要求：
+
+    1. **双侧同源判分**（不是各判各的）：图侧答案来自产品 HTTP 链路，基线侧来自
+       :mod:`app.evaluation.baseline` 的 dense top-k 检索 + **同一份 Prompt、同一个
+       ChatModel、同一个解析器、同一套引用回查** ⇒ 唯一变量是**检索方式**；
+    2. **可比性前置断言**：两侧池指纹 / k / 生成模型 / prompt 版本任一不一致
+       ⇒ **返回 UNKNOWN，不给数字**（不公平条件下算出的增益比没有数字更糟）；
+    3. **反向守卫**：增益**保号**——基线反超 ⇒ 值为负且 ``regression_warning`` 显式出现，
+       **不许**取绝对值，也不许被 10% 阈值判定悄悄吞掉。
+
+    ⚠️ **A3**：两侧**都**必须有人工判分，缺任一侧 ⇒ UNKNOWN（**不是 0、不是 PASS**）。
+    """
+    runner_ctx: RunnerContext = ctx["ctx"]
+    if runner_ctx.mode != "live":
+        return _c1_unknown(
+            runner_ctx,
+            "需 live 模式（C1 要跑两侧问答链路）；offline 不产出判据数字",
+        )
+
+    snapshot = _qa_run(runner_ctx)
+    if not snapshot.answers:
+        return _qa_unavailable(C_GAIN, runner_ctx, snapshot)
+
+    graph_answers = _judged_answers(
+        snapshot.answers,
+        snapshot.answered_indices,
+        runner_ctx.judgements,
+        runner_ctx.judged_by,
+    )
+    graph_metric = accuracy(graph_answers)
+
+    baseline_error, baseline_answers, baseline_indices = _run_baseline_side(runner_ctx)
+    baseline_metric = (
+        accuracy(
+            _judged_answers(
+                baseline_answers,
+                baseline_indices,
+                runner_ctx.baseline_judgements,
+                runner_ctx.judged_by,
+            )
+        )
+        if baseline_error is None
+        else None
+    )
+
+    if graph_metric.value is None:
+        return _c1_unknown(
+            runner_ctx,
+            "A3：图侧没有一题被人工判分（用 --judgements 提供）；"
+            "脚本不自动判分 ⇒ 不判就等于没跑",
+        )
+    if baseline_error is not None:
+        return _c1_unknown(runner_ctx, f"基线侧不可用：{baseline_error}")
+    if baseline_metric.value is None:  # type: ignore[union-attr]
+        return _c1_unknown(
+            runner_ctx,
+            "A3：基线侧没有一题被人工判分（用 --judgements-baseline 提供）；"
+            "只判图谱侧 ⇒ 增益无从计算",
+        )
+
+    #: 可比性前置断言（此处才装 embedder：缺 key ⇒ 上面会先以 baseline_error 返回）
+    from app.evaluation.baseline import comparability_error  # noqa: PLC0415
+
+    embedder = _build_embedder_or_none()
+    graph_spec, base_spec, _pool_ref, _pool = _load_pool_and_specs(runner_ctx, embedder)
+    incomparable = comparability_error(graph_spec, base_spec)
+    if incomparable is not None:
+        return _c1_unknown(
+            runner_ctx,
+            f"L10-A1 反向守卫：{incomparable}",
+            graph_spec=graph_spec.as_dict(),
+            baseline_spec=base_spec.as_dict(),
+        )
+
+    metric = graph_gain(graph_metric.value, baseline_metric.value)
+    if metric.value is None:
+        return _c1_unknown(runner_ctx, metric.reason or "增益无定义")
+
+    regression = metric.value < 0
+    status, reason = resolve_status(
+        link_ready=True,
+        dataset_ready=True,
+        rubric_defined=True,
+        #: 基线是**项目内自建**（L10-A1 条款 6 / G5 声明）⇒ 非终局
+        corpus_is_final=False,
+    )
+    return CriterionResult(
+        criterion=C_GAIN,
+        status=status,
+        value=metric.value,
+        provenance=_provenance(
+            runner_ctx,
+            dataset_version="controlled-qset-v3",
+            kg_version=", ".join(snapshot.kg_versions),
+            corpus_layer=QSET_CORPUS_LAYER,
+            notes="; ".join(
+                x
+                for x in (
+                    reason,
+                    "基线 = 项目内自建 dense top-k，**非客户现有系统**"
+                    " ⇒ 增益只对该基线成立（L10-A1 条款 6 / G5 声明）",
+                    "残留变量：as_of_date 走 db=None 口径"
+                    "（演示语料全部无 document_date ⇒ 两侧同解）",
+                    "追问记忆：A8 只解决 L1；本判据仍未走端到端（L2）",
+                )
+                if x
+            ),
+        ),
+        threshold=C1_GAIN_THRESHOLD,
+        threshold_source=THRESHOLD_PROVISIONAL,
+        verdict=judge(
+            metric.value,
+            threshold=C1_GAIN_THRESHOLD,
+            threshold_source=THRESHOLD_PROVISIONAL,
+        ),
+        detail={
+            #: **基线分必须落盘**（L10-A1 条款 4 ①）：只落增益则复核不了分母
+            "graph_accuracy": graph_metric.value,
+            "baseline_accuracy": baseline_metric.value,
+            "graph_judged": sum(1 for a in graph_answers if a.correct is not None),
+            "baseline_judged": sum(
+                1
+                for a in _judged_answers(
+                    baseline_answers,
+                    baseline_indices,
+                    runner_ctx.baseline_judgements,
+                    runner_ctx.judged_by,
+                )
+                if a.correct is not None
+            ),
+            "graph_spec": graph_spec.as_dict(),
+            "baseline_spec": base_spec.as_dict(),
+            "regression_warning": "基线反超图谱（增益为负）" if regression else None,
+        },
+    )
+
+
+def _build_embedder_or_none() -> Any:
+    """装默认 embedder；不可用返回 ``None``（**不**退化成关键词检索）。"""
+    from app.evaluation.baseline import EmbedderUnavailable, build_default_embedder
+
+    try:
+        return build_default_embedder()
+    except EmbedderUnavailable:
+        return None
+
+
+def _run_baseline_side(
+    runner_ctx: RunnerContext,
+) -> tuple[str | None, tuple[AnswerRecord, ...], tuple[int, ...]]:
+    """跑一遍**基线侧**问答；返回 ``(错误, 答案, 题号)``。**不抛异常**（同 `ask_safe`）。"""
+    import asyncio  # noqa: PLC0415
+    from uuid import UUID  # noqa: PLC0415
+
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.evaluation.baseline import (
+        DenseTopKRetriever,
+        EmbedderUnavailable,
+        answer_with_dense,
+    )
+    from app.services.graphs import GraphService
+
+    embedder = _build_embedder_or_none()
+    if embedder is None:
+        return "embedding 未配置（EVAL_EMBEDDING_MODEL / *_API_KEY）", (), ()
+
+    snapshot = _qa_run(runner_ctx)
+    kg_version = next(iter(snapshot.kg_versions), "")
+    if not kg_version:
+        return "取不到图侧的 kg_version ⇒ 无法确定基线该用哪一版 chunk 池", (), ()
+
+    try:
+        pool = GraphService.instance().fetch_chunk_pool(
+            kg_version=kg_version, org_id=UUID(runner_ctx.org_id)
+        )
+    except Exception as exc:  # noqa: BLE001 - 图库故障要转成字面看得懂的原因
+        return f"基线候选池读取失败：{exc!r}", (), ()
+    if not pool:
+        return "基线候选池为空（该 kg_version 下无 :Chunk ⇒ 无从召回）", (), ()
+
+    retriever = DenseTopKRetriever(embedder, top_k=get_settings().eval_baseline_top_k)
+    answers: list[AnswerRecord] = []
+    indices: list[int] = []
+    errors: list[str] = []
+    for item in load_question_set():
+        try:
+            retrieved = retriever.retrieve(item.question, pool)
+            answers.append(
+                asyncio.run(
+                    answer_with_dense(question=item.question, evidence_chunks=retrieved)
+                )
+            )
+            indices.append(item.index)
+        except EmbedderUnavailable as exc:
+            return str(exc), (), ()
+        except Exception as exc:  # noqa: BLE001 - 单题失败不拖垮整批改判
+            errors.append(f"#{item.index}: {exc!r}")
+    if not answers:
+        return "基线侧全部题目失败：" + "; ".join(errors[:3]), (), ()
+    return None, tuple(answers), tuple(indices)
+
+
 def _register_builtin_criteria() -> None:
     """注册内置判据（**唯一真源**：新增判据必须在此登记）。"""
     for name, evaluator in (
@@ -868,14 +1173,9 @@ def _register_builtin_criteria() -> None:
         if name not in _registered():
             register_criterion(name, evaluator)
     if C_GAIN not in _registered():
-        register_criterion(
-            C_GAIN,
-            PlaceholderEvaluator(
-                C_GAIN,
-                blocked_by="baseline-not-implemented"
-                "（A1：RAG 基线检索未实现，C1 分母不存在）",
-            ),
-        )
+        #: **A1（2026-10-05，P6-C）**：换成真 evaluator（dense top-k 基线 + 双侧同源判分）。
+        #: 阈值口径保持不变（10% / provisional）——**本批不碰阈值**，TBD-7 归阶段 ⑤。
+        register_criterion(C_GAIN, eval_graph_gain)
     #: C3-a / C3-b **不用** PlaceholderEvaluator：它们**有阈值**（TBD-7 已落 config），
     #: 只是没有值 ⇒ 用真 evaluator 带出 threshold / threshold_source。
     for name, evaluator in (

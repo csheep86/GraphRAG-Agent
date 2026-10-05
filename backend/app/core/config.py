@@ -54,6 +54,18 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-chat"
     llm_request_timeout_seconds: float = Field(default=60.0, gt=0)
 
+    # -- 评测基线 embedding（A1 / L10-A1：dense top-k 基线侧的向量化）--
+    # 消费者唯一落点：app/evaluation/baseline.py::build_default_embedder。
+    # 留空⇒回落到 LLM_*：绝大多数 OpenAI 兼容网关的 chat 与 embeddings 同源。
+    eval_embedding_base_url: str = ""
+    eval_embedding_api_key: str = ""
+    #: **刻意无默认值**：嵌入模型与对话模型必然不是同一个，填错会 Embedding 报 404，
+    #: 给一个"看起来能用"的默认值反而会把错误推迟到跑数据那天。
+    eval_embedding_model: str = ""
+    #: 基线侧注入条数。**下限由 L10-A1 反向守卫钉住**：
+    #: 不得小于图侧的 EVIDENCE_CHUNK_LIMIT（comparability_error 会在运行时再判一次）。
+    eval_baseline_top_k: int = Field(default=32, ge=1)
+
     # -- 解析 Provider（接缝 3：parser 侧切换开关，Sprint 5 批次 A2）--
     # 当前唯一实现 mineru_cloud；内网本地解析通路（plan §18.4）落地时在此切换。
     parser_provider: str = "mineru_cloud"

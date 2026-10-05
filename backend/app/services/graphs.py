@@ -96,10 +96,43 @@ if TYPE_CHECKING:  # 仅类型检查：运行时走函数内延迟导入，避�
 #: ``changes/Sprint10.2/probe_e16_doc_order.py`` 复核，别把 32 当普适值。
 _EVIDENCE_CHUNK_LIMIT = 32
 
+#: **A1（2026-10-05，P6-C）**：图侧注入上限的**对外可读别名**。
+#: 评测基线要用它断言「基线侧 ``k`` **不得小于**图侧」——两侧配额必须同源，
+#: 否则"悄悄把图谱侧的 k 调大"就能刷出增益（L10-A1 条款 4 反向守卫 ②）。
+EVIDENCE_CHUNK_LIMIT = _EVIDENCE_CHUNK_LIMIT
+
 #: Sprint 10 批次 C 残留缺口：选片段前先取**轻量索引**（chunk_id / doc_id / mentions / spans，
 #: **不含** ``text``）的上限。与 ``_GRAPH_NODE_LIMIT`` 同思路——索引行很便宜，
 #: 取满可达集合才能"按文档保底"；真正贵的是 :data:`_EVIDENCE_CHUNK_LIMIT` 条全文。
 _EVIDENCE_CHUNK_INDEX_LIMIT = 1000
+
+#: **A1（2026-10-05，P6-C）**：基线候选池的**防御性上限**——整池要先向量化再召回，
+#: 成本随 chunk 数线性增长；这里是"跑得起"的量级护栏，**不是**召回质量参数。
+_CHUNK_POOL_LIMIT = 5000
+
+#: **A1（2026-10-05）**：基线候选池查询。**刻意不带 ``MENTIONS`` 偏置**（拉开池才谈得上对比），
+#: 返回键与 :data:`_QUERY_EVIDENCE_CHUNKS_BY_IDS` 一致 ⇒ 可复用 :meth:`_project_chunks`。
+_QUERY_CHUNK_POOL = """
+MATCH (c:Chunk {kg_version: $kg_version})
+WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
+OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
+OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity {kg_version: $kg_version})
+WHERE e.char_start IS NOT NULL
+WITH c, d,
+     collect(DISTINCT {mention: e.mention,
+                       char_start: e.char_start,
+                       char_end: e.char_end}) AS spans
+RETURN
+  c.id AS chunk_id,
+  d.id AS doc_id,
+  c.text AS text,
+  c.page AS page,
+  coalesce(c.char_start, 0) AS char_start,
+  coalesce(c.char_end, 0) AS char_end,
+  [s IN spans WHERE s.mention IS NOT NULL] AS spans
+ORDER BY chunk_id
+LIMIT $limit
+"""
 
 
 class GraphUnavailableError(Exception):
@@ -1285,6 +1318,44 @@ class GraphService:
 
         return self._project_chunks(
             records, f"fetch_evidence_chunks kg_version={kg_version}"
+        )
+
+    def fetch_chunk_pool(
+        self,
+        *,
+        kg_version: str,
+        org_id: UUID | None = None,
+        limit: int = _CHUNK_POOL_LIMIT,
+    ) -> list[EvidenceChunk]:
+        """**A1（2026-10-05，P6-C）**：基线检索的**候选池** = 该租户该版本的全部 chunk。
+
+        与 :meth:`fetch_evidence_chunks` 的区别：那条沿 ``:Entity`` 做有偏召回
+        （``MENTIONS`` 反查 + 每文档保底），本条**不带任何偏置**——基线要的是"整池可被
+        向量召回"这一件事，保底逻辑属于图谱侧的策略，不得混进基线。
+
+        ⚠️ 它是**问答以外的只读路径**：当前唯一消费者是评测基线
+        （``app/evaluation/baseline.py``），**不接任何 HTTP 端点**。
+
+        :param limit: 池上限（防御性：整池嵌入的成本随 chunk 数线性增长）
+        """
+        if limit <= 0:
+            raise ValueError("limit 必须为正整数")
+        params: dict[str, Any] = {
+            "kg_version": kg_version,
+            "org_id": str(org_id) if org_id else None,
+            "limit": limit,
+        }
+        try:
+            with self._session() as session:
+                records = list(session.run(_QUERY_CHUNK_POOL, **params))
+        except GraphUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 统一包装
+            raise GraphUnavailableError(
+                f"查询基线候选池失败: kg_version={kg_version}: {exc}"
+            ) from exc
+        return self._project_chunks(
+            records, f"fetch_chunk_pool kg_version={kg_version}"
         )
 
     def _project_chunks(

@@ -70,7 +70,12 @@ def test_blocked_criteria_name_their_blocker(tmp_path: Path) -> None:
 
     assert "P5-M6" in blocked["c3_a_single_doc_cost"]
     assert "P5-M6" in blocked["c3_b_incremental_cost_ratio"]
-    assert "baseline" in blocked["c1_graph_gain"]
+    #: **2026-10-05 P6-C 订正**：A1（dense top-k 基线）**已实现** ⇒ C1 不再报
+    #: "baseline-not-implemented"，它现在欠的是**真链路**（同 C2-a / C2-b 的口径：点名 live）。
+    #: 本断言的**意图不变**——blocked_by 必须点名"到底缺什么"，只是缺的东西变了。
+    #: 「基线缺失 ⇒ 点名 baseline」的断言下移到
+    #: tests/test_eval_baseline_a1.py::test_missing_embedding_blocks_c1_without_number。
+    assert "live" in blocked["c1_graph_gain"]
     #: C2-a / C2-b 的 id 空间**已核对**（2026-10-03）⇒ 不再是"数据未核对"，
     #: 而是 offline 读不到 Neo4j ⇒ 点名 live。
     assert "live" in blocked["c2_a_hidden_relation_recall"]
