@@ -1,0 +1,25 @@
+# 变体清单（ADR-0007 §3.2 / DR-A1）—— 只描述「启用什么」，**不含业务代码**。
+#
+# ⚠️ **命名**：需求基线 §300 的第二个形态字面写的是 `demo`（内部演示），但
+#    `tests/test_guardrails_delivery.py::_customer_tokens()` 取**变体文件名的 stem**
+#    与 `customer` 字段值，对基座契约做**子串**匹配；契约词频实测 `demo` = 3 次、
+#    `default` = 10 次 ⇒ 按字面命名会让 **G-14 结构性假红**。故沿用 `baseline` 的做法：
+#    文件名 stem = `customer` 值 = `internal-demo`（契约词频实测 **0 次**）。
+#
+# ⚠️ **为什么没写 `domain_profile`**（ADR-0007 §3.2 的 schema 里有该字段）：
+#    ① **零消费者**：全仓库 grep 只有 ADR-0007 与 P6-O 文档提到它，`backend/` 下 0 命中
+#       ⇒ 无代码读取（CODEBUDDY.md「功能预留原则」第 6 条；历史病例 `task_retry_multiplier`）；
+#    ② **差异实证不成立**：真机读数 `kg_versions` 仅 1 条 `attendance-demo-v1`（ready），
+#       `affiliation_tasks` = 0 / `affiliation_suspicions` = 0 ⇒ 提案 §3 O-D2 的
+#       「两个业务域都真实入图」前提**未成立**。
+#    ⇒ 写了就是「看起来有差异、实际没人读」的假差异，故**不写**。
+#    真实差异维度落在 **`customer`（部署形态标识）**——它由 G-14 **真实消费**。
+#
+# 真实部署形态依据（需求基线 §300 点名的两个形态之一：内部演示）：
+#   `backend/scripts/demo_rehearsal.py`、`docs/demo-seed-dataset.md`、`demo/`。
+
+customer: internal-demo
+base_ref: v1.6.0                        # 基座版本（含补丁位）；机械核对自 config.py 的 app_version = 1.6.0
+plugins:
+  - id: json-csv-export
+    version: 1.0.0

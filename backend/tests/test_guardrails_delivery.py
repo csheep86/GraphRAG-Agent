@@ -13,7 +13,6 @@ import importlib
 import inspect
 from pathlib import Path
 
-import pytest
 import yaml
 
 from app.core.config import get_settings
@@ -97,14 +96,12 @@ def test_g14_customer_token_source_exists() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "G-12 / DR-A1 / DR-A3：deploy/variants/ 当前 **1 个**变体"
-        "（`baseline`，2026-10-04 P2.5 落）。启用条件写死为 **variant ≥ 2**，"
-        "本批**不凑第二个**（需求基线 §300：不许捏造客户、不许放宽成 ≥1）"
-    ),
-)
+# ✅ **已转正（2026-10-06，P6-O）**：第二个真实部署形态 `internal-demo.yaml` 已落
+#    ⇒ `deploy/variants/` 达到 **2 个**，启用条件 `≥ 2` 满足。
+#    **转正流程**（与 G-14 / G-19 同款）：先让本条**真通过**（`strict=True` 下
+#    XPASS ⇒ FAILED，实测到过），**再**摘 `@pytest.mark.xfail`——只删标记不算转正。
+# ⚠️ **绿灯只代表矩阵机制可跑，不代表多客户交付已验证**（需求基线 §300 同款注记）：
+#    骨架阶段只判「yaml 可解析 + 顶层是映射」，真实镜像构建待 deploy 侧流程落地后升级。
 def test_g12_variant_matrix_builds() -> None:
     """一次基座改动 ⇒ **全部** variant 都必须构建成功。
 
