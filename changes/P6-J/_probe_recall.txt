@@ -1,0 +1,19 @@
+实体总数 = 2805 | 子图采样 = 500 个
+候选 chunk = 213 条 ⇒ select_evidence_chunks(limit=32) 选出 32 条
+
+=== 三题的目标 chunk 是否被选中 ===
+Q20 月标准工时：chunk-cc75924988e4 ⇒ ❌ **被切掉**
+Q22 审批程序：chunk-eb5f28fb5e2a ⇒ ❌ **被切掉**
+Q26 预警处置：chunk-80577ef6ea9a ⇒ ❌ **被切掉**
+
+=== 选出这 32 条的文档分布 ===
+  14 条  (未挂文档)
+   2 条  business_trips.csv
+   2 条  overtime_records.csv
+   2 条  employees.csv
+   2 条  leave_requests.csv
+   2 条  attendance_records.csv
+   2 条  access_records.csv
+   2 条  work_orders.csv
+   2 条  shifts.csv
+   2 条  location_records.csv
