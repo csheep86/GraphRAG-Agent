@@ -160,11 +160,18 @@ check_session_drift.py        S1 读到 9 条边界；S2 1 文件 / 141 新增�
 （跑测需 `$env:NEO4J_PASSWORD='graphragdev'` 与 `GRAPH_REAL_NEO4J_*` 三项；
 本机 `.env` 里写的 `password` 与在跑的容器不符 —— 本机环境问题，**本批不改 `.env`**。）
 
-⚠️ **上表是本地门禁，不代表 CI 绿**：推送后查 `gh run view` ⇒ CI 的 backend job **红在
-pytest 之前的「导入受控种子语料」**（A8 语料在仓库根 `demo/affiliation/generated/`，
-CI 却在 `backend/` 下找 `backend/demo/affiliation/generated/`）⇒ **自 P6-D 起连续 8 次红，
+⚠️ **本地全绿 ≠ CI 绿（收尾时查出来的，已修）**：首轮推送后查 `gh run view` ⇒ CI 的
+backend job **红在 pytest 之前的「导入受控种子语料」** —— A8 语料在仓库根
+`demo/affiliation/generated/`，而该 job 的工作目录是 `backend/` ⇒ 找的是
+`backend/demo/affiliation/generated/` ⇒ `CorpusError` ⇒ **自 P6-D 起连续 8 次红，
 pytest 与 G-25 门禁一步都没跑到**。本批两个提交里 ruff / format / 接缝 / 契约冻结 /
-契约漂移 / 前端 lint **全 ✓**。已登记 **`dev-doc-status.md` R26**，**本批不修**（详见 §9 第 6 条）。
+契约漂移 / 前端 lint **全 ✓**。
+
+⇒ 已登记 **`dev-doc-status.md` R26**（根因 + 证据 + 影响面），**升级用户**；授权后
+一行修毕（`ci.yml` 补 `../`，提交 `460c830`），CI run **37412509873 全绿**：
+后端 **986 passed / 5 skipped / 3 xfailed**（本地 988 / 3 —— 差 2 条是本地有真 Neo4j
+才跑得起来的真机用例，**非回归**）、G-25 门禁 `c2_a 1.0000 → 1.0000`、
+`c2_b 0.0000 → 0.0000` 判过、契约与前端 ✓。详见 §9 第 6 条。
 
 ## 6. R22：**只改措辞，不关闭**
 
@@ -216,4 +223,4 @@ pytest 与 G-25 门禁一步都没跑到**。本批两个提交里 ruff / format
 | 3 | 「必然丢失率」目前靠一次性 gold（`p6j-dryrun.json`）才出数 ⇒ 无长期 gold 标注 | 换语料 / 换题集时须重新标注 |
 | 4 | C1 已瞎（40/40 封顶）；扩/换题集与换语料均未做 | P6-J 遗留，裁决 A 已记账 |
 | 5 | H6 403 / 入图器自检 / P7-B / G-12 / MANIFEST 语料统计 | Non-goals 第 7 条 |
-| 6 | **CI 后端 job 既有红（非本批引入）**：卡在 pytest **之前**的「导入受控种子语料」—— A8 语料在仓库根 `demo/affiliation/generated/`，而 CI 在 `backend/` 下找 `backend/demo/affiliation/generated/` ⇒ `CorpusError`（自 P6-D 起连续 8 次红，pytest 从未执行） | 已登记 **`docs/dev-doc-status.md` R26**；属 P6-A / P3-E 领域，**本批不修**，修法与影响面升级用户拍板 |
+| 6 | **CI 后端 job 既有红（非本批引入）**：卡在 pytest **之前**的「导入受控种子语料」—— A8 语料在仓库根 `demo/affiliation/generated/`，而 CI 在 `backend/` 下找 `backend/demo/affiliation/generated/` ⇒ `CorpusError`（自 P6-D 起连续 8 次红，pytest 从未执行） | ✅ **已修**：登记 **`dev-doc-status.md` R26** → 升级用户 → 授权后一行修毕（`ci.yml` 补 `../`，`460c830`）⇒ CI run **37412509873 全绿**（后端 **986 passed / 5 skipped / 3 xfailed**；G-25 门禁 `c2_a 1.0000 → 1.0000`、`c2_b 0.0000 → 0.0000` 判过） |
