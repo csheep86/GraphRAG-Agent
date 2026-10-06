@@ -99,6 +99,7 @@ kg_version                 = affiliation-demo-v2
 | ③ | **反向验证**：撤掉留痕 ⇒ 用例变红 | ✅ 撤告警体后 **`test_sentinel_fires_on_a_larger_corpus` FAILED**（共 5 红）；还原 ⇒ 11 绿 |
 | ④ | 全量 `pytest` 零回归 | ✅ **989 passed / 3 skipped / 3 xfailed**（P6-K 基线 988 ⇒ **+1**，0 回归） |
 | ⑤ | 门禁 | ✅ ruff check / ruff format（234 文件）/ `check_seams`（ERROR 0）/ `export_openapi --check`（零 diff）/ `check_session_drift`（**S1 读到 9 条边界**、S3–S5 OK） |
+| ⑥ | **CI 绿，且真机用例在 CI 上真跑**（验收 ⑥） | ✅ run **37420987033** 四 job 全 ✓；后端 **987 passed / 5 skipped / 3 xfailed** —— 较修 R26 后的 **986** 正好 **+1**，而 skipped **仍是 5**（= 那 5 条本地独占用例，单独步骤登记）⇒ `test_sentinel_fires_on_a_larger_corpus` 在 CI 上**passed 而非 skip**，L-D4「哨兵每次 CI 都被真实语料验一次」**成立**（证据：`gh run view --job 112130058254 --log`） |
 
 ### 4.1 S1 先红了一次（必须记下来）
 

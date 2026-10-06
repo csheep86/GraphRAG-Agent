@@ -12,7 +12,7 @@
 - [x] **T4** 新增真机用例 `test_sentinel_fires_on_a_larger_corpus`：在 v2 上断言**哨兵确实 warn**（**CI 上不 skip**，因 CI 会先导入该语料；CI 上语料缺失 ⇒ **fail** 不是 skip）
 - [x] **T5** **反向验证**：撤掉 `_warn_if_candidate_window_narrow` 的告警体 ⇒ T4 那条**变红**（共 5 红）；还原 ⇒ 11 绿
 - [x] **T6** `integration-log.md`：贴真机输出 + **R22 补登「已在 988 chunk 语料上实测劣化到 35.93%」（仍不关闭）** + 收尾三问
-- [x] **T7** 门禁全绿：`pytest` **989 passed**（+1，0 回归）/ ruff / `check_seams`（ERROR 0）/ `export_openapi --check`（零 diff）/ `check_session_drift`（**S1 读到 9 条边界**）—— ⏳ 摊 diff 给用户（**不自行 push**）
+- [x] **T7** 门禁全绿：`pytest` **989 passed**（+1，0 回归）/ ruff / `check_seams`（ERROR 0）/ `export_openapi --check`（零 diff）/ `check_session_drift`（**S1 读到 9 条边界**）；✅ **已推送**（`de1fa71` + `af55322`），**CI run 37420987033 四 job 全 ✓**：后端 **987 passed / 5 skipped / 3 xfailed**（= 修 R26 后的 986 **+1**，skipped 仍 5 ⇒ 真机用例在 CI 上**真跑非 skip**）
 
 ---
 
