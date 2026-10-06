@@ -32,6 +32,10 @@ P6-K 否决 O3 的理由）。P6-L 在 ``affiliation-demo-v2``（988 chunk）上
 | **B 现状** | 500 采样实体 → ``MENTIONS`` → chunk（P6-L 实测 355 条），**与问句无关** |
 | **① 字面量** | ``c.text CONTAINS $key`` ⇒ chunk |
 | **② 实体链接** | ``Entity.<attr> = $key`` → ``MENTIONS`` → chunk（**全图匹配，不受 500 采样限制**） |
+| **P 生产（P6-N 落地后）** | 真调 :meth:`fetch_evidence_chunks` 并**传 ``question``** ⇒ 图候选 **∪** 字面量候选，再由 P6-J 的词面重排选 32 条 |
+
+前三档是**比选**（P6-M）；``P`` 档是**落地后的端到端验收**（P6-N）—— 它走的是
+真实生产函数，不是探针自己拼的 Cypher ⇒ 唯一可信的"改完了真有用"读数。
 
 三档随后过**同一条**选片规则 :func:`select_evidence_chunks`（含 P6-J 的词面重排，
 ``question`` / ``snippets`` 都给）⇒ 比的确实只是"候选从哪来"。
@@ -71,6 +75,7 @@ from app.services.agents import _GRAPH_NODE_LIMIT  # noqa: E402
 from app.services.graphs import (  # noqa: E402
     _EVIDENCE_CHUNK_INDEX_LIMIT,
     _EVIDENCE_CHUNK_SNIPPET_CHARS,
+    _LEXICAL_CANDIDATE_LIMIT,
     _QUERY_EVIDENCE_CHUNK_INDEX,
     GraphService,
     select_evidence_chunks,
@@ -232,6 +237,10 @@ def main() -> None:
             kg_version=version, org_id=UUID(org), node_limit=_GRAPH_NODE_LIMIT
         )
         sampled_entities = [n.id for n in nodes if n.label == "Entity"]
+        #: P 档要用生产那个**同一份**索引（进程内缓存）⇒ 与线上口径一致
+        _lexical_index = graph._lexical_index_for(  # noqa: SLF001 - 诊断脚本
+            kg_version=version, org_param=org
+        )
 
         # 现状基线候选：生产那条索引 Cypher（**与问句无关**，故只算一次）
         with driver.session() as session:
@@ -276,6 +285,7 @@ def main() -> None:
                 "B 现状": {"cand": [], "in_cand": [], "in_final": [], "chars": []},
                 "① 字面量": {"cand": [], "in_cand": [], "in_final": [], "chars": []},
                 "② 实体链接": {"cand": [], "in_cand": [], "in_final": [], "chars": []},
+                "P 生产": {"cand": [], "in_cand": [], "in_final": [], "chars": []},
             }
 
             for key in keys:
@@ -324,6 +334,29 @@ def main() -> None:
                     stats[arm]["in_cand"].append(hit_cand / len(gold))
                     stats[arm]["in_final"].append(hit_final / len(gold))
                     stats[arm]["chars"].append(chars_of(final))
+
+                # **P 生产档**：真调生产函数并传 ``question`` ⇒ 图候选 ∪ 字面量候选。
+                # 两个数**分开记**，因为它们卡在不同的层：
+                # - ``in_cand`` = gold 是否进了**合并候选**（本批 P6-N 的职责）；
+                # - ``in_final`` = gold 是否进了最终 **32 条**（还要过 P6-J 的词面重排，
+                #   它对本探针这类**短键查询**区分度为零 ⇒ 见结尾说明）。
+                merged_cand = set(baseline_ids) | set(
+                    _lexical_index.search(key, _LEXICAL_CANDIDATE_LIMIT)
+                )
+                prod = graph.fetch_evidence_chunks(
+                    kg_version=version,
+                    org_id=UUID(org),
+                    entity_ids=sampled_entities,
+                    limit=FINAL_LIMIT,
+                    question=key,
+                )
+                prod_ids = [c.chunk_id for c in prod]
+                stats["P 生产"]["cand"].append(len(merged_cand))
+                stats["P 生产"]["in_cand"].append(len(gold & merged_cand) / len(gold))
+                stats["P 生产"]["in_final"].append(
+                    len(gold & set(prod_ids)) / len(gold)
+                )
+                stats["P 生产"]["chars"].append(sum(len(c.text) for c in prod))
 
             n = len(stats["B 现状"]["cand"])
             if n == 0:

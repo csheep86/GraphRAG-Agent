@@ -58,6 +58,7 @@ from app.schemas.graph import (
     GraphOverviewNode,
     GraphOverviewResponse,
 )
+from app.services.lexical import LexicalIndex
 
 #: 批次 C：实体详情邻居上限。超限截断由 Python 侧裁剪 + ``truncated`` 标记；
 #: 不写入设置项（避免 CODEBUDDY.md §R4「无消费者配置」陷阱）。
@@ -140,6 +141,50 @@ _EVIDENCE_CHUNK_SNIPPET_CHARS = 400
 #: **A1（2026-10-05，P6-C）**：基线候选池的**防御性上限**——整池要先向量化再召回，
 #: 成本随 chunk 数线性增长；这里是"跑得起"的量级护栏，**不是**召回质量参数。
 _CHUNK_POOL_LIMIT = 5000
+
+# ---------------------------------------------------------------------------
+# P6-N（2026-10-06）：**字面量召回** —— 让 ``question`` 第一次参与"能看到哪些证据"
+# ---------------------------------------------------------------------------
+
+#: 字面量召回最多补进多少条候选。与 ``_EVIDENCE_CHUNK_INDEX_LIMIT``（图候选行上限）
+#: **并列**而非共用 —— 两者语义不同（一个是"沿图反查"，一个是"按文本捞"）。
+#: 并入方式必须是**并集**（裁决 N-D1）：图候选一条不丢，字面量只负责补进来。
+#: ⚠️ 换成"替换"会让 Q20 / Q22 / Q26 这类"句中没有实体锚点"的概念性提问
+#: **候选清空**（P6-M M-D5：本类召回对开放性提问无增益，但绝不能反噬）。
+_LEXICAL_CANDIDATE_LIMIT = 200
+
+#: 进程内索引缓存上限（超出即**整体清空**：重建代价只是一次池查询，
+#: 不值得为它引入 LRU 的复杂度；只有频繁切版本的部署才会触到）。
+_LEXICAL_INDEX_CACHE_MAX = 8
+
+_LEXICAL_INDEX_CACHE: dict[tuple[str, str | None], LexicalIndex] = {}
+
+#: 字面量召回的**池**：只要 id + 文本（建倒排不需要别的列）。
+#: 护栏沿用 ``_CHUNK_POOL_LIMIT`` —— 整池进内存，必须有上限。
+_QUERY_LEXICAL_POOL = """
+MATCH (c:Chunk {kg_version: $kg_version})
+WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
+RETURN c.id AS chunk_id, coalesce(c.text, '') AS text
+LIMIT $limit
+"""
+
+#: 字面量召回命中的 chunk ⇒ 取**与图候选同款的索引列**（doc_id / mentions /
+#: spans / char_start / snippet）⇒ 两路候选才能过**同一条**选片规则，
+#: 唯一变量才真的只是"候选从哪来"。
+_QUERY_EVIDENCE_CHUNK_INDEX_BY_IDS = """
+MATCH (c:Chunk {kg_version: $kg_version})
+WHERE c.id IN $ids
+  AND ($org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id)
+OPTIONAL MATCH (d:Document {kg_version: $kg_version})-[:HAS_CHUNK]->(c)
+RETURN
+  c.id AS chunk_id,
+  d.id AS doc_id,
+  size([(c)-[:MENTIONS]->(:Entity {kg_version: $kg_version}) | 1]) AS mentions,
+  size([(c)-[:MENTIONS]->(e2:Entity {kg_version: $kg_version})
+        WHERE e2.char_start IS NOT NULL | 1]) AS spans,
+  coalesce(c.char_start, 0) AS char_start,
+  substring(coalesce(c.text, ''), 0, $snippet_chars) AS snippet
+"""
 
 #: **A1（2026-10-05）**：基线候选池查询。**刻意不带 ``MENTIONS`` 偏置**（拉开池才谈得上对比），
 #: 返回键与 :data:`_QUERY_EVIDENCE_CHUNKS_BY_IDS` 一致 ⇒ 可复用 :meth:`_project_chunks`。
@@ -1456,6 +1501,35 @@ class GraphService:
 
         return nodes, edges, truncated
 
+    def _lexical_index_for(
+        self, *, kg_version: str, org_param: str | None
+    ) -> LexicalIndex:
+        """**P6-N**：该版本 / 租户的 chunk 文本倒排（**进程内缓存，不落库**）。
+
+        缓存**不失效**的后果已想清楚：只影响**召回新鲜度**（新入图的 chunk 暂时
+        搜不到），不影响正确性 —— 字面量候选只是"补充"，图候选仍是权威来源
+        （并集，N-D1）。
+        """
+        key = (kg_version, org_param)
+        cached = _LEXICAL_INDEX_CACHE.get(key)
+        if cached is not None:
+            return cached
+        with self._session() as session:
+            docs = [
+                (str(row["chunk_id"]), str(row["text"] or ""))
+                for row in session.run(
+                    _QUERY_LEXICAL_POOL,
+                    kg_version=kg_version,
+                    org_id=org_param,
+                    limit=_CHUNK_POOL_LIMIT,
+                )
+            ]
+        index = LexicalIndex.build(docs)
+        if len(_LEXICAL_INDEX_CACHE) >= _LEXICAL_INDEX_CACHE_MAX:
+            _LEXICAL_INDEX_CACHE.clear()
+        _LEXICAL_INDEX_CACHE[key] = index
+        return index
+
     def fetch_evidence_chunks(
         self,
         *,
@@ -1530,14 +1604,62 @@ class GraphService:
                         str(row["chunk_id"]): str(row["snippet"] or "")
                         for row in raw_index
                     }
+                    # **P6-N（2026-10-06）字面量召回**：``question`` 为 None ⇒
+                    # **与 P6-K 逐字节一致**（不建索引、不查池、候选一条不变）⇒
+                    # 既有调用点 / 单测零影响；新能力只在显式传 ``question`` 时生效。
+                    lexical_row_count = 0
+                    if question:
+                        known = {item[0] for item in index}
+                        lex_ids = [
+                            cid
+                            for cid in self._lexical_index_for(
+                                kg_version=kg_version, org_param=org_param
+                            ).search(question, _LEXICAL_CANDIDATE_LIMIT)
+                            if cid not in known
+                        ]
+                        if lex_ids:
+                            raw_lexical = list(
+                                session.run(
+                                    _QUERY_EVIDENCE_CHUNK_INDEX_BY_IDS,
+                                    kg_version=kg_version,
+                                    org_id=org_param,
+                                    ids=lex_ids,
+                                    snippet_chars=_EVIDENCE_CHUNK_SNIPPET_CHARS,
+                                )
+                            )
+                            index = [
+                                *index,
+                                *(
+                                    (
+                                        str(row["chunk_id"]),
+                                        str(row["doc_id"]) if row["doc_id"] else None,
+                                        int(row["mentions"] or 0),
+                                        int(row["spans"] or 0),
+                                        int(row["char_start"] or 0),
+                                    )
+                                    for row in raw_lexical
+                                ),
+                            ]
+                            snippets.update(
+                                {
+                                    str(row["chunk_id"]): str(row["snippet"] or "")
+                                    for row in raw_lexical
+                                }
+                            )
+                            lexical_row_count = len(raw_lexical)
                     # **P6-K（2026-10-06）候选窗口哨兵**：只留痕，不改变任何返回值
                     # （裁决 D3）。放在 select 之前——"候选少了多少"是**选之前**就
                     # 已经发生的事，与后面选哪 32 条无关，早一步才归因得清。
+                    # 哨兵看的是**合并后**的候选：字面量若真把窗口补齐了，它本就
+                    # 不该再喊（否则就是假告警）。``question=None`` 时
+                    # ``lexical_row_count=0``、上限仍为 ``_EVIDENCE_CHUNK_INDEX_LIMIT``
+                    # ⇒ 与 P6-K 完全一致。
                     _warn_if_candidate_window_narrow(
                         kg_version=kg_version,
-                        row_count=len(raw_index),
+                        row_count=len(raw_index) + lexical_row_count,
                         candidate_count=len({item[0] for item in index}),
-                        index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT,
+                        index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT
+                        + (_LEXICAL_CANDIDATE_LIMIT if question else 0),
                         total_chunks=self._count_chunks_in_version(
                             session, kg_version=kg_version, org_param=org_param
                         ),
