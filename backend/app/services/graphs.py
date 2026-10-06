@@ -564,6 +564,22 @@ RETURN
 ORDER BY chunk_id
 """
 
+#: **P6-K（2026-10-06）**：版本内 ``:Chunk`` **总数**（候选窗口哨兵的分母）。
+#:
+#: 与 :data:`_QUERY_EVIDENCE_CHUNK_INDEX` 共用同一套 org 过滤口径
+#: （``$org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id``）——
+#: 分子分母不同源 ⇒ 完整率会凭空多出 / 少掉一批 chunk，哨兵就白建了。
+#:
+#: 为什么单独开一条而不是塞进索引查询：索引那条带 ``LIMIT $index_limit``，
+#: 「被截断后的行数」与「版本内总数」是**两件事**；塞进同一条 Cypher 只能靠
+#: 标量子查询（Neo4j 5 才有），代价并不比一次 ``count`` 小。
+#: **代价要记账**：读侧每轮问答多一次往返（``count`` 很便宜，不是全表回传）。
+_QUERY_COUNT_CHUNKS_IN_VERSION = """
+MATCH (c:Chunk {kg_version: $kg_version})
+WHERE $org_id IS NULL OR c.org_id IS NULL OR c.org_id = $org_id
+RETURN count(c) AS n
+"""
+
 
 def _bigrams(text: str) -> frozenset[tuple[str, str]]:
     """字符 **bigram** 集合（去重、忽略标点空白、字母小写）。
@@ -740,6 +756,83 @@ def select_evidence_chunks(
             chosen.append((chunk_id, mentions, spans, char_start))
             taken.add(chunk_id)
     return [item[0] for item in chosen]
+
+
+#: **P6-K（2026-10-06）**：候选窗口哨兵的告警**前缀**（日志检索键，单测也按它断言）。
+#: 见 :func:`_warn_if_candidate_window_narrow`。
+_EVIDENCE_WINDOW_NARROW_PREFIX = "证据候选窗口不完整"
+
+#: 哨兵自己跑挂了时的告警**前缀**（**刻意与上面不同**：否则"窗口不完整的告警"
+#: 与"哨兵没跑成的告警"在日志里无法区分，前者是风险信号，后者是诊断失明）。
+_EVIDENCE_WINDOW_PROBE_FAILED_PREFIX = "证据窗口哨兵自检失败"
+
+
+def _warn_if_candidate_window_narrow(
+    *,
+    kg_version: str,
+    row_count: int,
+    candidate_count: int,
+    index_limit: int,
+    total_chunks: int | None,
+) -> bool:
+    """**P6-K（2026-10-06）候选窗口哨兵**：窗口不完整 ⇒ 留一条 WARNING。
+
+    **为什么要有它（裁决 D1 = O1）**：``changes/P6-J`` 之后剩下的那条根因是
+    「候选集仍是**结构性窗口** —— 目标片段若**不在候选里**，词面重排也救不回来」。
+    ¥0 探针（``backend/scripts/probe_candidate_window.py``，原始输出见
+    ``changes/P6-K/integration-log.md``）已量过：本语料上候选 **213 = 版本内
+    chunk 总数 213**，即**当前规模零损失**。⇒ 它不是**当前缺陷**，而是
+    **规模风险**：语料一大（500 采样实体 / 1000 索引行是固定预算），窗口必然
+    开始丢东西。为一个**还没发生的缺陷**去建召回（方向②/③）没有可证伪的判据
+    （本语料 40/40，改完仍 40/40）⇒ 本批**只建哨兵，不建召回**：让"窗口开始
+    丢数据"这件事**自己喊出来**，而不是靠后人记得去复查。
+
+    两条触发条件（**机械量，不依赖任何人工判分** —— 这是裁决 D2 的落点）：
+
+    1. ``row_count >= index_limit`` —— 索引行撞上 :data:`_EVIDENCE_CHUNK_INDEX_LIMIT`，
+       候选是**被截断的**（后面还有没有，不知道）；
+    2. ``candidate_count < total_chunks`` —— 候选少于版本内 chunk 总数，
+       即**有 chunk 从未进入候选**（窗口完整率 < 100%）。
+
+    **不改返回值、不改契约、不加配置项**（裁决 D3）：它只留痕，
+    不替上层做任何决策 —— 该拒答的仍由归因闸门拒答。
+
+    :param total_chunks: 版本内 chunk 总数；``None`` = 哨兵没查到
+        （见 :meth:`GraphService._count_chunks_in_version`）⇒ 只判第 1 条，
+        窗口完整率打印为「未知」。**这不是"把未知当完整"**：取不到总数这件事
+        已经由 :data:`_EVIDENCE_WINDOW_PROBE_FAILED_PREFIX` 那条告警单独喊出来，
+        两条告警**前缀刻意不同**，否则"确实完整"与"根本没测成"在日志里无法区分。
+    :returns: 是否留痕（布尔量，单测可直接断言，不必解析日志文本）。
+    """
+    truncated = row_count >= index_limit
+    short = total_chunks is not None and candidate_count < total_chunks
+    if not (truncated or short):
+        return False
+
+    reasons: list[str] = []
+    if truncated:
+        reasons.append(f"索引行撞上 index_limit({index_limit})，候选被截断")
+    if short:
+        reasons.append(f"候选 {candidate_count} < 版本内 chunk 总数 {total_chunks}")
+    coverage = (
+        f"{candidate_count / total_chunks:.2%}"
+        if total_chunks
+        else "未知（哨兵未取到总数）"
+    )
+    logger.bind(
+        kg_version=kg_version,
+        candidate=candidate_count,
+        total_chunks=total_chunks,
+        coverage=coverage,
+        index_limit=index_limit,
+        truncated=truncated,
+    ).warning(
+        f"{_EVIDENCE_WINDOW_NARROW_PREFIX}"
+        "（R22：候选集是结构性窗口 —— 当前语料零损失，属**规模风险**而非已修缺陷）："
+        f"kg_version={kg_version} 候选={candidate_count} 版本内 chunk 总数={total_chunks}"
+        f" 窗口完整率={coverage} 原因={'；'.join(reasons)}"
+    )
+    return True
 
 
 #: 同上，“scope = single_doc” 分支：直接从 ``:Document`` 出发取全部 chunk（不看实体）。
@@ -1386,6 +1479,12 @@ class GraphService:
         :param question: **P6-J**：本轮提问，只用于 ``entity_ids`` 路径的**词面重排**
             （``single_doc`` 路径本来就限定在某一篇文档内，没有"选哪些"的问题）。
             不传 ⇒ 与 P6-J 之前完全一致。
+
+        **P6-K（2026-10-06）**：``entity_ids`` 路径上多了一道**候选窗口哨兵**
+        （:func:`_warn_if_candidate_window_narrow`）——候选被 ``index_limit`` 截断、
+        或少于版本内 chunk 总数时留一条 WARNING。**只留痕**：不换候选、
+        不改返回值、不加配置项。它盯的是 R22 里「候选集是结构性窗口」这一半
+        （本语料实测零损失 ⇒ 属**规模风险**，不是当前缺陷）。
         :raises GraphUnavailableError: Neo4j 不可用，或原始数据与投影契约不符
             （沿用设计要点 5：失败即显式暴露，**不**静默返回空列表——
             空片段会让上层误判为「图谱里没有证据」而拒答）。
@@ -1431,6 +1530,18 @@ class GraphService:
                         str(row["chunk_id"]): str(row["snippet"] or "")
                         for row in raw_index
                     }
+                    # **P6-K（2026-10-06）候选窗口哨兵**：只留痕，不改变任何返回值
+                    # （裁决 D3）。放在 select 之前——"候选少了多少"是**选之前**就
+                    # 已经发生的事，与后面选哪 32 条无关，早一步才归因得清。
+                    _warn_if_candidate_window_narrow(
+                        kg_version=kg_version,
+                        row_count=len(raw_index),
+                        candidate_count=len({item[0] for item in index}),
+                        index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT,
+                        total_chunks=self._count_chunks_in_version(
+                            session, kg_version=kg_version, org_param=org_param
+                        ),
+                    )
                     selected = select_evidence_chunks(
                         index, limit, question=question, snippets=snippets
                     )
@@ -1534,6 +1645,36 @@ class GraphService:
         return self._project_chunks(
             records, f"fetch_chunk_pool kg_version={kg_version}"
         )
+
+    def _count_chunks_in_version(
+        self, session: Any, *, kg_version: str, org_param: str | None
+    ) -> int | None:
+        """版本内 ``:Chunk`` 总数（**只服务哨兵**，:data:`_QUERY_COUNT_CHUNKS_IN_VERSION`）。
+
+        **哨兵自身失败 ⇒ 返回 ``None`` 并留痕，绝不打断主流程**：它只是"多一双眼睛"，
+        不该让一次 ``count`` 抖动把本可正常回答的问答打成 501。但**必须留痕**
+        （用 :data:`_EVIDENCE_WINDOW_PROBE_FAILED_PREFIX`）——
+        否则"哨兵没跑成"与"窗口确实完整"在日志里长得一模一样，那是**诊断失明**。
+
+        与 :meth:`_project_chunks` 的取舍相反是有意的：投影失败要抛（空证据会让
+        上层误判「图谱里没有证据」而拒答），哨兵失败只告警（它不产生任何业务结论）。
+        """
+        try:
+            row = session.run(
+                _QUERY_COUNT_CHUNKS_IN_VERSION,
+                kg_version=kg_version,
+                org_id=org_param,
+            ).single()
+        except Exception as exc:  # noqa: BLE001 - 哨兵失败不得污染主流程
+            logger.bind(kg_version=kg_version).warning(
+                f"{_EVIDENCE_WINDOW_PROBE_FAILED_PREFIX}："
+                f"kg_version={kg_version} 取不到版本内 chunk 总数（{exc}）"
+                "⇒ 本次只判「是否被 index_limit 截断」，窗口完整率留空"
+            )
+            return None
+        if row is None:
+            return None
+        return int(row["n"])
 
     def _project_chunks(
         self, records: Sequence[Any], projection_context: str
