@@ -23,6 +23,11 @@ dependencies = [
     "slowapi>=0.1.10",
     "alembic>=1.13,<2.0",
     "psycopg[binary]>=3.3.6",
+    # ADR-0006 §2.3 / TBD-L1：Ed25519 验签（detached signature）。
+    # 选型判据（ADR-0006 :108）：① 纯 uv 可装 ② 无原生编译依赖（离线 wheelhouse 友好）
+    # ③ 无网络回调 ④ 支持 Ed25519 —— 与 pynacl 同样四条全满足，
+    # 以「生态地位」打破平局：避免额外引入 libsodium。
+    "cryptography>=44,<47",
 ]
 
 [project.scripts]
