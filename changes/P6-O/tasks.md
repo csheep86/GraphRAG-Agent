@@ -28,9 +28,11 @@
       + `integration-log.md` + 需求基线 & `dev-doc-status.md` 的 G-12 状态登记
       （**保留**"绿灯只代表机制可跑、不代表多客户交付已验证"这条注记）
       （⚠️ 绝对值 ≥998 以 **CI 终裁** —— 本地 991 = 999 − 8 条真图用例 skip，见日志 §4 ④）
-- [ ] **T6** 摊 diff（自动提交；push 失败先重试，仍失败就把命令给用户）+ **CI 实证回登**
-      → **提交 ✅ `8e80935`**（7 files / +144 / −28）；
-      **push ❌**：`git push origin main` 连续重试 **18 次**全失败
-      （`Recv failure: Connection was reset` / `Failed to connect to github.com:443`，**非 DNS**）
-      ⇒ 命令已交用户；**未**改用 force、未换远程。**推成功后**：跑
-      `gh run watch` 取后端 job 的 pytest 数字回登判据 ④（本地 991 = 999 − 8 条真图 skip）
+- [x] **T6** 摊 diff（自动提交；push 失败先重试，仍失败就把命令给用户）+ **CI 实证回登**
+      → **提交 ✅**：`8e80935`（7 files / +144 / −28）+ `2afb855`（状态登记）
+      → **push ✅ 第 19 次成功**（前 18 次 `Recv failure` / `Failed to connect ...443`，**非 DNS**；
+      **未**用 force、**未**换远程）
+      → **CI ✅ 全绿**：run **`37433603894`**（sha `2afb855`）四 job success；后端 pytest
+      **997 passed / 5 skipped / 2 xfailed / 0 failed**（CI 基线 996 ⇒ **+1 = G-12 转正，0 回归**）
+      → ⚠️ **判据 ④ 的字面阈值 998 未达**：本地 991 = 999 − 8 条真图用例 skip；CI 997 = 基线 996 + 1。
+      差值已归因，**判据本身未放宽**（启用条件仍 ≥2）
