@@ -1900,6 +1900,12 @@ components:
       - RATE_LIMITED
       - INTERNAL_ERROR
       - HTTP_ERROR
+      - LICENSE_MISSING
+      - LICENSE_INVALID
+      - LICENSE_FINGERPRINT_MISMATCH
+      - LICENSE_EXPIRED
+      - LICENSE_LIMIT_EXCEEDED
+      - LICENSE_MODULE_DISABLED
       title: ErrorCode
       type: string
       x-enum-descriptions:
@@ -1912,6 +1918,12 @@ components:
         INTERNAL_ERROR: 未预期的服务端异常，已记录日志（含 trace_id）。
         KG_TENANT_LEAK: 跨租户子图泄漏检测到（ADR-0003 §4，Sprint 5 批次 B）。active kg_version 内任一 Entity 节点 org_id 与当前 org_id 不一致——属数据质量事故伪装为正常结论，由 /agent/query 路由层转 403。
         KG_VERSION_NOT_ACTIVE: 请求显式指定了非 active 的 kg_version（writing / failed / superseded），按 ADR-0002 §3.2 一律拒绝，严禁静默降级到最新版。
+        LICENSE_EXPIRED: 有效期已过且越过宽限期（§2.5 / §2.7）：宽限期（`grace_days`，默认 30）内**只读**，超期才全量拒绝——离线环境时钟不可信，硬拒有误伤风险。
+        LICENSE_FINGERPRINT_MISMATCH: license 绑定的机器指纹与本机不符（§2.1 / §2.5）：指纹组件交集 < 2/3 即判为另一台机器。
+        LICENSE_INVALID: license 存在但验签失败 / 正文非法（§2.3）：Ed25519 验签不通过即判无效，**不做宽松通过**，与「文件缺失」同等处理。
+        LICENSE_LIMIT_EXCEEDED: 超出授权维度上限（§2.4 组合维度）：**卡增量、保存量** —— 租户数 / 席位数超限只拒绝**新增**动作（新建 org / 新建或启用用户），已有数据与只读查询不受影响（超限即锁死只读等于拿客户数据当人质，必然引发交付纠纷）。
+        LICENSE_MISSING: 未找到有效 license 文件（ADR-0006 §2.5）：文件缺失 ⇒ **全量拒绝**，仅 `/health` 与 `/license/status` 可访问（自检端点被锁死则现场无法诊断）。
+        LICENSE_MODULE_DISABLED: 请求所属功能模块**未被授权**（§2.4 维度 3，`modules[]` 未包含）：按模块收费的兑现点。
         NOT_FOUND: 通用资源不存在（含未注册路由）。
         NOT_IMPLEMENTED: 基础设施不可用（Neo4j 图谱存储不可用（连不上 / 查询失败）/ LLM 未配置或装配失败）时返回 501，**不**表示「接口未实现」。
         RATE_LIMITED: 请求触发限流（M5 §3 验收 5，slowapi）：同一 IP 在时间窗口内对同一接口的调用超过 `rate_limit_per_minute`（默认 60）次。响应带 `Retry-After` 头（秒），限流同时写 `audit_log(action=rate_limit.triggered)`。
@@ -1930,6 +1942,12 @@ components:
         INTERNAL_ERROR: CODEBUDDY.md 错误响应规范
         KG_TENANT_LEAK: ADR-0003 §4 / Sprint 5 批次 B
         KG_VERSION_NOT_ACTIVE: ADR-0002 §3.2 / M3 §4.1
+        LICENSE_EXPIRED: ADR-0006 §2.5 / §2.7（宽限期 + max_seen_ts）
+        LICENSE_FINGERPRINT_MISMATCH: ADR-0006 §2.1 / §2.5
+        LICENSE_INVALID: ADR-0006 §2.3 / §2.5
+        LICENSE_LIMIT_EXCEEDED: ADR-0006 §2.4 维度 1 / 2 + §2.5「卡增量保存量」
+        LICENSE_MISSING: ADR-0006 §2.5（文件缺失 ⇒ 全量拒绝）
+        LICENSE_MODULE_DISABLED: ADR-0006 §2.4 维度 3（modules[]）/ §3.3
         NOT_FOUND: CODEBUDDY.md 错误响应规范
         NOT_IMPLEMENTED: backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2
         RATE_LIMITED: M5 §3 验收 5 / 决策 A14（Sprint 8.1 批次 B）
@@ -2327,6 +2345,97 @@ components:
       - activated_at
       - trace_id
       title: KgVersionActivationResponse
+      type: object
+    LicenseLimits:
+      description: 授权维度上限（ADR-0006 §2.4 的组合维度 1 / 2）。
+      properties:
+        max_orgs:
+          description: 租户数上限（0 = 未授权任何租户）
+          title: Max Orgs
+          type: integer
+        max_seats:
+          description: 席位数上限（0 = 未授权任何席位）
+          title: Max Seats
+          type: integer
+      required:
+      - max_orgs
+      - max_seats
+      title: LicenseLimits
+      type: object
+    LicenseStatusResponse:
+      description: '``GET /api/v1/license/status`` 的响应。
+
+
+        **为什么这个端点必须豁免 License 拦截**：它是自检面 ——
+
+        客户现场拿到无效 License 时，若连「为什么不能用」都查不到，就只能提工单。'
+      properties:
+        code:
+          anyOf:
+          - $ref: '#/components/schemas/ErrorCode'
+          - type: 'null'
+          description: 无效原因错误码；``has_license=true`` 时为 ``null``
+        enforced:
+          description: 是否处于强制模式（false = 放行但会落 bypass 审计）
+          title: Enforced
+          type: boolean
+        grace_days:
+          default: 0
+          description: 宽限天数
+          title: Grace Days
+          type: integer
+        has_license:
+          description: 是否加载到有效 License
+          title: Has License
+          type: boolean
+        in_grace:
+          description: 是否处于过期宽限期（**只读**可用）
+          title: In Grace
+          type: boolean
+        license_id:
+          default: ''
+          description: License 唯一标识（UUID）
+          title: License Id
+          type: string
+        limits:
+          $ref: '#/components/schemas/LicenseLimits'
+          description: 维度上限
+        modules:
+          description: 已授权模块（ADR-0006 §3.3 取值集合）
+          items:
+            type: string
+          title: Modules
+          type: array
+        not_after:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: 有效期截止时间
+          title: Not After
+        not_before:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: 生效时间
+          title: Not Before
+        status:
+          default: ''
+          description: active / expired / revoked / superseded
+          title: Status
+          type: string
+        trace_id:
+          description: 链路追踪 id
+          title: Trace Id
+          type: string
+      required:
+      - has_license
+      - enforced
+      - in_grace
+      - limits
+      - trace_id
+      title: LicenseStatusResponse
       type: object
     OntologyActionResponse:
       description: 'merge / split / rename **三个动作共用**的响应（M6 §3.2：三动作，不多做）。
@@ -4552,6 +4661,26 @@ paths:
       summary: 健康检查（豁免租户上下文）
       tags:
       - health
+  /api/v1/license/status:
+    get:
+      description: '返回当前License 的加载状态与授权维度，**不返回**签名 / 正文 / 公钥。
+
+
+        **为什么它必须豁免**：无有效 License 时全站已拒绝受保护端点；若自检端点也被拦，客户现场就无法判断是 License 过期还是系统故障，排障会被彻底误导。
+
+
+        `has_license=false` 时看 `code` 字段即可定位原因（`LICENSE_MISSING` / `LICENSE_INVALID` / `LICENSE_FINGERPRINT_MISMATCH` / `LICENSE_EXPIRED` / `LICENSE_LIMIT_EXCEEDED` / `LICENSE_MODULE_DISABLED`）。'
+      operationId: getLicenseStatus
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseStatusResponse'
+          description: Successful Response
+      summary: License 状态自检（豁免 License 拦截）
+      tags:
+      - license
   /api/v1/ontology/active:
     get:
       description: '读当前租户**生效中**的本体 schema（版本 + 实体 / 关系类型集）。

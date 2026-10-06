@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
+
+if TYPE_CHECKING:  # 仅类型检查期：``ErrorCode`` 在实现里是**函数内**导入的（延迟引用）
+    from app.core.errors import ErrorCode
 
 from loguru import logger
 
@@ -53,7 +56,7 @@ class TraceIdMiddleware:
     def __init__(self, app) -> None:  # noqa: ANN001 - ASGI callable
         self.app = app
 
-    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+    async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -106,7 +109,7 @@ class AuditMiddleware:
     def __init__(self, app) -> None:  # noqa: ANN001 - ASGI callable
         self.app = app
 
-    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+    async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http" or not self._is_auditable(scope):
             await self.app(scope, receive, send)
             return
@@ -253,3 +256,201 @@ class AuditMiddleware:
             return UUID(str(raw))
         except (ValueError, AttributeError, TypeError):
             return None
+
+
+class LicenseMiddleware:
+    """License 强制中间件（**纯 ASGI**，DR-C1 / G-23 / ADR-0006 §2.6）。
+
+    **为什么必须纯 ASGI**：每请求都要跑但它极轻，且必须与
+    :class:`AuditMiddleware` 同形态（该批首要目标是 P95 增量 **< 1ms**，R-L4）。
+    继承 ``BaseHTTPMiddleware`` 会引入额外的 body 缓冲与异常转换开销
+    ⇒ `tests/test_guardrails_compliance.py` 直接判其为**不达标**。
+
+    **挂载位置**：``main.py`` 里插在 ``RateLimitMiddleware`` 之后、
+    ``AuditMiddleware`` 之前 —— ``add_middleware`` 后加者在外层 ⇒
+    实际顺序是 `审计 → License → 限流 → 路由`：审计要能记录 License 的拒绝本身，
+    License 在限流之前避免无效 License 消耗配额（§2.6 固定顺序）。
+
+    **豁免**（§2.6 集中声明，与限流 ``EXEMPT_ROUTE_NAMES`` 同款口径）：
+    ``/health`` 与 ``/license/status`` —— 自检端点必须可访问，
+    否则客户现场拿到一份无效 License 时**连为什么都不知道**。
+
+    **性能**（§2.6）：只做内存判断 —— 有效期比较 + 模块集合 ``in``；
+    不读盘、不验签（那些只在重载态时发生）。
+    """
+
+    def __init__(self, app) -> None:  # noqa: ANN001 - ASGI callable
+        self.app = app
+
+    async def __call__(  # noqa: ANN001 - ASGI callable：参数类型由 ASGI 协议给出
+        self, scope, receive, send
+    ) -> None:
+        if scope["type"] != "http" or self._is_exempt(scope):
+            await self.app(scope, receive, send)
+            return
+
+        denied = self._decide(scope)
+        if denied is None:
+            await self.app(scope, receive, send)
+            return
+
+        # **一次定值、处处复用**：下面三个去处必须拿到**同一个** trace_id
+        # （审计 + 响应体），否则这条拒绝就永远串不进链路，排障时无从反查。
+        trace_id = LicenseMiddleware._trace_id(scope)
+        self._audit_denied(scope, denied, trace_id)
+        await self._send_denied(send, denied, trace_id)
+
+    # ------------------------------------------------------------------ internals
+
+    @staticmethod
+    def _is_exempt(scope: dict[str, Any]) -> bool:
+        """``/health`` 与 ``/license/status`` 永不拦（§2.6 自检端点必须可达）。"""
+        from app.core.config import get_settings
+
+        path = str(scope.get("path", ""))
+        prefix = get_settings().api_prefix
+        return path == f"{prefix}/health" or path.endswith("/license/status")
+
+    def _decide(self, scope: dict[str, Any]) -> ErrorCode | None:
+        """返回错误码 = 拒绝；``None`` = 放行。"""
+        from app.core.config import get_settings
+        from app.core.errors import ErrorCode
+        from app.services.license.policy import READ_ONLY_METHODS, required_module
+        from app.services.license.provider import get_license_provider
+
+        settings = get_settings()
+        state = get_license_provider().current_state()
+
+        if not settings.license_enforce:
+            # §2.5 最后一行：不强执时**放行但必须落 license.bypass 审计**——
+            # 禁止静默放行（否则没人知道 License 事实上没在工作）。
+            self._audit_bypass(scope)
+            return None
+
+        if not state.ok:
+            return state.code
+
+        # 宽限期内只读（§2.5 第 4 行）
+        if state.in_grace and scope.get("method") not in READ_ONLY_METHODS:
+            return ErrorCode.LICENSE_EXPIRED
+
+        module = required_module(str(scope.get("path", "")))
+        if module is not None and module not in state.modules:
+            return ErrorCode.LICENSE_MODULE_DISABLED
+
+        # 维度 1 / 2（租户数 / 席位数）**不在中间件里判** —— §2.5「卡增量、保存量」：
+        # 它们只拒绝**新建**动作（新建 org / 启用用户），没有理由拦只读请求。
+        # 判据落在 policy.py，由 P2-C 的「新建 / 启用」动作调用。
+        return None
+
+    def _audit_denied(
+        self, scope: dict[str, Any], code: ErrorCode, trace_id: str
+    ) -> None:
+        """拒绝必须留痕（§2.5）：``action = license.denied``。
+
+        ``detail`` **只含错误码与维度**，绝不含 License 正文 / 签名（§2.5 明令）。
+        """
+        self._audit(
+            scope, trace_id, action="license.denied", detail={"code": str(code.value)}
+        )
+
+    def _audit_bypass(self, scope: dict[str, Any], trace_id: str) -> None:
+        """``LICENSE_ENFORCE=false`` ⇒ 放行但留痕（§2.5「禁止静默放行」）。"""
+        self._audit(
+            scope, trace_id, action="license.bypass", detail={"enforced": False}
+        )
+
+    def _audit(
+        self,
+        scope: dict[str, Any],
+        trace_id: str,
+        *,
+        action: str,
+        detail: dict[str, Any],
+    ) -> None:
+        """写一条审计；任何失败都**只记日志**（License 缺陷不得变成全站 500）。"""
+        from app.core.config import DEFAULT_ORG_ID, get_settings
+        from app.db.session import open_session
+        from app.services.audit import record_audit_entry
+
+        method = str(scope.get("method", ""))
+        path = str(scope.get("path", ""))
+        try:
+            settings = get_settings()
+            identity = self._resolve_identity(scope, settings)
+            org_id = identity.org_id if identity is not None else DEFAULT_ORG_ID
+            actor_id = identity.actor_id if identity is not None else None
+            with open_session(org_id=org_id) as session:
+                record_audit_entry(
+                    session,
+                    org_id=org_id,
+                    action=action,
+                    actor_id=actor_id,
+                    resource=f"{method} {path}"[:255],
+                    status="failure",
+                    trace_id=trace_id,
+                    detail=detail,
+                )
+                session.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.bind(action=action, path=path, reason=str(exc)).warning(
+                "license_audit_write_failed"
+            )
+
+    @staticmethod
+    def _trace_id(scope: dict[str, Any]) -> str:
+        """**一次定值、审计与响应体复用同一个值**（缺了就是"串不进链路"的假审计）。
+
+        ⚠️ **为什么不能只信 ``get_trace_id_value()``**：本中间件按 §2.6 的顺序挂在
+        ``TraceIdMiddleware`` **之外**（审计 → License → 限流 → 路由），
+        到达这里时 contextvar **还没被写入** ⇒ 直接读恒为 ``None``。
+        ⇒ 优先采信**调用方显式传入**的 ``X-Trace-Id``（这样客户才能把这条拒绝串回自己的链路），
+        都没有才自行生成；结果**缓存进 scope**，保证同一请求的三处引用拿到同一个值。
+        """
+        cached = scope.get("license_trace_id")
+        if isinstance(cached, str) and cached:
+            return cached
+        header = TRACE_ID_HEADER.encode("latin-1")
+        value = ""
+        for key, raw in scope.get("headers") or ():
+            if key.lower() == header:
+                value = raw.decode("latin-1")
+                break
+        resolved = value or get_trace_id_value() or str(uuid4())
+        scope["license_trace_id"] = resolved
+        return resolved
+
+    @staticmethod
+    def _resolve_identity(scope: dict[str, Any], settings: Any) -> Any:
+        """与 :class:`AuditMiddleware` **同一套**身份解析（决策 A6：不另起口径）。"""
+        from app.services.auth import get_auth_provider
+
+        return AuditMiddleware._resolve_identity(scope, settings, get_auth_provider)
+
+    @staticmethod
+    async def _send_denied(  # noqa: ANN001 - send 的类型由 ASGI 协议给出
+        send, code: ErrorCode, trace_id: str
+    ) -> None:
+        """构造 403 响应体：``{code, message, detail, trace_id}``（统一错误响应规范）。
+
+        状态码统一 **403**（§2.5 明写：**不用 402** —— 402 语义未标准化，
+        client / 网关处理不一致）。``trace_id`` 由调用方**一次定值**传入，
+        保证与落进审计的那一条是同一个值。
+        """
+        import json
+
+        from app.core.errors import AppError
+
+        body = AppError(code).to_body(trace_id)
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 403,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(payload)).encode("latin-1")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": payload})

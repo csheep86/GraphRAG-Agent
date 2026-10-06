@@ -31,6 +31,10 @@ RESOURCE_COMPLIANCE = "compliance"
 RESOURCE_COST = "cost"
 RESOURCE_DOCUMENT = "document"
 RESOURCE_GRAPH = "graph"
+#: **2026-10-06 P4 新增**：License 自检端点（`GET /license/status`）。
+#: 它像一个探针：不承载任何业务对象（不返回签名 / 正文 / 公钥），
+#: 也不能被 License 中间件拦（否则无 License 时现场无从判断原因）。
+RESOURCE_LICENSE = "license"
 RESOURCE_ONTOLOGY = "ontology"
 
 #: 契约端点 → 资源。**键必须与 `contracts/openapi.yaml` 的 `paths` 逐字一致**
@@ -55,6 +59,7 @@ CONTRACT_PATH_RESOURCE: dict[str, str] = {
     "/api/v1/entities/{entity_id}": RESOURCE_GRAPH,
     "/api/v1/graph/overview": RESOURCE_GRAPH,
     "/api/v1/graph/versions/{version}/activate": RESOURCE_GRAPH,
+    "/api/v1/license/status": RESOURCE_LICENSE,
     "/api/v1/ontology/active": RESOURCE_ONTOLOGY,
     "/api/v1/ontology/cold-start": RESOURCE_ONTOLOGY,
     "/api/v1/ontology/confirm": RESOURCE_ONTOLOGY,
@@ -114,6 +119,10 @@ ROLE_PERMISSIONS: dict[str, dict[str, frozenset[str]]] = {
         RESOURCE_COST: _ALL_READ,
         RESOURCE_DOCUMENT: _ALL_READ_WRITE,
         RESOURCE_GRAPH: _ALL_READ,
+        # P4（2026-10-06）：License 自检端点。赋**只读**的理由：它不承载业务对象，
+        # 返回的是「当前 License 是否有效 / 到期日 / 授权模块」这类**运维自检信息**，
+        # 而 License 过期恰恰是 ANALYST 需要第一手排查的场景（到期前没人看得见 ⇒ 到期后才发现）。
+        RESOURCE_LICENSE: _ALL_READ,
         RESOURCE_ONTOLOGY: _ALL_READ,
     },
     RoleName.VIEWER: {
@@ -124,6 +133,8 @@ ROLE_PERMISSIONS: dict[str, dict[str, frozenset[str]]] = {
         RESOURCE_COST: _NONE,
         RESOURCE_DOCUMENT: _ALL_READ,
         RESOURCE_GRAPH: _ALL_READ,
+        # 同上：只读。VIEWER 是被允许读「盘点类视图」的角色，License 状态属同一类信息。
+        RESOURCE_LICENSE: _ALL_READ,
         RESOURCE_ONTOLOGY: _NONE,
     },
 }

@@ -16,7 +16,12 @@ from app.core.config import get_settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.limiter import RateLimitMiddleware, get_limiter
 from app.core.logging import logger, setup_logging
-from app.core.middleware import TRACE_ID_HEADER, AuditMiddleware, TraceIdMiddleware
+from app.core.middleware import (
+    TRACE_ID_HEADER,
+    AuditMiddleware,
+    LicenseMiddleware,
+    TraceIdMiddleware,
+)
 from app.core.openapi import build_openapi
 from app.db.session import dispose_engine, init_db
 from app.tasks import recover_orphan_tasks
@@ -76,6 +81,10 @@ def create_app() -> FastAPI:
         expose_headers=[TRACE_ID_HEADER],
     )
     app.add_middleware(RateLimitMiddleware)
+    # License（ADR-0006 §2.6 固定顺序：审计 → License → 限流 → 路由）：
+    # 「后加者在外层」⇒ 插在 RateLimit 之后、Audit 之前，才落在这两者之间。
+    # License 必须在限流**之外**：无效 License 不该消耗限流配额。
+    app.add_middleware(LicenseMiddleware)
     app.add_middleware(AuditMiddleware)
     app.add_middleware(TraceIdMiddleware)
 

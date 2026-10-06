@@ -38,6 +38,7 @@ from app.api.v1.routes import (
     documents,
     graph,
     health,
+    license,
     ontology,
 )
 from app.core.config import get_settings
@@ -56,3 +57,6 @@ api_router.include_router(compliance.router)
 # 全部 501 占位骨架
 api_router.include_router(ontology.router)
 api_router.include_router(cost.router)
+# P4 / DR-C1（ADR-0006 §2.6）：GET /license/status —— **自检端点**，
+# 与 /health 一样被 LicenseMiddleware 豁免（无有效 License 时它必须仍可访问）
+api_router.include_router(license.router)

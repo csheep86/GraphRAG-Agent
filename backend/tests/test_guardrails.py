@@ -175,6 +175,13 @@ USER_COLUMNS = frozenset(
     }
 )
 
+#: **2026-10-06 P4 追加**：ADR-0006 §2.4 维度 2「席位 = 已激活且可登录」的谓词列。
+#: 这两列 spec §4.1 里没有 —— 它们由 **ADR-0006**（DR-C1 席位口径）引入，
+#: 缺了它们 License **算不出席位数**（补了 users 行也没用，见 §8 R29 的实测）。
+#: ⇒ 判据从「恰好 7 列」放宽为「恰好 7 列 **+ 这 2 列**」：
+#: **严格度不变**（任何**第四方**列仍会被下面的相等断言判红），只是把新的 ADR 来源显式登记进来。
+SEAT_COLUMNS = frozenset({"activated_at", "disabled_at"})
+
 
 def test_g18_users_table_exists() -> None:
     """✅ **已转正（2026-10-01，P2-A）**：`users` 表已建，本例由 XPASS 转常驻门禁。
@@ -202,10 +209,15 @@ def test_g18_users_table_exists() -> None:
     users = Base.metadata.tables["users"]
 
     columns = {column.name for column in users.columns}
-    assert columns == set(USER_COLUMNS), (
-        "users 的列必须逐字等于 specs/m5-permission-audit.md §4.1 的 7 列："
-        f"多 {sorted(columns - set(USER_COLUMNS))}，"
-        f"缺 {sorted(set(USER_COLUMNS) - columns)}"
+    expected = set(USER_COLUMNS) | SEAT_COLUMNS
+    assert columns == expected, (
+        "users 的列必须逐字等于 specs/m5-permission-audit.md §4.1 的 7 列"
+        "**加上 ADR-0006 §2.4 的两列席位列**："
+        f"多 {sorted(columns - expected)}，缺 {sorted(expected - columns)}"
+    )
+    # 保留「spec 7 列一个都不能少」的原判据（上面放宽的那句容易被误读为整体放宽）
+    assert set(USER_COLUMNS) <= columns, (
+        f"spec §4.1 的 7 列被删减：{sorted(set(USER_COLUMNS) - columns)}"
     )
 
     leading_columns = {next(iter(index.columns.keys())) for index in users.indexes}
@@ -228,7 +240,16 @@ def test_g18_users_table_exists() -> None:
 #: `users` 表的**消费者登记**——RK-4「表已建 ≠ 账号体系落地」的机械处置。
 #: **空集合 = 表已建、无人读它**。P2-B（RBAC）/ P2-C（SSO）/ P4（License）接线时，
 #: 把引用 `User` 的模块**登记进来**——登记动作本身就是那批的开工闸门。
-USERS_CONSUMER_MODULES: frozenset[str] = frozenset()
+#: **2026-10-06 P4（DR-C1 License）登记**：`services/license/policy.py` 是 `users` 的
+#: **第一个真实消费者**（`count_seats`= 席位口径的唯一实现）。一并交代要求的四件事：
+#: ① **归属 DR-C1**（ADR-0006 §2.4 维度 2：席位数 = 已激活且未停用的用户）；
+#: ② 所需两列 `activated_at` / `disabled_at` **随本批迁移** `f3a91c2d6b70` 补（**不**在 P2-A 预置）；
+#: ③ 接缝 1（AuthProvider）**不受影响**，本批新增的是**接缝 9**（LicenseProvider），
+#:    登记真源为 **ADR-0006 §4**（ADR-0004 §2.1 的八个接缝数量与编号不变）；
+#: ④ #: ④ 提示早boost只是这里被登记了 —— G-23 转正仍必须看自身判据（行为侧 403 + 落审计）， —— G-23 转正仍必须看自身判据（行为侧 403 + 落审计），
+#:    **不得**因为引用了 User 就宣称 License / 账号体系完工。
+#: ⚠️ 即便登记了，`app/` 下**仍无端点直接读 users** ⇒ 仍不得宣称账号体系落地。
+USERS_CONSUMER_MODULES: frozenset[str] = frozenset({"services/license/policy.py"})
 
 
 def test_g18_users_consumers_are_registered() -> None:

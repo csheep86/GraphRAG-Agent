@@ -79,8 +79,14 @@ ROLE_NAME_VALUES = ("admin", "auditor", "analyst", "viewer")
 #: 因此它是一个**高危集合**：偷偷往里加表 = 开一个不受租户约束的口子。
 #: ⇒ 两条机械约束（由 `tests/test_guardrails_compliance.py` 的 G-24 组断言盯住）：
 #:   ① 本集合必须与「模型上声明了 ``__rls_exempt__`` 的表」**逐字相等**（防偷偷加表）；
-#:   ② `roles` **不得出现租户业务列**（无 `org_id`）——出现即说明字典表被业务污染。
-RLS_EXEMPT_TABLES: frozenset[str] = frozenset({"roles"})
+#:   ② 豁免表**不得出现租户业务列**（无 ``org_id``）——出现即说明字典表被业务污染。
+#:
+#: **2026-10-06 P4 追加 ``licenses``**（ADR-0006 §3.1）：它是**实例级**表——
+#: 一机一 License，本就没有租户维度，与 ``roles`` 同属「无租户维度的系统表」。
+#: 新增豁免表属破坏性变更，故连带同步了 ``tests/test_guardrails_rls.py`` 的
+#: 豁免集合断言（该断言原本硬写 ``{"roles"}``）——**不是放宽**，是登记项更新，
+#: 收紧程度不变（仍断言「库里真的没有策略」+「集合恰好相等」）。
+RLS_EXEMPT_TABLES: frozenset[str] = frozenset({"roles", "licenses"})
 
 
 def utcnow() -> datetime:
@@ -809,11 +815,83 @@ class User(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     #: 账号状态（CheckConstraint 限两档）
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: **席位口径**（ADR-0006 §2.4 维度 2）—— 席位 = 「已激活且可登录」的用户。
+    #: 首次**成功登录**回填（登录属 P2-C）；此刻全表为 NULL ⇒ **当前占席位 0 人**。
+    activated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 停用时间；**可空且未停用**即计入席位（同上：席位谓词是 disabled_at IS NULL）
+    disabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+    #: ADR-0006 §2.4：席位判定谓词，**唯一**判据（`LicensePolicy` 直接取用，避免口径漂移）
+    __seat_predicate__ = "activated_at IS NOT NULL AND disabled_at IS NULL"
+
+
+class License(Base):
+    """``licenses`` 表（ADR-0006 §3.1）：**实例级**，RLS **显式豁免**。
+
+    **为什么实例级**：这是一台机器一份 License（一 License 管全实例），**没有租户维度**
+    ⇒ 与 ``roles`` 同属「无租户维度的系统表」（ADR-0006 §3.1 原文：显式豁免 RLS，
+    与 ``roles`` 全局字典表同理）。
+
+    **豁免的三条机械约束**（沿用 2026-10-03 用户对 ``roles`` 的裁决=「代码内显式声明 +
+    机械断言 + 事后 CR 抽检」，要求未放松，只变更履行载体）：
+
+    1. 本表**没有** ``org_id``（有即说明被租户业务污染）；
+    2. 豁免集合 :data:`RLS_EXEMPT_TABLES` 与本模型的 ``__rls_exempt__`` **双向相等**；
+    3. 库里不得出现 ``tenant_isolation`` 策略（由 ``tests/test_guardrails_rls.py`` 查库判）。
+
+    **写的是谁**：每份**成功加载**的 License 落一行，用于回溯「这台机器上装过什么」
+    （ADR-0006 §3.1 ``raw_payload`` 的取证目的）。消费者唯一落点：
+    ``app/services/license/store.py::record_loaded_license``。
+    """
+
+    __tablename__ = "licenses"
+    __rls_exempt__ = True
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'expired', 'revoked', 'superseded')",
+            name="ck_licenses_status",
+        ),
+        UniqueConstraint("license_id", name="uq_licenses_license_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    #: License 唯一标识（UUID 字符串）
+    license_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: 本机指纹（32 位 hex，ADR-0006 §2.1）
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    not_before: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    not_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: 过期宽限天数（ADR-0006 §2.5，默认 30）
+    grace_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: 维度 1：租户数上限
+    max_orgs: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: 维度 2：席位数上限
+    max_seats: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: 维度 3：授权模块列表（``m1_ingest`` … ``connectors``，ADR-0006 §3.3）
+    modules: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    #: License **正文原文**（**不含签名**）——审计 / 争议取证用
+    raw_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Ed25519 签名（base64）
+    signature: Mapped[str] = mapped_column(Text, nullable=False)
+    #: 首次生效时间
+    activated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
     )
 
 

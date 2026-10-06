@@ -47,6 +47,8 @@ CORE_PATHS = {
     "/api/v1/ontology/rename",
     "/api/v1/ontology/active",
     "/api/v1/cost/dashboard",
+    # P4 / DR-C1（ADR-0006 §2.6）：License **自检端点** —— 与 /health 一样豁免 License 拦截
+    "/api/v1/license/status",
 }
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
@@ -54,7 +56,13 @@ HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
 #: ADR 强制要求的错误码（ADR-0001 / 0002 / 0003）
 ADR_REQUIRED_CODES = {"TASK_INTERRUPTED", "KG_VERSION_NOT_ACTIVE", "FORBIDDEN"}
 
-TENANT_PROTECTED_PATHS = CORE_PATHS - {"/api/v1/health"}
+#: **探针端点不上租户 / 鉴权判据**的排除集（2026-10-06 P4 登记，不是偷懒）：
+#: `/health` 是存活性探针（no history）；`/license/status`（ADR-0006 §2.6）是**自检端点**——
+#: 它必须**在 License 全量拒绝时仍然可达**，否则客户现场连"为什么不能用"都查不出来；
+#: 它只返回「是否有效 / 到期日 / 授权模块」，**不含任何租户数据**（连组织名字都没有），
+#: 所以与 `/health` 同属"不承载业务对象"的一类，按同一口径排除。
+#: ⚠️ 若将来给它加了租户相关返回字段 ⇒ 必须立即从这里移回受保护集。
+TENANT_PROTECTED_PATHS = CORE_PATHS - {"/api/v1/health", "/api/v1/license/status"}
 
 
 @pytest.fixture(scope="module")
@@ -107,7 +115,8 @@ def test_operation_ids_are_unique(schema: dict) -> None:
     # （Sprint 9.5 批次 C3 合规扫描端点）→ 19
     # （批次 C4 异常归因两端点）→ 26
     # （M6 契约先行批次 7 个占位端点；operation_id 不得重复）
-    assert len(operation_ids) == len(set(operation_ids)) == 26
+    # （P4 License 自检端点 `getLicenseStatus`）→ 27
+    assert len(operation_ids) == len(set(operation_ids)) == 27
 
 
 def test_info_version_is_constant(schema: dict) -> None:

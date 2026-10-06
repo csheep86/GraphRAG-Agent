@@ -76,6 +76,11 @@ REPO_ROOT = BACKEND_DIR.parent
 CONTRACT_FILE = REPO_ROOT / "contracts" / "openapi.yaml"
 CONFIG_FILE = BACKEND_DIR / "app" / "core" / "config.py"
 ADR_FILE = REPO_ROOT / "docs" / "adr" / "0004-integration-seams.md"
+
+#: **2026-10-06 P4 新增**：接缝 9（`LicenseProvider`）的登记真源是 **ADR-0006 §4**，
+#: 它**不在** ADR-0004 §2.1 的八个接缝里（ADR-0006 §4 原文：「ADR-0004 §2.1 的
+#: 8 个接缝**数量与编号不变**」）⇒ 判据 4 必须能读到第二个真源，否则接缝 9 无论怎么登记都红。
+ADR0006_FILE = REPO_ROOT / "docs" / "adr" / "ADR-0006-license-control.md"
 PROMPTS_REL = "prompts"
 
 SCAN_DIRS: tuple[Path, ...] = (BACKEND_DIR / "app", BACKEND_DIR / "scripts")
@@ -165,6 +170,21 @@ INTERFACE_RULES: tuple[InterfaceRule, ...] = (
         1,
         1,
         adr_tokens=("JSON/CSV 实现",),
+    ),
+    InterfaceRule(
+        "接缝 9 计费",
+        # ⚠️ required_from 取 **1.1.0**（未到期 ⇒ 缺实现先记 WARN）：见 :data:`INTERFACE_RULES`
+        # 处注释 —— License 已实装，G-23 的静态资产断言会立刻拦住"实现被删"的情况，
+        # 这里不需要再用 ERROR 顶一次；同时避免与既有「未到期不得报 ERROR」的门禁用例冲突。
+        "LicenseProvider",
+        "1.1.0",
+        1,
+        1,
+        allowed=("DevLicenseProvider",),
+        note=(
+            "登记真源是 ADR-0006 §4（接缝 9 由该 ADR 管辖，"
+            "**不在** ADR-0004 §2.1 的八个接缝内）——详见本文件 ADR0006_FILE 的注释"
+        ),
     ),
 )
 
@@ -537,12 +557,31 @@ def _check_interfaces(index: ClassIndex, version: str, findings: list[Finding]) 
 
 
 def _adr_seam_rows(text: str) -> dict[str, str]:
-    """取 ADR-0004 §2.1 的表格行：{接缝号: 行原文}（先出现的优先，§4 的同号行不覆盖）。"""
+    """取 ADR §2.1 的表格行：{接缝号: 行原文}（先出现的优先）。
+
+    **容忍加粗的行号**（``| **9** |``）：ADR-0006 §4 的表格用 ``**9**`` 写编号，
+    而 ADR-0004 用的是裸 ``9``。两边都是"登记表的第一行就是这个接缝号"——
+    排版差异不该让寄存器判红线，这里对 ``*`` 做可选匹配。
+    """
     rows: dict[str, str] = {}
     for line in text.splitlines():
-        match = re.match(r"\|\s*(\d+)\s*\|", line)
+        match = re.match(r"\|\s*\**\s*(\d+)\s*\**\s*\|", line)
         if match:
             rows.setdefault(match.group(1), line)
+    return rows
+
+
+def _all_seam_rows() -> dict[str, str]:
+    """合并两份登记真源：ADR-0004（接缝 1–8）+ **ADR-0006**（接缝 9）。
+
+    ADR-0004 优先（``setdefault``）：一旦 ADR-0004 将来真的加了第 9 行，
+    以它为准 —— 本å函数只负责"让接缝 9 有处可查"，不负责抢占定义权。
+    """
+    rows = _adr_seam_rows(ADR_FILE.read_text(encoding="utf-8"))
+    for number, line in _adr_seam_rows(
+        ADR0006_FILE.read_text(encoding="utf-8")
+    ).items():
+        rows.setdefault(number, line)
     return rows
 
 
@@ -569,7 +608,7 @@ def _check_adr_registry(findings: list[Finding]) -> None:
             )
         )
         return
-    rows = _adr_seam_rows(ADR_FILE.read_text(encoding="utf-8"))
+    rows = _all_seam_rows()
     for rule in INTERFACE_RULES:
         expected = rule.adr_tokens or rule.allowed or ()
         if not expected:

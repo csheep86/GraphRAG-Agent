@@ -42,6 +42,16 @@ class ErrorCode(StrEnum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
     HTTP_ERROR = "HTTP_ERROR"
 
+    # -- License（接缝 9 / DR-C1 / ADR-0006 §2.5）--
+    #: 六个码是 ADR-0006 §2.5 的**逐字清单**，缺任一个前端都无法区分拒绝原因。
+    #: 全部映射 403 —— ADR 明写「统一 403，不用 402：402 语义未标准化」。
+    LICENSE_MISSING = "LICENSE_MISSING"
+    LICENSE_INVALID = "LICENSE_INVALID"
+    LICENSE_FINGERPRINT_MISMATCH = "LICENSE_FINGERPRINT_MISMATCH"
+    LICENSE_EXPIRED = "LICENSE_EXPIRED"
+    LICENSE_LIMIT_EXCEEDED = "LICENSE_LIMIT_EXCEEDED"
+    LICENSE_MODULE_DISABLED = "LICENSE_MODULE_DISABLED"
+
 
 #: 每个错误码的默认 HTTP 状态码（HTTP 状态码与业务错误码分离）
 ERROR_HTTP_STATUS: Mapping[ErrorCode, int] = {
@@ -62,6 +72,13 @@ ERROR_HTTP_STATUS: Mapping[ErrorCode, int] = {
     ErrorCode.RATE_LIMITED: 429,
     ErrorCode.INTERNAL_ERROR: 500,
     ErrorCode.HTTP_ERROR: 500,
+    # 全部 403（ADR-0006 §2.5「统一 403，不用 402——402 语义未标准化」）
+    ErrorCode.LICENSE_MISSING: 403,
+    ErrorCode.LICENSE_INVALID: 403,
+    ErrorCode.LICENSE_FINGERPRINT_MISMATCH: 403,
+    ErrorCode.LICENSE_EXPIRED: 403,
+    ErrorCode.LICENSE_LIMIT_EXCEEDED: 403,
+    ErrorCode.LICENSE_MODULE_DISABLED: 403,
 }
 
 #: 默认 human-readable 消息（英文短句，便于日志检索；面向用户的中文说明见人类可读规格）
@@ -83,6 +100,12 @@ DEFAULT_MESSAGES: Mapping[ErrorCode, str] = {
     ErrorCode.RATE_LIMITED: "Too many requests",
     ErrorCode.INTERNAL_ERROR: "Internal server error",
     ErrorCode.HTTP_ERROR: "Unmapped HTTP error",
+    ErrorCode.LICENSE_MISSING: "No valid license file found",
+    ErrorCode.LICENSE_INVALID: "License signature verification failed",
+    ErrorCode.LICENSE_FINGERPRINT_MISMATCH: "License is bound to another machine",
+    ErrorCode.LICENSE_EXPIRED: "License expired beyond the grace period",
+    ErrorCode.LICENSE_LIMIT_EXCEEDED: "License quota exceeded",
+    ErrorCode.LICENSE_MODULE_DISABLED: "Requested module is not licensed",
 }
 
 #: 错误码语义 + 决策依据（写入 OpenAPI 枚举描述，供前端与人工阅读）
@@ -127,6 +150,29 @@ ERROR_CODE_DESCRIPTIONS: Mapping[ErrorCode, str] = {
     ),
     ErrorCode.INTERNAL_ERROR: "未预期的服务端异常，已记录日志（含 trace_id）。",
     ErrorCode.HTTP_ERROR: "未在错误码表中登记的 HTTP 状态兜底，保留原始 HTTP 状态语义。",
+    ErrorCode.LICENSE_MISSING: (
+        "未找到有效 license 文件（ADR-0006 §2.5）：文件缺失 ⇒ **全量拒绝**，"
+        "仅 `/health` 与 `/license/status` 可访问（自检端点被锁死则现场无法诊断）。"
+    ),
+    ErrorCode.LICENSE_INVALID: (
+        "license 存在但验签失败 / 正文非法（§2.3）：Ed25519 验签不通过即判无效，"
+        "**不做宽松通过**，与「文件缺失」同等处理。"
+    ),
+    ErrorCode.LICENSE_FINGERPRINT_MISMATCH: (
+        "license 绑定的机器指纹与本机不符（§2.1 / §2.5）：指纹组件交集 < 2/3 即判为另一台机器。"
+    ),
+    ErrorCode.LICENSE_EXPIRED: (
+        "有效期已过且越过宽限期（§2.5 / §2.7）：宽限期（`grace_days`，默认 30）内**只读**，"
+        "超期才全量拒绝——离线环境时钟不可信，硬拒有误伤风险。"
+    ),
+    ErrorCode.LICENSE_LIMIT_EXCEEDED: (
+        "超出授权维度上限（§2.4 组合维度）：**卡增量、保存量** —— 租户数 / 席位数超限"
+        "只拒绝**新增**动作（新建 org / 新建或启用用户），已有数据与只读查询不受影响"
+        "（超限即锁死只读等于拿客户数据当人质，必然引发交付纠纷）。"
+    ),
+    ErrorCode.LICENSE_MODULE_DISABLED: (
+        "请求所属功能模块**未被授权**（§2.4 维度 3，`modules[]` 未包含）：按模块收费的兑现点。"
+    ),
 }
 
 #: 错误码 -> 决策来源（ADR / 规格），用于追溯
@@ -148,6 +194,12 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.RATE_LIMITED: "M5 §3 验收 5 / 决策 A14（Sprint 8.1 批次 B）",
     ErrorCode.INTERNAL_ERROR: "CODEBUDDY.md 错误响应规范",
     ErrorCode.HTTP_ERROR: "CODEBUDDY.md 错误响应规范",
+    ErrorCode.LICENSE_MISSING: "ADR-0006 §2.5（文件缺失 ⇒ 全量拒绝）",
+    ErrorCode.LICENSE_INVALID: "ADR-0006 §2.3 / §2.5",
+    ErrorCode.LICENSE_FINGERPRINT_MISMATCH: "ADR-0006 §2.1 / §2.5",
+    ErrorCode.LICENSE_EXPIRED: "ADR-0006 §2.5 / §2.7（宽限期 + max_seen_ts）",
+    ErrorCode.LICENSE_LIMIT_EXCEEDED: "ADR-0006 §2.4 维度 1 / 2 + §2.5「卡增量保存量」",
+    ErrorCode.LICENSE_MODULE_DISABLED: "ADR-0006 §2.4 维度 3（modules[]）/ §3.3",
 }
 
 #: HTTP 状态码 -> 错误码（用于拦截框架自身抛出的 HTTPException）

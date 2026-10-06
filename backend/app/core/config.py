@@ -37,6 +37,25 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # -- License（接缝 9 / DR-C1 / ADR-0006）--
+    # ⚠️ 六项**逐项**都有真实消费点，**无一占位**（ADR-0004 §3 第 5 条；写了不读 ⇒ CI 红，
+    # 由 scripts/check_seams.py 的「settings 必须有消费者」判据盯住）：
+    #   - license_file_path / _public_key / _state_ttl_seconds → LicenseProvider 加载与重载；
+    #   - license_fp_salt → 机器指纹计算；
+    #   - license_clock_skew_tolerance_days → 时钟漂移（只告警不拒绝）；
+    #   - license_enforce → LicenseMiddleware（false 时放行，但**必须**落 license.bypass 审计）。
+    license_file_path: str = "deploy/license/app.lic"
+    #: Ed25519 公钥（base64）。**留空 = 一律验签失败** —— 没有密钥就应当拒绝，
+    #: 而不是退化为「不校验」（后者会让 License 形同虚设，ADR-0006 §2.3）。
+    license_public_key: str = ""
+    license_enforce: bool = True
+    #: 指纹 salt（ADR-0006 §2.1：应用级，同一客户 / 同一版本一致，**不是密钥**）
+    license_fp_salt: str = "graphrag-fp-salt-v1"
+    #: 内存态 TTL（秒）——到期重载，保证每请求都是 O(1) 判断（§2.6 / R-L4）
+    license_state_ttl_seconds: int = Field(default=60, gt=0)
+    #: 时钟回拨容忍天数（§2.7：只告警不拒绝，避免客户调时钟把自己锁死）
+    license_clock_skew_tolerance_days: int = Field(default=7, ge=0)
+
     # -- Neo4j（阶段九：ADR-0002 主写入 / 查询目标）--
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"

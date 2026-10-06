@@ -393,7 +393,9 @@ def test_g26_5_exempt_set_is_exactly_registered() -> None:
     代码侧的标记集合，以及**库里真实的状态**（``downgrade`` 之后若有人误给
     ``roles`` 加策略，「豁免集合没变」这条照样绿，只有查库才算数）。
     """
-    assert set(RLS_EXEMPT_TABLES) == {"roles"}, (
+    # 2026-10-06 P4：新增 ``licenses``（ADR-0006 §3.1 的实例级表，无租户维度）。
+    # 判据**未放宽**：仍是「集合恰好相等」+「库里真的没有策略」，只是把新登记项写进来。
+    assert set(RLS_EXEMPT_TABLES) == {"roles", "licenses"}, (
         f"RLS 豁免集合被改成 {sorted(RLS_EXEMPT_TABLES)}——"
         "新增豁免表属于破坏性变更，须先升级评估（G-24 三条断言盯的正是这条边界）"
     )

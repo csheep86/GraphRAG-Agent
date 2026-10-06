@@ -25,10 +25,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+from uuid import uuid4
 
-import pytest
 from sqlalchemy import CheckConstraint
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -78,10 +79,6 @@ def _any_match(sources: dict[Path, str], pattern: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="G-23 / DR-C1：License 子系统零代码（ADR-0006 未落地），六项资产均不存在",
-)
 def test_g23_license_assets_exist() -> None:
     """DR-C1 完成判据的**静态侧**：六项资产必须齐备。
 
@@ -126,25 +123,99 @@ def test_g23_license_assets_exist() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="G-23 / DR-C1：License 子系统零代码，移除 license 后的行为围栏无从建立",
-)
-def test_g23_missing_license_blocks_requests() -> None:
-    """DR-C1 完成判据的**行为侧**：移除 license 文件 ⇒ 受保护端点 **403 `LICENSE_MISSING`**。
+def test_g23_missing_license_blocks_requests(tmp_path) -> None:
+    """DR-C1 完成判据的**行为侧**：移除 license ⇒ 受保护端点 **403 `LICENSE_MISSING`**。
 
-    同时要求**拒绝必须落审计**——否则客户到期后打不开系统，而我们拿不出证据说明是
-    License 到期而非系统故障（排障会被误导）。
+    四条都必须是**真跑出来的**，不是读代码得出的：
+
+    ① 受保护端点被 **403** 且错误码逐字为 ``LICENSE_MISSING``；
+    ② 拒绝**落审计**（``action = license.denied``）——否则客户到期后打不开系统，
+       而我们拿不出证据说明是 License 到期而非系统故障（排障会被彻底误导）；
+    ③ 审计里的 ``trace_id`` 与**响应体一致**（不一致就是"串不进链路的假审计"）；
+    ④ ``/health`` 与 ``/license/status`` **仍然可达** —— 自检端点被锁死，
+       现场连"为什么不能用"都查不到。
+
+    ⚠️ **测试后必须清场**：本条会写入一条真实审计记录，若不清掉会污染
+    其它按条数断言审计的用例（并会让 subsequent 会话的数据状态漂移）。
     """
-    try:
-        from app.core.middleware import LicenseMiddleware  # noqa: F401
-    except ImportError as exc:  # pragma: no cover - 有实现后不再走到这里
-        pytest.fail(f"LicenseMiddleware 不存在：{exc}")
 
-    pytest.fail(
-        "已存在 LicenseMiddleware 类，但尚未接入移除 license 后的 403 / 审计断言占位——"
-        "请在本条补全端到端行为断言并摘掉 xfail"
+    from sqlalchemy import delete, select
+
+    import app.services.license.provider as provider_module
+    from app.core.config import DEFAULT_ORG_ID, get_settings
+    from app.core.middleware import TRACE_ID_HEADER
+    from app.db.models import AuditLog
+    from app.db.session import open_session
+    from app.services.license.provider import DevLicenseProvider
+    from app.services.license.provider import (
+        get_license_provider as ignored_unused,  # noqa: F401 - 表明入口存在
     )
+
+    settings = get_settings()
+    trace_id = str(uuid4())
+    old_path = settings.license_file_path
+    old_provider = provider_module._PROVIDER
+
+    try:
+        # ① 让 license "消失"：指向一个确定不存在的文件 + 换掉已缓存的 Provider
+        object.__setattr__(settings, "license_file_path", str(tmp_path / "absent.lic"))
+        provider_module._PROVIDER = DevLicenseProvider()
+
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        client = TestClient(app)
+        response = client.get("/api/v1/documents", headers={TRACE_ID_HEADER: trace_id})
+        assert response.status_code == 403, (
+            f"无 license 时应 403，实际 {response.status_code}：{response.text[:200]}"
+        )
+        body = response.json()
+        assert body["code"] == "LICENSE_MISSING", f"错误码不对：{body}"
+        assert body["trace_id"] == trace_id, (
+            "响应 trace_id 与请求携带的不一致 ⇒ 调用方无法把这条拒绝串回自己的链路"
+        )
+
+        self_check = client.get(f"{settings.api_prefix}/license/status")
+        health = client.get(f"{settings.api_prefix}/health")
+        assert health.status_code == 200, "/health 必须在无 license 时仍可达"
+        assert self_check.status_code == 200, (
+            "/license/status 必须在无 license 时仍可达"
+        )
+        assert self_check.json()["has_license"] is False
+
+        # ②③ 拒绝必须落审计，且 trace_id 与响应体一致
+        with open_session(org_id=DEFAULT_ORG_ID) as session:
+            rows = session.scalars(
+                select(AuditLog).where(
+                    AuditLog.action == "license.denied",
+                    AuditLog.trace_id == trace_id,
+                )
+            ).all()
+            assert len(rows) == 1, (
+                f"拒绝未落审计（或落了 {len(rows)} 条重复）：action=license.denied / "
+                f"trace_id={trace_id}"
+            )
+            row = rows[0]
+            detail = row.detail or {}
+            assert detail.get("code") == "LICENSE_MISSING", (
+                f"审计详情缺错误码：{detail}"
+            )
+            # ADR-0006 §2.5：审计里**禁止**出现 License 正文 / 签名（写进去就是泄漏面）
+            blob = json.dumps(detail, ensure_ascii=False)
+            for forbidden in ("signature", "raw_payload", "-----BEGIN"):
+                assert forbidden not in blob, (
+                    f"审计里出现了 License 敏感字段：{forbidden}"
+                )
+            session.execute(
+                delete(AuditLog).where(
+                    AuditLog.action == "license.denied", AuditLog.trace_id == trace_id
+                )
+            )
+            session.commit()
+    finally:
+        object.__setattr__(settings, "license_file_path", old_path)
+        provider_module._PROVIDER = old_provider
 
 
 # --------------------------------------------------------------------------- #
@@ -305,3 +376,43 @@ def test_g24_role_name_set_is_frozen() -> None:
     assert tuple(MODEL_VALUES) == tuple(ROLE_NAME_VALUES) == tuple(RoleName)
     assert [name for name, _ in PRESET_ROLES] == list(ROLE_NAME_VALUES)
     assert set(ROLE_PERMISSIONS) == set(ROLE_NAME_VALUES)
+
+
+def test_g23_license_decision_is_sub_millisecond_at_p95() -> None:
+    """R-L4（ADR-0006 §2.6）：**每请求** License 判断的增量必须 **P95 < 1ms**。
+
+    这是**常驻判据**而不是一次性实测：将来有人往热路径里塞了读盘 / 验签 / DB 查询，
+    这条会立刻红（ADR §2.6 要求「只做内存判断 —— 有效期比较 + 模块集合 in」）。
+
+    ⚠️ **说明边界**：量的是**中间件判断本身**的耗时（不含业务处理），
+    这也是 ADR 那句"每请求判断"所指的部分；它不是端到端请求时延。
+    """
+    import statistics
+    import time
+
+    from app.core.middleware import LicenseMiddleware
+
+    middleware = LicenseMiddleware(app=None)
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/v1/documents",
+        "headers": [],
+    }
+
+    for _ in range(200):  # 预热：把首次加载态的开销排除在外
+        middleware._decide(scope)
+
+    samples: list[float] = []
+    for _ in range(1000):
+        start = time.perf_counter()
+        middleware._decide(scope)
+        samples.append((time.perf_counter() - start) * 1000)
+
+    samples.sort()
+    p95 = samples[int(len(samples) * 0.95) - 1]
+    median = statistics.median(samples)
+    assert p95 < 1.0, (
+        f"License 判断 P95 = {p95:.4f}ms ≥ 1ms（违反 ADR-0006 R-L4）；"
+        f"中位数 {median:.4f}ms —— 通常是把加载 / 验签 / 查库放进了热路径"
+    )

@@ -69,6 +69,80 @@ os.environ["LLM_API_KEY"] = ""
 # 需要验证「真实 LLM 抽取」的用例请 monkeypatch 注入假 invoker，不要依赖外部服务。
 os.environ["EXTRACTION_ENGINE"] = "mock"
 
+# ⚠️ **License 的 env 必须在这里就落地**（P4）：
+# `get_settings()` 是 `lru_cache`，而 `app.core.config` 在**模块级**就实例化了 Settings
+# ⇒ 一旦下面第 84 行导入 `app.services.license.fingerprint`（它会连带导入 app.core.config），
+# Settings 就**带着默认值被缓存**了，之后再设 env 一律无效
+# （表现为：测试环境永远 LICENSE_MISSING，而 pdb/命令行里却正常）。
+os.environ["LICENSE_FILE_PATH"] = str(_TMP_DIR / "license" / "pytest.lic")
+os.environ["LICENSE_PUBLIC_KEY"] = ""  # 下面签出密钥后立刻覆盖为真实公钥
+
+# License（接缝 9 / DR-C1）：测试**带着一份真 license 跑**，而不是把 enforce 关掉。
+#
+# 为什么不是 ``LICENSE_ENFORCE=false``：那样所有请求都被放行，
+# ① 掩盖「中间件到底拦没拦」这个本批唯一要证明的事；
+# ② 每条请求都会写一条 ``license.bypass`` 审计，把 /audit 的用例全污染掉。
+# ⇒ 在这里现签一份 ``.lic``：真的 Ed25519 签名 + 真的本机指纹 + 未来有效期，
+#   私钥**只在进程内**（测试脚手架），不入仓库、不作为交付资产。
+import base64  # noqa: E402
+import json  # noqa: E402
+
+from cryptography.hazmat.primitives.asymmetric import ed25519  # noqa: E402
+
+from app.services.license.fingerprint import compute_fingerprint  # noqa: E402
+
+_TEST_LICENSE_PRIVATE_KEY = ed25519.Ed25519PrivateKey.generate()
+_TEST_LICENSE_PUBLIC_KEY_B64 = base64.b64encode(
+    _TEST_LICENSE_PRIVATE_KEY.public_key().public_bytes_raw()
+).decode()
+
+# ⚠️ **顺序不能换**：`get_settings()` 是 `lru_cache`，而下面算指纹时会调用它 ——
+# 若先算指纹（即先缓存一份"还没设 env"的 Settings），再设 env 就**全部无效**
+# （部署 ≤ 早于 P4 岔口踩过：表现为资源测试环境一律 LICENSE_MISSING）。
+# ⇒ env 必须在**第一次**触发 get_settings() 之前落地。
+os.environ["LICENSE_FILE_PATH"] = str(_TMP_DIR / "license" / "pytest.lic")
+os.environ["LICENSE_PUBLIC_KEY"] = _TEST_LICENSE_PUBLIC_KEY_B64
+
+_TEST_LICENSE_BODY = {
+    "license_id": "00000000-0000-4000-8000-00000000beef",
+    "schema_version": 1,
+    "product": "graphrag-agent",
+    "customer": "pytest-scaffold",
+    "fingerprint": compute_fingerprint(),
+    "issued_at": "2026-01-01T00:00:00Z",
+    "not_before": "2026-01-01T00:00:00Z",
+    # 有效期给到很远的未来：**测试不得依赖真实时钟** ——
+    # 需要验证过期 / 宽限期的用例请另签一份特定日期的 license，而不是改系统时间。
+    "not_after": "2099-12-31T00:00:00Z",
+    "grace_days": 30,
+    "limits": {"max_orgs": 100, "max_seats": 100},
+    "modules": [
+        "m1_ingest",
+        "m2_extract",
+        "m3_graphqa",
+        "m4_affiliation",
+        "m5_permission",
+        "m6_ontology",
+        "connectors",
+    ],
+}
+_TEST_CANONICAL = json.dumps(
+    _TEST_LICENSE_BODY, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+)
+_TEST_LICENSE_FILE = _TMP_DIR / "license" / "pytest.lic"
+_TEST_LICENSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+_TEST_LICENSE_FILE.write_text(
+    json.dumps(
+        {
+            **_TEST_LICENSE_BODY,
+            "signature": base64.b64encode(
+                _TEST_LICENSE_PRIVATE_KEY.sign(_TEST_CANONICAL.encode("utf-8"))
+            ).decode(),
+        },
+        ensure_ascii=False,
+    ),
+    encoding="utf-8",
+)
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from pg_scratch import ensure_database  # noqa: E402
@@ -77,6 +151,25 @@ from app.core.config import get_settings  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.services.graphs import GraphService  # noqa: E402
 from app.services.kg.versioning import KgVersioningService  # noqa: E402
+
+
+@pytest.fixture(scope="session", autouse=True)
+def license_environment():
+    """把 License 配置写进**已经缓存的那个** Settings 实例。
+
+    **为什么不走 env**：``get_settings()`` 是 ``lru_cache``，而 Settings 在 pytest 进程里
+    早于 conftest 的 env 改写就被实例化和缓存了（表现为：``os.environ`` 已改、读到的仍是默认值；
+    在命令行里 python -c 却一切正常 —— 时序依赖，极难定位）。
+    ⇒ 这里直接改字段，**不依赖任何导入时序**。
+
+    用 ``object.__setattr__`` 是因为 pydantic 默认禁止直接赋值。
+    """
+    settings = get_settings()
+    object.__setattr__(settings, "license_file_path", str(_TEST_LICENSE_FILE))
+    object.__setattr__(settings, "license_public_key", _TEST_LICENSE_PUBLIC_KEY_B64)
+    object.__setattr__(settings, "license_enforce", True)
+    return settings
+
 
 # 测试库是**持久**的（不再像 SQLite 时代那样每次换一个临时文件），因此必须显式
 # 保证它存在。`create_app()` 只建 engine 不连库，所以放在导入之后仍然来得及。
