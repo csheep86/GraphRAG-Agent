@@ -4,6 +4,7 @@
 
     uv run python scripts/seed_dev_rbac.py           # 播种（幂等，可重复跑）
     uv run python scripts/seed_dev_rbac.py --check   # 只报告当前状态，不写
+    uv run python scripts/seed_dev_rbac.py --password=<dev 口令>  # 显式给定口令
 
 **为什么需要它**（实测证据见 `changes/P2/probe_rbac_dev_actor.py`）：
 
@@ -28,10 +29,23 @@ P2-B 给 10 个端点挂上了 RBAC 强制校验，而测试库那份 admin 授�
 - 不修改矩阵、不绕过校验——校验照常执行，这里只补「这个主体是谁」。
 
 真实账号与授权管理界面归 **P2-C**；在那之前，本脚本是"让演示能打开"的最小手段。
+
+**2026-10-06 追加（P6-P1 / R29）：顺带补上「主体锚点」** —— `users` 此前是 0 行，
+而 `user_roles.user_id` / `documents.uploaded_by` / `audit_log.actor_id` **全都指向它**
+⇒ 那三条 seed 出来的授权其实是**挂在库里不存在的人身上**（真机：孤儿 2/2、36/36、2/2）。
+本脚本原先只补"授权"，现在先补"被授权的人"：**以 `DEFAULT_ACTOR_ID` 为主键插一行 `users`**，
+于是既有数据一行都不用改就全部脱孤。
+
+⚠️ **它不代表账号体系落地**：`app/` 下**仍无一处 `select(User)`**（`users` 依旧 **0 真实读者**）；
+本脚本在 `scripts/` 下，**不需要**登记进 `USERS_CONSUMER_MODULES`（那条闸门只盯 `app/`）。
+口令哈希目前**没有任何校验方**（登录归 P2-C）⇒ `--password` 缺省时取随机值且**不打印**。
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import secrets
 import sys
 from pathlib import Path
 
@@ -42,10 +56,61 @@ if str(BACKEND_ROOT) not in sys.path:
 from sqlalchemy import select  # noqa: E402
 
 from app.core.config import get_settings  # noqa: E402
-from app.db.models import Role, UserRole  # noqa: E402
+from app.db.models import Role, User, UserRole  # noqa: E402
 from app.db.session import init_db, open_session  # noqa: E402
 from app.services.rbac.roles import PRESET_ROLES, RoleName  # noqa: E402
 from app.services.rbac.service import ensure_preset_roles  # noqa: E402
+
+#: PBKDF2 迭代数（OWASP 对 SHA-256 的推荐量级）
+_PBKDF2_ITERATIONS = 600_000
+
+
+def _hash_password(raw: str) -> str:
+    """PBKDF2-SHA256（**stdlib，零新增依赖**）。
+
+    ⚠️ 哈希算法的最终选型归 **P2-C** —— 届时才有校验方。这里只是为了让 `password_hash`
+    这条 `NOT NULL` 列拿到一个**真哈希**而不是占位串：为本仓**还没有校验方**的一列引入
+    `passlib` / `argon2` 依赖 ⇒ 无消费者依赖（预留纪律第 6 条），日后再换算法还得再迁移一次。
+    """
+    salt = secrets.token_bytes(16)
+    derived = hashlib.pbkdf2_hmac(
+        "sha256", raw.encode("utf-8"), salt, _PBKDF2_ITERATIONS
+    )
+    return (
+        f"pbkdf2_sha256${_PBKDF2_ITERATIONS}$"
+        f"{base64.b64encode(salt).decode()}${base64.b64encode(derived).decode()}"
+    )
+
+
+def _user_exists(session, actor_id) -> bool:
+    """dev 主体在 `users` 里有没有锚点行（RLS 下自然只查得到本租户的）。"""
+    return (
+        session.scalars(select(User.id).where(User.id == actor_id)).first() is not None
+    )
+
+
+def _ensure_dev_user(session, org_id, actor_id, password: str | None) -> bool:
+    """确保 dev 主体在 `users` 里有**一行**（幂等）；返回「是否已存在」。
+
+    主键**刻意取 `DEFAULT_ACTOR_ID`**：既有 `user_roles` / `documents` / 审计里那个 actor_id
+    恒为这个值 ⇒ 锚点对上后，**改业务代码这一步全省了**（改了反而会造出第一批需要回填的新数据）。
+    """
+    username = f"dev-{actor_id}"
+    if _user_exists(session, actor_id):
+        return True
+    session.add(
+        User(
+            id=actor_id,
+            username=username,
+            # 不传口令 ⇒ 随机串（**不打印**）：当前没有任何校验方，打印也只是制造一条需要保管的秘密
+            password_hash=_hash_password(password or secrets.token_urlsafe(24)),
+            org_id=org_id,
+            status="active",
+        )
+    )
+    session.flush()
+    print(f"[OK] 已插入 users 锚点：username={username} / org={org_id}")
+    return False
 
 
 def _report(session, org_id, actor_id) -> bool:
@@ -67,6 +132,11 @@ def _report(session, org_id, actor_id) -> bool:
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     check_only = "--check" in argv
+    # 显式给口令（缺省 ⇒ 随机值且**不打印**；当前无校验方，登录归 P2-C）
+    password = next(
+        (arg.split("=", 1)[1] for arg in argv if arg.startswith("--password=")),
+        None,
+    )
     settings = get_settings()
 
     print(f"DATABASE_URL         = {settings.database_url}")
@@ -89,9 +159,16 @@ def main(argv: list[str] | None = None) -> int:
     # A4：脚本没有请求身份 ⇒ org 只能显式给（本脚本只授默认 org）
     with open_session(org_id=org_id) as session:
         already = _report(session, org_id, actor_id)
+        has_user = _user_exists(session, actor_id)
+        print(f"dev 主体 users 锚点 = {'已存在' if has_user else '缺失（待补）'}")
         if check_only:
             print("\n[--] --check 模式：未写入")
-            return 0 if already else 1
+            # P6-P1：主体锚点与授权**两者齐全**才算 dev 逃生口可用
+            return 0 if (already and has_user) else 1
+
+        # P6-P1 / R29：**先有被授权的人**（没有这一步，授权挂在库里不存在的主体上）
+        _ensure_dev_user(session, org_id, actor_id, password)
+        session.commit()
 
         ensure_preset_roles(session)
         role_id = session.scalars(
