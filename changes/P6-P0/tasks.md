@@ -39,3 +39,6 @@
 - [x] **T4** 回切点：`check_session_drift.py`（S1 须读到 **10 条** Non-goals）+ 门禁全绿
       （契约 zero diff ／ `pytest` passed 不减 ／ `ruff` ／ `check_seams` ERROR 0）
 - [x] **T5** 摊 diff + 提交（Conventional Commits）+ CI 实证回登
+      ⇒ 提交 **`692cc8c8`**（3 文件 / +227 −11，全在 `changes/P6-P0/` + `docs/dev-doc-status.md`）；
+      **CI run `37450050163` 四 job 全 success**，后端 job `112224160692` **997 passed / 5 skipped / 2 xfailed**
+      （= CI 基线，0 回归）。push 一次即成功（未用 `--force`、未换远程）

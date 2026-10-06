@@ -177,7 +177,7 @@ RBAC 现在授的是一个**库里根本没有的主体**。
 |---|---|---|---|
 | ① | 六维表每格有行号证据；查不到写「未查到」 | §2 六格 **全部有坐标**；无「未查到」格（RLS 行为侧按 §2 坑 4 写「**本地不可判**」，非猜测） | ✅ |
 | ② | 真机读数齐 | `users` **0 行**；`user_roles` **2 行** / 孤儿 **2（100%）**；并附带 `documents` 36 行 / 孤儿 36、`audit_log` 2 行 / 孤儿 2；**连接角色已标注**（`graphrag` / `rolbypassrls=True`） | ✅ |
-| ③ | **零代码改动** ⇒ 契约 zero diff / pytest 不减 / ruff / `check_seams` ERROR 0 | `export_openapi.py --check` **零 diff**；`pytest` **991 passed / 11 skipped / 2 xfailed / 0 failed**（= 基线，**不减**）；`ruff check` **All checks passed**、`ruff format --check` **237 files already formatted**；`check_seams` **ERROR 0 / WARN 0 / OK 10**（含「Settings 全部 55 个字段均有消费者」） | ✅ |
+| ③ | **零代码改动** ⇒ 契约 zero diff / pytest 不减 / ruff / `check_seams` ERROR 0 | `export_openapi.py --check` **零 diff**；`pytest` **991 passed / 11 skipped / 2 xfailed / 0 failed**（= 基线，**不减**）；`ruff check` **All checks passed**、`ruff format --check` **237 files already formatted**；`check_seams` **ERROR 0 / WARN 0 / OK 10**（含「Settings 全部 55 个字段均有消费者」）。<br>**CI 终裁（R-10）**：提交 **`692cc8c8`** ⇒ run **`37450050163`** 四 job **全 success**（契约校验 / 后端 ruff+pytest / 前端 lint+gen:api / 流水线汇总）；后端 job **`112224160692`** 实测 **997 passed / 5 skipped / 2 xfailed**（= CI 基线，**不减、0 回归**） | ✅ |
 | ④ | drift 的 S1 读到 **10 条** Non-goals | `check_session_drift.py` ⇒ **S1 读到 10 条**，且来源批次 = **`changes/P6-P0/`**（草案目录最近活跃） | ✅ |
 | ⑤ | T3 结论二选一不含糊 | §3.2 **给出可开工的最小真接线方案**（seed 途径 + 固定 UUID 锚点 + 登记），并点名**唯一需用户拍板的项** = 「注册端点 / schema / 注册流程」与「让读维转正」属新批次 | ✅（选前者） |
 
