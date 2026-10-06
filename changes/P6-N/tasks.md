@@ -19,8 +19,12 @@
       attendance 上**本批单独挤掉 0/40 条**（只开关字面量召回，其余不动 ⇒ 注入集合逐条不变）
 - [x] **T6** **反向验证**：撤掉并集 ⇒ **2 条红**（首轮只有 1 条红 ⇒ 查出
       `test_lexical_candidates_are_deduped` 是**假绿**，已加硬断言）
-- [x] **T7** 门禁全绿：`pytest` **998 passed**（+9，0 回归）/ ruff / 接缝 ERROR 0（新模块已引用）/
-      契约零 diff + `integration-log.md`
+- [x] **T7** 门禁全绿：`pytest` **998 passed**（本地，+9，0 回归）/ ruff / 接缝 ERROR 0（新模块已引用）/
+      契约零 diff + `integration-log.md`；✅ **已推送**，**CI run 37424385882 四 job 全 ✓**：
+      后端 **996 passed / 5 skipped / 3 xfailed**（= 987 +9，skipped 仍 5 ⇒ 新单测在 CI 上真跑非 skip）
+- [x] **T8（收尾，用户拍板）** **R22 结案**：候选层 35.93%→100%、40 题 0/40 不退化、
+      CI 996 ⇒ 本体关闭；剩余一层**另立 R27**（挂起、不排期、附三条触发条件）；
+      结案依据写入 `integration-log.md` §9
 
 ---
 
