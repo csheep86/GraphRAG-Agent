@@ -6,15 +6,21 @@
 > / N-D4 索引**进程内构建 + 按版本缓存**、不落库 / N-D5 **只出机械量、不判分**
 > **上游**：[`changes/P6-M/`](../P6-M/)（比选：①字面量 100% 且字符成本仅现状 1/8）
 
-- [ ] **T1** 三件套：`proposal.md` + 本文件
-- [ ] **T2** 实现：倒排 + BM25（新模块 `app/services/lexical.py`，由 `graphs.py` 引用）；
-      `fetch_evidence_chunks` 加 `question: str | None = None` ⇒ 图候选 **∪** 字面量候选
-- [ ] **T3** 问答链路（M3）**显式传入** `question` ⇒ 新能力真生效（否则是死代码）
-- [ ] **T4** 单测：**不传 `question` 时逐字节不变**（钉死默认路径）+ 传入时补召回收敛
-- [ ] **T5** 真机：v2 上重跑 `probe_recall_tradeoff.py`（gold 命中率应 = 100%）；
-      attendance 上机械量不退化（归因 / 拒答 / 32 条 / 字符成本）
-- [ ] **T6** **反向验证**：撤掉字面量召回 ⇒ T4 相关用例**变红**
-- [ ] **T7** 门禁 + `integration-log.md` + 摊 diff（**不自行 push**）
+- [x] **T1** 三件套：`proposal.md` + 本文件
+- [x] **T2** 实现：倒排 + BM25（新模块 `app/services/lexical.py`，由 `graphs.py` 引用）；
+      `fetch_evidence_chunks` 的 `entity_ids` 路径：``question`` 非空 ⇒ 图候选 **∪** 字面量候选
+      （⚠️ **意外省事**：``question`` 参数 P6-J 就已有、agents.py 早就在传 ⇒ **签名与调用点零改动**，
+      新能力由已有消费者直接生效）
+- [x] **T3** 问答链路已传 `question` ⇒ **无需改动**（已核实 agents.py:383）
+- [x] **T4** 单测 **9 条**（`tests/test_lexical_recall.py`）：不传 `question` 时**绝不查池** +
+      补召回 + 并集 + 去重
+- [x] **T5** 真机：候选层 **71%→100%**、**38.97%→100%** ✅；注入层 **93.00% / 96.23%**
+      ⚠️（未达 100%，根因 = P6-J bigram 重排对短键查询区分度为零：**213/355 条并列满分**）；
+      attendance 上**本批单独挤掉 0/40 条**（只开关字面量召回，其余不动 ⇒ 注入集合逐条不变）
+- [x] **T6** **反向验证**：撤掉并集 ⇒ **2 条红**（首轮只有 1 条红 ⇒ 查出
+      `test_lexical_candidates_are_deduped` 是**假绿**，已加硬断言）
+- [x] **T7** 门禁全绿：`pytest` **998 passed**（+9，0 回归）/ ruff / 接缝 ERROR 0（新模块已引用）/
+      契约零 diff + `integration-log.md`
 
 ---
 
