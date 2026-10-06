@@ -25,6 +25,8 @@
 | 9 | **users 是租户表（有 RLS）**：`users.org_id` 存在且不在 `RLS_EXEMPT_TABLES`（仅 `roles`）⇒ 自动进 `TENANT_TABLES`；两笔 RLS 迁移显式含 `users` | `models.py:83`、`:809`；`migrations/versions/8210590e76a5:48`、`b7c4e1f9a2d3:59` |
 | 10 | 已接线但**取脚手架值**的字段（第一个真实消费者的候选落点） | `documents.uploaded_by`（`models.py:114` ← `services/documents.py:240`）；`affiliation_suspicions.reviewed_by`（`:431` ← `api/v1/routes/affiliation.py:252`）；`audit_log.actor_id`（`:664` ← `services/audit.py:131`）；`user_roles.user_id`（`:894` ← `scripts/seed_dev_rbac.py:117`，**无 FK 校验**） |
 | 11 | License 明写依赖：`LicenseProvider` 接缝 9「**S11 落地，依赖 `users` 表**」 ⇒ **users 空表 = License 席位无数据源** | `docs/adr/ADR-0006-license-control.md:235`；现状零代码 `:294` |
+| 12 | ⚠️ **本地读库角色绕过 RLS**：`system_session()` 的 `current_user = graphrag`，`rolbypassrls = **True**` ⇒ 本地任何「RLS 是否生效」的结论**不可信**（这正是 R28 里 `test_g26_4_app_account_is_not_bypassrls` 三条红的根因） | 2026-10-06 实测 `select current_user, rolbypassrls`；`dev-doc-status.md` §8 **R28** |
+| 13 | 开工基线（2026-10-06 体检）：本地全量 **`991 passed / 11 skipped / 2 xfailed / 0 failed`**；容器 `graphrag-pg16` / `graphrag-neo4j` 均在跑；CI 口径 **997 passed** | `uv run pytest -q --no-header`；`docker ps` |
 
 ⇒ **本批要回答的唯一问题**：缺口不是「表没建」，而是「**主体从哪来**」——
 `users` 恒空、`actor_id` 恒为默认 UUID ⇒ 若只是把 `identity.actor_id` 换成「查 users 表」，
@@ -41,6 +43,14 @@
 3. **不许造第二个「假差异」**：若只为了让 G-18 / G-23 的判定条件"看起来满足"而新增字段或端点，
    但无人真实读写 ⇒ 重演 `task_retry_multiplier` 与本次 `domain_profile` 的病例
    （CODEBUDDY.md 预留纪律第 6 条）。本批**只量化、不落地**，正是为了避开这个坑。
+4. ⚠️ **本地读数可信度分级**（2026-10-06 实测，务必照此区分）：本地 `system_session()` 用
+   `graphrag` 角色且 **`rolbypassrls = True`** ⇒
+      - ✅ **「`users` = 0 行」这个结论更强、可信** —— 绕过 RLS 只会看到**更多**行，连绕过都只有 0 行
+        ⇒ 全表确实为空；
+      - ❌ **任何「RLS 对 `users` 生不生效」的结论在本地一律不许下** —— 读的人本身就能绕过 RLS。
+        这类结论只能由 **CI（受限角色）** 判定，本地必须写「本地不可判」。
+      - ⇒ 这是 **R28**（`dev-doc-status.md` §8）对下一批的**唯一污染路径**，本批不修 R28，
+        **只用这条纪律把它隔离掉**。
 
 ## 3. 决策点（建议项 —— 无人值守下默认采纳；有异义按升级条件处理）
 
@@ -68,7 +78,9 @@
 
 - **T1 只读量化（¥0，顺序不能反）**
       - T1.1 **复核 §1 的 11 条坐标**（行号会漂移，失效即停）
-      - T1.2 真机读数：`users` 行数；`user_roles` 行数 + 其 `user_id` 是否能在 users 中命中（**外键不校验 ⇒ 可能有孤儿**）
+      - T1.2 真机读数：`users` 行数（2026-10-06 已实测 **0**）；`user_roles` 行数 + 其 `user_id`
+            是否能在 users 中命中（**外键不校验 ⇒ 可能有孤儿**）。**每次读数必须标注所用连接角色**；
+            `users` 的 **RLS 类结论**按 §2 坑 4 写「本地不可判」（本地 `graphrag` = `bypassrls`）
       - T1.3 列出**所有**取 `identity.actor_id` / `default_actor_id` 的落点（§1 第 10 条是否穷尽）
       - T1.4 查 `Identity` 是否有姓名/角色的可能来源（决定「第一个 user」需要哪些字段）
       - T1.5 查 `USERS_CONSUMER_MODULES` 的判定逻辑（登记后会不会连带要求别的条件）
@@ -93,3 +105,17 @@
 
 - **草案**（2026-10-06 起草）｜ 关联：`docs/adr/ADR-0006-license-control.md:235`、
   `docs/delivery-requirements-and-guardrails.md:183`（G-23）/ `:228`（users 仍 0 消费者）/ `:463`（P2 排期）
+
+## 8. 开工基线（2026-10-06 体检，新会话可直接沿用，不必重跑）
+
+| 项 | 实测 | 说明 |
+|---|---|---|
+| 本地全量 pytest（无图口径） | **991 passed / 11 skipped / 2 xfailed / 0 failed** | 与 P6-O 收尾一致 ⇒ 无既存红 |
+| CI 口径 | **997 passed / 5 skipped / 2 xfailed** | 基线 996 **+1** = G-12；本地/CI 差值 8 条 = 真图用例本地 skip |
+| 容器 | `graphrag-pg16` **Up** / `graphrag-neo4j` **Up** | 真机读数可用（PG 侧够了，Neo4j 非本批所需） |
+| 本地读库角色 | `current_user = graphrag`，**`rolbypassrls = True`** | ⚠️ 见 §2 坑 4 —— 行数结论可信、**RLS 结论本地不可判** |
+| `users` 真机 | 表存在，**0 行** | 连绕过 RLS 都只有 0 行 ⇒ 全表空（结论更强） |
+| 护栏 | `[OK]` 仅剩 **G-23** 挂起（`--`） | G-12 已转 `[OK]`；`xfailed` 2 条 = G-23 两条 |
+
+⚠️ **唯一已知的环境干扰**：本机 `git push` 到 GitHub 时好时坏（`Recv failure` / `Failed to connect`，
+**非 DNS**）⇒ 提交照常，push **失败就重试**，不要改用 `--force` 或换远程（P6-O 时第 19 次才成功）。
