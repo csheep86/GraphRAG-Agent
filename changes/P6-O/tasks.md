@@ -29,3 +29,8 @@
       （**保留**"绿灯只代表机制可跑、不代表多客户交付已验证"这条注记）
       （⚠️ 绝对值 ≥998 以 **CI 终裁** —— 本地 991 = 999 − 8 条真图用例 skip，见日志 §4 ④）
 - [ ] **T6** 摊 diff（自动提交；push 失败先重试，仍失败就把命令给用户）+ **CI 实证回登**
+      → **提交 ✅ `8e80935`**（7 files / +144 / −28）；
+      **push ❌**：`git push origin main` 连续重试 **18 次**全失败
+      （`Recv failure: Connection was reset` / `Failed to connect to github.com:443`，**非 DNS**）
+      ⇒ 命令已交用户；**未**改用 force、未换远程。**推成功后**：跑
+      `gh run watch` 取后端 job 的 pytest 数字回登判据 ④（本地 991 = 999 − 8 条真图 skip）

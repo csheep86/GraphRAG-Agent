@@ -80,3 +80,11 @@ proposal §3 的 O-D2 **前置条款**写死：「无消费者 ⇒ **不许写**
    **非本批引入**：`deploy/variants/` 的消费者只有 `test_guardrails_delivery.py` 与
    `check_startup_readiness.py`（`rg "deploy/variants\|VARIANT_DIR"` 全仓仅此两处），
    本批改动**触达不到**那些用例；且无图口径下改动前后对照为 **990 → 991（0 failed）**。
+
+## 7. 提交与推送（**push 未成功，命令已交用户**）
+
+| 项 | 状态 |
+|---|---|
+| 提交 | ✅ `8e80935` `feat(g12): 落第二个真实部署形态 internal-demo，G-12 转正常驻门禁`（**7 files / +144 / −28**） |
+| 推送 | ❌ `git push origin main` 连续重试 **18 次**全失败：`Recv failure: Connection was reset` / `Failed to connect to github.com:443 after 21s`（**非 DNS**，与历史病例同型）。**未**改用 `--force`、**未**换远程 ⇒ 按预授权边界把命令交给用户 |
+| CI 实证（判据 ④ 终裁） | ⏳ **待推送成功后执行**：`gh run watch` → 取 backend job 的 pytest 数字回登本节（本地 991 = 999 − 8 条真图用例 skip；CI 基线 996 ⇒ 预期 **997**） |
