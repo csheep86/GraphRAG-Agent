@@ -30,6 +30,18 @@
     uv run python scripts/probe_candidate_window.py --with-anchor-only
     uv run python scripts/probe_candidate_window.py --gold-citations gold.json
 
+    # P6-L：诊断**另一个版本 / 租户**（指定版本时**默认不跑题集**，理由见下）
+    uv run python scripts/probe_candidate_window.py \
+        --kg-version affiliation-demo-v2 \
+        --org-id 5dea8f62-0c67-579a-9509-8b4ce98eadea
+
+**P6-L（2026-10-06）**：新增 ``--kg-version`` / ``--org-id`` / ``--with-questions``。
+原因：本脚本原先写死「取 active 版本 + 单一 org」⇒ 只能诊断 ``attendance-demo-v1``，
+而 P6-K 的结论「当前规模零损失」恰恰需要一个**更大语料**来反证。图里现成就有
+``affiliation-demo-v2``（**988** chunk / **1268** 实体）当对照物，代价 ¥0。
+**指定 ``--kg-version`` 时默认不跑题集**：40 题是 attendance 域的问答集，放到
+疑点检测语料上锚点抽不出来，逐题数只会造出一张"看似有数、其实不相关"的表。
+
 ``--gold-citations`` 的 JSON 形态：``{"1": ["chunk-<id>", ...], "2": [...]}``
 （题号 ⇒ 该题答案引用到的 chunk_id 列表）。
 
@@ -89,6 +101,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="额外算「只用问句锚点」那一档（A 口径；O1–O4 已定案，默认不重算）",
     )
+    parser.add_argument(
+        "--kg-version",
+        default=None,
+        help=(
+            "要诊断的 kg_version；不给 ⇒ 取 --org-id 的 active 版本（P6-K 原行为）。"
+            "给了 ⇒ 直接诊断该版本，且**默认不跑题集**（题集与版本同域才有意义）"
+        ),
+    )
+    parser.add_argument(
+        "--org-id",
+        default=ORG_ID,
+        help=f"租户 id（默认 {ORG_ID}；换 --kg-version 时通常要一起给）",
+    )
+    parser.add_argument(
+        "--with-questions",
+        action="store_true",
+        help="强制跑逐题表（默认只在诊断 active / 默认版本时跑）",
+    )
     return parser.parse_args()
 
 
@@ -107,7 +137,11 @@ def main() -> None:
 
     settings = get_settings()
     graph = GraphService.instance()
-    version = graph.fetch_active_kg_version(org_id=UUID(ORG_ID), db=None).version
+    org = args.org_id
+    if args.kg_version:
+        version = args.kg_version
+    else:
+        version = graph.fetch_active_kg_version(org_id=UUID(org), db=None).version
 
     driver = GraphDatabase.driver(
         settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
@@ -120,7 +154,7 @@ def main() -> None:
                 session.run(
                     _QUERY_EVIDENCE_CHUNK_INDEX,
                     kg_version=version,
-                    org_id=ORG_ID,
+                    org_id=org,
                     entity_ids=entity_ids,
                     index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT,
                     snippet_chars=_EVIDENCE_CHUNK_SNIPPET_CHARS,
@@ -136,7 +170,7 @@ def main() -> None:
                 session.run(
                     _QUERY_COUNT_CHUNKS_IN_VERSION,
                     kg_version=version,
-                    org_id=ORG_ID,
+                    org_id=org,
                 ).single()["n"]
             )
             all_entity_ids = [
@@ -146,12 +180,12 @@ def main() -> None:
                     " WHERE e.org_id IS NULL OR e.org_id = $org_id"
                     " RETURN e.id AS id",
                     v=version,
-                    org_id=ORG_ID,
+                    org_id=org,
                 )
             ]
 
         nodes, _edges, _truncated = graph.fetch_all_subgraph(
-            kg_version=version, org_id=UUID(ORG_ID), node_limit=_GRAPH_NODE_LIMIT
+            kg_version=version, org_id=UUID(org), node_limit=_GRAPH_NODE_LIMIT
         )
         sampled_entities = [n.id for n in nodes if n.label == "Entity"]
 
@@ -168,20 +202,37 @@ def main() -> None:
             f"（窗口完整率 {_pct(len(cand_u), total_chunks)}）"
             f"{'  ⚠️ 撞 index_limit' if cap_u else ''}"
         )
+        # **S 档（生产采样口径，不加问句锚点）**：纯看 500 采样能覆盖多少 chunk。
+        # P6-L 的核心读数——换版本诊断时题集与语料不同域，这一档才是**可比**的那个数。
+        cand_s0, cap_s0 = candidates(sampled_entities)
+        print(
+            f"[S] 生产采样口径（{len(sampled_entities)} 实体，无锚点）⇒ 候选 "
+            f"{len(cand_s0)} 条（窗口完整率 {_pct(len(cand_s0), total_chunks)}）"
+            f"{'  ⚠️ 撞 index_limit' if cap_s0 else ''}"
+        )
         print()
 
         header = f"{'题':>4} {'锚点':>4} {'S候选':>6} {'S完整率':>8} {'S截断':>6} {'U候选':>6} {'U完整率':>8}"
         if args.with_anchor_only:
             header += f" {'A候选':>6} {'A完整率':>8}"
-        print(header)
 
+        # 题集与语料**同域**才有意义：指定了别的 kg_version ⇒ 默认不跑（L-D5）。
+        run_questions = args.with_questions or args.kg_version is None
         rows: list[tuple[int, int, set[str], bool]] = []
-        for item in load_question_set():
+        if not run_questions:
+            print(
+                "（**未跑逐题表**：指定了 --kg-version ⇒ 题集与该语料不同域，"
+                "逐题数没有意义；要强制跑加 --with-questions）"
+            )
+        else:
+            print(header)
+
+        for item in load_question_set() if run_questions else []:
             anchors = [
                 str(a)
                 for a in graph.fetch_anchor_entity_ids(
                     kg_version=version,
-                    org_id=UUID(ORG_ID),
+                    org_id=UUID(org),
                     question=item.question,
                     nodes=nodes,
                 )
@@ -204,14 +255,20 @@ def main() -> None:
 
     print()
     print("=== 汇总（机械量，不含任何人工判分）===")
-    rates = [_pct_raw(len(cand), total_chunks) for _i, _a, cand, _c in rows]
-    print(
-        f"逐题 S 窗口完整率          ：min={min(rates):.2%} "
-        f"max={max(rates):.2%} 均值={sum(rates) / len(rates):.2%}"
-    )
-    hit_cap = sum(1 for _i, _a, _c, cap in rows if cap)
-    print(f"撞 index_limit 的题数      ：{hit_cap} / {len(rows)}")
-    print(f"逐题候选数去重后的取值集合 ：{sorted({len(c) for _i, _a, c, _c in rows})}")
+    if not rows:
+        print("逐题 S 窗口完整率          ：N/A（未跑逐题表 ⇒ **不**给 0）")
+        print("撞 index_limit 的题数      ：N/A（同上）")
+    else:
+        rates = [_pct_raw(len(cand), total_chunks) for _i, _a, cand, _c in rows]
+        print(
+            f"逐题 S 窗口完整率          ：min={min(rates):.2%} "
+            f"max={max(rates):.2%} 均值={sum(rates) / len(rates):.2%}"
+        )
+        hit_cap = sum(1 for _i, _a, _c, cap in rows if cap)
+        print(f"撞 index_limit 的题数      ：{hit_cap} / {len(rows)}")
+        print(
+            f"逐题候选数去重后的取值集合 ：{sorted({len(c) for _i, _a, c, _c in rows})}"
+        )
 
     if gold is None:
         print(

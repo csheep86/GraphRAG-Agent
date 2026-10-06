@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from typing import Any
 from uuid import UUID
@@ -22,8 +23,12 @@ from uuid import UUID
 import pytest
 from loguru import logger
 
+from app.core.config import get_settings
 from app.services import graphs
+from app.services.agents import _GRAPH_NODE_LIMIT
 from app.services.graphs import (
+    _EVIDENCE_CHUNK_INDEX_LIMIT,
+    _EVIDENCE_CHUNK_SNIPPET_CHARS,
     _EVIDENCE_WINDOW_NARROW_PREFIX,
     _EVIDENCE_WINDOW_PROBE_FAILED_PREFIX,
     _QUERY_COUNT_CHUNKS_IN_VERSION,
@@ -297,3 +302,122 @@ def test_sentinel_denominator_is_org_scoped(monkeypatch: pytest.MonkeyPatch) -> 
     assert session.count_params is not None, "哨兵应当真的去取了分母"
     assert session.count_params["org_id"] == str(org)
     assert session.count_params["kg_version"] == KG_VERSION
+
+
+# ---------------------------------------------------------------------------
+# P6-L：真机 —— 哨兵在**更大语料**上必须真的喊（**CI 上不 skip**）
+# ---------------------------------------------------------------------------
+
+#: 对照语料 `affiliation-demo-v2`：**988** chunk / **1268** 实体，
+#: 生产 500 采样实测只覆盖 **355 / 988 = 35.93%**
+#: （`uv run python scripts/probe_candidate_window.py --kg-version affiliation-demo-v2
+#: --org-id 5dea8f62-…` 可 ¥0 复算）。
+#:
+#: 它由 **CI 的「导入受控种子语料」步骤**导入，而该步骤排在 Pytest **之前**
+#: ⇒ 本组用例在 CI 上**一定跑得到**（跑不到 = 门禁前提被破坏，属 fail 不是 skip）。
+_LARGE_KG_VERSION = "affiliation-demo-v2"
+_LARGE_ORG = UUID("5dea8f62-0c67-579a-9509-8b4ce98eadea")
+
+_REAL_URI_ENV = "GRAPH_REAL_NEO4J_URI"
+_REAL_USER_ENV = "GRAPH_REAL_NEO4J_USER"
+_REAL_PASSWORD_ENV = "GRAPH_REAL_NEO4J_PASSWORD"
+
+
+def _real_graph_env() -> tuple[str, str, str]:
+    """真 Neo4j 连接三元组；**CI 上不可达 ⇒ fail，本地未设 ⇒ skip**。
+
+    与 `tests/test_guardrails_graph.py` 同款：skip 会让「没在验」和「验过了」
+    在 CI 日志里长得一模一样（纪律 **R-9「恒绿即失效」**）。
+    """
+    uri = os.environ.get(_REAL_URI_ENV, "").strip()
+    user = os.environ.get(_REAL_USER_ENV, "").strip() or "neo4j"
+    password = os.environ.get(_REAL_PASSWORD_ENV, "").strip()
+    if not uri or not password:
+        missing = f"未设 {_REAL_URI_ENV} / {_REAL_PASSWORD_ENV}"
+        if os.environ.get("CI"):
+            pytest.fail(
+                f"{missing} ⇒ CI 上真图用例连不上图库，这是门禁失效不是环境问题"
+            )
+        pytest.skip(f"{missing}（本地无 Neo4j ⇒ 真图用例跳过；CI 上为 fail）")
+    return uri, user, password
+
+
+@pytest.fixture
+def real_graph_service(monkeypatch: pytest.MonkeyPatch) -> Iterator[GraphService]:
+    """把 `GraphService` 指向**真** Neo4j（其余用例仍走 conftest 的不可达端口）。"""
+    uri, user, password = _real_graph_env()
+    settings = get_settings()
+    monkeypatch.setattr(settings, "neo4j_uri", uri)
+    monkeypatch.setattr(settings, "neo4j_user", user)
+    monkeypatch.setattr(settings, "neo4j_password", password)
+    GraphService.reset()  # 单例里可能缓存着上一个（不可达的）driver
+    try:
+        yield GraphService.instance()
+    finally:
+        GraphService.reset()
+
+
+def test_sentinel_fires_on_a_larger_corpus(
+    real_graph_service: GraphService, warnings: list[str]
+) -> None:
+    """**哨兵在真实大语料上必须真的喊** —— 此前只有单测的合成场景作证（P6-K 已知限制）。
+
+    为什么非真机不可：P6-K 的「本语料零损失」是在 **213 chunk / 每 chunk 约 13 个实体
+    提及**的语料上得出的。同一个固定预算（500 采样实体 / 1000 索引行）放到
+    **988 chunk / 每 chunk 约 1.28 个提及**的语料上，生产采样只覆盖 **35.93%**
+    ⇒ 哨兵**必然**喊。合成场景证明不了这件事，只有真图能。
+    """
+    service = real_graph_service
+    nodes, _edges, _truncated = service.fetch_all_subgraph(
+        kg_version=_LARGE_KG_VERSION, org_id=_LARGE_ORG, node_limit=_GRAPH_NODE_LIMIT
+    )
+    entity_ids = [n.id for n in nodes if n.label == "Entity"]
+
+    with service._session() as session:
+        total = int(
+            session.run(
+                _QUERY_COUNT_CHUNKS_IN_VERSION,
+                kg_version=_LARGE_KG_VERSION,
+                org_id=str(_LARGE_ORG),
+            ).single()["n"]
+        )
+        rows = list(
+            session.run(
+                _QUERY_EVIDENCE_CHUNK_INDEX,
+                kg_version=_LARGE_KG_VERSION,
+                org_id=str(_LARGE_ORG),
+                entity_ids=entity_ids,
+                index_limit=_EVIDENCE_CHUNK_INDEX_LIMIT,
+                snippet_chars=_EVIDENCE_CHUNK_SNIPPET_CHARS,
+            )
+        )
+    candidate = len({str(r["chunk_id"]) for r in rows})
+
+    if total == 0:
+        why = f"图里没有 {_LARGE_KG_VERSION} 的 chunk ⇒ 本用例前提不成立"
+        if os.environ.get("CI"):
+            pytest.fail(f"{why}（CI 应先导入受控种子语料，这是门禁前提被破坏）")
+        pytest.skip(f"{why}（本地可先跑 scripts/ingest_affiliation_sources.py）")
+
+    if candidate >= total:
+        pytest.skip(
+            f"该语料 S 档已完整（候选 {candidate} / 总数 {total}）⇒ "
+            "本用例前提（窗口窄）不再成立；若这是**召回修复**的结果，请回来更新本用例"
+        )
+
+    before = len(_narrow(warnings))
+    service.fetch_evidence_chunks(
+        kg_version=_LARGE_KG_VERSION,
+        org_id=_LARGE_ORG,
+        entity_ids=entity_ids,
+        limit=32,
+    )
+    fired = _narrow(warnings)[before:]
+
+    assert len(fired) == 1, (
+        "哨兵必须喊：候选 "
+        f"{candidate} < 版本内 chunk 总数 {total}"
+        f"（窗口完整率 {candidate / total:.2%}）却没有留痕"
+    )
+    assert _LARGE_KG_VERSION in fired[0]
+    assert f"候选 {candidate} < 版本内 chunk 总数 {total}" in fired[0]
