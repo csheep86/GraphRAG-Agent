@@ -4,10 +4,14 @@
 > **定位**：纯新建子系统（`backend/app/services/license/` 当前不存在）。
 > **链路**：P6-P0（量化缺口）→ P6-P1（补 users 主体锚点）→ **本批 P4**（License）。
 
-- [ ] **T0 依赖裁决清零**（ADR-0006 `:108` TBD-L1：验签库未落选不得写代码）
-      - [ ] T0.1 选 **`cryptography`**（Ed25519 走 `hazmat.primitives.asymmetric.ed25519`）
-      - [ ] T0.2 加进依赖 ⇒ **重配 `uv.lock`**（不重配 CI 必挂）
-      - [ ] T0.3 本地 `import` 验通（当前 venv 实测 `cryptography` / `nacl` **皆无**）
+- [x] **T0 依赖裁决清零**（ADR-0006 `:108` TBD-L1：验签库未落选不得写代码）
+      - [x] T0.1 选 **`cryptography`**（Ed25519 走 `hazmat.primitives.asymmetric.ed25519`）
+      - [x] T0.2 加进依赖 ⇒ **重配 `uv.lock`**（不重配 CI 必挂）
+            ⇒ `uv lock` 解析出 **cryptography v46.0.7**（连带 `cffi 2.1.1` / `pycparser 3.0`）
+      - [x] T0.3 本地功能验通：**签名/验签回路 ✅、篡改可检出 ✅、错钥匙拒签 ✅**；
+            签名 **64 字节 / base64 88 字符**（符合 ADR §2.2 的 detached base64 形态）
+      - [x] T0.4 连带回归：`check_seams` **ERROR 0**、契约 **zero diff**、
+            合规测试 **4 passed / 2 xfailed**、自检 `[--]` **仍仅 G-23**
 - [ ] **T1 接缝 9 登记**（**先文档后门禁**，ADR-0006 §4 + ADR-0004 §3 第 4 条）
       - [ ] T1.1 扩写 **ADR-0006 §4** 的接缝 9 登记行（`LicenseProvider → [DevLicenseProvider]`，`max_impls = 1`）
       - [ ] T1.2 改 `check_seams.py`：`InterfaceRule` 增 **`adr_file`** 字段 ⇒ 判据 4 支持**按规则取 ADR 源**
