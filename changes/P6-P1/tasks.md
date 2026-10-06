@@ -33,3 +33,6 @@
 - [x] **T4** 回切点：S1 **12 条**、S2 OK + 门禁全绿（契约 zero diff ／ 无图口径 **991 passed** 不减 ／
       `ruff check` + `ruff format --check`（237 文件）／ `check_seams` **ERROR 0 / WARN 0 / OK 10**）
 - [x] **T5** 摊 diff + 提交（Conventional Commits）+ CI 实证回登
+      ⇒ 提交 **`6b3a90a8`**（5 文件 / +324 −4）；**CI run `37457262324` 四 job 全 success**，
+      后端 job `112247798701` **997 passed / 5 skipped / 2 xfailed**（= CI 基线，0 回归）。
+      push **第 1 次 `Recv failure` 后重试一次即成功**（未用 `--force`、未换远程）

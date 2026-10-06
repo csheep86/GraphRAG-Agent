@@ -102,7 +102,7 @@
 |---|---|---|---|
 | ① | 有图口径 0 failed，原 8 条旧红全绿 | **999 passed / 3 skipped / 2 xfailed / 0 failed**（rc=0）；collected **1002** 与 CI（997+5）**同量** ⇒ 差值 = **本地独占 2 条**（CI 缺 `bridge_web_demo/output.json` / MinerU 产物故 skip），本地实则**多跑通 2 条**。⚠️ 计划目标 997/5 是**下界**，实测 999/3，**0 failed 达成** | ✅ |
 | ② | `users` ≥1 行；`user_roles` 孤儿 0；`\bUser\b` 命中 ⊆ 登记（双向） | `users` **1 行**；孤儿**全局 0**（严格视图 1 ⇒ 已登记为 R30，**未粉饰**）；`app/` 下 `\bUser\b` 仍只有定义处 `models.py:773`，登记集合仍为空 ⇒ **双向一致** | ✅ |
-| ③ | 契约 zero diff / 无图口径 pytest 不减 / ruff / `check_seams` ERROR 0 | `export_openapi.py --check` **零 diff**；无图口径 `pytest` **991 passed / 11 skipped / 2 xfailed**（= 基线，**不减**）；`ruff check` **All checks passed**、`ruff format --check` **237 files**（首轮因 1 文件需格式化已 `ruff format` 后复验通过）；`check_seams` **ERROR 0 / WARN 0 / OK 10** | ✅ |
+| ③ | 契约 zero diff / 无图口径 pytest 不减 / ruff / `check_seams` ERROR 0 | `export_openapi.py --check` **零 diff**；无图口径 `pytest` **991 passed / 11 skipped / 2 xfailed**（= 基线，**不减**）；`ruff check` **All checks passed**、`ruff format --check` **237 files**（首轮因 1 文件需格式化已 `ruff format` 后复验通过）；`check_seams` **ERROR 0 / WARN 0 / OK 10**。<br>**CI 终裁（R-10）**：提交 **`6b3a90a8`** ⇒ run **`37457262324`** 四 job **全 success**；后端 job **`112247798701`** 实测 **997 passed / 5 skipped / 2 xfailed**（= CI 基线，**不减、0 回归**） | ✅ |
 | ④ | drift S1 读到 **12 条** Non-goals | ✅（且批次 = `changes/P6-P1/`） | ✅ |
 | ⑤ | 三项遗留状态更新且带证据 | R28 **已闭环** / R29 **锚点已补（残留见 R30）** / Sprint10.5 **不归档 + 债务登记**，每条带命令与行数 | ✅ |
 
