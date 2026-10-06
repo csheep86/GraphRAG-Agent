@@ -207,8 +207,13 @@ jobs:
       # **G-25（P3-E）+ A8（P6-A）：导入受控种子语料**。
       # 评测判据要"出真值"，前提是图库里有**可复现**的数据——用"某次真机留下的库"
       # 不行（谁知道里面是什么）。语料由**生成器**产出（seed 固定 ⇒ 字节级可复现）：
-      # `demo/affiliation/generated/`，规模 200 合同 / 500 发票 / 100 凭证 / 20 组植入
-      # （spec §3 验收 6；v1 手工语料只有 8/60/30/9，**统计上判不出达标**）。
+      # 仓库根 `demo/affiliation/generated/`，规模 200 合同 / 500 发票 / 100 凭证 / 20 组
+      # 植入（spec §3 验收 6；v1 手工语料只有 8/60/30/9，**统计上判不出达标**）。
+      # ⚠️ **路径必须带 `../`**：本 job 的 `working-directory: backend`（见本 job 顶部
+      # defaults），而语料在**仓库根** ⇒ 写 `demo/affiliation/generated` 会解析成
+      # `backend/demo/affiliation/generated`（不存在）⇒ `CorpusError: CSV 不存在`
+      # ⇒ job 在 **pytest 之前**就红、后端测试一步没跑（**R26**：2026-10-05 P6-D 起
+      # 连续 8 次红的根因；当时被误读为"语料未入库"，实际是**路径错位**）。
       #
       # ⚠️ 少了这一步，下一个 gate 步骤会因**空图**判红——那正是 G-25 判据 ⑤ 想要的
       # （空图 ⇒ 检测到 0 疑点 ⇒ 召回 0 ⇒ 假红，此时必须 fail 而不是 pass）。
@@ -219,7 +224,7 @@ jobs:
           NEO4J_PASSWORD: ci-graph-pw-2026
         run: |
           uv run python scripts/ingest_affiliation_sources.py --purge \
-            --corpus-dir demo/affiliation/generated \
+            --corpus-dir ../demo/affiliation/generated \
             --kg-version affiliation-demo-v2
 
       # DATABASE_URL 取自本 job 级 env（指向 services.postgres 的 graphrag_test）；
