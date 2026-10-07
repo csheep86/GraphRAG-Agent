@@ -1,4 +1,5 @@
-"""业务域本体读取（M6 §4.1；Sprint 9.5 批次 B1-follow）。
+"""业务域本体：**读取**（M6 §4.1；Sprint 9.5 批次 B1-follow）+ 冷启动建议
+（M6 §3.1 验收 1 的 PoC）+ **确认生效**（P5-C 批次接上的写路径）。
 
 **为什么单独成文件**：本体是**每 org 一套**的域配置，消费方不止一处——
 
@@ -24,27 +25,36 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, get_args
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.db.models import OntologySchema
+from app.db.models import OntologyAction, OntologySchema
 from app.prompts import load_prompt
 from app.schemas import GraphCategory
 
 __all__ = [
+    "CONFIRM_ACTION_TYPE",
     "DEFAULT_MAX_ENTITY_TYPES",
     "DEFAULT_MAX_RELATION_TYPES",
     "OntologySuggestError",
     "OntologySuggestion",
+    "OntologyVersionConflictError",
+    "confirm_ontology_schema",
     "entity_type_categories",
     "extraction_type_vocabulary",
     "load_active_ontology",
     "suggest_ontology_types",
 ]
+
+#: `ontology_actions.action_type` 里本批次写入的那一档（偏离 **X-2a**，
+#: 理由见 `app/db/models.py::ONTOLOGY_ACTION_TYPES`）。
+CONFIRM_ACTION_TYPE = "confirm"
 
 #: 冷启动建议用的 Prompt 名（``prompts/ontology_suggest_v1.md``）。
 #: **为什么不复用既有 Prompt**：spec §3.1 验收 1 原文写「调用 ``kg_qa_v1.md``」，
@@ -227,6 +237,102 @@ def suggest_ontology_types(
         prompt_name=template.name,
         prompt_version=template.version,
     )
+
+
+class OntologyVersionConflictError(RuntimeError):
+    """同一 ``version`` **二次确认**被拒（M6 §3.1 验收 2 → 409 `SCHEMA_VERSION_NOT_ACTIVE`）。
+
+    **为什么不写成"幂等放行"**：第二次确认的类型集可能与第一次不同，
+    静默复用旧行 ⇒ 用户以为自己改的内容生效了（与 ``KG_VERSION_NOT_ACTIVE``
+    同一条纪律：**不静默复用旧版本**）。
+    """
+
+
+def confirm_ontology_schema(
+    *,
+    db: Session,
+    org_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    trace_id: uuid.UUID,
+    version: int,
+    entity_types: Sequence[Mapping[str, Any]],
+    relation_types: Sequence[Mapping[str, Any]],
+    domain_description: str = "",
+    suggested_by_llm: bool = False,
+) -> OntologySchema:
+    """把（人工确认过的）类型集**写生效**：唯一会落 `status='active'` 的入口。
+
+    M6 §3.1 验收 2 / §3.5 验收 12。三件事在同一个事务里做完，**不留半成品**：
+
+    1. 目标 ``version`` 已存在 ⇒ :class:`OntologyVersionConflictError`（409）；
+    2. 该 org 的旧 ``active`` 行置 ``superseded``（§4.6：换域走 ``version + 1``，
+       旧版本**不**删除，历史图谱不回溯重算）；
+    3. 落一行 ``ontology_actions(action_type='confirm')`` ——「确认」这件事
+       **先有证据、再有生效**，本表是该因果关系唯一的可举证载体。
+
+    :param suggested_by_llm: 类型集是否源自 LLM 建议（**由调用方诚实传值**——
+        本函数无法从数据本身判断来源，编猜测值等于给审计表写假数据）。
+    :param domain_description: 领域描述。**偏离 X-2c**：契约
+        ``OntologyConfirmRequest`` 不带该字段（本批不改契约），而列 ``NOT NULL``
+        ⇒ 传空串表示"未知"，**不**替用户编一段描述。
+    :raises OntologyVersionConflictError: 同一 ``(org_id, version)`` 已存在。
+    """
+    duplicated = db.scalar(
+        select(OntologySchema).where(
+            OntologySchema.org_id == org_id,
+            OntologySchema.version == version,
+        )
+    )
+    if duplicated is not None:
+        raise OntologyVersionConflictError(
+            f"version {version} 已存在（status={duplicated.status}），"
+            "重复确认被拒；如需修改请确认下一个版本号"
+        )
+
+    superseded_version: int | None = None
+    previous = load_active_ontology(db=db, org_id=org_id)
+    if previous is not None:
+        previous.status = "superseded"
+        superseded_version = previous.version
+
+    row = OntologySchema(
+        org_id=org_id,
+        version=version,
+        entity_types=list(entity_types),
+        relation_types=list(relation_types),
+        domain_description=domain_description,
+        suggested_by_llm=suggested_by_llm,
+        confirmed_by_user=actor_id,
+        status="active",
+        trace_id=trace_id,
+    )
+    db.add(row)
+    db.add(
+        OntologyAction(
+            org_id=org_id,
+            action_type=CONFIRM_ACTION_TYPE,
+            target_entities={
+                "entity_type_names": [item.get("name") for item in entity_types],
+                "relation_type_names": [item.get("name") for item in relation_types],
+            },
+            actor_id=actor_id,
+            # X-2b：确认本体时图谱尚不存在 ⇒ 没有 kg_version 可写，写 NULL 而不是假值
+            kg_version=None,
+            trace_id=trace_id,
+        )
+    )
+    db.commit()
+    db.refresh(row)
+
+    logger.bind(
+        org_id=str(org_id),
+        version=version,
+        superseded_version=superseded_version,
+        entity_type_count=len(entity_types),
+        relation_type_count=len(relation_types),
+        trace_id=str(trace_id),
+    ).info("ontology_schema_confirmed")
+    return row
 
 
 def _default_suggest_invoke(prompt: str) -> str:

@@ -70,6 +70,13 @@ PROTECTED_ENDPOINTS: dict[str, str] = {
     "/documents/{document_id}/graph": "GET",
     "/documents/{document_id}/status": "GET",
     "/graph/versions/{version}/activate": "POST",
+    #: P5-C（2026-10-07）：M6 第一批把这三个端点从 501 占位换成**真实现**
+    #: （`/ontology/confirm` 会写库）⇒ 从这一刻起它们**必须**走 RBAC，
+    #: 否则等于给租户内任意主体开一个改本体的写入口。
+    #: 三个仍占位的（merge / split / rename）留给它们自己的实现批次登记。
+    "/ontology/active": "GET",
+    "/ontology/cold-start": "POST",
+    "/ontology/confirm": "POST",
 }
 PROTECTED_PATHS = set(PROTECTED_ENDPOINTS)
 
