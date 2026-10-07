@@ -65,6 +65,7 @@
 | **X-2a** | `ontology_actions.action_type` 的 CHECK 在 spec 的三值（`merge/split/rename`）之外**多一个 `confirm`** | 判据 4 要求「确认后的状态变化写进 `ontology_actions`」；而 spec §4.2 的「仅三值」源自 plan §12 R12 对**批次 B GUI 三动作**的收口，未定义**批次 A**（冷启动 / 确认）的审计载体 | 一个迁移 + 删常量即可退回三值（退回 ⇒ 判据 4 作废） |
 | **X-2b** | `ontology_actions.kg_version` 允许 NULL，且 `confirm` 行的 CHECK 形如「非 confirm 必须非空」 | spec §4.6 的新租户链路是「先确认本体、后有图谱」⇒ confirm 时**不可能**有 `kg_version`；写假值等于 fabrication | 同上 |
 | **X-2c** | `confirm` 落 `ontology_schemas` 时 `domain_description` 写**空串** | `OntologyConfirmRequest` 不含该字段（契约不可改，Non-goal 1），而列 `NOT NULL`；编一段"看起来合理"的描述等于替用户决定业务域 | 将来契约带上该字段后直接回填；在此之前以"空 = 未知"为口径 |
+| **B-1** | **契约 + 前端生成物**随三个端点实现**再生**（openapi.yaml 42 行 / api.d.ts 49 行，均为描述文本与一条已失效的 501 声明） | 端点已实现，而契约仍写「占位骨架，恒返回 501」「未接线到本端点」——留着是**失真**；另一选项是明知描述为假仍提交，与本仓反「假做」的基线直接冲突 | 单独一个提交（`90bb5163`），两个文件均系生成物，撤回即恢复零契约改动（⇒ 判据 6 之外的所有判据不受影响） |
 
 ## 6. 验收判据（每条都要能贴机器输出）
 
