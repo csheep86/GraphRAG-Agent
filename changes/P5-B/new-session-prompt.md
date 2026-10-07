@@ -3,11 +3,11 @@
 > 🔒 **执行模式：无人值守**（技能 `unattended-sprint-execution`，用户已预授权）—— **不索过程性确认**，
 > 只在 §10 列的四类升级边界停下找我。详见 §1。
 >
-> 复制本文件全文到新会话作为第一条消息。
-> 上一批：**P5-A**（D4 解冻裁决）—— 它以「**依据失效，停下升级**」收尾，
-> 证据链在 `changes/archive/2026-10-07-P5-A/integration-log.md`，**开工前先读它**，
-> 本批的 §6 坐标表是它的续篇。（P5-A 已归档，因为它以「依据失效、停下升级」收尾。）
-> 用户 2026-10-07 在 P5-A 的升级报告上裁决：**P5-B**。
+> 📦 **本文件自包含**：前一个会话已收口、不会再回来。开工所需的**全部**坐标、命令、基线、陷阱
+> 都在本文里，不依赖任何上一轮对话的口头上下文。唯一需要你额外读的是 §0.5 列的**四份仓库内文件**
+> （它们都在库里，`git pull` 后即可读）。
+>
+> 复制本文件**全文**到新会话作为第一条消息。
 
 ---
 
@@ -16,8 +16,22 @@
 **先把 J3 做完（¥0、不依赖图谱），再把演示图谱恢复起来跑 G3，最后 D4 收口。**
 
 - **J3** = 推理路径上 `valid_to` 已过期的跳，前端画成**虚线置灰**，不再与有效边同色。
-- **图谱恢复** —— 本地演示环境已被整体清掉（详见 §6），这是 G3 与 J3 端到端验收的**硬前置**。
+- **图谱恢复** —— 本地演示环境已被整体清掉（详见 §6.3），这是 G3 与 J3 端到端验收的**硬前置**。
 - **G3** = 受控题集回归（`eval_controlled_qset.py`，40 题），比对 P6-H 的基线 **C1 = 0.0294**。
+
+---
+
+## 0.5 开工前必读（四份文件，都在库里；读完再动手）
+
+| 顺序 | 文件 | 为什么必须读 |
+|---|---|---|
+| 1 | **`changes/archive/2026-10-07-P5-A/integration-log.md`** | 上一批以「**依据失效、停下升级**」收尾。它用**四条实测**证明了 P5-A 的立项依据全部过期 —— 不读就可能重做一遍已被推翻的 recon，或以为还要去"裁决 A/B/C"（那事 09-30 就做完了）。**本批 §6 坐标表是它的续篇** |
+| 2 | `changes/Sprint10.5/13-as-of-evidence-rank.md` | J3 的**渲染前提**在此确立（§验收：2025 时点落到 `valid_to=2025-12-31`）。同时它 §遗留 登记了一个本批**不动**的口径不一致（见 §6.5） |
+| 3 | `changes/Sprint10.5/12-document-scope-inheritance.md` | 出路 B / R4-b 的核准与验收回填（`inconsistent` 259→352）。解释了为什么后端侧"已经做完了" |
+| 4 | `backend/scripts/ingest_attendance_policies.py` | T3 的主脚本。看它的 docstring / `POLICY_FILES` / `verify_and_close` 再动手，别照猜 |
+
+> ⚠️ `changes/Sprint10.5/` **没有归档**（`docs/delivery-plan.md:198` 既定处置：由 P5-D4 承接）。
+> 它仍被 ADR / spec / 代码多处引用，**不要顺手 `git mv` 它**。
 
 ---
 
@@ -30,8 +44,8 @@
 
 | 技能步骤 | 原真源 | 本批替代真源 |
 |---|---|---|
-| 1 定位进度 | `sprint-calendar.md` §5 | 本提示词 §5 决策表 + §4 Non-goals（顺序不可调换） |
-| 2 SDD 事前 | `dev-doc-status.md` §9.1 | 照做；`proposal.md` + `tasks.md` 落在 **`changes/P5-B/`** |
+| 1 定位进度 | `sprint-calendar.md` §5（该文件**已不存在**） | 本提示词 §5 决策表 + §4 Non-goals（顺序不可调换） |
+| 2 SDD 事前 | `dev-doc-status.md` §9.1 | 照做；`proposal.md` + `tasks.md` 落在 **`changes/P5-B/`**（**本批开工第一步就建**） |
 | 3 契约先行 | `backend/CODEBUDDY.md` §3 | 照做。**本批预期零契约改动**（见 §4 Non-goal 1） |
 | 5 免请求提交 | — | 沿用：任务验证通过即自行 Conventional Commits 提交 |
 | 7 收尾 | `dev-doc-status.md` §9.2 | 照做；「更新 `sprint-calendar.md` §5」一步**无文件可更新** ⇒ 跳过并登记理由 |
@@ -47,12 +61,11 @@
 
 ---
 
-## 2. 确认起点：为什么是 P5-B（三条机械理由）
+## 2. 为什么是 P5-B（三条理由 + P5-A 的四条实测）
+
+### 2.1 三条理由
 
 1. **用户 2026-10-07 直接指名**：在 P5-A 的升级报告上批「**P5-B**」。
-   P5-A 已用四条实测证明「裁决 A 成立与否」这个交付物是 09-30 之前的历史
-   （`changes/archive/2026-10-07-P5-A/integration-log.md` §2/§3/§4），
-   它自己已提交推送、CI `37585440393` 全绿。
 2. **J3 是 D4 唯一剩下的实质缺口**：后端 J1（`valid_to` 非空 69 条）/ J2（`inconsistent` 352）
    / J4（两时点选出的链不同）**均已在 2026-09-30 达成**；
    `13-as-of-evidence-rank.md:59-60` 原文：「`valid_to=2025-12-31` ——
@@ -60,6 +73,19 @@
    而 `frontend/src/components/qa/reasoning-path.tsx` **零 `valid_to` 消费**。
 3. **J3 是唯一不需要图谱就能做完的一段** ⇒ 可以先以 ¥0 交付，
    不必卡在环境重建上。图谱恢复 + G3 排在它后面，作为**独立可失败的一段**（见 §5 D3）。
+
+### 2.2 P5-A 的四条实测（**不必重做，直接采信**）
+
+P5-A 原本要「裁决出路 A 成立与否」。开工自检后做的核查把它整个推翻了：
+
+| # | 实测 | 后果 |
+|---|---|---|
+| ① | **本地没有图谱**：`graphrag-neo` 容器是 2 小时前起的**空实例**（0 Entity / `RELATION` 类型不存在）；`.env` 口令 `password` 与容器 `ci-graph-pw-2026` 不一致 | G1/G2/G3 三条判据在本地一行都跑不出来 |
+| ② | **出路 A 已于 2026-09-30 裁决并执行过**：`11-derived-window-inheritance.md:9` 原文「用户裁决 A：语料逐条写明施行日、重抽 4 份」⇒ `valid_to` 2→48、`valid_from` 7→108。且双文档**磁盘上已是目标形式** | 「裁决 A」这个交付物是历史，不是待办 |
+| ③ | **出路 B 也已核准并落地**：`ADR-0005:153` R4-b（用户 09-30 裁决）+ `specs/m2:240/:246` + `_bridge_window.py` + `document_date.py:227` **全在 HEAD**；12 号 §5 回填 `inconsistent` 259→**352** | G2 早就翻面了 |
+| ④ | **`inconsistent=0` 是探针的采样盲区**：`probe_l2_path_temporal.py` 用 `LIMIT 4000` 抽样 **19 万+** 条链 | 「G2 未通过」这个冻结理由是它骗出来的 |
+
+⇒ **本批绝不要再去"裁决 A/B/C"**，也不要重跑那两个已被证伪的探针。
 
 ---
 
@@ -88,10 +114,11 @@ cd backend && uv run python scripts/check_startup_readiness.py
    `backend/app/services/reasoning.py:425-430` 填好，本批不需要动。
 3. **不做 as-of 的前端交互**（时点选择器 / 双时点对比 UI）：J4 是**后端**已达成的判据，
    前端 as-of 输入不在本批。
-4. **不引入前端测试框架**（vitest / jest / testing-library）：仓库现状只有 `bundle.test.ts`，
-   `package.json` 里没有测试框架。J3 的验收靠 `tsc --noEmit` + `npm run lint` + **真机 HTML 断言**（见 §9）。
+4. **不引入前端测试框架**（vitest / jest / testing-library）：已实测 `frontend/package.json`
+   的 dependencies + devDependencies **均无**任何测试框架，全仓只有 `bundle.test.ts`。
+   J3 的验收靠 `npm run typecheck` + `npm run lint` + **真机 DOM 断言**（见 §9）。
 5. **不改演示语料**：`demo/attendance/policies/*.md` 与 `corpus/*.docx` 一个字不动。
-   （2025 版双文档已是出路 A 的目标形式，见 P5-A §2。）
+   （2025 版双文档已是出路 A 的目标形式，见 §2.2 ②。）
 6. **不做 D2（M6）/ D1 / D3 / D5 / D7 / D8**：`docs/delivery-plan.md:198` 排期在 D4 之后。
 7. **不做实体消解 / M4 完整化**（DR-D5，另一阶段）。
 8. **不改 `specs/` 与 ADR**：J3 是渲染，不是口径变更；ADR-0005 R4-b / R5 已在 09-30 写入。
@@ -115,7 +142,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 ---
 
-## 6. 已查证坐标表（**不要重做 recon；这是 P5-A §6 的续篇**）
+## 6. 已查证坐标表（**不要重做 recon**）
 
 ### 6.1 后端侧（**已达成，本批不动** —— 见 Non-goal 2）
 
@@ -134,7 +161,8 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | J3 唯一落点 | `frontend/src/components/qa/reasoning-path.tsx:44-95` | hop 渲染只读了 `origin` / `relation` / `source` / `target` / `evidence` —— **零 `valid_to` 消费**（P5-A §5 实测） |
 | 假阳性排查 | 同上 `:27` / `:36`，及 `attribution-panel.tsx:183` 等 | 命中的 `border-dashed` 全是**空状态卡片**边框，与失效边无关 |
 | 判定函数候选地 | `frontend/src/lib/reasoning.ts` | 已有 `entityTypeLabel` / `relationLabel` / `originMeta` / `entitySystem` 等展示层映射 |
-| 测试现状 | 仅 `frontend/**/bundle.test.ts`；`package.json` **无** vitest/jest | ⇒ Non-goal 4：不引入框架 |
+| **命令（已实测）** | `frontend/package.json` 的 `scripts` | `dev`=`next dev`／`build`=`next build`／`lint`=`eslint`／**`typecheck`=`tsc --noEmit`**／`gen:api`=`openapi-typescript ../contracts/openapi.yaml -o src/types/api.d.ts`。⇒ **用 `npm run typecheck`，不要裸跑 `npx tsc`** |
+| 测试现状 | 仅 `frontend/**/bundle.test.ts`；无任何测试框架（已实测） | ⇒ Non-goal 4：不引入框架 |
 
 ### 6.3 环境（**P5-A §1 实测，本批 T3 要在这里动手**）
 
@@ -156,9 +184,17 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | 制度入库 | `backend/scripts/ingest_attendance_policies.py:105-112` | `POLICY_FILES` 6 份 docx（含两份 2025 版）；MinerU（¥）+ LLM 抽取（¥） |
 | 桥接窗口 | `backend/scripts/_bridge_window.py` + `_clause_doc_scopes.json` | R4-b 落地产物；`--force` 会清产物重跑 |
 | **不走**的路 | `docs/demo-seed-dataset.md:56-66` | 那是招商局系年报切片的 HTTP 上传流程，**不是** `attendance-demo-v1` |
-| G3 | `backend/scripts/eval_controlled_qset.py` | `QSET_VERSION=v4-2026-10-05`、`QSET_KG_VERSION=attendance-demo-v1`、**40 题**；需起后端（`EVAL_BASE_URL`） |
+| G3 | `backend/scripts/eval_controlled_qset.py` | `QSET_VERSION=v4-2026-10-05`、`QSET_KG_VERSION=attendance-demo-v1`、**40 题**；需起后端（`EVAL_BASE_URL`，默认 `http://127.0.0.1:8002`） |
 | G3 基线 | `changes/P6-H/integration-log.md:26` | graph 0.875 / baseline 0.850 / **C1 0.0294** / L2 / v4，三遍一致 |
 | 非确定性警告 | `docs/demo-seed-dataset.md:70` | 重建会生成**新** `kg_version`，实体/关系数**不会逐字复现**（原库 2855 / 3729） |
+
+### 6.5 已知但**本批不动**（登记，别顺手做）
+
+| 项 | 坐标 | 为什么不动 |
+|---|---|---|
+| `_cypher_paths()` 的 DB 侧 `ORDER BY (prio, size(rels), ids[-1]) LIMIT 400` 与 Python 侧 7 维口径**不一致**；module 注释却写"两者口径一致" | `13-as-of-evidence-rank.md:69-74` | 当前候选最多 165 行，够不着 400 ⇒ **未触发**。13 号自己登记的遗留，属口径批 |
+| `_bridge_window.py:3` docstring 仍写「（待核准记录）」 | 该文件 `:3` | 12 号早已核准 ⇒ 注解漂移，不影响行为（Non-goal 10） |
+| DR-D4 编号须改指 P5 | `delivery-requirements-and-guardrails.md` §6.4 / `:117` | Non-goal 9，留待口径订正批 |
 
 ---
 
@@ -167,10 +203,11 @@ cd backend && uv run python scripts/check_startup_readiness.py
 - **L2-① 路径时序一致性**（Sprint 10.4：`_temporal_verdict` 三值 + 选链优先级 + 单测）
 - **出路 A**（11 号记录：语料逐条写明施行日、重抽 4 份 ⇒ `valid_to` 2→48、`valid_from` 7→108）
 - **出路 B / R4-b**（12 号记录：ADR-0005 `:153` + `specs/m2:240/:246` + `_bridge_window.py`
-  + `resolve_document_expiry` ⇒ `inconsistent` 259→**352**、`valid_to` 60→**69**）
-- **R5 as-of 证据位次**（13 号记录：`reasoning.py` 已落 + 单测 6 条；两时点末端不同）
+  + `document_date.py:227 resolve_document_expiry` ⇒ `inconsistent` 259→**352**、`valid_to` 60→**69**、
+  两时点获胜链末端不同、主链缺日期边 191/226→**26**）
+- **R5 as-of 证据位次**（13 号记录：`reasoning.py` 已落 + 单测 6 条）
 - **契约字段**（`valid_from` / `valid_to` 已在 `ReasoningPathHop`，无需再改）
-- **P5-A 的证据链**（`changes/archive/2026-10-07-P5-A/integration-log.md`，CI `37585440393` 全绿）
+- **P5-A 的证据链**（`changes/archive/2026-10-07-P5-A/integration-log.md`）
 
 ---
 
@@ -183,8 +220,12 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | 契约 | zero diff（**paths 28**） | P5-A 开工实测 |
 | 接缝门禁 | ERROR 0 / WARN 0 / OK 12 | P5-A 开工实测 |
 | 护栏 | **`[OK]` 17 / `[~~]` 0 / `[--]` 0**，地雷 0 项 | P5-A 开工实测 |
-| CI | `37585440393` 四 job 全绿 | P5-A 收尾 |
+| CI | `37585440393` 四 job 全绿 | P5-A 收尾（含归档提交） |
 | **G3 基线** | **C1 = 0.0294**（graph 0.875 / baseline 0.850） | P6-H，40 题口径 |
+
+**交接时的 commit 链**（均已推送，`origin/main` 一致，工作区干净）：
+`97aca70a`（P5-A 证据链）→ `aefb17db`（P5-B 提示词）→ `f2f6e4b9`（归档 P5-A + 改指）
+→ **`cae47048`（HEAD，CI `37585440393` 绿）**。
 
 ⚠️ **本地 vs CI 口径差**：本地整个演示环境已被清掉 ⇒ 那 2 条失败是环境债，不是本批引入。
 **验收一律以 CI 为准（R-10）。**
@@ -195,7 +236,10 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 ### T1–T2：J3（¥0，不依赖图谱）
 
-1. **静态**：`frontend/` 下 `npx tsc --noEmit` exit 0、`npm run lint` exit 0。
+1. **静态（命令已核实，见 §6.2）**：`frontend/` 下
+   `npm run typecheck`（= `tsc --noEmit`）exit 0、**`npm run build`**（= `next build`）exit 0、
+   `npm run lint`（= `eslint`）exit 0。
+   ⇒ **`build` 是前端的真实门禁**（会做完整类型检查 + lint），不要只跑 `typecheck` 就宣称通过。
 2. **契约零漂移**：`npm run gen:api` 后 `git diff --stat` **为空**（Non-goal 1）。
 3. **行为（真机）**：起后端 + `npm run dev`，跑一次会命中失效跳的问答，
    在渲染出的 HTML / DOM 里断言之：该跳带**虚线**标记，而同一条链上 `valid_to` 为空的跳**不带**。
@@ -236,8 +280,10 @@ cd backend && uv run python scripts/check_startup_readiness.py
   S1 报「没有 Non-goals」⇒ 停下来补边界；**S5 命中必须回答属于哪条 DR/G**，答不上就是顺手做的。
 - **P2-C 的现场教材**：被 S2 提示"摊太大"后拆成 4 + 1 个提交；中途红过一次（run `37571248946`）
   只因 **`ruff format` 漏跑** —— `ruff check` 查不出格式，**改完代码两个都要跑**。
-  前端侧对应：`tsc --noEmit` 与 `npm run lint` 也**都要跑**。
+  前端侧对应：`npm run lint`、`typecheck`、`build` **都要跑**。
 - 本地检查 → 提交 → **推送后以 CI 为终裁** → 回登 run id。
+- ⚠️ **推送偶发 `Recv failure / Could not connect to github.com:443`**（上一会话连遇 4 次，
+  第 5 次才通）。这是**网络侧**，不是仓库问题 ⇒ **重试几次**，不要判定为被拒。
 
 **升级用户的 4 类**
 1. **需要改 spec / ADR**（本批预期不需要；若 J3 的口径分歧 D1 被证明必须写进 spec ⇒ 停下）。
@@ -265,3 +311,14 @@ cd backend && uv run python scripts/check_startup_readiness.py
   `delivery-requirements-and-guardrails.md` §6.4 挂着（Non-goal 9，本批不动）。
 - **陈旧口径未修**（Non-goal 9）：`delivery-plan.md:173` 与 `requirements:115/:120` 仍会误导下一批
   ⇒ 下一批开工前**必须先读 `changes/archive/2026-10-07-P5-A/integration-log.md` §6**。
+
+---
+
+## 12. 本批之后（交给下一批的指针）
+
+- **D4 收口后**，P5 的下一个是 **D2（M6）**（`docs/delivery-plan.md:198`：D4 → D2 M6 → D1 → D3/D5/D7/D8）。
+  ⚠️ P5 从未做过 M6 的 recon，7 个端点全 501 —— 那批要先做 recon，别直接开工。
+- 本批若因图谱恢复失败而只交付 J3 ⇒ 下一批应先把**环境重建**当作独立批次处理
+  （它的产出是"可跑的演示图谱"，本身就是一个可被验收的交付物）。
+- **下一批开工前必读**：本批的 `changes/P5-B/integration-log.md` §（实测读数与环境状态），
+  以及 `changes/archive/2026-10-07-P5-A/integration-log.md` §6。
