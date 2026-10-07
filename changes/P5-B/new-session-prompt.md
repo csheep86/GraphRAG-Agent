@@ -5,7 +5,8 @@
 >
 > 复制本文件全文到新会话作为第一条消息。
 > 上一批：**P5-A**（D4 解冻裁决）—— 它以「**依据失效，停下升级**」收尾，
-> 证据链在 `changes/P5-A/integration-log.md`，**开工前先读它**，本批的 §6 坐标表是它的续篇。
+> 证据链在 `changes/archive/2026-10-07-P5-A/integration-log.md`，**开工前先读它**，
+> 本批的 §6 坐标表是它的续篇。（P5-A 已归档，因为它以「依据失效、停下升级」收尾。）
 > 用户 2026-10-07 在 P5-A 的升级报告上裁决：**P5-B**。
 
 ---
@@ -50,7 +51,8 @@
 
 1. **用户 2026-10-07 直接指名**：在 P5-A 的升级报告上批「**P5-B**」。
    P5-A 已用四条实测证明「裁决 A 成立与否」这个交付物是 09-30 之前的历史
-   （`changes/P5-A/integration-log.md` §2/§3/§4），它自己已提交推送、CI `37579395982` 全绿。
+   （`changes/archive/2026-10-07-P5-A/integration-log.md` §2/§3/§4），
+   它自己已提交推送、CI `37579395982` 全绿。
 2. **J3 是 D4 唯一剩下的实质缺口**：后端 J1（`valid_to` 非空 69 条）/ J2（`inconsistent` 352）
    / J4（两时点选出的链不同）**均已在 2026-09-30 达成**；
    `13-as-of-evidence-rank.md:59-60` 原文：「`valid_to=2025-12-31` ——
@@ -168,7 +170,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
   + `resolve_document_expiry` ⇒ `inconsistent` 259→**352**、`valid_to` 60→**69**）
 - **R5 as-of 证据位次**（13 号记录：`reasoning.py` 已落 + 单测 6 条；两时点末端不同）
 - **契约字段**（`valid_from` / `valid_to` 已在 `ReasoningPathHop`，无需再改）
-- **P5-A 的证据链**（`changes/P5-A/integration-log.md`，CI `37579395982` 全绿）
+- **P5-A 的证据链**（`changes/archive/2026-10-07-P5-A/integration-log.md`，CI `37579395982` 全绿）
 
 ---
 
@@ -262,4 +264,4 @@ cd backend && uv run python scripts/check_startup_readiness.py
 - **DR-D4 仍然 🟡 在途**：本批走完它剩下的 J3 + G3，但编号改指 P5 的处置仍在
   `delivery-requirements-and-guardrails.md` §6.4 挂着（Non-goal 9，本批不动）。
 - **陈旧口径未修**（Non-goal 9）：`delivery-plan.md:173` 与 `requirements:115/:120` 仍会误导下一批
-  ⇒ 下一批开工前**必须先读 `changes/P5-A/integration-log.md` §6**。
+  ⇒ 下一批开工前**必须先读 `changes/archive/2026-10-07-P5-A/integration-log.md` §6**。
