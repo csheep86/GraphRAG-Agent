@@ -256,6 +256,9 @@ CI 四 job：`契约校验（前后端漂移门禁）` / `后端（ruff + pytest
 `流水线汇总` —— **全部 success**（`gh run watch --exit-status` 退出码 0）。
 CI 侧的 ruff 也是 `All checks passed!`。
 
+> 收尾的最后一次推送（本文档的定稿提交）亦已过 CI：**run `37595358195`** 四 job 全绿
+> （`gh run watch --exit-status` 退出码 0）。本批 HEAD 与 `origin/main` 一致，工作区干净。
+
 ---
 
 ## 6. 环境债台账（**下一批开工先看这里，能省一小时**）
