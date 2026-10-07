@@ -3,7 +3,8 @@
 > **日期**：2026-10-07　**分支**：`main` 直推　**执行模式**：无人值守
 > **上游**：[`../P5-B/integration-log.md`](../P5-B/integration-log.md)
 > **边界**：[`proposal.md`](./proposal.md)（11 条 Non-goals）｜**花销**：**¥0**（未调真 LLM，冷启动用例一律 fake）
-> **状态**：四条提交已落地，CI 结论待网络恢复后补登（见 §8.3）
+> **状态**：**已收口** —— 五条提交在 `main`，CI **run `37607081246` 四 job 全绿**
+> （pytest **1020 passed / 5 skipped / 0 failed**）
 
 ---
 
@@ -110,9 +111,9 @@
 | 5 | 占位测试改写而非删除 | 4 个未实现端点仍钉死 501 + `blocked_by` 含 `P5-M6`；`detail.endpoint` 逐个核对 |
 | 6 | 契约零漂移 | `export_openapi.py --check` 零漂移；26 路径计数不变（**注**：为达成这条，本批对契约做了 B-1 再生，见 §7.4） |
 | 7 | 护栏不倒退 | `check_startup_readiness.py` = `[OK]` 17 / `[~~]` 0 / `[--]` 0 ✅ |
-| 8 | pytest 不降 | 本地 1019 passed / 4 skipped / 2 failed（2 failed = 已登记环境债）；CI 口径待 §8.3 |
+| 8 | pytest 不降 | **本地** 1019 passed / 4 skipped / 2 failed（2 failed = 已登记环境债）；**CI** 1020 passed / 5 skipped / **0 failed**（= 1007 + 13，见 §8.3） |
 | 9 | RBAC 债不丢、不裸奔 | 按 D4：**只登记、不动 `rbac/policy.py`**；`/cost/dashboard` 恒 501 期间无访问面，**将来实现它的人必须同批补 RBAC 登记**（§11 指针） |
-| 10 | CI 四 job 全绿 | ⏳ 见 §8.3：三次推送全部网络失败（github.com:443 连不上），**非代码原因** |
+| 10 | CI 四 job 全绿 | ✅ **run `37607081246` / commit `f7c0fa12`**，`gh run watch --exit-status` **EXIT=0**（四 job 明细见 §8.3） |
 
 ---
 
@@ -176,19 +177,23 @@ CHECK 形如 `action_type = 'confirm' OR kg_version IS NOT NULL` ⇒ 将来接�
 | 口径 | 读数 |
 |---|---|
 | 本地（补 `GRAPH_REAL_NEO4J_*`） | **1019 passed / 4 skipped / 2 failed**（2 failed = `affiliation-demo-v2` 环境债） |
-| 预期 CI | 由 CI 口径 1007 + 本批净增 13 ⇒ **1020 passed / 5 skipped / 0 failed**（待 §8.3 实测） |
+| **CI**（实读，见 §8.3） | **1020 passed / 5 skipped / 0 failed** = 上一批绿跑的 1007 + 本批净增 13（逐项对账见 §5） |
 
-### 8.3 ⏳ CI：**未出结果**（网络故障，非代码原因）
+> 下一批请继续用 `gh run view <id> --log | grep passed` **实读**，不要抄本表的数字。
 
-四条提交均已 commit，`git push` 连续 **4 次**失败：
+### 8.3 ✅ CI：**run `37607081246`（commit `f7c0fa12`）四 job 全绿**
 
 ```
-fatal: unable to access 'https://github.com/csheep86/GraphRAG-Agent.git/':
-       Failed to connect to github.com:443 after 21xxx ms: Could not connect to server
+✓ 契约校验（前后端漂移门禁） in 35s
+✓ 前端（lint + gen:api）      in 33s
+✓ 后端（ruff + pytest）       in 2m12s   Pytest: 1020 passed, 5 skipped, 0 failed
+✓ 流水线汇总                   in 3s
+gh run watch 37607081246 --exit-status  => EXIT=0
 ```
 
-按提示词 §10「推送偶发网络失败，重试 3 次再报告」已重试到位 ⇒ **如实登记，不伪造 run id**。
-网络恢复后只需 `git push origin main` + `gh run watch --exit-status`，run id 回登本节。
+> 推送过程：**先失败 4 次**（`failed to connect to github.com:443`），第 5 次成功，
+> 均为网络层连不上，**非代码、非鉴权**原因。本节初稿照实写了"未出结果"，
+> 网络恢复后才补登 —— 期间**没有**拿估算的 run id 把表格填满。
 
 本地 Env 侧动过一件事（不进提交）：给本地 demo 库的默认主体补了一条 `admin` 授权，
 否则真机验证 `GET /ontology/active` 会 403 `no_role_assignment`。与 P5-B §6 第 3 条同类，属本机动作。
@@ -206,9 +211,10 @@ fatal: unable to access 'https://github.com/csheep86/GraphRAG-Agent.git/':
    LLM 调用未加timeout（spec §6 的 `ONTOLOGY_LLM_SUGGEST_TIMEOUT` 保持"无消费者"状态，
    符合本仓「无消费者的配置不得提交」的纪律，本批没有为它造一个假消费者）。
 3. **结论是真跑出来的还是读代码得出的？**
-   除 CI（网络不通）外全部实跑：三个端点有真机 HTTP 200 的读数（§6 判据 2）、
-   迁移真跑到底且 G-26 / 迁移基线 31 条绿、pytest + 三条门禁 + ruff 两件套、
-   `check_session_drift` 五条判据。**CI 缺位是唯一缺口，没有用"应当绿"来填满**。
+   **全部实跑**：三个端点有真机 HTTP 200 的实测读数（§6 判据 2）、迁移跑到底且
+   G-26 / 迁移基线 31 条绿、pytest 两口径 + 三条门禁 + ruff 两件套 +
+   `check_session_drift` 五条判据、**CI 四 job 全绿（run `37607081246`，exit 0）**。
+   没有一处是"读代码推断"。
 
 ---
 
@@ -223,8 +229,7 @@ fatal: unable to access 'https://github.com/csheep86/GraphRAG-Agent.git/':
 
 ## 11. 下一批指针（**按优先级**）
 
-1. **先把本批这四条推送上去**（网络恢复即可，`git push origin main`），并把 §8.3 的 run id 回登。
-2. **随端点走的 RBAC 债**：`merge` / `split` / `rename` / `cost/dashboard` 四个仍占位的端点，
+1. **RBAC 债随端点走**：`merge` / `split` / `rename` / `cost/dashboard` 四个仍占位的端点，
    **谁实现谁同批补** ① `require_permission` ② `PROTECTED_ENDPOINTS` 登记。`/cost/dashboard` 那份来自 D4，
    在这里合并登记，避免两头丢。
 3. **做 merge 之前必须走完契约同步五步**（D3 的安排，未作废）：Pydantic `EntityMergeStatus` 加 `applied`
@@ -245,6 +250,8 @@ fatal: unable to access 'https://github.com/csheep86/GraphRAG-Agent.git/':
 - **confirm 落了 ≠ 抽取会用它**：`extraction_type_vocabulary` 的消费者
   （`app/tasks/registry.py:60`）本批**一行未改**，它本来就走这条链路，本批没有给它新增失败模式。
 - **409 出现了 ≠ 业务正确性**：无 active / 重复确认都是 409，语义不同，`detail.reason` 才区分得开。
-- **本地 1019 绿 ≠ CI 绿**：本地还有 2 条 `affiliation-demo-v2` 的已知 fail；CI 读数尚未拿到。
-- **三条偏离登记了 ≠ 豁免**：X-2a/b/c 与 B-1 都还**等你裁决**，裁决不同这四条提交要跟着改。
+- **本地 1019 绿 ≠ CI 绿**：本批两个口径都对上了（本地 1019+2 环境债 / CI 1020 + 0），
+  但本地那 2 条 `affiliation-demo-v2` 的 fail **仍未修**，下一批若 CI 红先看是不是它。
+- **四条偏离登记了 ≠ 豁免**：X-2a/b/c 与 B-1 都还**等你裁决**；裁决转向时受影响的是
+  `e833bdde`（表结构）、`e34060c0`（写路径）、`90bb5163`（契约，可整笔 revert）。
 - **`[OK]` 17 条护栏 ≠ 全绿真实**：`check_startup_readiness.py` 自己写着「pytest 全绿 ≠ 护栏在拦」。

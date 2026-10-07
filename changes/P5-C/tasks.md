@@ -42,12 +42,12 @@
       无 active 409 / confirm→active 且落审计 / 重复确认 409 / 换域 supersede /
       跨租户不可见 / 401 ×3
 
-## T6 · 收口 ⏳（**只差 CI**）
+## T6 · 收口 ✅（CI 四 job 全绿，run `37607081246`）
 
 - [x] 三条门禁 + pytest（本地口径需补 `GRAPH_REAL_NEO4J_*`）+ ruff 两件套全跑：
       护栏 `[OK]` 17 / `[~~]` 0 / `[--]` 0；接缝 0/0/12；契约零漂移；
       pytest **1019 passed / 4 skipped / 2 failed**（2 failed = 已登记环境债）
 - [x] Conventional Commits 分四笔提交（记载/迁移 / 接线 / 测试 / 契约再生）
-- [ ] ⏳ **推送**：github.com:443 连不上（已重试 4 次），恢复后 `git push origin main`
-- [ ] ⏳ `gh run watch <id> --exit-status` = 0，run id 回登 `integration-log.md` §8.3
+- [x] **推送**（第 5 次成功；前 4 次 github.com:443 连不上）
+- [x] `gh run watch 37607081246 --exit-status` = **0**，四 job 全绿，run id 已回登 §8.3
 - [x] `integration-log.md`：X-2a/b/c 与 **B-1** 偏离登记、D4 的 RBAC 债指针、§11 下一批指针
