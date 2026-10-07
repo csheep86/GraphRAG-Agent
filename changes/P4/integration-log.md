@@ -68,14 +68,74 @@ ADR-0006 §4 要求「`check_seams.py` 新增登记行 `LicenseProvider → [Dev
 
 ---
 
-## 4. T2~T10 · 待填（每完成一条在此追加实测命令与读数）
+## 4. T2~T10 · 实测登记（完成一条、在此追加一条；读数一律来自跑出来的命令）
 
-- **T2** 迁移：`licenses` 表（实例级）+ `users` 补 `activated_at` / `disabled_at`
-- **T3** ORM `class License` + RLS 豁免登记 + 豁免三条断言
-- **T4** `LicenseProvider` / `DevLicenseProvider` + 6 个 `settings.*` 及其消费点
+- **T2** 迁移 `f3a91c2d6b70`：`licenses` 表（实例级、无 `org_id`）+ `users` 补 `activated_at` / `disabled_at`
+- **T3** ORM `class License` + RLS 豁免登记 + 豁免三条断言（`test_guardrails_rls.py`）
+- **T4** `LicenseProvider` / `DevLicenseProvider` + 6 个 `settings.*` 及其消费点（接缝 9 登记成立）
 - **T5** `LicenseMiddleware`（纯 ASGI）+ 挂载 + 豁免清单 + 拒绝落审计
 - **T6** `GET /license/status` + 6 个 `LICENSE_*` 契约码（走 `export_openapi.py`，**不手写**契约）
 - **T7** `license-cli fingerprint`
 - **T8** 行为围栏端到端断言 ⇒ **摘掉 G-23 的两条 xfail**（按 R-9 先有真子系统，且补强判据）
 - **T9** P95 增量 **< 1ms** 实测登记（ADR R-L4）
-- **T10** 收尾三件套 + drift + 提交 + **CI 实证回登**（含 §1.1 的 wheelhouse 未知）
+- **T10** 收尾三件套 + drift + 提交 + **CI 实证回登**（见 §5）
+
+### 4.1 本地实测（提交前）
+
+| 判据 | 命令 | 读数 |
+|---|---|---|
+| 全量测试 | `uv run pytest -q` | **994 passed / 11 skipped / 0 failed** |
+| 静态 | `uv run ruff check .` | **All checks passed** |
+| 格式化 | `uv run ruff format --check .` | **245 files already formatted** |
+| 契约零漂移 | `uv run python scripts/export_openapi.py --check` | **zero diff** |
+| 接缝门禁 | `uv run python scripts/check_seams.py` | **ERROR 0 / WARN 0 / OK 12** |
+| 开工自检 | `uv run python scripts/check_startup_readiness.py` | G-23 计入 `[OK]`（2 条，xfail 已摘） |
+| P95（R-L4） | `test_g23_license_decision_is_sub_millisecond_at_p95` | 1000 次采样，**P95 < 1ms 常驻判据**通过 |
+
+⚠️ **P95 的口径边界**：量的是**中间件判断本身**（不含业务处理），即 ADR §2.6「每请求判断」所指的部分；
+**不是**端到端请求时延。别拿这个数去回答"接口慢不慢"。
+
+### 4.2 被既有判据抓住的三次（都未绕过，逐条登记）
+
+1. **契约黄金清单** `tests/test_openapi_contract.py::CORE_PATHS` 硬编码 26 路径 ⇒ 新增端点必须登记
+   （我一开始误判为"测试间污染"，证据纠正了我）。同步更新 operationId 唯一性断言 `26 → 27`。
+2. **受保护路径须声明 401/403**：新自检端点被自动纳入 `TENANT_PROTECTED_PATHS`。
+   按 `/health` 同款口径排除，并把**理由 + 失效条件**写进代码：将来它若返回租户数据，必须移回受保护集。
+3. **S3 配置模板**：6 个 `LICENSE_*` 未同步 ⇒ 补齐 `backend/.env.example` 后转 `[OK]`。
+
+### 4.3 过程中修掉的一个自埋缺陷（不是既有问题）
+
+`_trace_id()` 原被调用两次 ⇒ **响应体与审计会拿到两个不同的 trace_id**；且它挂在 `TraceIdMiddleware`
+**之外**（§2.6 顺序），contextvar 恒空。现改为**一次定值、审计与响应体复用**，并优先采信上游 `X-Trace-Id`。
+为什么值得记：不修的话"拒绝落审计"就是**串不进链路的假审计**——排障时看得见一条审计却对不上客户端拿到的 trace。
+
+---
+
+## 5. T10 · CI 实证回登（R-10：CI 才是终裁）
+
+| 轮次 | run id | commit | 结论 | 说明 |
+|---|---|---|---|---|
+| 第 1 轮 | **37480357477** | `42c75bd1` | **failure** | 后端 / 前端 lint 均 success，**契约校验红** |
+| 第 2 轮 | **37562184724** | `ec59e9b7` | **success** | 四个 job 全绿 |
+
+**第 1 轮红因（根因，不是批次摊太大）**：改了 `contracts/openapi.yaml` 却**未按契约同步铁律第 2/4 条**
+重生成前端类型。CI 现场证据（`git diff -- frontend/src/types/api.d.ts`）：
+
+- `ErrorCode` 缺 6 项 `LICENSE_*`（MISSING / INVALID / FINGERPRINT_MISMATCH / EXPIRED / LIMIT_EXCEEDED / MODULE_DISABLED）
+- 缺 `/api/v1/license/status`（`getLicenseStatus`）与 `LicenseStatus` 结构
+
+修复：`cd frontend && npm run gen:api`（**仅机械生成物**，1 file / +127 −1，无手写改动），提交 `ec59e9b7`。
+
+**第 2 轮四 job 结论**：后端（ruff + pytest）success ｜ 前端（lint + gen:api）success ｜
+契约校验（前后端漂移门禁）success ｜ 流水线汇总 success。
+
+✅ **§1.1 的未知已清**：离线 wheelhouse 的 `cryptography` 在 CI **装得上**——后端 job 全绿即为实证
+（本地不敢下这个结论，因为它是离线产物）。994 passed 在 CI 环境**复现**，非本地特有。
+
+### 5.1 仍未兑现（本批不做，登记在此，不得宣称完成）
+
+1. **指纹组件交集 ≥2/3 容忍**：ADR §2.2 的 `fingerprint` 只有**单个聚合值**，无组件明细可交集 ⇒ 换网卡需重签。
+2. **`max_seen_ts` 未持久化**：§2.7 要求持久化，但 §3.1 字段清单无对应列 ⇒ 加列须先改 ADR。
+3. **`LICENSE_FP_OVERRIDE` 未实现**：它附带的义务是必须落 `license.fp_override` 审计；只做旋钮不做义务等于假做。
+4. **席位维度无端到端生效**：`activated_at` 由**首次登录**回填，登录属 P2-C ⇒ 此刻全表 NULL、实际席位恒 0。
+   License 存在也 **≠** 防破解——安全边界是 ADR-0003 的 RLS，License 是**合规计数**不是安全边界。

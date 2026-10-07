@@ -39,8 +39,10 @@
 - [x] **T8 行为围栏**：移除 license ⇒ 受保护端点 **403 `LICENSE_MISSING`** 且拒绝落审计
       ⇒ **摘掉 G-23 的两条 `xfail`**（按 R-9：先有真子系统再摘标记，且**补强判据**）
 - [x] **T9 P95 增量 < 1ms 实测登记**（ADR-0006 R-L4）
-- [ ] **T10 收尾三件套 + drift + 提交 + CI 回登**
-      ⇒ **进行中**：提交 + push 已完成，**CI 终裁（R-10）尚未回收**（run id 待补登录）
+- [x] **T10 收尾三件套 + drift + 提交 + CI 回登**
+      ⇒ **已闭环**：第 1 轮 run 37480357477 红（契约校验 job：改了契约未跑 `gen:api`）⇒
+      修 `frontend/src/types/api.d.ts` 机械重生成（commit `ec59e9b7`）⇒
+      第 2 轮 **run 37562184724 四 job 全 success**。证据登记在 `integration-log.md` §5。
       - [ ] T10.1 `pytest` 无图口径**不减**（基线 991）/ `ruff check` + `ruff format --check` /
             `export_openapi.py --check` 零 diff / `check_seams.py` **ERROR 0**
       - [ ] T10.2 `check_startup_readiness.py` ⇒ **G-23 进 🟢**、`[--]` 与 `[~~]` **均归零**
