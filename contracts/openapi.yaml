@@ -1893,6 +1893,7 @@ components:
       - UNSUPPORTED_MEDIA_TYPE
       - KG_VERSION_NOT_ACTIVE
       - KG_TENANT_LEAK
+      - PRIVATE_DEPLOY_BLOCKED
       - COMPLIANCE_NO_FACTS
       - SCHEMA_VERSION_NOT_ACTIVE
       - TASK_INTERRUPTED
@@ -1926,6 +1927,7 @@ components:
         LICENSE_MODULE_DISABLED: 请求所属功能模块**未被授权**（§2.4 维度 3，`modules[]` 未包含）：按模块收费的兑现点。
         NOT_FOUND: 通用资源不存在（含未注册路由）。
         NOT_IMPLEMENTED: 基础设施不可用（Neo4j 图谱存储不可用（连不上 / 查询失败）/ LLM 未配置或装配失败）时返回 501，**不**表示「接口未实现」。
+        PRIVATE_DEPLOY_BLOCKED: 私域部署下的出向被阻断（M5 §3 验收 4）：`PRIVATE_DEPLOY_ENABLED=true` 时，出向目标必须落在**内网 / 回环**地址或 `ALLOWED_EGRESS_HOSTS` 白名单内，其余一律在**客户端构造期**拒绝（请求尚未发出），并写`audit_log(action=private_deploy.violation, status=failure)`。与 501 区分：本码表示**主动禁止出网**，不是外部依赖不可用。
         RATE_LIMITED: 请求触发限流（M5 §3 验收 5，slowapi）：同一 IP 在时间窗口内对同一接口的调用超过 `rate_limit_per_minute`（默认 60）次。响应带 `Retry-After` 头（秒），限流同时写 `audit_log(action=rate_limit.triggered)`。
         SCHEMA_VERSION_NOT_ACTIVE: 本体 schema 版本冲突（M6 §5.5）：① `POST /ontology/confirm` 对同一 version 重复确认；② `GET /ontology/active` 时本租户尚无 active schema。与 `KG_VERSION_NOT_ACTIVE` 同一纪律——**不**静默复用旧版本 / 默认 schema。
         TASK_INTERRUPTED: 进程重启导致在途任务被 TaskManager.recover() 回收置 failed（ADR-0001 §3.2）。
@@ -1950,6 +1952,7 @@ components:
         LICENSE_MODULE_DISABLED: ADR-0006 §2.4 维度 3（modules[]）/ §3.3
         NOT_FOUND: CODEBUDDY.md 错误响应规范
         NOT_IMPLEMENTED: backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2
+        PRIVATE_DEPLOY_BLOCKED: M5 §3 验收 4 / specs/m5-permission-audit.md §4.6
         RATE_LIMITED: M5 §3 验收 5 / 决策 A14（Sprint 8.1 批次 B）
         SCHEMA_VERSION_NOT_ACTIVE: M6 §5.5 / changes/archive/2026-10-02-P0-m6-finalization F2
         TASK_INTERRUPTED: ADR-0001 §3.2
