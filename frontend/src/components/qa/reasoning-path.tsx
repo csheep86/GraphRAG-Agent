@@ -3,7 +3,14 @@
 import { ArrowRight, Database, FileText, Network, SearchX } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { entitySystem, entityTypeLabel, originMeta, relationLabel } from "@/lib/reasoning";
+import {
+  entitySystem,
+  entityTypeLabel,
+  isHopExpired,
+  originMeta,
+  relationLabel,
+  todayISO,
+} from "@/lib/reasoning";
 import type { components } from "@/types/api";
 
 type ReasoningPathHop = components["schemas"]["ReasoningPathHop"];
@@ -20,6 +27,10 @@ const ORIGIN_ICON = {
  * **渲染纪律**：顺序严格照后端给的 `reasoning_path[]`（前端**不**重排、不补跳）。
  * `null`（拒答未产出）与 `[]`（零命中）必须**分开说**——二者语义相反：
  * 前者是「没给你结论所以没给链」，后者是「查过了，图上没连上」。
+ *
+ * **时效渲染（J3）**：某一跳的 `valid_to` 非空且已到期 ⇒ 该跳画成**虚线置灰**，
+ * 与仍然有效的边区分开。判定口径由 `@/lib/reasoning` 的 `isHopExpired` 单点持有，
+ * 这里只负责画（ADR-0005 §6：`valid_to = null` 是「未失效」，不是「明天失效」）。
  */
 export function ReasoningPath({ hops }: { hops: ReasoningPathHop[] | null }) {
   if (hops === null) {
@@ -41,18 +52,34 @@ export function ReasoningPath({ hops }: { hops: ReasoningPathHop[] | null }) {
     );
   }
 
+  const today = todayISO();
+
   return (
     <ol className="flex flex-col gap-2">
       {hops.map((hop, index) => {
         const meta = originMeta(hop.origin);
         const Icon = ORIGIN_ICON[hop.origin as keyof typeof ORIGIN_ICON] ?? Database;
+        const expired = isHopExpired(hop.valid_to, today);
 
         return (
           <li key={`${hop.source.id}-${hop.relation}-${hop.target.id}-${index}`}>
-            <div className="rounded-lg border border-border p-3">
+            <div
+              className={
+                expired
+                  ? "rounded-lg border border-dashed border-muted-foreground/50 p-3"
+                  : "rounded-lg border border-border p-3"
+              }
+              data-expired={String(expired)}
+            >
               <div className="flex flex-wrap items-center gap-1.5">
                 <Badge variant="muted">{entityTypeLabel(hop.source.entity_type)}</Badge>
-                <span className="text-[12px] font-medium text-foreground">
+                <span
+                  className={
+                    expired
+                      ? "text-[12px] font-medium text-muted-foreground"
+                      : "text-[12px] font-medium text-foreground"
+                  }
+                >
                   {hop.source.name}
                 </span>
                 <span className="font-mono text-[10px] text-muted-foreground">
@@ -65,12 +92,24 @@ export function ReasoningPath({ hops }: { hops: ReasoningPathHop[] | null }) {
                 </span>
 
                 <Badge variant="muted">{entityTypeLabel(hop.target.entity_type)}</Badge>
-                <span className="text-[12px] font-medium text-foreground">
+                <span
+                  className={
+                    expired
+                      ? "text-[12px] font-medium text-muted-foreground"
+                      : "text-[12px] font-medium text-foreground"
+                  }
+                >
                   {hop.target.name}
                 </span>
                 <span className="font-mono text-[10px] text-muted-foreground">
                   {hop.target.id}
                 </span>
+
+                {expired ? (
+                  <Badge variant="outline" className="border-dashed">
+                    已于 {hop.valid_to} 失效
+                  </Badge>
+                ) : null}
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -81,6 +120,12 @@ export function ReasoningPath({ hops }: { hops: ReasoningPathHop[] | null }) {
                 <span className="text-[10px] text-muted-foreground/70">
                   {entitySystem(hop.target.entity_type)}
                 </span>
+                {hop.valid_from || hop.valid_to ? (
+                  <span className="font-mono text-[10px] text-muted-foreground/70">
+                    有效期 {hop.valid_from ?? "未标施行日"} ~{" "}
+                    {hop.valid_to ?? "未标失效日"}
+                  </span>
+                ) : null}
                 {hop.evidence ? (
                   <span className="font-mono text-[10px] text-muted-foreground">
                     {hop.evidence}

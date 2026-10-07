@@ -100,3 +100,27 @@ export function refusalReasonLabel(reason: Maybe): string {
   if (!reason) return "—";
   return REFUSAL_REASON_META[reason] ?? reason;
 }
+
+/** 今天的日期串（`YYYY-MM-DD`，本地时区） */
+export function todayISO(now: Date = new Date()): string {
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * 该跳在今天**是否已经失效**：`valid_to` 非空 **且** `valid_to <= today`。
+ *
+ * 口径逐字对齐后端 `app/services/reasoning.py` 的「那天已经失效」分支
+ * （`valid_to is not None and str(valid_to) <= as_of` ⇒ unconfirmed）——**不为前端重写
+ * 一套过滤条件**（13 号记录「本次踩到的坑」正是死在：探针自己重写过滤条件导致误报）。
+ *
+ * `valid_to` 为 `null` 是「未失效」，**不是**「明天失效」：不可判定与永远有效是两回事
+ * （ADR-0005 §6），此处只渲染不可再触碰的那一种，其余一律照常显示。
+ *
+ * 比较是**纯字符串比较**：`YYYY-MM-DD` 字典序等于日期序，与后端同口径。
+ */
+export function isHopExpired(validTo: Maybe, today: string = todayISO()): boolean {
+  if (!validTo) return false;
+  return String(validTo) <= today;
+}
