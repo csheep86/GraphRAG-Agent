@@ -126,6 +126,7 @@ def _actions_for(resource: str, default: frozenset[str]) -> frozenset[str]:
     """
     return _NONE if resource == RESOURCE_AUTH else default
 
+
 #: **角色 × 资源 × 操作**（每个角色对每个资源都**显式**列出，不留空位——
 #: 空位会让"忘了配"和"刻意不给"看起来一样）。取值理由登记在
 #: `changes/P2/integration-log.md` 的「矩阵赋权」小节。
