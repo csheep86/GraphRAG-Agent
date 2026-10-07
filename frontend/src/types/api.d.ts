@@ -274,6 +274,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 口令登录并签发访问令牌
+         * @description 校验 `username` + `password`（对 `users` 表里的**口令哈希**，不是任何 mock），通过后签发一枚 JWT（`HS256`），前端以 `Authorization: Bearer <token>` 携带。
+         *
+         *     **租户从账号推导，不由请求声明**：`org_id` 取自 `users.org_id`，请求体里**没有**也不接受 `org_id`（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+         *
+         *     **首次成功登录会回填 `users.activated_at`** —— 那是席位计数（`activated_at IS NOT NULL AND disabled_at IS NULL`，ADR-0006 §2.4 维度 2）的**唯一**来源。口令错、账号停用**都不**回填。
+         *
+         *     **失败一律 401 且不区分原因**：`detail.reason` 会给出 `invalid_credentials` / `account_disabled`（供日志侧区分），但**消息与耗时不区分** —— 否则等于给出一条账号枚举旁路（能探出「这个用户名存在」）。
+         *
+         *     **限流**：沿用全局 60/min（每 IP 每接口）。
+         */
+        post: operations["loginWithPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cost/dashboard": {
         parameters: {
             query?: never;
@@ -2819,6 +2847,71 @@ export interface components {
             trace_id: string;
         };
         /**
+         * LoginRequest
+         * @description 登录请求。
+         *
+         *     **只有两个字段是刻意的**：不加 `org_id`（见模块 docstring）、不加 `captcha`
+         *     / `client_id` / `grant_type`（OAuth 形态的登录不在 P2-C 边界内）。
+         */
+        LoginRequest: {
+            /**
+             * Password
+             * @description 明文口令。仅存在于本请求体中，服务端只与哈希比对、不落日志
+             */
+            password: string;
+            /**
+             * Username
+             * @description 登录名（对应 `users.username`，全库唯一）
+             */
+            username: string;
+        };
+        /**
+         * LoginResponse
+         * @description 登录成功响应。
+         *
+         *     **不含角色**：角色的唯一真源是 `user_roles` 表，塞进响应/令牌都会产生
+         *     「库里已撤权、手里还写着有」的窗口（见 `app/core/token.py` 模块 docstring）。
+         *
+         *     ``org_id`` 只是**回显**当前账号归属的租户，供前端展示用；它不是授权声明——
+         *     后续每个请求的租户仍由令牌解析得出（ADR-0003 §3.3）。
+         */
+        LoginResponse: {
+            /**
+             * Access Token
+             * @description JWT 访问令牌（`Authorization: Bearer <token>` 携带）
+             */
+            access_token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             * @description 令牌过期时刻（UTC）
+             */
+            expires_at: string;
+            /**
+             * Org Id
+             * Format: uuid
+             * @description 该主体所属租户（`users.org_id`，**只读回显**）
+             */
+            org_id: string;
+            /**
+             * Token Type
+             * @description 令牌类型，恒为 `Bearer`
+             * @default Bearer
+             */
+            token_type: string;
+            /**
+             * Trace Id
+             * @description 链路追踪 id
+             */
+            trace_id: string;
+            /**
+             * User Id
+             * Format: uuid
+             * @description 登录主体的 `users.id`
+             */
+            user_id: string;
+        };
+        /**
          * OntologyActionResponse
          * @description merge / split / rename **三个动作共用**的响应（M6 §3.2：三动作，不多做）。
          *
@@ -3958,6 +4051,48 @@ export interface operations {
             };
             /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    loginWithPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            /** @description 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

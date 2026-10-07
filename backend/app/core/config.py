@@ -26,6 +26,11 @@ DEFAULT_ALLOWED_MIME_TYPES: tuple[str, ...] = (
 DEFAULT_ORG_ID = UUID("00000000-0000-4000-8000-000000000001")
 DEFAULT_ACTOR_ID = UUID("00000000-0000-4000-8000-0000000000aa")
 
+#: JWT 签名的**开发态**密钥（P2-C）。**生产沿用此值即启动失败**
+#: （见 :meth:`Settings._guard_production_jwt_secret`）——拿一个开源默认值去签令牌，
+#: 等于任何人都能给自己签一份 admin。
+DEFAULT_JWT_SECRET = "dev-only-jwt-secret"
+
 
 class Settings(BaseSettings):
     """后端全部可配置项。"""
@@ -143,6 +148,16 @@ class Settings(BaseSettings):
     allow_dev_org_header: bool = False
     default_org_id: UUID = DEFAULT_ORG_ID
     default_actor_id: UUID = DEFAULT_ACTOR_ID
+
+    # -- 登录与访问令牌（P2-C：DR-D9 的「真实登录」一半；接缝 1 仍只有 LocalAuthProvider）--
+    #: JWT（HS256）签名密钥。**dev / test 之外的环境必须显式注入**：沿用开源默认值
+    #: 去签令牌，等于任何人都能给自己签一份 admin ⇒ 生产启动即失败（fail-closed，
+    #: 与 :meth:`_guard_production_sqlite` 同款口径）。
+    #: 唯一消费点：`app/services/auth/token.py`（签发与验签各一次）。
+    auth_jwt_secret: str = DEFAULT_JWT_SECRET
+    #: 访问令牌有效期（**分钟**）。唯一消费点：
+    #: `app/services/auth/token.py::issue_access_token`。
+    auth_jwt_ttl_minutes: int = Field(default=480, gt=0)
 
     # -- 上传限制（M1 验收 2 / 3）--
     max_upload_size_mb: int = Field(default=100, gt=0)
@@ -290,6 +305,22 @@ class Settings(BaseSettings):
             "客户侧确需时必须同时置 ALLOW_AGENT_FAIL_OPEN=true，"
             "并完成「显式登记 + 告知客户 + 落审计」三项（与信创降级 DR-B10 同级）。"
         )
+
+    @model_validator(mode="after")
+    def _guard_production_jwt_secret(self) -> Settings:
+        """生产环境禁止沿用默认 JWT 密钥（P2-C）。
+
+        为什么必须启动就拦：`auth_jwt_secret` 是**签名**密钥，它的默认值和数据库口令
+        的默认值性质不同——口令猜不到就进不来，而一个公开的签名密钥意味着
+        **任何人都能给自己签一份任意 org / 任意主体的令牌**，且事后无法区分伪造与真实。
+        故不能用"日志警告"这种软处置。
+        """
+        if self.is_production and self.auth_jwt_secret == DEFAULT_JWT_SECRET:
+            raise ValueError(
+                "生产环境禁止沿用默认 AUTH_JWT_SECRET（开源默认值签出来的令牌"
+                "任何人都能伪造）。请经 Secrets / KMS 注入一个随机密钥。"
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

@@ -2437,6 +2437,80 @@ components:
       - trace_id
       title: LicenseStatusResponse
       type: object
+    LoginRequest:
+      description: '登录请求。
+
+
+        **只有两个字段是刻意的**：不加 `org_id`（见模块 docstring）、不加 `captcha`
+
+        / `client_id` / `grant_type`（OAuth 形态的登录不在 P2-C 边界内）。'
+      properties:
+        password:
+          description: 明文口令。仅存在于本请求体中，服务端只与哈希比对、不落日志
+          maxLength: 255
+          minLength: 1
+          title: Password
+          type: string
+        username:
+          description: 登录名（对应 `users.username`，全库唯一）
+          maxLength: 255
+          minLength: 1
+          title: Username
+          type: string
+      required:
+      - username
+      - password
+      title: LoginRequest
+      type: object
+    LoginResponse:
+      description: '登录成功响应。
+
+
+        **不含角色**：角色的唯一真源是 `user_roles` 表，塞进响应/令牌都会产生
+
+        「库里已撤权、手里还写着有」的窗口（见 `app/core/token.py` 模块 docstring）。
+
+
+        ``org_id`` 只是**回显**当前账号归属的租户，供前端展示用；它不是授权声明——
+
+        后续每个请求的租户仍由令牌解析得出（ADR-0003 §3.3）。'
+      properties:
+        access_token:
+          description: 'JWT 访问令牌（`Authorization: Bearer <token>` 携带）'
+          title: Access Token
+          type: string
+        expires_at:
+          description: 令牌过期时刻（UTC）
+          format: date-time
+          title: Expires At
+          type: string
+        org_id:
+          description: 该主体所属租户（`users.org_id`，**只读回显**）
+          format: uuid
+          title: Org Id
+          type: string
+        token_type:
+          default: Bearer
+          description: 令牌类型，恒为 `Bearer`
+          title: Token Type
+          type: string
+        trace_id:
+          description: 链路追踪 id
+          title: Trace Id
+          type: string
+        user_id:
+          description: 登录主体的 `users.id`
+          format: uuid
+          title: User Id
+          type: string
+      required:
+      - access_token
+      - expires_at
+      - user_id
+      - org_id
+      - trace_id
+      title: LoginResponse
+      type: object
     OntologyActionResponse:
       description: 'merge / split / rename **三个动作共用**的响应（M6 §3.2：三动作，不多做）。
 
@@ -3886,6 +3960,50 @@ paths:
       summary: 按 trace_id 回看一次调用链的审计记录（M5 §3 验收 6）
       tags:
       - audit
+  /api/v1/auth/login:
+    post:
+      description: '校验 `username` + `password`（对 `users` 表里的**口令哈希**，不是任何 mock），通过后签发一枚 JWT（`HS256`），前端以 `Authorization: Bearer <token>` 携带。
+
+
+        **租户从账号推导，不由请求声明**：`org_id` 取自 `users.org_id`，请求体里**没有**也不接受 `org_id`（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+
+
+        **首次成功登录会回填 `users.activated_at`** —— 那是席位计数（`activated_at IS NOT NULL AND disabled_at IS NULL`，ADR-0006 §2.4 维度 2）的**唯一**来源。口令错、账号停用**都不**回填。
+
+
+        **失败一律 401 且不区分原因**：`detail.reason` 会给出 `invalid_credentials` / `account_disabled`（供日志侧区分），但**消息与耗时不区分** —— 否则等于给出一条账号枚举旁路（能探出「这个用户名存在」）。
+
+
+        **限流**：沿用全局 60/min（每 IP 每接口）。'
+      operationId: loginWithPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+      summary: 口令登录并签发访问令牌
+      tags:
+      - auth
   /api/v1/cost/dashboard:
     get:
       description: '按日期区间给出**成本总览**：token 用量、单文档成本、**增量 / 全量成本比**，以及按天明细。

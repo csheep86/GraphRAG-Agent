@@ -26,6 +26,16 @@ from app.services.rbac.roles import RoleName
 
 RESOURCE_AFFILIATION = "affiliation"
 RESOURCE_AGENT = "agent"
+#: **2026-10-07 P2-C 新增**：认证（`POST /auth/login`）。
+#:
+#: ⚠️ **它在矩阵里的取值四档一律 `_NONE`，含义是「RBAC **不参与**」而不是「谁都登不了」**：
+#: `POST /auth/login` 上**刻意没有** `require_permission` —— 登录时还没有身份，
+#: 挂强制校验是循环要求（要求一枚令牌才能换一枚令牌）。所以这一列不能照
+#: 「该角色能不能用」去读，它存在的唯一理由是满足下面的「契约端点 → 资源」双向锁
+#: （`tests/test_rbac.py::test_contract_paths_are_all_registered`）。
+#: ⚠️ **失效条件**：一旦登录端点挂上 `require_permission`，这一列必须立刻按真实口径
+#: 重新赋权，否则"谁都能登录"和"矩阵里写着谁都不行"会同时成立。
+RESOURCE_AUTH = "auth"
 RESOURCE_AUDIT = "audit"
 RESOURCE_COMPLIANCE = "compliance"
 RESOURCE_COST = "cost"
@@ -40,6 +50,8 @@ RESOURCE_ONTOLOGY = "ontology"
 #: 契约端点 → 资源。**键必须与 `contracts/openapi.yaml` 的 `paths` 逐字一致**
 #: （`/api/v1/health` 除外——它是探针，不承载业务对象，故不登记）。
 CONTRACT_PATH_RESOURCE: dict[str, str] = {
+    # P2-C：真实登录。**不**受 RBAC 强制校验，理由见 :data:`RESOURCE_AUTH`
+    "/api/v1/auth/login": RESOURCE_AUTH,
     "/api/v1/affiliation/detect": RESOURCE_AFFILIATION,
     "/api/v1/affiliation/suspicions": RESOURCE_AFFILIATION,
     "/api/v1/affiliation/suspicions/{suspicion_id}": RESOURCE_AFFILIATION,
@@ -105,13 +117,23 @@ _ALL_READ: frozenset[str] = frozenset({ACTION_READ})
 _ALL_READ_WRITE: frozenset[str] = frozenset({ACTION_READ, ACTION_WRITE})
 _NONE: frozenset[str] = frozenset()
 
+
+def _actions_for(resource: str, default: frozenset[str]) -> frozenset[str]:
+    """``auth`` 这一列**刻意留空**：登录不走 RBAC，`_NONE` 表示"RBAC 不参与"。
+
+    （完整理由见 :data:`RESOURCE_AUTH`；把它写成"默认给权限"会让人误以为
+    某个角色被禁止登录。）
+    """
+    return _NONE if resource == RESOURCE_AUTH else default
+
 #: **角色 × 资源 × 操作**（每个角色对每个资源都**显式**列出，不留空位——
 #: 空位会让"忘了配"和"刻意不给"看起来一样）。取值理由登记在
 #: `changes/P2/integration-log.md` 的「矩阵赋权」小节。
 ROLE_PERMISSIONS: dict[str, dict[str, frozenset[str]]] = {
-    RoleName.ADMIN: {resource: _ALL_READ_WRITE for resource in RESOURCES},
-    RoleName.AUDITOR: {resource: _ALL_READ for resource in RESOURCES},
+    RoleName.ADMIN: {r: _actions_for(r, _ALL_READ_WRITE) for r in RESOURCES},
+    RoleName.AUDITOR: {r: _actions_for(r, _ALL_READ) for r in RESOURCES},
     RoleName.ANALYST: {
+        RESOURCE_AUTH: _NONE,
         RESOURCE_AFFILIATION: _ALL_READ_WRITE,
         RESOURCE_AGENT: _ALL_READ,
         RESOURCE_AUDIT: _ALL_READ,
@@ -126,6 +148,7 @@ ROLE_PERMISSIONS: dict[str, dict[str, frozenset[str]]] = {
         RESOURCE_ONTOLOGY: _ALL_READ,
     },
     RoleName.VIEWER: {
+        RESOURCE_AUTH: _NONE,
         RESOURCE_AFFILIATION: _NONE,
         RESOURCE_AGENT: _ALL_READ,
         RESOURCE_AUDIT: _NONE,
@@ -158,6 +181,7 @@ __all__ = [
     "RESOURCES",
     "RESOURCE_AFFILIATION",
     "RESOURCE_AGENT",
+    "RESOURCE_AUTH",
     "RESOURCE_AUDIT",
     "RESOURCE_COMPLIANCE",
     "RESOURCE_COST",

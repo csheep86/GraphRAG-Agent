@@ -13,6 +13,8 @@
   路径口径以 spec 为准，plan §6.2 摘要原写 `/affiliation/suspects` 已统一为 `suspicions`）
 - `GET /audit`、`GET /audit/trace/{trace_id}`（**Sprint 8.1 批次 A**，M5 §3 验收 7 / 6）
 - `GET /attendance/compliance/scan`（**Sprint 9.5 批次 C3**，考勤域合规预警，确定性规则）
+- `POST /auth/login`（**P2-C**，真实口令登录 + 签发 JWT；它**不要求**认证态，
+  是 `TENANT_PROTECTED_PATHS` 里唯一被排除的非探针端点）
 - **M6 契约先行批次**（`changes/archive/2026-10-02-P0-m6-finalization` F2，**7 个端点全部 501 占位**，
   实现归 P5-M6 / Sprint 12）：`POST /ontology/cold-start`、`POST /ontology/confirm`、
   `POST /ontology/merge`、`POST /ontology/split`、`POST /ontology/rename`、
@@ -33,6 +35,7 @@ from app.api.v1.routes import (
     affiliation,
     agent,
     audit,
+    auth,
     compliance,
     cost,
     documents,
@@ -60,3 +63,6 @@ api_router.include_router(cost.router)
 # P4 / DR-C1（ADR-0006 §2.6）：GET /license/status —— **自检端点**，
 # 与 /health 一样被 LicenseMiddleware 豁免（无有效 License 时它必须仍可访问）
 api_router.include_router(license.router)
+# P2-C：POST /auth/login —— 真实登录（签发 JWT，回填 users.activated_at = 席位计数来源）。
+# 它**不挂** require_permission：登录时还没有身份，挂了就是循环要求。
+api_router.include_router(auth.router)

@@ -49,6 +49,9 @@ CORE_PATHS = {
     "/api/v1/cost/dashboard",
     # P4 / DR-C1（ADR-0006 §2.6）：License **自检端点** —— 与 /health 一样豁免 License 拦截
     "/api/v1/license/status",
+    # P2-C：真实登录（paths 27 → **28**）。它签发 JWT 并回填 users.activated_at
+    # （席位计数的唯一来源，ADR-0006 §2.4 维度 2）
+    "/api/v1/auth/login",
 }
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
@@ -62,7 +65,18 @@ ADR_REQUIRED_CODES = {"TASK_INTERRUPTED", "KG_VERSION_NOT_ACTIVE", "FORBIDDEN"}
 #: 它只返回「是否有效 / 到期日 / 授权模块」，**不含任何租户数据**（连组织名字都没有），
 #: 所以与 `/health` 同属"不承载业务对象"的一类，按同一口径排除。
 #: ⚠️ 若将来给它加了租户相关返回字段 ⇒ 必须立即从这里移回受保护集。
-TENANT_PROTECTED_PATHS = CORE_PATHS - {"/api/v1/health", "/api/v1/license/status"}
+#:
+#: **P2-C 追加**：``/auth/login`` 按**同一类理由**排除，但理由不同、失效条件也不同——
+#: 它是**认证态的签发入口**：请求时尚无认证态，要求它自带 ``bearerAuth`` 是循环要求
+#: （要求一枚令牌才能换一枚令牌）。它同样**不承载业务对象**：响应体只有令牌、
+#: 过期时刻与「这个主体属于哪个租户」的回显，没有任何文档 / 图谱 / 审计数据。
+#: ⚠️ **失效条件（与上面两条同款）**：一旦它的响应体开始返回租户业务数据
+#: ⇒ 必须立即移回受保护集，并同步补上 ``security`` 与租户头声明。
+TENANT_PROTECTED_PATHS = CORE_PATHS - {
+    "/api/v1/health",
+    "/api/v1/license/status",
+    "/api/v1/auth/login",
+}
 
 
 @pytest.fixture(scope="module")
@@ -90,7 +104,9 @@ def test_core_paths_match_contract(schema: dict) -> None:
     批次 C4 再增异常归因两端点（`GET /attendance/anomalies` +
     `GET /attendance/anomalies/explain`）→ **19 路径**；
     M6 契约先行批次再增 spec §5.5 的 7 个端点（6 个 ontology + `GET /cost/dashboard`，
-    **全部 501 占位**）→ **26 路径**。
+    **全部 501 占位**）→ **26 路径**；
+    P4 再增 License 自检端点（`GET /license/status`）→ **27 路径**；
+    P2-C 再增登录端点（`POST /auth/login`）→ **28 路径**。
     """
     assert set(schema["paths"]) == CORE_PATHS
 
@@ -116,7 +132,8 @@ def test_operation_ids_are_unique(schema: dict) -> None:
     # （批次 C4 异常归因两端点）→ 26
     # （M6 契约先行批次 7 个占位端点；operation_id 不得重复）
     # （P4 License 自检端点 `getLicenseStatus`）→ 27
-    assert len(operation_ids) == len(set(operation_ids)) == 27
+    # （P2-C 登录端点 `loginWithPassword`）→ **28**
+    assert len(operation_ids) == len(set(operation_ids)) == 28
 
 
 def test_info_version_is_constant(schema: dict) -> None:
