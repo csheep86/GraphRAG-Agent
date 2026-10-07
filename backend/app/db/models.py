@@ -39,6 +39,10 @@ P2 批次 B（2026-10-03）新增 `roles` / `user_roles` 两张表（M5 §4.2 / 
   `doc_scope` / `scene_scope` 承载**文档级 / 场景级**两粒度；
 - **本批不做 RLS 策略**（DR-B4 归 **P3**）：这里只做 `roles` 的豁免**登记**，
   策略本身一行不写。
+
+P5-C（2026-10-07，D2 / M6 第一批）新增 `ontology_actions` 表（M6 §4.2 的审计载体）：
+本表的存在理由是把「**未确认不生效**」变成可举证——确认动作落得到一行，
+而不是只留在日志里。带 `org_id` ⇒ **自动**成为租户表（G-26 会盯着它的 RLS）。
 """
 
 from __future__ import annotations
@@ -87,6 +91,21 @@ ROLE_NAME_VALUES = ("admin", "auditor", "analyst", "viewer")
 #: 豁免集合断言（该断言原本硬写 ``{"roles"}``）——**不是放宽**，是登记项更新，
 #: 收紧程度不变（仍断言「库里真的没有策略」+「集合恰好相等」）。
 RLS_EXEMPT_TABLES: frozenset[str] = frozenset({"roles", "licenses"})
+
+#: `ontology_actions.action_type` 的合法值（M6 §4.2 的**三值** + 本批增补）。
+#:
+#: ⚠️ **偏离登记 X-2a（changes/P5-C）**：spec §4.2 明文写「``merge / split / rename``
+#: **仅三值**」，那句源自 plan §12 R12 对**批次 B（校正 GUI 三动作）**的收口，
+#: 并**没有**定义**批次 A（冷启动 / 确认）**的审计载体。而本批的验收判据要求
+#: 「确认后状态变化必须写进 ``ontology_actions``」——写不进来，本批这张表就
+#: 是 **零写入方**的表（等价于心照不宣的"建了等于没建"）。故取最小增补：
+#: **只加一个 ``confirm``**，并把理由写在这里而不是藏进代码。
+#: 撤回成本：一个迁移删掉 CHECK 里的第四值即可（那条判据随之作废）。
+ONTOLOGY_ACTION_TYPES = ("merge", "split", "rename", "confirm")
+#: 偏离登记 **X-2b**：只有 ``confirm`` 允许 ``kg_version`` 为 NULL ——
+#: 确认本体时图谱尚不存在（spec §4.6 的新租户链路：先确认本体，后有图谱），
+#: 该场景**没有** kg_version 可写，写假值等于 fabrication。
+ONTOLOGY_ACTION_WITHOUT_KG_VERSION = "confirm"
 
 
 def utcnow() -> datetime:
@@ -995,5 +1014,68 @@ class UserRole(Base):
     #: 授权人（spec §4.3 标必填；系统预置时取 `DEFAULT_ACTOR_ID`）
     granted_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class OntologyAction(Base):
+    """`ontology_actions` 表（M6 §4.2：本体动作的**审计**载体）。
+
+    P5-C（M6 第一批）落地。与 `ontology_schemas` 的分工：后者存**生效中的本体**，
+    本表存**谁在什么时候做了什么**——「未确认不生效」要可举证，靠的就是本表有一行。
+
+    两处偏离登记（详见 :data:`ONTOLOGY_ACTION_TYPES` 与
+    :data:`ONTOLOGY_ACTION_WITHOUT_KG_VERSION`）：
+
+    1. **X-2a**：``action_type`` 在 spec 的三值外多一个 ``confirm``（批次 A 的确认动作）；
+    2. **X-2b**：``kg_version`` 允许 NULL，但**只有** ``confirm`` 行可以为 NULL
+       （其余三动作的 CHECK 要求非空，保持 spec §4.2 的语义）。
+
+    **本批唯一的写入方是** ``confirm``（``app.services.ontology.confirm_ontology_schema``）；
+    ``merge`` / ``split`` / ``rename`` 归后续批次（增量重算落地之后）。
+    """
+
+    __tablename__ = "ontology_actions"
+    __table_args__ = (
+        CheckConstraint(
+            "action_type IN ('merge', 'split', 'rename', 'confirm')",
+            name="ck_ontology_actions_action_type",
+        ),
+        # X-2b：把 deviation 限制在 confirm 这一档，
+        # 将来接 merge/split/rename 时漏填 kg_version 会被库当场拒绝。
+        CheckConstraint(
+            "action_type = 'confirm' OR kg_version IS NOT NULL",
+            name="ck_ontology_actions_kg_version_required_except_confirm",
+        ),
+        # ADR-0003 §3.1：复合索引必须 org_id 打头
+        Index("ix_ontology_actions_org_id_action_type", "org_id", "action_type"),
+        Index("ix_ontology_actions_org_id_created_at", "org_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    #: 租户隔离键（ADR-0003）
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 动作类型（见 :data:`ONTOLOGY_ACTION_TYPES`）
+    action_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: 涉及对象：``merge`` / ``split`` / ``rename`` 是**实体 id 列表**；
+    #: ``confirm`` 是**本体类型名列表** ——
+    #: ``{"entity_type_names": [...], "relation_type_names": [...]}``。
+    #: shape 随动作而变是 JSON 列的本分，故键名自解释，**不**对不同动作硬套同一形状。
+    target_entities: Mapped[dict] = mapped_column(JSON, nullable=False)
+    #: 操作人（`users.id`；**不建外键**——与 `documents.uploaded_by` 同口径）
+    actor_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 操作时的图谱版本（`confirm` 行恒 NULL，见
+    #: :data:`ONTOLOGY_ACTION_WITHOUT_KG_VERSION`）
+    kg_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: 增量重算产出的新版本；NULL = 未完成或失败（spec §4.2 同口径）
+    result_kg_version: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    #: 失败错误码（沿用 ADR-0002）
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: 失败明细（**敏感**：日志禁输出原文）
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
