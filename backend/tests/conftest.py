@@ -214,6 +214,21 @@ def default_org_for_bare_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
 
 OTHER_ORG_ID = "00000000-0000-4000-8000-000000000002"
 
+#: **P2-C / R30**：第二个租户的**专属主体**。
+#:
+#: 为什么不能沿用 ``DEFAULT_ACTOR_ID``：``users.id`` 是**主键**，同一个 UUID 不可能
+#: 在两个租户里各占一行（而 ``user_roles.user_id`` 若仍指向 org A 的那个 UUID，
+#: 形态就是「org B 的授权挂在 org A 的人身上」—— 那正是 R30 第 ① 条抓到的跨租户引用）。
+#: ⇒ 每个租户**各有一个主体**，``actor_id`` 的唯一来源随之变成"这个租户里的这个账号"。
+OTHER_ORG_ACTOR_ID = UUID("00000000-0000-4000-8000-0000000000bb")
+
+#: 测试库里两个 dev 主体的**登录口令**（`POST /auth/login` 真校验用）。
+#: ``users.username`` 全库唯一 ⇒ 两个主体必须用两个名字；口令刻意取同一个，
+#: 让"换租户 = 换账号"这件事只体现在 username 上，不给判据增加第二个变量。
+DEV_LOGIN_PASSWORD = "dev-login-password"
+DEFAULT_ORG_LOGIN_USERNAME = "dev-admin-a"
+OTHER_ORG_LOGIN_USERNAME = "dev-admin-b"
+
 #: ``KgVersioningService.get_active`` 的**原始**实现——:func:`pg_active_kg_version`
 #: 会把它桩掉，:func:`real_pg_get_active` 用它恢复（顺序：autouse 先、显式后）。
 _REAL_GET_ACTIVE = KgVersioningService.get_active
@@ -305,20 +320,28 @@ def rbac_default_actor_is_admin() -> None:
     补上——与 :func:`pg_active_kg_version` 桩掉一个 ready 版本是同一类动作
     （不打桩会让基础设施故障伪装成别的语义）。
 
-    **为什么两个 org 都授**：``cross_tenant_headers`` **只换 org 不换 actor**
-    （见本文件 :data:`OTHER_ORG_ID`）——不授 org B，跨租户用例就会被 RBAC 抢在
-    应用层 `org_id` 过滤**之前**拦掉，于是「跨租户返回空 / 403」的既有判据
+    **为什么两个 org 都授**：跨租户用例要在 org B 里**能写能读**
+    （`test_documents_list.py` 就往 org B 上传文档）——不授 org B，跨租户用例就会被
+    RBAC 抢在应用层 `org_id` 过滤**之前**拦掉，于是「跨租户返回空 / 403」的既有判据
     （G-9 / G-10 / `test_documents.py`）虽然仍然绿，验的却不再是它们要验的那层。
 
     ⚠️ **它同时意味着**：默认主体是 admin ⇒ 默认路径**验不到**拒绝分支。
     拒绝分支由 `tests/test_rbac.py` 用**另外的 actor id** 专测（见该文件）。
+
+    **2026-10-07 P2-C（R30）：每个租户各播一个**主体锚点**（`users` 的一行）。**
+    原先只有 `user_roles`、没有 `users` ⇒ 授权挂在库里不存在的人身上（R29 的孤儿），
+    而 org B 那条更是**跨租户引用**（`user_roles.org_id=B` 却指向 org A 的主体）。
+    `users.id` 是主键 ⇒ 两个租户不可能共用同一个 UUID ⇒ org B 改用
+    :data:`OTHER_ORG_ACTOR_ID`，`cross_tenant_headers` 的 actor 随之改用它。
+    机械断言见 `tests/test_identity_anchor.py`（严格视图孤儿 = 0）。
     """
     from sqlalchemy import create_engine
 
     from app.core.config import get_settings
-    from app.db.models import Role, UserRole
+    from app.db.models import USER_STATUS_ACTIVE, Role, User, UserRole
     from app.db.rls import apply_tenant_rls, ensure_exempt_tables_unprotected
     from app.db.session import init_db, session_scope
+    from app.services.auth.password import hash_password
     from app.services.rbac import ensure_preset_roles
 
     settings = get_settings()
@@ -340,14 +363,55 @@ def rbac_default_actor_is_admin() -> None:
     finally:
         owner_engine.dispose()
 
-    # `user_roles` 是**租户数据**（含 org_id）⇒ 每个 org 必须在自己的租户
-    # 视野里播种（RLS 下跨租户写会被 WITH CHECK 直接拒掉，不是静默失败）。
-    for org_id in (settings.default_org_id, UUID(OTHER_ORG_ID)):
+    # `user_roles` / `users` 都是**租户数据**（含 org_id）⇒ 每个 org 必须在自己的
+    # 租户视野里播种（RLS 下跨租户写会被 WITH CHECK 直接拒掉，不是静默失败）。
+    #
+    # **P2-C**：每个租户 = (一个 org, 一个专属 actor, 一行 users, 一条 admin 授权)。
+    # activated_at **刻意留 NULL** —— 它由「首次成功登录」回填，
+    # 这里播种就等同于造假席位（P4-D5 明令禁止）。
+    # **R30 第 ① 条的"清创"**：删掉 org B 里那条指向 **org A** 主体的历史授权
+    # （`user_roles.org_id=B` 而 `user_id=DEFAULT_ACTOR_ID`）。
+    # 不删它，严格视图孤儿就永远是 1（`tests/test_identity_anchor.py` 会红）；
+    # **只删这一条、绝不泛化清理** —— 泛化会把 `test_rbac.py` 授给其它 actor 的
+    # 记录一并删掉，那些是别人的判据。（CI 的库是空的，这条清理对它无副作用。）
+    with session_scope(org_id=UUID(OTHER_ORG_ID)) as session:
+        session.query(UserRole).filter(
+            UserRole.org_id == UUID(OTHER_ORG_ID),
+            UserRole.user_id == settings.default_actor_id,
+        ).delete(synchronize_session=False)
+        # `session_scope` **不**代提交（它只 close），不显式 commit 就是静默回滚
+        session.commit()
+
+    tenants = (
+        (
+            settings.default_org_id,
+            settings.default_actor_id,
+            DEFAULT_ORG_LOGIN_USERNAME,
+        ),
+        (UUID(OTHER_ORG_ID), OTHER_ORG_ACTOR_ID, OTHER_ORG_LOGIN_USERNAME),
+    )
+    for org_id, actor_id, username in tenants:
         with session_scope(org_id=org_id) as session:
+            if (
+                session.query(User)
+                .filter(User.org_id == org_id)
+                .filter(User.id == actor_id)
+                .first()
+                is None
+            ):
+                session.add(
+                    User(
+                        id=actor_id,
+                        username=username,
+                        password_hash=hash_password(DEV_LOGIN_PASSWORD),
+                        org_id=org_id,
+                        status=USER_STATUS_ACTIVE,
+                    )
+                )
             exists = (
                 session.query(UserRole)
                 .filter(UserRole.org_id == org_id)
-                .filter(UserRole.user_id == settings.default_actor_id)
+                .filter(UserRole.user_id == actor_id)
                 .filter(UserRole.role_id == admin_id)
                 .first()
             )
@@ -355,11 +419,11 @@ def rbac_default_actor_is_admin() -> None:
                 session.add(
                     UserRole(
                         org_id=org_id,
-                        user_id=settings.default_actor_id,
+                        user_id=actor_id,
                         role_id=admin_id,
                         doc_scope=None,
                         scene_scope=None,
-                        granted_by=settings.default_actor_id,
+                        granted_by=actor_id,
                     )
                 )
             session.commit()
@@ -394,6 +458,22 @@ def dev_headers() -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
+def dev_login() -> dict[str, str]:
+    """默认租户那个**真实账号**的登录凭据（P2-C：`POST /auth/login` 真校验用）。
+
+    与 :func:`dev_headers` 的区别：后者是 dev 脚手架头（不查库、不做口令校验），
+    本夹具走的是**真登录**——拿它登录会真的去比对 `users.password_hash`，
+    并真的回填 `activated_at`（席位计数的唯一来源）。
+    """
+    return {
+        "username": DEFAULT_ORG_LOGIN_USERNAME,
+        "password": DEV_LOGIN_PASSWORD,
+    }
+
+
+@pytest.fixture(scope="session")
 def cross_tenant_headers() -> dict[str, str]:
-    settings = get_settings()
-    return {"X-Org-Id": OTHER_ORG_ID, "X-Actor-Id": str(settings.default_actor_id)}
+    # **P2-C**：actor 用 org B **自己的**主体（:data:`OTHER_ORG_ACTOR_ID`）——
+    # 沿用默认主体会构成跨租户引用（R30 第 ① 条）。跨租户用例验的是
+    # 「org A 的资源在 org B 视野下不可见」，与 actor 是否相同无关。
+    return {"X-Org-Id": OTHER_ORG_ID, "X-Actor-Id": str(OTHER_ORG_ACTOR_ID)}

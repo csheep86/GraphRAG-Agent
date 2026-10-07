@@ -54,6 +54,27 @@
 
 复用已有预留：`org_id`（ADR-0003）、`storage_key`、`retry_count`、`trace_id` 已存在，无需新增。
 
+### 2.2.1 `users` 表预留字段清单（2 个，全部 nullable）—— **2026-10-07 P2-C 追加登记**
+
+| 字段 | 用途 | **启用条件** |
+|---|---|---|
+| `issuer` | 外部身份源的**签发方**标识（`local` / OIDC issuer / LDAP 域） | 接缝 1 出现**第二个**实现（AD / LDAP / OIDC）时启用：登录查找键由 `username` 改为 `(issuer, subject)`，`LocalAuthProvider` 即 `issuer='local'` |
+| `subject` | 外部身份源**内部**的主体标识（OIDC 的 `sub` / LDAP 的 DN） | 同上（两列必须同时启用，单列无意义） |
+
+**当前状态：0 消费者**（P2-C 落列时即如此，刻意不为它们造读取方）。
+本地登录（`POST /api/v1/auth/login`）按 `users.username` 查，**不读**这两列。
+
+**为什么现在就落列**：接缝 1 的实现集合恒为 1（`max_impls=1`，§2.1 / 规则 4），
+而"第二实现"一旦落地就要有查找键；那时再改一列 `NOT NULL` 要同时动
+登录路径与存量行，成本远高于现在加两个可空列。
+
+遵守：① **nullable**（规则 1）；② **不进 API 契约**（规则 1，`export_openapi.py --check` 零 diff）；
+③ **无读取方 ⇒ 不建索引、不加唯一约束**（规则 5 的同一条纪律：不许造"看起来被用着"的假差异）。
+
+> 与 §2.3 里 `auth_source` / `external_id` 的关系：那是 Pro 阶段对 `users` 的
+> **早期登记形态**，命名与本节不同（本节命名对齐 OIDC / LDAP 的通行术语
+> `issuer` / `subject`）。**启用时以本节命名为准**，§2.3 那两行随之作废并注明。
+
 ### 2.3 未来要建的表的字段清单（现在只登记 DDL 形态，不建表）
 
 **`users`**（Pro 阶段随 AD/LDAP 登录一起建）：

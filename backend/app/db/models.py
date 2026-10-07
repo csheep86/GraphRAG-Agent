@@ -776,6 +776,14 @@ class OntologySchema(Base):
     )
 
 
+#: `users.status` 的取值（**唯一定义处**，与下面 `ck_users_status` 的
+#: CheckConstraint 同源）。P2-C 起有两个消费者：登录（`services/auth/login.py`）与
+#: RBAC 判定（`services/rbac/service.py`）——两处各写一个 `"active"` 字面量，
+#: 迟早一边改一边不改。
+USER_STATUS_ACTIVE = "active"
+USER_STATUS_DISABLED = "disabled"
+
+
 class User(Base):
     """`users` 表（M5 §4.1：账号主体）—— DR-B13 / G-18。
 
@@ -824,6 +832,14 @@ class User(Base):
     disabled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: **预留**（P2-C / 子任务 ②）：外部身份源的**签发方**标识。
+    #: 本批**不消费**——本地登录按 `username` 查；启用企业身份源（AD / LDAP / OIDC）
+    #: 后，查找键由 `username` 改为 `(issuer, subject)`，`LocalAuthProvider` 即
+    #: `issuer='local'`。登记见 `docs/adr/0004-integration-seams.md`
+    #: （启用条件写在那里；**不进**任何契约，功能预留原则第 4 条）。
+    issuer: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: **预留**（同上）：外部身份源**内部**的主体标识（OIDC 的 `sub` / LDAP 的 DN）。
+    subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
