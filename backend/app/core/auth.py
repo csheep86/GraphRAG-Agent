@@ -12,7 +12,7 @@
 :func:`parse_bearer_token` 在 dev 格式之后增加了 JWT 验签分支 ⇒ dev 兜底从
 「唯一的认证态来源」降级为「**并存的**开发态来源」。它**仍在**——上千条既有用例
 的身份来源就是它，删掉等于一次性改掉全部测试的主体，那是另一批的事
-（见 `changes/P2-C/proposal.md` §5「不许外推」）。
+（见 `changes/archive/2026-10-07-P2-C/proposal.md` §5「不许外推」；该批已于 2026-10-07 归档）。
 """
 
 from __future__ import annotations

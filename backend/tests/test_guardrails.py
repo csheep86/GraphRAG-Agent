@@ -266,7 +266,8 @@ def test_g18_users_table_exists() -> None:
 #: ③ 接缝 1 若因此新增实现 ⇒ **没有**（D1 顺延）。登录**不**造第二个 `AuthProvider`：
 #:    它只查库验口令，令牌签发/验签落在 `app/core/token.py`（核心原语，不是接缝实现）；
 #: ④ 对应护栏：G-18 三条**仍绿**（users 表形状未变）+ G-26（新增受控函数已登记）
-#:    + 契约零漂移 ⇒ **仍不得**宣称账号体系 / SSO 完成（见 `changes/P2-C/proposal.md` §5）。
+#:    + 契约零漂移 ⇒ **仍不得**宣称账号体系 / SSO 完成
+#:      （见 `changes/archive/2026-10-07-P2-C/proposal.md` §5；该批已于 2026-10-07 归档）。
 USERS_CONSUMER_MODULES: frozenset[str] = frozenset(
     {
         "services/license/policy.py",
