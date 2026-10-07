@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # backend/app/core/config.py -> parents[2] == backend/
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -237,6 +238,21 @@ class Settings(BaseSettings):
     #: 同一 IP 每分钟对同一接口的请求上限。唯一消费点：core/limiter.py::get_limiter
     rate_limit_per_minute: int = Field(default=60, ge=1)
 
+    # -- 私域出向管控（M5 §3 验收 4 / §4.6，spec 名为 `private_deploy`）--
+    #: 私域部署开关。**true** ⇒ 出向目标必须是**内网地址**或在 `ALLOWED_EGRESS_HOSTS`
+    #: 白名单内，否则在**构造期**抛 503 `PRIVATE_DEPLOY_BLOCKED`（守护 + 审计）。
+    #: 为什么默认 **false**：开发 / CI 的 `LLM_BASE_URL` 就是公网地址，置 true 会让
+    #: 一大批用例（含必需联网的计算项）全部失败；生产是否置 true 属部署侧动作
+    #: （本批**不**加"生产必须为 true"的护栏——那是新增需求，登记为建议项）。
+    #: 唯一消费点：app/core/egress.py::guard_egress
+    private_deploy_enabled: bool = False
+    #: 出向白名单。条目形如 `host` 或 `host:port`（写了端口 ⇒ 端口必须匹配，
+    #: **不**静默忽略端口那个部分）；**本批只做精确匹配，不支持通配 / 子域**。
+    #: 为什么还需要它：内网 / 回环天然放行（D9），白名单是给「确实在公网上、
+    #: 但客户允许出向」的目标留的口子。
+    #: 唯一消费点：app/core/egress.py::_matches_allowlist
+    allowed_egress_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
     # -- 可观测导出（ADR-0004 §2.1 注：不单列接缝；§3 第 5 条的"合规占位"）--
     #: 统一日志平台 / OTLP 导出开关。**Demo-MVP 阶段未实现**：置 true 时
     #: core/logging.py 显式抛 NOT_IMPLEMENTED，绝不静默无效（占位≠假做）。
@@ -275,6 +291,42 @@ class Settings(BaseSettings):
         if not normalized:
             raise ValueError("ALLOWED_MIME_TYPES 不能为空")
         return normalized
+
+    @field_validator("allowed_egress_hosts", mode="before")
+    @classmethod
+    def _decode_egress_hosts(cls, value: object) -> list[str]:
+        """把环境变量的**原始字符串**解析成清单（容忍 JSON 数组 / 逗号分隔 / 空串）。
+
+        为什么不能用 source 层默认的 JSON 解析：``ALLOWED_EGRESS_HOSTS=``（空值）
+        会让 **服务启动即失败**（``SettingsError: Expecting value: line 1 column 1``，
+        本机实跑复现），而"白名单缺省"是这个字段**最常见的合法取值**——
+        不该让一个缺省形态把整套服务带停。故用 ``NoDecode`` 接管解析。
+        """
+        if value is None:
+            return []
+        if not isinstance(value, str):
+            return value  # type: ignore[unreachable] - 直接传 list 的场合（含 init）
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            decoded = json.loads(text)
+        except ValueError:
+            return text.split(",")
+        if isinstance(decoded, list):
+            return [str(item) for item in decoded]
+        return [str(decoded)]
+
+    @field_validator("allowed_egress_hosts")
+    @classmethod
+    def _normalize_egress_hosts(cls, value: list[str]) -> list[str]:
+        """归一化：去空白、统一小写、**丢掉空项**。
+
+        ⚠️ 为什么必须显式丢空项：条目一旦出现 ``''``，「白名单为空」与
+        「有一条匹配任何东西的规则」这两种状态就会混为一谈——
+        `M5` 陷阱表专门点过这一条（清单型配置被解析成 `['']` 是典型形态）。
+        """
+        return [item.strip().lower() for item in value if item.strip()]
 
     @model_validator(mode="after")
     def _guard_production_sqlite(self) -> Settings:
