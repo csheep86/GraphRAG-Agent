@@ -600,14 +600,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 读取当前生效的本体 schema（M6 §3.1，占位骨架）
+         * 读取当前生效的本体 schema（M6 §3.1）
          * @description 读当前租户**生效中**的本体 schema（版本 + 实体 / 关系类型集）。
          *
          *     **无 active → 409** `SCHEMA_VERSION_NOT_ACTIVE`：**严禁**静默返回一份默认的内置 schema —— 那会让用户以为自己配过（与 ADR-0002 §3.2 同款纪律）。
          *
-         *     **当前状态**：占位骨架，恒返回 501。读取侧应用层**已具备**（`app.services.ontology.load_active_ontology`），接线归 P5-M6。
+         *     **未确认的 schema 不会出现在这里**：冷启动只产生建议、不写库（§3.1 验收 1），本端点读到的每一行都经过 `POST /ontology/confirm`。
          *
-         *     **错误语义**：无 active → 409；跨租户 → 403；未实现 → 501。
+         *     **错误语义**：无 active → 409；跨租户 → 403。
          */
         get: operations["getActiveOntology"];
         put?: never;
@@ -628,14 +628,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 本体冷启动建议（M6 §3.1，占位骨架）
+         * 本体冷启动建议（M6 §3.1）
          * @description 给一段业务域描述，**建议**一组实体 / 关系类型（LLM 调用）。
          *
          *     **仅建议、未生效**：本端点**不**写 `ontology_schemas`；要生效必须再调 `POST /ontology/confirm`（M6 §3.1 验收 1 / §3.5 验收 12）。
          *
-         *     **当前状态**：占位骨架，恒返回 501。PoC 已在应用层跑通（`app.services.ontology.suggest_ontology_types`，真机产出 12 实体 + 12 关系类型），**但未接线到本端点**——接线属实现，归 P5-M6。
-         *
-         *     **错误语义**：跨租户 → 403 `FORBIDDEN`；未实现 → 501。
+         *     **错误语义**：跨租户 → 403 `FORBIDDEN`；LLM 建议解析失败 → 500 `INTERNAL_ERROR`（**不**静默回落内置枚举——悄悄塞一组"看起来合理"的类型，等于替用户做决策）。
          */
         post: operations["coldStartOntology"];
         delete?: never;
@@ -654,16 +652,18 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 确认本体 schema 生效（M6 §3.1，占位骨架）
+         * 确认本体 schema 生效（M6 §3.1 验收 2）
          * @description 把（人工在校正 GUI 上确认过的）类型集写入 `ontology_schemas`，置 `status='active'`。
          *
          *     **唯一会写生效状态的端点**：冷启动只建议、merge / split / rename 产新 `kg_version` 但**不改本体**——GAP-F2「严禁 LLM 自动修改本体」的落点。
          *
+         *     **换域（同租户确认新版本）**：旧 `active` 行置 `superseded`、新行按请求里的 `version` 落 `active`（§4.6）；历史图谱**不**回溯重算。
+         *
+         *     **审计**：同事务写一行 `ontology_actions(action_type='confirm')` —— 「谁确认的」这件事必须与「本体生效」同时成立（§3.5 验收 12）。
+         *
          *     **重复确认 → 409** `SCHEMA_VERSION_NOT_ACTIVE`：同一 `version` 二次确认一律拒绝，**不**静默复用旧版本（与 `KG_VERSION_NOT_ACTIVE` 同一纪律）。
          *
-         *     **当前状态**：占位骨架，恒返回 501。
-         *
-         *     **错误语义**：重复确认 / 版本冲突 → 409；跨租户 → 403；未实现 → 501。
+         *     **错误语义**：重复确认 / 版本冲突 → 409；跨租户 → 403。
          */
         post: operations["confirmOntology"];
         delete?: never;
@@ -4761,15 +4761,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
         };
     };
     coldStartOntology: {
@@ -4810,15 +4801,6 @@ export interface operations {
             };
             /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4875,15 +4857,6 @@ export interface operations {
             };
             /** @description 本体 schema 版本冲突（`SCHEMA_VERSION_NOT_ACTIVE`，M6 §5.5）：① `POST /ontology/confirm` 对同一 version **重复确认**；② `GET /ontology/active` 时本租户**尚无 active schema**。与 409 `KG_VERSION_NOT_ACTIVE` 同一纪律——**严禁**静默降级到旧版本 / 默认schema（那会让用户以为自己配过） */
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };
