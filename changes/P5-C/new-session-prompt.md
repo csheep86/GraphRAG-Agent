@@ -6,8 +6,8 @@
 > 📦 **本文件自包含**：前一个会话（P5-B）已收口、不会再回来。开工所需的**全部**坐标、命令、基线、
 > 陷阱都在本文里。唯一需要你额外读的是 §0.5 列的**五份仓库内文件**（都在库里，`git pull` 后可读）。
 >
-> 📌 **本提示词尚未经过用户确认范围** ——它由 P5-B 收尾 session 依 recon 结果起草。
-> 复制到新会话前，**请先看 §2.3 的三刀切法**，那是我建议的范围；要改就改那里，别改其他节。
+> ✅ **范围已由用户确认（2026-10-07）**：采纳 §2.3 的三刀切法（ontology_actions 表 + `/ontology/active`
+> + 冷启动确认闭环 + 占位测试改写），并把 **D3 / D4 一并裁决**（见 §5）。本文件可直接作为新会话第一条消息。
 >
 > 复制本文件**全文**到新会话作为第一条消息。
 
@@ -115,7 +115,7 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是一片�
 
 ---
 
-## 4. 边界纪律 · Non-goals（**10 条，逐条对照**）
+## 4. 边界纪律 · Non-goals（**11 条，逐条对照**）
 
 | # | Non-goal | 说明 |
 |---|---|---|
@@ -129,9 +129,10 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是一片�
 | 8 | **不为 M6 新增别名 / 兼容层** | 有多套叫法属于历史债，本批不顺手 |
 | 9 | **不改 `seeds/ontology_schema.json` 的实体/关系定义** | 它是本体唯一真源（`seed_attendance_ontology.py:13` 明文），改它等于改语料 |
 | 10 | **不顺手订正 `delivery-requirements-and-guardrails.md:115`** 的过期表述 | 值得改，但要单独登记；混在本批里就成了"顺手做" |
+| 11 | **不碰 `entity_merge_candidates` 与 `applied` 枚举的契约同步五步** | `applied` 只服务于 `/ontology/merge`（`specs/m6-ontology-incremental.md:166` 明文），而 merge 已由 Non-goal 2 排除 ⇒ 见 §5 **D3 已裁决**。那五步（Pydantic 枚举 → 重导契约 → 提交生成物 → `gen:api` → CI 零漂移）**整体顺延**，本批不开这个口子 |
 
 > **回切点**：每个子任务收尾跑 `uv run python scripts/check_session_drift.py`，
-> S1 必须读到**本文件这 10 条**；S5 命中要答得出归属哪条需求。
+> S1 必须读到**本文件这 11 条**；S5 命中要答得出归属哪条需求。
 
 ---
 
@@ -140,9 +141,9 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是一片�
 | # | 决策 | 处置 | 依据 |
 |---|---|---|---|
 | **D1** | 闸门是否满足 | ✅ **满足**，直接开工 | spec v1.0 + checklist 七项全勾 |
-| **D2** | 占位测试怎么写 | **改写成真行为测试**，不删不 skip | `test_ontology_placeholder_endpoints.py:69` 注释本就写着「返回 200 空结果 = 前端会以为接口可mock用（假做）」；护栏三档规则要求反向守卫常驻 |
-| **D3** | 是否先升 M2 spec | ⚠️ **尚未裁决（本批可能踩到）**：`specs/m6-ontology-incremental.md:155` 要求 M6 落地前为 `status` **新增第 5 个枚举值 `applied`**（现只有 `pending/auto_merged/human_review/rejected`）。若 confirm 链路需要该状态 ⇒ **停下升级**（§10 第 2 类） | 见该 spec 行原文 |
-| **D4** | `/api/v1/cost/dashboard` 的 RBAC | 登记 RBAC 时补还是走豁免，**本批不动**（该端点本批不实现）。但**不要**让它成为"越权可访问"的既成事实 | RBAC 表 `app/services/rbac/policy.py:75-80` 只登记了 6 个 `/ontology/*`，**未含 cost** |
+| **D2** | 占位测试怎么写 | **改写成真行为测试**，不删不 skip | `test_ontology_placeholder_endpoints.py:69` 注释本就写着「返回 200 空结果 = 前端会以为接口可用（假做）」；护栏三档规则要求反向守卫常驻 |
+| **D3** | 是否先升 M2 spec 加 `applied` | ✅ **已裁决：本批不动 spec / 契约、不触发 §10 第 2 类**。三条横竖证据：① `applied` 是 **`entity_merge_candidates.status` 的第 5 值**，**只服务于 `/ontology/merge`** —— `specs/m6-ontology-incremental.md:166` 原文：「未走完前 5 步，**`/api/v1/ontology/merge` 端点不得对外实现**」；② M2 spec **文档侧早已包含该预留**（`specs/m2-extract-kg.md:128` 的 status 行「另有 M6 前向预留值 `applied`」+ `:134-136` 独立注脚），由 P0-m6-finalization 批次完成 ⇒ **不需要再"升版"一次**；③ merge 已在 §4 Non-goal 2 排除 ⇒ 契约同步 5 步**整体顺延**到做 merge 那批。真正没动的只有**代码 / 契约侧**（Pydantic 枚举与 `openapi.yaml` 里没有 `applied`），那同样是 merge 的前置 | 见上述三处原文 |
+| **D4** | `/api/v1/cost/dashboard` 的 RBAC | ✅ **已裁决：本批只登记、不动 `rbac/policy.py`**。该端点**恒 501 ⇒ 当前没有可访问面 ⇒ 没有越权面**；在 integration-log 明确登记为已知即可。**不要**去改 RBAC 表（那是代码改动，且 RBAC 完整性另有门禁看着）。⛔ 这条债务**必须跟着端点走**：将来谁实现 `/cost/dashboard`，谁必须同批补 RBAC 登记 —— 已写进 §11 指针 | `app/services/rbac/policy.py:75-80` 只登记了 6 个 `/ontology/*`，**未含 cost** |
 | **D5** | C1 判据口径 | 沿用 **X-1 裁决**（P5-B，2026-10-07）：P6-H 的 0.0294 **只作历史数字**；引用时必须同时写明判分表版本与 `graph_spec.retriever` | `changes/P5-B/integration-log.md` §8 |
 | **D6** | 成本敞口 | 本批**预期 ¥0**（不调 LLM 做冷启动实测；只测接线与契约）。若确需跑真实冷启动 ⇒ 先说明再花 | — |
 
@@ -166,6 +167,7 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是一片�
 | 本体真源 | `demo/attendance/ontology_schema.json`（13 实体类 / 14 关系类），由 `backend/scripts/seed_attendance_ontology.py:48-56` 读取 |
 | 测试（**无 xfail / skipif** ⇒ 真在拦） | `backend/tests/test_ontology_placeholder_endpoints.py`（`:81` 断言 501、`:84` 断言 detail 含 `P5-M6`）、`backend/tests/test_ontology.py`（应用层已覆盖）、`backend/tests/test_ontology_suggest.py`（`:114`「建议不写库」硬约束） |
 | 契约路径计数门禁 | `backend/tests/test_openapi_contract.py:41-49` 与 `:106-107`（现 **26 路径**） |
+| **`applied` 枚举的三份口径**（§5 D3 的依据，别重新查） | `specs/m6-ontology-incremental.md:166`「未走完前 5 步，**`/api/v1/ontology/merge` 端点不得对外实现**」；`specs/m2-extract-kg.md:128` status 行含「另有 M6 前向预留值 `applied`」+ `:134-136` 注脚；`changes/archive/2026-10-02-P0-m6-finalization/integration-log.md:175`「**文档侧对齐**，⚠️ 代码 / 契约侧未动」 |
 
 ---
 
@@ -204,7 +206,7 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是一片�
 | 6 | **契约零漂移** | `export_openapi.py --check` 零 diff；`test_openapi_contract.py` 的 26 路径计数不变 |
 | 7 | **护栏不倒退** | `check_startup_readiness.py` 仍 `[OK]` 17 / `[~~]` 0 / `[--]` 0 |
 | 8 | **pytest 不降** | CI 口径仍 ≥ 1007 passed / 5 skipped / **0 failed** |
-| 9 | **RBAC 不裸奔** | `/api/v1/cost/dashboard` 未登记 RBAC 这件事**要么本批处理、要么在 integration-log 明确登记为已知**（不许既不处理也不登记） |
+| 9 | **RBAC 债不丢、不裸奔** | 按 §5 **D4 裁决**：本批**只登记、不动 `rbac/policy.py`** —— integration-log 里写明「`/cost/dashboard` 恒 501 期间无访问面；将来实现该端点者必须同批补 RBAC 登记」。**不许**既不处理也不登记，**也不许**顺手去改 RBAC 表 |
 | 10 | **CI 四 job 全绿**，`gh run watch <id> --exit-status` 退出码 0，run id 回登 integration-log |
 
 ---
@@ -220,9 +222,23 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是一片�
 | # | 情况 | 例子 |
 |---|---|---|
 | 1 | **前置不成立** | 开工自检与 §8 基线不符且不属已知环境债 |
-| 2 | **要动 spec / ADR 才能继续** | D3 的 M2 spec 升 `applied` 枚举、RBAC 是否要补 cost |
+| 2 | **要动 spec / ADR 才能继续**（**先做完下面的三步自检再报告**） | 本已裁决的 D3（`applied`）、D4（cost RBAC）**都不属此类**；真踩到的例子是「confirm 链路非加不可一个新状态」 |
 | 3 | **边界冲突** | 实现过程中发现必须触碰 §4 的某条 Non-goal（如不得不改契约） |
 | 4 | **CI 红了且复核两遍仍红** | 带上 job 名 + 失败行 + 你自己的归因 |
+
+### ⚠️ 第 2 类的正确处置顺序：**先缩范围，后报告**
+
+报告之前**依次答完这三步**，答完仍绕不过去才算真的踩到第 2 类：
+
+1. 卡住的那个**端点 / 动作，是不是本来就在 §4 Non-goal 里**？
+   —— D3 就是标准样本：`applied` 只卡 `/ontology/merge`，而 merge 被 §4 第 2 条排除了 **⇒ 它根本不该触发升级**。
+2. 能不能把它**整体推到下一批**，而不是在本批给 spec 开一个变更口子？
+   —— `/cost/dashboard` 与 RBAC 就是这么处理的（端点不动 ⇒ 债不动，随端点一起走）。
+3. 真不行了 —— **报告时带上**：哪份 spec 的哪一行、要加/改什么、为什么绕不过去、
+   以及**你试过的替代方案**。不接受"spec 没写所以做不了"这种笼统结论。
+
+**为什么这么定**：动 spec 的代价比推迟一个端点高一个量级（要连带契约同步五步 + 前端重导 + CI 零漂移校验），
+而本仓库历史上多数"必须改 spec"最后都被证明是**范围没切干净**。
 
 不在上述四类范围内的：按 §5 决策表已裁决的项**直接执行**，
 文档里已有建议项的**采纳建议项**并在 `integration-log.md` 登记。
@@ -236,4 +252,8 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是一片�
 - **冷启动通了 ≠ LLM 建议质量达标**：本批不评估建议质量（那要花钱跑多轮并人工判）。
 - **`ontology_actions` 建了 ≠ 可举证**：没往里写东西的审计表等于没建。
 - **本地 pytest 绿 ≠ CI 绿**：本地口径还有 2 条 `affiliation-demo-v2` 的已知 fail。
+- **`/cost/dashboard` 的 RBAC 债登记了 ≠ 债还了**：恒 501 期间它没有访问面；一旦谁实现它，
+  必须同批补 RBAC 登记（随端点走的债，见 §9 判据 9）。
+- **D3 / D4 已裁决 ≠ 那条 spec 要求作废**：`applied` 契约同步五步仍然必须走，
+  只是**跟着 merge 端点走** —— 本批没做 merge 所以没触发。
 - **`[OK]` 17 条护栏 ≠ 全绿真实**：`check_startup_readiness.py` 自己说过" pytest 全绿 ≠ 护栏在拦"。
