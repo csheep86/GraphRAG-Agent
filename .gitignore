@@ -53,6 +53,10 @@ backend/storage/
 .DS_Store
 Thumbs.db
 
+# License 文件（ADR-0006 §2.2）：含 Ed25519 签名与本机机器指纹。
+# 客户现场由 deployment-spec §4.2 的步骤 3 自行放入，**严禁入库**。
+deploy/license/*.lic
+
 # 例外：保留 MVP 输出目录的占位文件
 !**/output/.gitkeep
 
