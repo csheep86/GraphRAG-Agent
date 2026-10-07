@@ -67,7 +67,7 @@
 
 1. **排期队列指向它**：`docs/delivery-plan.md:198` 原文明写 P5 的顺序是
    `D4 承接 Sprint10.5 → **D2 M6** → D1 → D3/D5/D7/D8`，而 **D4 已在 2026-10-07 由 P5-B 收口**
-   （CI run `37595768058` 四 job 全绿）。队列的自然下一项就是 D2。
+   （CI 四 job 全绿，run id 见 §8，开工时以实读为准）。队列的自然下一项就是 D2。
 2. **开工硬闸门已满足，不必再等**：M6 的硬闸门是 `specs/m6` 升 **v1.0**，
    `specs/m6-ontology-incremental.md:3-5` 已是 **v1.0（2026-10-02 定稿）**，`:323` §10 checklist 七项全勾。
    但同一份 spec `:7` 也明写：**「定稿 ≠ 已实现：7 个端点仍为 501 占位骨架」**。
@@ -107,6 +107,7 @@ uv run python scripts/check_seams.py                  # 期望：ERROR 0 / WARN 
 uv run python scripts/export_openapi.py --check       # 期望：零 diff
 uv run pytest -q                                      # 本地口径基线见 §8（注意 §0.5 第 2 份文档的环境变量）
 Get-NetTCPConnection -LocalPort 8009 -State Listen    # embedding 服务（跑 C 类判据才需要）
+cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是一片绿的（否则先别动代码）
 ```
 
 **任何一条与 §8 基线不符，先治病，不要带着红底写代码** —— 否则你无法分辨 CI 红是自己改的还是本来就红的。
@@ -172,7 +173,7 @@ Get-NetTCPConnection -LocalPort 8009 -State Listen    # embedding 服务（跑 C
 
 - ✅ **J3 前端虚线**（¥0）：过期跳画虚线置灰；判定单点在 `frontend/src/lib/reasoning.ts`。
 - ✅ **演示图谱恢复**：Entity 2855 / Relation 3643、`attendance-demo-v1` = ready、`verify_and_close` 四项 OK。
-- ✅ **D4 收口**：CI run `37595768058` 四 job 全绿。
+- ✅ **D4 收口**：CI 四 job 全绿（收口时最近一次绿 run `37598886121`，开工时用 §8 的命令实读最新）。
 - ✅ C1 = 0.1765（graph 1.000 / baseline 0.850）；**X-1 裁决**见 §5 D5。
 
 ---
@@ -187,7 +188,7 @@ Get-NetTCPConnection -LocalPort 8009 -State Listen    # embedding 服务（跑 C
 | `check_seams.py` | ERROR 0 / WARN 0 / OK 12 |
 | `export_openapi.py --check` | 零 diff（**26 路径**） |
 | 前端三条 | `typecheck` / `lint` / `build` 均 exit 0；`gen:api` 后 git diff 为空 |
-| 最近一次绿 CI | **run `37595768058`（2026-10-07，commit `27e3ec48`）** |
+| 最近一次绿 CI | **不要照抄本文档写死的 run id**（每次提交都会产生新 run，抄了必然过期）。开工时用 `gh run list --limit 1` 实读：P5-B 收口时点的值是 **run `37598886121` / commit `7f82d34d`**，之后的以实读为准 |
 
 ---
 
