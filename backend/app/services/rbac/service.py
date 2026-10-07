@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ErrorCode
-from app.db.models import Role, UserRole
+from app.db.models import USER_STATUS_ACTIVE, Role, User, UserRole
 from app.services.audit import record_audit_entry
 from app.services.rbac.policy import allowed_actions, scene_of
 from app.services.rbac.roles import PRESET_ROLES
@@ -39,12 +39,16 @@ REASON_NO_ROLE = "no_role_assignment"
 REASON_ACTION_NOT_PERMITTED = "action_not_permitted"
 REASON_SCENE_NOT_IN_SCOPE = "scene_not_in_scope"
 REASON_DOCUMENT_NOT_IN_SCOPE = "document_not_in_scope"
+#: P2-C（D4）：账号被停用。`user_roles` 还在也照样拒——"停用"就是对账号的
+#: 整体收回，不是逐条撤权；留着授权记录是为了保留"他曾经有什么"的可追溯性。
+REASON_ACCOUNT_DISABLED = "account_disabled"
 
 _DENIAL_MESSAGES: dict[str, str] = {
     REASON_NO_ROLE: "当前主体在本租户内没有任何角色授权",
     REASON_ACTION_NOT_PERMITTED: "当前角色在该资源上没有该操作的权限",
     REASON_SCENE_NOT_IN_SCOPE: "授权的场景范围不含本次请求的场景",
     REASON_DOCUMENT_NOT_IN_SCOPE: "授权的文档范围不含本次请求的文档",
+    REASON_ACCOUNT_DISABLED: "该账号已停用，不再具有任何权限",
 }
 
 
@@ -106,6 +110,30 @@ def load_role_grants(
         RoleGrant(role=name, doc_scope=row.doc_scope, scene_scope=row.scene_scope)
         for row, name in rows
     )
+
+
+def account_status(session: Session, *, org_id: UUID, user_id: UUID) -> str | None:
+    """读该主体在本租户内的 `users.status`；**查不到该主体**返回 ``None``。
+
+    **为什么"查不到"不算拒绝**（这是本批最容易被误改的一行）：
+    P2-C 之前 `user_roles` 授给的是**库里根本不存在的主体**（R29 / R30 的孤儿问题），
+    若这里改成"查不到即拒"，上千条既有用例会为了与己无关的原因集体变红，
+    而它们要验的东西（租户隔离 / 引用口径）会一次性失去判据。
+    ⇒ **孤儿主体的处置权在 R30（`tests/test_identity_anchor.py` 的严格视图断言），
+    不在这里**。这里只负责"有这个账号、且它被停用了 ⇒ 拒"。
+
+    ``org_id`` 是显式过滤条件，不是靠 RLS 兜的（ADR-0003 §3.7：应用层过滤是
+    **常设防线**，不因 RLS 生效而移除）。
+    """
+    return session.scalar(
+        select(User.status).where(User.org_id == org_id).where(User.id == user_id)
+    )
+
+
+def is_account_active(session: Session, *, org_id: UUID, user_id: UUID) -> bool:
+    """``True`` = 允许进入权限判定（无该主体行也放行，理由见 :func:`account_status`）。"""
+    status = account_status(session, org_id=org_id, user_id=user_id)
+    return status is None or status == USER_STATUS_ACTIVE
 
 
 def build_permission_context(
@@ -252,15 +280,18 @@ def _merge_scope(values: list[list | None]) -> tuple[str, ...] | None:
 
 __all__ = [
     "PERMISSION_DENIED_ACTION",
+    "REASON_ACCOUNT_DISABLED",
     "REASON_ACTION_NOT_PERMITTED",
     "REASON_DOCUMENT_NOT_IN_SCOPE",
     "REASON_NO_ROLE",
     "REASON_SCENE_NOT_IN_SCOPE",
     "PermissionContext",
     "RoleGrant",
+    "account_status",
     "build_permission_context",
     "ensure_preset_roles",
     "evaluate",
+    "is_account_active",
     "load_role_grants",
     "permission_denied_error",
     "record_permission_denied",

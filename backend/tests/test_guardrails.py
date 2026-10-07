@@ -182,6 +182,14 @@ USER_COLUMNS = frozenset(
 #: **严格度不变**（任何**第四方**列仍会被下面的相等断言判红），只是把新的 ADR 来源显式登记进来。
 SEAT_COLUMNS = frozenset({"activated_at", "disabled_at"})
 
+#: **2026-10-07 P2-C**：外部身份的两列（子任务 ②）。与上面 `SEAT_COLUMNS` 同款处置——
+#: **判据严格度不变**（任何**第五方**列仍会被下面的相等断言判红），只是把新的来源
+#: 显式登记进来。两列**当前 0 消费者**：本地登录按 `username` 查，它们是给
+#: 「接缝 1 第二实现（企业身份源）」留的查找键，启用条件登记在
+#: `docs/adr/0004-integration-seams.md`（功能预留原则第 5 条）。
+#: ⚠️ **不进契约**：`export_openapi.py --check` 必须仍是零 diff。
+EXTERNAL_IDENTITY_COLUMNS = frozenset({"issuer", "subject"})
+
 
 def test_g18_users_table_exists() -> None:
     """✅ **已转正（2026-10-01，P2-A）**：`users` 表已建，本例由 XPASS 转常驻门禁。
@@ -209,10 +217,11 @@ def test_g18_users_table_exists() -> None:
     users = Base.metadata.tables["users"]
 
     columns = {column.name for column in users.columns}
-    expected = set(USER_COLUMNS) | SEAT_COLUMNS
+    expected = set(USER_COLUMNS) | SEAT_COLUMNS | EXTERNAL_IDENTITY_COLUMNS
     assert columns == expected, (
         "users 的列必须逐字等于 specs/m5-permission-audit.md §4.1 的 7 列"
-        "**加上 ADR-0006 §2.4 的两列席位列**："
+        "**加上 ADR-0006 §2.4 的两列席位列**"
+        "**加上 ADR-0004 登记的两列外部身份预留列**："
         f"多 {sorted(columns - expected)}，缺 {sorted(expected - columns)}"
     )
     # 保留「spec 7 列一个都不能少」的原判据（上面放宽的那句容易被误读为整体放宽）
@@ -249,7 +258,22 @@ def test_g18_users_table_exists() -> None:
 #: ④ #: ④ 提示早boost只是这里被登记了 —— G-23 转正仍必须看自身判据（行为侧 403 + 落审计）， —— G-23 转正仍必须看自身判据（行为侧 403 + 落审计），
 #:    **不得**因为引用了 User 就宣称 License / 账号体系完工。
 #: ⚠️ 即便登记了，`app/` 下**仍无端点直接读 users** ⇒ 仍不得宣称账号体系落地。
-USERS_CONSUMER_MODULES: frozenset[str] = frozenset({"services/license/policy.py"})
+#: **2026-10-07 P2-C 登记**（第二批、第三批真实消费者）。一并交代四件事：
+#: ① **归属 DR-D9**（真实登录）+ **DR-B9**（RBAC 判定）——本批把 `users.status`
+#:    接进 RBAC（D4），并把「首次成功登录」接成 `activated_at` 的回填点；
+#: ② 所需列：两处**都不**需要新列 —— `status` / `password_hash` / `activated_at`
+#:    已随 P2-A / P4 的迁移就位；本批只加预留列 `issuer` / `subject`（**随本批迁移**补）；
+#: ③ 接缝 1 若因此新增实现 ⇒ **没有**（D1 顺延）。登录**不**造第二个 `AuthProvider`：
+#:    它只查库验口令，令牌签发/验签落在 `app/core/token.py`（核心原语，不是接缝实现）；
+#: ④ 对应护栏：G-18 三条**仍绿**（users 表形状未变）+ G-26（新增受控函数已登记）
+#:    + 契约零漂移 ⇒ **仍不得**宣称账号体系 / SSO 完成（见 `changes/P2-C/proposal.md` §5）。
+USERS_CONSUMER_MODULES: frozenset[str] = frozenset(
+    {
+        "services/license/policy.py",
+        "services/auth/login.py",
+        "services/rbac/service.py",
+    }
+)
 
 
 def test_g18_users_consumers_are_registered() -> None:

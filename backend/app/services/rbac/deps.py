@@ -23,8 +23,10 @@ from fastapi import Depends, Request
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.services.rbac.policy import ACTION_READ, ACTION_WRITE
 from app.services.rbac.service import (
+    REASON_ACCOUNT_DISABLED,
     build_permission_context,
     evaluate,
+    is_account_active,
     permission_denied_error,
     record_permission_denied,
 )
@@ -52,7 +54,10 @@ def path_document_id(request: Request) -> UUID | None:
 def require_permission(resource: str, action: str) -> Any:
     """声明「本端点需要 ``resource`` 上的 ``action`` 权限」的路由依赖。
 
-    判定顺序：角色 → 资源 × 操作 → 场景（由资源推导）→ 文档（路径参数）。
+    判定顺序（**P2-C 起在前面加了一道**）：
+    **账号状态** → 角色 → 资源 × 操作 → 场景（由资源推导）→ 文档（路径参数）。
+    账号停用是**整体收回**，先看它可以避免"授权记录还在就还能用"
+    （`user_roles` 保留历史授权是有意为之，故不能靠撤授权来停用账号）。
     拒绝时**先落审计**（``action=permission.denied``）**再**抛 403 `FORBIDDEN`。
     """
     if action not in (ACTION_READ, ACTION_WRITE):  # pragma: no cover - 配置期错误
@@ -64,6 +69,30 @@ def require_permission(resource: str, action: str) -> Any:
         session: DbSession,
         trace_id: TraceId,
     ) -> None:
+        # **P2-C / D4：账号停用优先于一切授权判定**。
+        # 放在 build_permission_context 之前是刻意的：`user_roles` 里还留着授权记录
+        # 是**有意**的（保留"他曾经有什么"的可追溯性），所以不能靠"撤掉授权"来停用
+        # 一个账号——只能在这里加一道"账号整体不可用"的前置门。
+        if not is_account_active(
+            session, org_id=identity.org_id, user_id=identity.actor_id
+        ):
+            reason = REASON_ACCOUNT_DISABLED
+            record_permission_denied(
+                session,
+                org_id=identity.org_id,
+                actor_id=identity.actor_id,
+                resource=resource,
+                action=action,
+                reason=reason,
+                trace_id=trace_id,
+                actor_ip=_client_ip(request),
+                method=request.method,
+                path=request.url.path,
+            )
+            raise permission_denied_error(
+                resource=resource, action=action, reason=reason, roles=()
+            )
+
         context = build_permission_context(
             session, org_id=identity.org_id, user_id=identity.actor_id
         )
