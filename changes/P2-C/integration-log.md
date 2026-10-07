@@ -45,7 +45,7 @@
 | 7 | 接缝门禁 ERROR 0（本批**未新增**实现） | ✅ `check_seams.py` ERROR 0 / OK 12 |
 | 8 | 契约零漂移（paths 28）+ 前端无漂移 | ✅ `export_openapi.py --check` 零 diff；`npm run gen:api` 生成物同批提交 |
 | 9 | 测试基线不回归 | ✅ 本地 **1006 passed / 4 skipped / 2 failed**（999 基线 **+7** 新增；2 条失败 = 改动前**逐条相同**的语料相关用例） |
-| 10 | CI 四 job 全绿（R-10：CI 才是终裁） | ⏳ 见 §5 |
+| 10 | CI 四 job 全绿（R-10：CI 才是终裁） | ✅ run **37571415841** 四 job 全绿；`1007 passed / 5 skipped / 0 failed`，同口径对照 **1000 → 1007（+7、0 回归）** |
 
 ---
 
@@ -100,7 +100,23 @@ S1 读到 **12 条 Non-goals**；S3 配置同步 `[OK]`；S5 无孤独模块。
 
 | run | 结论 |
 |---|---|
-| 待回填 | 四 job 全绿 / 红 |
+| **37571248946** | ❌ **红（1 处）**：`后端（ruff + pytest）` 的 **Ruff 格式检查** —— `app/services/rbac/policy.py:129` 需重排。成因：该文件的 `RESOURCE_AUTH` / `_actions_for` 改动发生在**最后一次 `ruff format` 之后**，本地只补跑了 `ruff check`（它查不出格式）⇒ 漏网。修法 = `ruff format .`（提交 `aa54e7e`）。**教训**：`ruff check` 与 `ruff format` 是**两道**门，改完代码两个都要跑，只跑一个不算过 |
+| **37571415841** | ✅ **四 job 全绿**：契约校验 / 后端（ruff + pytest）/ 前端（lint + gen:api）/ 流水线汇总 |
+
+**后端 pytest 读数（CI 口径）**：**`1007 passed / 5 skipped / 0 failed`**。
+
+同口径对照（**改动前**那次 run `37565500068`，docs-only 提交）：**`1000 passed / 5 skipped`**
+⇒ **+7 passed、skipped 数不变、0 回归** —— 7 = `test_login_flow.py` 5 条 + `test_identity_anchor.py` 2 条，**逐条对得上**。
+
+⚠️ **基线口径订正（不静默）**：`new-session-prompt.md` §8 写的基线是「**994 passed / 11 skipped**」，
+而改动前 CI 实测是 **1000 / 5**。差 6 passed / -6 skipped 的来源**未逐条查证**（中间隔着 P4 之后
+的若干提交），因此本批**只**采用「改动前后**同一口径**」的对照（1000→1007），
+**不用** 994 这个数做差值。⇒ 判据 9 的「不回归」以 CI 同口径对照为准。
+
+**Sprint 收尾一步的处置（显式登记，不静默略过）**：`dev-doc-status.md` §9.2 要求
+「更新 `sprint-calendar.md` §5 状态列」，而该文件**已归档**到
+`changes/archive/2026-10-01-obsolete-plans/` ⇒ **无文件可更新**，本批**跳过该步**，
+理由登记在此；状态改登在 `dev-doc-status.md` §0 的 P2-C 条目与 §8 R30。
 
 ---
 
