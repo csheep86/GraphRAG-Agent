@@ -250,6 +250,11 @@ rubric-v2 重判**（Q5 / Q7 两条翻 true，35 → **37**）。
 | `check_startup_readiness.py` | **`[OK]` 17 / `[~~]` 0 / `[--]` 0** | ✅ 不倒退 |
 | `ruff check .` / `ruff format --check .` | clean / **252 files already formatted** | ✅ 两个都跑（P2-C 教材） |
 | `check_session_drift.py` | 每段收尾均 OK；S1 读到 10 条 Non-goals、S2 未超阈值、S5 无孤独模块 | ✅ |
+| **CI（R-10 终裁）** | **run `37594891877` 四 job 全绿**；其中 pytest = **1007 passed / 5 skipped**，与 §8 CI 基线**逐位一致** | ✅ |
+
+CI 四 job：`契约校验（前后端漂移门禁）` / `后端（ruff + pytest）` / `前端（lint + gen:api）` /
+`流水线汇总` —— **全部 success**（`gh run watch --exit-status` 退出码 0）。
+CI 侧的 ruff 也是 `All checks passed!`。
 
 ---
 
@@ -287,7 +292,8 @@ rubric-v2 重判**（Q5 / Q7 两条翻 true，35 → **37**）。
    除 J3 的渲染部分（降级，已标注）外全部实跑：typecheck / build / lint 三条 exit 0、
    `gen:api` 为零 diff、判定函数喂真实 hop 数据跑出 `ASSERT_OK`、图谱各项读数来自 Neo4j
    实读、C1 两侧 40 题 live、pytest 两种口径各跑一遍。
-   **CI 尚未出结果** ⇒ 终裁仍在 CI（R-10）。
+   **CI 已出结果并全绿**（run `37594891877`，pytest 1007 passed / 5 skipped，与 §8 基线逐位一致）
+   ⇒ 终裁已过（R-10）。
 
 ---
 
@@ -300,7 +306,7 @@ rubric-v2 重判**（Q5 / Q7 两条翻 true，35 → **37**）。
 2. **【未追查】`valid_to` 非空 30 vs 69 的差**（§3.3）：成因没有追到底。若下一批要靠这个数做
    判据，建议先把它当作独立小议题。
 
-（其余三类升级边界均未触发：未改 spec / ADR、无边界冲突、CI 未红——CI 结果待出。）
+（其余三类升级边界均未触发：未改 spec / ADR、无边界冲突、CI 四 job 全绿。）
 
 ---
 

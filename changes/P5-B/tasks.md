@@ -38,4 +38,4 @@
 - [x] `check_seams.py` ERROR 0 / WARN 0 / OK 12、`export_openapi.py --check` 零 diff
 - [x] `ruff check` / `ruff format --check` 均过；`check_startup_readiness.py` 仍 `[OK]` 17 / `[~~]` 0 / `[--]` 0
 - [x] 写 `changes/P5-B/integration-log.md`（含 §6 环境债台账 + 下一批指针）
-- [ ] CI 四 job 全绿，run id 回登 `integration-log.md`（R-10：CI 才是终裁）
+- [x] CI 四 job 全绿：**run `37594891877`**，pytest = 1007 passed / 5 skipped（与 §8 CI 基线逐位一致）
