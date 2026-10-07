@@ -8,7 +8,9 @@
    ① ``AuditMiddleware``（全量写）；② slowapi 429 handler（``rate_limit.triggered``，
    A14）；③ ``agents.py`` fail-open 逃生阀分支（``tenant_leak.warn``，A12）；
    ④ ``app/services/rbac/service.py::record_permission_denied``（``permission.denied``，
-   M5 §3 验收 1 —— **拒绝必须留痕**，只返 403 不留痕不算完成）。
+   M5 §3 验收 1 —— **拒绝必须留痕**，只返 403 不留痕不算完成）；
+   ⑤ ``app/core/egress.py::_record_violation``（``private_deploy.violation``，
+   M5 §3 验收 4 —— 私域出向被阻断必须留痕，**先写审计再抛 AppError**）。
    新增调用方必须先在此登记。
 2. **`detail` 只写结构化字段**：**绝不写响应体原文**（决策 **A5**）。本批次不引入
    脱敏器（属 H5 / S11），所以宁可不写，也不先把原文写进库再想办法脱敏。

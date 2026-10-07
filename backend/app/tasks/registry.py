@@ -42,6 +42,7 @@ from tenacity import (
 )
 
 from app.core.config import get_settings
+from app.core.egress import guard_egress
 from app.core.errors import AppError, ErrorCode
 from app.db.models import AffiliationTask, Document, KgVersion
 from app.db.session import open_session
@@ -252,6 +253,13 @@ async def _do_parse(
 
         # 文件名不使用原始上传名（M5 §4.5：文件名不得明文外发）；
         # 后缀是解析器的选择依据，见 _PARSE_MIME_TO_SUFFIX 注释
+        # 私域出向管控（M5 §3 验收 4）：MinerU 是第二个已知出向面，**构造期**判定。
+        # 任务侧拿着 TaskSpec.org_id ⇒ 审计行归属明确，不必回落到 'system'（偏离 X-3）。
+        guard_egress(
+            settings.mineru_api_base,
+            target="mineru.api_base",
+            org_id=document.org_id,
+        )
         client = MineruClient(
             base_url=settings.mineru_api_base,
             token=settings.mineru_token,

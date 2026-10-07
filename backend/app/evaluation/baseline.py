@@ -37,6 +37,7 @@ from hashlib import sha256
 from typing import Any, Protocol
 
 from app.core.config import get_settings
+from app.core.egress import guard_egress
 from app.evaluation.metrics import AnswerRecord
 from app.prompts.prompt_loader import load_prompt
 from app.services.graphs import EVIDENCE_CHUNK_LIMIT, EvidenceChunk
@@ -251,9 +252,14 @@ def build_default_embedder() -> OpenAICompatibleEmbedder:
         raise EmbedderUnavailable(
             "未配置 embedding 密钥（EVAL_EMBEDDING_API_KEY 或 LLM_API_KEY）"
         )
+    base_url = settings.eval_embedding_base_url or settings.llm_base_url
+    # 私域出向管控（M5 §3 验收 4）：评测 embedding 是第三个已知出向面。
+    # **本地 embedding 服务（127.0.0.1:8009）走的就是这条** ⇒ 内网 ⇒ 天然放行，
+    # 这正是「内网双轨不被自己的守卫误杀」判据的落点（D9）。
+    guard_egress(base_url, target="eval.embedding.base_url")
     return OpenAICompatibleEmbedder(
         model=settings.eval_embedding_model,
-        base_url=settings.eval_embedding_base_url or settings.llm_base_url,
+        base_url=base_url,
         api_key=settings.eval_embedding_api_key or settings.llm_api_key,
         timeout_seconds=settings.llm_request_timeout_seconds,
     )

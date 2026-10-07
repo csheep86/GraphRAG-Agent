@@ -6,6 +6,10 @@
 - 内网双轨（本地 vLLM / Ollama，plan §18.4）落地时切换 base_url 即可，
   **不新增档位不写 stub**（ADR-0004 §3 第 2 条）。
 
+出向管控（M5 §3 验收 4）：本函数是 LLM 出向的**唯一构造点**，私域守卫挂在这里即
+覆盖全部 LLM 路径（``AgentService`` / 本体建议 / 抽取的 ``llm`` 档都经此构造）。
+内网 base_url **天然放行**——否则"只改 base_url 就切内网"这句话会被自己的守卫否掉。
+
 抽象原则（批次 A2 CP 闸门）：「只多一层」——工厂仅做构造参数收敛，
 不引入额外消息转换 / 会话管理。
 """
@@ -15,6 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from app.core.config import get_settings
+from app.core.egress import guard_egress
 
 if TYPE_CHECKING:  # 避免在未装 langchain 的环境下导入失败
     from langchain_openai import ChatOpenAI
@@ -38,6 +43,12 @@ def build_chat_model() -> ChatOpenAI:
             f"未知 llm_provider={provider!r}（当前仅支持 'openai_compatible'；"
             "内网本地端点同样走 openai_compatible，仅切 base_url）"
         )
+
+    # 私域出向管控（M5 §3 验收 4）：**构造期**判定，目标是 settings.llm_base_url。
+    # 违规 ⇒ 抛 503 PRIVATE_DEPLOY_BLOCKED，**一个字节都没发出去**。
+    # 这也是内网双轨（本地 vLLM / Ollama 只改 base_url）的使用前提——
+    # 内网地址天然放行，不需要进白名单（D9）。
+    guard_egress(settings.llm_base_url, target="llm.base_url")
 
     from langchain_openai import ChatOpenAI  # type: ignore[import-not-found]
 
