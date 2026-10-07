@@ -52,7 +52,7 @@
 1. **用户 2026-10-07 直接指名**：在 P5-A 的升级报告上批「**P5-B**」。
    P5-A 已用四条实测证明「裁决 A 成立与否」这个交付物是 09-30 之前的历史
    （`changes/archive/2026-10-07-P5-A/integration-log.md` §2/§3/§4），
-   它自己已提交推送、CI `37579395982` 全绿。
+   它自己已提交推送、CI `37585440393` 全绿。
 2. **J3 是 D4 唯一剩下的实质缺口**：后端 J1（`valid_to` 非空 69 条）/ J2（`inconsistent` 352）
    / J4（两时点选出的链不同）**均已在 2026-09-30 达成**；
    `13-as-of-evidence-rank.md:59-60` 原文：「`valid_to=2025-12-31` ——
@@ -170,7 +170,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
   + `resolve_document_expiry` ⇒ `inconsistent` 259→**352**、`valid_to` 60→**69**）
 - **R5 as-of 证据位次**（13 号记录：`reasoning.py` 已落 + 单测 6 条；两时点末端不同）
 - **契约字段**（`valid_from` / `valid_to` 已在 `ReasoningPathHop`，无需再改）
-- **P5-A 的证据链**（`changes/archive/2026-10-07-P5-A/integration-log.md`，CI `37579395982` 全绿）
+- **P5-A 的证据链**（`changes/archive/2026-10-07-P5-A/integration-log.md`，CI `37585440393` 全绿）
 
 ---
 
@@ -183,7 +183,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | 契约 | zero diff（**paths 28**） | P5-A 开工实测 |
 | 接缝门禁 | ERROR 0 / WARN 0 / OK 12 | P5-A 开工实测 |
 | 护栏 | **`[OK]` 17 / `[~~]` 0 / `[--]` 0**，地雷 0 项 | P5-A 开工实测 |
-| CI | `37579395982` 四 job 全绿 | P5-A 收尾 |
+| CI | `37585440393` 四 job 全绿 | P5-A 收尾 |
 | **G3 基线** | **C1 = 0.0294**（graph 0.875 / baseline 0.850） | P6-H，40 题口径 |
 
 ⚠️ **本地 vs CI 口径差**：本地整个演示环境已被清掉 ⇒ 那 2 条失败是环境债，不是本批引入。
