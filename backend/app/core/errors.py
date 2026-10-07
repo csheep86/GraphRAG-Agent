@@ -28,6 +28,10 @@ class ErrorCode(StrEnum):
     UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
     KG_VERSION_NOT_ACTIVE = "KG_VERSION_NOT_ACTIVE"
     KG_TENANT_LEAK = "KG_TENANT_LEAK"
+    #: M5 §3 验收 4：私域部署下检测到出向调用（目标既非内网、也不在
+    #: `ALLOWED_EGRESS_HOSTS` 白名单内）⇒ **构造期**阻断，返回 503。
+    #: 与 501 区分：501 = 基础设施不可用（连不上），本码 = **主动拒绝出网**（连通没问题）。
+    PRIVATE_DEPLOY_BLOCKED = "PRIVATE_DEPLOY_BLOCKED"
     #: Sprint 9.5 批次 C3：active 版本里没有考勤事实（EMPLOYEE / SHIFT / 打卡），
     #: 扫描**无从下手**。与「服务不可用」区分开——库是通的、版本是对的，只是没有数据。
     COMPLIANCE_NO_FACTS = "COMPLIANCE_NO_FACTS"
@@ -68,6 +72,7 @@ ERROR_HTTP_STATUS: Mapping[ErrorCode, int] = {
     ErrorCode.COMPLIANCE_NO_FACTS: 409,
     ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: 409,
     ErrorCode.TASK_INTERRUPTED: 409,
+    ErrorCode.PRIVATE_DEPLOY_BLOCKED: 503,
     ErrorCode.NOT_IMPLEMENTED: 501,
     ErrorCode.RATE_LIMITED: 429,
     ErrorCode.INTERNAL_ERROR: 500,
@@ -96,6 +101,7 @@ DEFAULT_MESSAGES: Mapping[ErrorCode, str] = {
     ErrorCode.COMPLIANCE_NO_FACTS: "No attendance facts in the active kg_version",
     ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: "Ontology schema version conflict",
     ErrorCode.TASK_INTERRUPTED: "Task interrupted by process restart",
+    ErrorCode.PRIVATE_DEPLOY_BLOCKED: "Egress to a non-approved host blocked by private deploy policy",
     ErrorCode.NOT_IMPLEMENTED: "Infrastructure unavailable",
     ErrorCode.RATE_LIMITED: "Too many requests",
     ErrorCode.INTERNAL_ERROR: "Internal server error",
@@ -138,6 +144,13 @@ ERROR_CODE_DESCRIPTIONS: Mapping[ErrorCode, str] = {
     ErrorCode.COMPLIANCE_NO_FACTS: (
         "active kg_version 内查不到 CSV 派生的 EMPLOYEE 节点，合规规则无从下手"
         "（Sprint 9.5 批次 C3）。与 501 区分：库是通的、版本是对的，只是没有考勤数据。"
+    ),
+    ErrorCode.PRIVATE_DEPLOY_BLOCKED: (
+        "私域部署下的出向被阻断（M5 §3 验收 4）：`PRIVATE_DEPLOY_ENABLED=true` 时，"
+        "出向目标必须落在**内网 / 回环**地址或 `ALLOWED_EGRESS_HOSTS` 白名单内，"
+        "其余一律在**客户端构造期**拒绝（请求尚未发出），并写"
+        "`audit_log(action=private_deploy.violation, status=failure)`。"
+        "与 501 区分：本码表示**主动禁止出网**，不是外部依赖不可用。"
     ),
     ErrorCode.NOT_IMPLEMENTED: (
         "基础设施不可用（Neo4j 图谱存储不可用（连不上 / 查询失败）"
@@ -190,6 +203,7 @@ ERROR_CODE_SOURCES: Mapping[ErrorCode, str] = {
     ErrorCode.SCHEMA_VERSION_NOT_ACTIVE: "M6 §5.5 / changes/archive/2026-10-02-P0-m6-finalization F2",
     ErrorCode.TASK_INTERRUPTED: "ADR-0001 §3.2",
     ErrorCode.COMPLIANCE_NO_FACTS: "Sprint 9.5 批次 C3 / changes/archive/2026-09-28-Sprint9.5/proposal.md §5.3",
+    ErrorCode.PRIVATE_DEPLOY_BLOCKED: "M5 §3 验收 4 / specs/m5-permission-audit.md §4.6",
     ErrorCode.NOT_IMPLEMENTED: "backend/CODEBUDDY.md §1.1 故障语义边界 / ADR-0002 §3.2",
     ErrorCode.RATE_LIMITED: "M5 §3 验收 5 / 决策 A14（Sprint 8.1 批次 B）",
     ErrorCode.INTERNAL_ERROR: "CODEBUDDY.md 错误响应规范",
