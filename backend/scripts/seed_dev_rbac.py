@@ -38,13 +38,15 @@ P2-B 给 10 个端点挂上了 RBAC 强制校验，而测试库那份 admin 授�
 
 ⚠️ **它不代表账号体系落地**：`app/` 下**仍无一处 `select(User)`**（`users` 依旧 **0 真实读者**）；
 本脚本在 `scripts/` 下，**不需要**登记进 `USERS_CONSUMER_MODULES`（那条闸门只盯 `app/`）。
-口令哈希目前**没有任何校验方**（登录归 P2-C）⇒ `--password` 缺省时取随机值且**不打印**。
+
+**2026-10-07 追加（P2-C）**：口令哈希的实现已**上移**到 `app/services/auth/password.py`
+（`hash_password` / `verify_password`）——登录上线后它就是校验方，两份实现必然漂移，
+故本脚本只保留调用。串格式与迭代数**未变**（既有那一行哈希无需重算）。
+`--password` 显式给的口令自此可被 `POST /auth/login` 真校验；缺省仍是随机值且**不打印**。
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import secrets
 import sys
 from pathlib import Path
@@ -58,28 +60,9 @@ from sqlalchemy import select  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.db.models import Role, User, UserRole  # noqa: E402
 from app.db.session import init_db, open_session  # noqa: E402
+from app.services.auth.password import hash_password  # noqa: E402
 from app.services.rbac.roles import PRESET_ROLES, RoleName  # noqa: E402
 from app.services.rbac.service import ensure_preset_roles  # noqa: E402
-
-#: PBKDF2 迭代数（OWASP 对 SHA-256 的推荐量级）
-_PBKDF2_ITERATIONS = 600_000
-
-
-def _hash_password(raw: str) -> str:
-    """PBKDF2-SHA256（**stdlib，零新增依赖**）。
-
-    ⚠️ 哈希算法的最终选型归 **P2-C** —— 届时才有校验方。这里只是为了让 `password_hash`
-    这条 `NOT NULL` 列拿到一个**真哈希**而不是占位串：为本仓**还没有校验方**的一列引入
-    `passlib` / `argon2` 依赖 ⇒ 无消费者依赖（预留纪律第 6 条），日后再换算法还得再迁移一次。
-    """
-    salt = secrets.token_bytes(16)
-    derived = hashlib.pbkdf2_hmac(
-        "sha256", raw.encode("utf-8"), salt, _PBKDF2_ITERATIONS
-    )
-    return (
-        f"pbkdf2_sha256${_PBKDF2_ITERATIONS}$"
-        f"{base64.b64encode(salt).decode()}${base64.b64encode(derived).decode()}"
-    )
 
 
 def _user_exists(session, actor_id) -> bool:
@@ -102,8 +85,10 @@ def _ensure_dev_user(session, org_id, actor_id, password: str | None) -> bool:
         User(
             id=actor_id,
             username=username,
-            # 不传口令 ⇒ 随机串（**不打印**）：当前没有任何校验方，打印也只是制造一条需要保管的秘密
-            password_hash=_hash_password(password or secrets.token_urlsafe(24)),
+            # 不传口令 ⇒ 随机串（**不打印**）：不打印的那条照样登不进来，
+            # 打印出来也只是制造一条需要保管的秘密。P2-C 起 ``--password`` 给的口令可被
+            # `POST /auth/login` 真校验（哈希算法与格式见 app/services/auth/password.py）。
+            password_hash=hash_password(password or secrets.token_urlsafe(24)),
             org_id=org_id,
             status="active",
         )

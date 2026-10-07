@@ -39,13 +39,11 @@ from app.core.config import get_settings
 from app.db.models import RLS_EXEMPT_TABLES, Base
 from app.db.rls import (
     APP_ROLE,
-    ORG_ENUMERATION_FUNCTION,
+    FUNCTION_TABLE_WHITELIST,
     ORG_GUC,
     OWNER_ROLE,
     POLICY_NAME,
-    PROBE_FUNCTION,
     PROBE_ROLE,
-    PROBE_TABLES,
     SYSTEM_SCHEMA,
     TENANT_TABLES,
     tenant_tables,
@@ -67,6 +65,10 @@ PROBE_CALL_SITES: frozenset[str] = frozenset(
     }
 )
 ORG_ENUMERATION_CALL_SITES: frozenset[str] = frozenset({"app/tasks/manager.py"})
+#: P2-C：登录查找的**唯一**调用点（`app/services/auth/login.py`）。
+#: 它是受控通道里第一个会返回列数据（含 `password_hash`）的函数 ⇒ 调用点必须
+#: 少到可以逐个点名；多出第二个调用点就是绕过面被悄悄扩大。
+LOGIN_LOOKUP_CALL_SITES: frozenset[str] = frozenset({"app/services/auth/login.py"})
 
 #: A / B 两个租户（判据 3 用；刻意**不用**默认租户，避免与脚手架默认值重合）
 _ORG_A = UUID("00000000-0000-4000-8000-0000000000a1")
@@ -436,9 +438,15 @@ def test_g26_5_exempt_set_is_exactly_registered() -> None:
 def test_g26_6_controlled_bypass_is_narrow() -> None:
     """受控绕过（A6 / A7）必须**窄到可以逐条点名**。
 
-    点名四件事：只有登记的两个函数、都是 ``SECURITY DEFINER``、只认表白名单、
+    点名四件事：只有登记的三个函数、都是 ``SECURITY DEFINER``、只认**各自**的表白名单、
     只有登记的调用点。任何一项变宽（多一个函数 / 多一张表 / 多一个调用点）
     都会让这条断言变红——**不允许**以"顺手加一个"的方式扩大绕过面。
+
+    **2026-10-07 P2-C**：受控函数由 2 个增至 **3 个**（新增 ``app.find_login_user``）。
+    判据**未放宽**：仍是「函数集合恰好相等」+「每个函数只碰自己被点名的表」，
+    只是把原来**一个全局白名单**改成**逐函数白名单**（`:data:`FUNCTION_TABLE_WHITELIST`）
+    ——否则新增函数要么进不去，要么被迫挤进 ``PROBE_TABLES`` 把 ``tenant_row_exists``
+    的探测面一起扩大（那才是真的放宽）。
     """
     functions = _rows(
         "SELECT proname, prosecdef, pg_get_userbyid(proowner), prosrc, "
@@ -449,9 +457,9 @@ def test_g26_6_controlled_bypass_is_narrow() -> None:
     )
     by_name = {row[0]: row for row in functions}
 
-    assert set(by_name) == {PROBE_FUNCTION, ORG_ENUMERATION_FUNCTION}, (
+    assert set(by_name) == set(FUNCTION_TABLE_WHITELIST), (
         f"受控 schema {SYSTEM_SCHEMA} 里的函数变成了 {sorted(by_name)}——"
-        "新增绕过函数须先登记（A7 登记表 + 本断言）"
+        "新增绕过函数须先登记（A7 登记表 + 本断言）；登记表里写了、库里却没有同样不许"
     )
 
     for name, (_, secdef, owner, source, can_login, bypass) in by_name.items():
@@ -466,11 +474,12 @@ def test_g26_6_controlled_bypass_is_narrow() -> None:
         assert bypass, (
             f"属主角色 {PROBE_ROLE} 没有 BYPASSRLS，则 FORCE 下函数体内查不到"
         )
-        # 函数体里出现的表**必须**恰好是白名单（多一张 = 绕过面变大）
+        # 函数体里出现的表**必须**在该函数自己的白名单内（多一张 = 绕过面变大）
+        allowed = FUNCTION_TABLE_WHITELIST.get(name, frozenset())
         referenced = set(re.findall(r"public\.([a-z_]+)", source))
-        assert referenced <= set(PROBE_TABLES), (
+        assert referenced <= set(allowed), (
             f"{SYSTEM_SCHEMA}.{name} 引用了白名单外的表 {sorted(referenced)}"
-            f"（白名单：{sorted(PROBE_TABLES)}）"
+            f"（它自己的白名单：{sorted(allowed)}）"
         )
 
     # 全库（超级用户除外）只允许这一个 BYPASSRLS 角色
@@ -485,6 +494,7 @@ def test_g26_6_controlled_bypass_is_narrow() -> None:
 
     _assert_call_sites("tenant_row_exists(", PROBE_CALL_SITES)
     _assert_call_sites("list_tenant_orgs(", ORG_ENUMERATION_CALL_SITES)
+    _assert_call_sites("find_login_user(", LOGIN_LOOKUP_CALL_SITES)
 
 
 def _assert_call_sites(symbol: str, registered: frozenset[str]) -> None:

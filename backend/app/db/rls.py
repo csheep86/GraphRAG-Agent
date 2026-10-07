@@ -73,6 +73,29 @@ PROBE_FUNCTION = "tenant_row_exists"
 #: A6 租户枚举函数名
 ORG_ENUMERATION_FUNCTION = "list_tenant_orgs"
 
+#: **P2-C 登录查找**函数名（受控旁路第 3 个）
+LOGIN_LOOKUP_FUNCTION = "find_login_user"
+
+#: 登录查找**唯一**允许触及的表。
+#:
+#: 为什么登录必须走旁路：登录时**还没有认证态** ⇒ 没有 org ⇒ 策略谓词为 NULL ⇒
+#: 一行都查不到。这与 A7 ``tenant_row_exists`` 是同一形态（"看不见"不是"绕过"）：
+#: 函数体只认这一张表、只按 ``username`` 取一行、属主仍是 ``rls_probe``。
+#:
+#: ⚠️ **它返回 ``password_hash``，这是受控通道里唯一一次返回列数据**（A7 只返回 boolean）。
+#: 代价评估：能调用它的只有 ``app_rls``，且只能按**精确 username** 取一行 ⇒ 它把
+#: "任意口令的在线猜测"从"不可能"放宽到"受 60/min 限流约束"。这是登录功能**不可分**的
+#: 一部分（不取哈希就无处校验），故按 A7 同款流程登记：**先登记、再改门禁**。
+LOGIN_LOOKUP_TABLE = "users"
+
+#: 逐函数的表白名单（G-26 判据 6 由「全局一个白名单」改为**逐函数**核对，
+#: 判据强度不变——每个函数仍然只能碰自己被点名的那几张表）。
+FUNCTION_TABLE_WHITELIST: dict[str, frozenset[str]] = {
+    PROBE_FUNCTION: PROBE_TABLES,
+    ORG_ENUMERATION_FUNCTION: ORG_ENUMERATION_TABLES,
+    LOGIN_LOOKUP_FUNCTION: frozenset({LOGIN_LOOKUP_TABLE}),
+}
+
 
 def tenant_tables() -> tuple[str, ...]:
     """租户表名（**由元数据推导**，不手工维护）。
@@ -224,6 +247,33 @@ $$;
 """
 
 
+def _login_lookup_body() -> str:
+    """``app.find_login_user``：按 ``username`` 取一行登录凭据（P2-C）。
+
+    **为什么只能用 ``LANGUAGE sql`` + 精确等值**：函数体里出现的每一张表都会被
+    G-26 判据 6 从源码里正则抓出来核对，写成动态 SQL 就会绕过那道核对。
+    """
+    return f"""
+CREATE OR REPLACE FUNCTION {SYSTEM_SCHEMA}.{LOGIN_LOOKUP_FUNCTION}(p_username text)
+RETURNS TABLE(
+    id uuid,
+    org_id uuid,
+    password_hash text,
+    status text,
+    activated_at timestamp with time zone,
+    disabled_at timestamp with time zone
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+    SELECT u.id, u.org_id, u.password_hash, u.status, u.activated_at, u.disabled_at
+    FROM public.{LOGIN_LOOKUP_TABLE} AS u
+    WHERE u.username = p_username
+$$;
+"""
+
+
 def system_function_statements() -> tuple[str, ...]:
     """建受控系统函数并收紧权限（幂等）。**须以超级用户**连库执行。"""
     return (
@@ -237,21 +287,30 @@ def system_function_statements() -> tuple[str, ...]:
         f"END $$;",
         _probe_body(),
         _org_enumeration_body(),
+        # P2-C：登录查找（它是唯一会返回列数据的受控函数，理由见 :data:`LOGIN_LOOKUP_TABLE`）
+        _login_lookup_body(),
         f"ALTER FUNCTION {SYSTEM_SCHEMA}.{PROBE_FUNCTION}(text, uuid) "
         f"OWNER TO {PROBE_ROLE}",
         f"ALTER FUNCTION {SYSTEM_SCHEMA}.{ORG_ENUMERATION_FUNCTION}() "
         f"OWNER TO {PROBE_ROLE}",
+        f"ALTER FUNCTION {SYSTEM_SCHEMA}.{LOGIN_LOOKUP_FUNCTION}(text) "
+        f"OWNER TO {PROBE_ROLE}",
         # ``BYPASSRLS`` 只免**行级策略**，不免**表权限** ⇒ 属主仍需显式 SELECT。
-        # 范围**只有白名单这两张表**（它是 NOLOGIN，只能通过上面两个函数被间接使用）。
+        # 范围**只有白名单这几张表**（它是 NOLOGIN，只能通过上面几个函数被间接使用）。
         *(
             f"GRANT SELECT ON public.{table} TO {PROBE_ROLE}"
-            for table in sorted(PROBE_TABLES)
+            for table in sorted(
+                PROBE_TABLES | ORG_ENUMERATION_TABLES | {LOGIN_LOOKUP_TABLE}
+            )
         ),
         f"REVOKE ALL ON FUNCTION {SYSTEM_SCHEMA}.{PROBE_FUNCTION}(text, uuid) FROM PUBLIC",
         f"REVOKE ALL ON FUNCTION {SYSTEM_SCHEMA}.{ORG_ENUMERATION_FUNCTION}() FROM PUBLIC",
+        f"REVOKE ALL ON FUNCTION {SYSTEM_SCHEMA}.{LOGIN_LOOKUP_FUNCTION}(text) FROM PUBLIC",
         f"GRANT EXECUTE ON FUNCTION {SYSTEM_SCHEMA}.{PROBE_FUNCTION}(text, uuid) "
         f"TO {APP_ROLE}",
         f"GRANT EXECUTE ON FUNCTION {SYSTEM_SCHEMA}.{ORG_ENUMERATION_FUNCTION}() "
+        f"TO {APP_ROLE}",
+        f"GRANT EXECUTE ON FUNCTION {SYSTEM_SCHEMA}.{LOGIN_LOOKUP_FUNCTION}(text) "
         f"TO {APP_ROLE}",
     )
 
@@ -286,8 +345,38 @@ def list_tenant_orgs(session: Session) -> tuple[UUID, ...]:
     return tuple(row for row in rows if row is not None)
 
 
+def find_login_user(session: Session, *, username: str) -> dict[str, Any] | None:
+    """P2-C：按 ``username`` 取一行登录凭据；查不到返回 ``None``。
+
+    **调用方必须传 `system_session()`**：登录时还没有认证态，绑了 org 反而会让
+    「另一个租户的同名账号」变成一场静默的串租户事故（虽然这里走的是旁路，但语义上
+    登录查找**不属于任何租户**，就该用无租户的会话）。
+
+    **为什么返回整行 dict 而不是只返回 id**：调用方要拿 ``password_hash`` 做校验、
+    拿 ``org_id`` 绑会话、拿 ``status`` 判停用——分三次查只会把"取凭据"这件事
+    拆成三个可以各自漂移的口子。
+
+    ⚠️ 返回值含 ``password_hash`` ⇒ **严禁**落日志 / 进响应体 / 进契约。
+    """
+    row = (
+        session.execute(
+            text(
+                "SELECT id, org_id, password_hash, status, activated_at, disabled_at "
+                f"FROM {SYSTEM_SCHEMA}.{LOGIN_LOOKUP_FUNCTION}(:username)"
+            ),
+            {"username": username},
+        )
+        .mappings()
+        .first()
+    )
+    return dict(row) if row is not None else None
+
+
 __all__ = [
     "APP_ROLE",
+    "FUNCTION_TABLE_WHITELIST",
+    "LOGIN_LOOKUP_FUNCTION",
+    "LOGIN_LOOKUP_TABLE",
     "ORG_ENUMERATION_FUNCTION",
     "ORG_ENUMERATION_TABLES",
     "ORG_GUC",
@@ -303,6 +392,7 @@ __all__ = [
     "drop_tenant_rls",
     "enable_statements",
     "ensure_exempt_tables_unprotected",
+    "find_login_user",
     "list_tenant_orgs",
     "system_function_statements",
     "tenant_row_exists",
