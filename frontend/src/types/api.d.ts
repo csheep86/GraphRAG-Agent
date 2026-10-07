@@ -540,6 +540,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/license/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * License 状态自检（豁免 License 拦截）
+         * @description 返回当前License 的加载状态与授权维度，**不返回**签名 / 正文 / 公钥。
+         *
+         *     **为什么它必须豁免**：无有效 License 时全站已拒绝受保护端点；若自检端点也被拦，客户现场就无法判断是 License 过期还是系统故障，排障会被彻底误导。
+         *
+         *     `has_license=false` 时看 `code` 字段即可定位原因（`LICENSE_MISSING` / `LICENSE_INVALID` / `LICENSE_FINGERPRINT_MISMATCH` / `LICENSE_EXPIRED` / `LICENSE_LIMIT_EXCEEDED` / `LICENSE_MODULE_DISABLED`）。
+         */
+        get: operations["getLicenseStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ontology/active": {
         parameters: {
             query?: never;
@@ -2383,7 +2407,7 @@ export interface components {
          * @description 统一业务错误码。HTTP 状态码与业务错误码分离（CODEBUDDY.md 错误响应规范）。
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "COMPLIANCE_NO_FACTS" | "SCHEMA_VERSION_NOT_ACTIVE" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | "HTTP_ERROR";
+        ErrorCode: "VALIDATION_ERROR" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "DOCUMENT_NOT_FOUND" | "ENTITY_NOT_FOUND" | "FILE_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "KG_VERSION_NOT_ACTIVE" | "KG_TENANT_LEAK" | "COMPLIANCE_NO_FACTS" | "SCHEMA_VERSION_NOT_ACTIVE" | "TASK_INTERRUPTED" | "NOT_IMPLEMENTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | "HTTP_ERROR" | "LICENSE_MISSING" | "LICENSE_INVALID" | "LICENSE_FINGERPRINT_MISMATCH" | "LICENSE_EXPIRED" | "LICENSE_LIMIT_EXCEEDED" | "LICENSE_MODULE_DISABLED";
         /**
          * ErrorResponse
          * @description 统一错误响应体（**所有** 4xx / 5xx 均使用本结构）。
@@ -2711,6 +2735,88 @@ export interface components {
              * @description 被激活的 kg_version 版本号
              */
             version: string;
+        };
+        /**
+         * LicenseLimits
+         * @description 授权维度上限（ADR-0006 §2.4 的组合维度 1 / 2）。
+         */
+        LicenseLimits: {
+            /**
+             * Max Orgs
+             * @description 租户数上限（0 = 未授权任何租户）
+             */
+            max_orgs: number;
+            /**
+             * Max Seats
+             * @description 席位数上限（0 = 未授权任何席位）
+             */
+            max_seats: number;
+        };
+        /**
+         * LicenseStatusResponse
+         * @description ``GET /api/v1/license/status`` 的响应。
+         *
+         *     **为什么这个端点必须豁免 License 拦截**：它是自检面 ——
+         *     客户现场拿到无效 License 时，若连「为什么不能用」都查不到，就只能提工单。
+         */
+        LicenseStatusResponse: {
+            /** @description 无效原因错误码；``has_license=true`` 时为 ``null`` */
+            code?: components["schemas"]["ErrorCode"] | null;
+            /**
+             * Enforced
+             * @description 是否处于强制模式（false = 放行但会落 bypass 审计）
+             */
+            enforced: boolean;
+            /**
+             * Grace Days
+             * @description 宽限天数
+             * @default 0
+             */
+            grace_days: number;
+            /**
+             * Has License
+             * @description 是否加载到有效 License
+             */
+            has_license: boolean;
+            /**
+             * In Grace
+             * @description 是否处于过期宽限期（**只读**可用）
+             */
+            in_grace: boolean;
+            /**
+             * License Id
+             * @description License 唯一标识（UUID）
+             * @default
+             */
+            license_id: string;
+            /** @description 维度上限 */
+            limits: components["schemas"]["LicenseLimits"];
+            /**
+             * Modules
+             * @description 已授权模块（ADR-0006 §3.3 取值集合）
+             */
+            modules?: string[];
+            /**
+             * Not After
+             * @description 有效期截止时间
+             */
+            not_after?: string | null;
+            /**
+             * Not Before
+             * @description 生效时间
+             */
+            not_before?: string | null;
+            /**
+             * Status
+             * @description active / expired / revoked / superseded
+             * @default
+             */
+            status: string;
+            /**
+             * Trace Id
+             * @description 链路追踪 id
+             */
+            trace_id: string;
         };
         /**
          * OntologyActionResponse
@@ -4446,6 +4552,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    getLicenseStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LicenseStatusResponse"];
                 };
             };
         };
