@@ -12,8 +12,13 @@
    ⑤ ``app/core/egress.py::_record_violation``（``private_deploy.violation``，
    M5 §3 验收 4 —— 私域出向被阻断必须留痕，**先写审计再抛 AppError**）。
    新增调用方必须先在此登记。
-2. **`detail` 只写结构化字段**：**绝不写响应体原文**（决策 **A5**）。本批次不引入
-   脱敏器（属 H5 / S11），所以宁可不写，也不先把原文写进库再想办法脱敏。
+2. **`detail` 只写结构化字段**：**绝不写响应体原文**（决策 **A5**）。
+   **P5-E 起本条升级**：`detail` 在写库**之前**统一过一遍脱敏器
+   （:func:`app.core.masking.mask_mapping`，M5 §5.3 的第三个统一组件）——
+   登记表收录的 key 名（合同金额 / 发票号 / 税号 / 法人姓名 / 银行账号 /
+   身份证 / 电话 / 文件名）**自动**脱敏，调用方另可用 ``sensitive=`` 显式增补。
+   ⚠️ 这不等于"可以随便往 detail 里写原文"：脱敏只认**登记表里的 key 名**，
+   第九类字段与未登记的 key 照样原样落库（见 masking 模块头的"不覆盖"清单）。
 3. **写失败只记日志、不抛异常**（proposal 风险 2）：审计缺陷不得变成全站 500。
    本模块的所有异常都在 :func:`record_audit_entry` 内部吞掉并打日志。
 
@@ -34,6 +39,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import Identity
 from app.core.errors import AppError, ErrorCode
+from app.core.masking import mask_mapping
 from app.db.models import AuditLog
 from app.schemas.audit import (
     AuditLogItem,
@@ -119,9 +125,13 @@ def record_audit_entry(
     actor_ip: str | None = None,
     doc_id: UUID | None = None,
     detail: dict[str, Any] | None = None,
+    sensitive: dict[str, str] | None = None,
 ) -> bool:
     """向当前 session 追加一条 `audit_log`（**不自行 commit**，照 `events/db.py:14-17`）。
 
+    :param detail: 明细。**写库前**统一过一遍脱敏器（M5 §3 验收 3：严禁原文落库）。
+    :param sensitive: 登记表之外的 ``key → category``（
+        :data:`app.core.masking.SENSITIVE_DETAIL_FIELDS` 始终生效，本参数只做增补）。
     :returns: 是否成功入 session。失败（如字段超长 / 约束冲突）**只记日志**，
         由调用方决定是否继续——审计不得拖垮主流程（proposal 风险 2）。
     """
@@ -136,7 +146,12 @@ def record_audit_entry(
                 resource=truncate_resource(resource),
                 status=status,
                 trace_id=UUID(str(trace_id)),
-                detail=detail,
+                # 脱敏在**写库之前**：写进去再想办法擦 = 原文已经在库里待过
+                detail=(
+                    mask_mapping(detail, sensitive=sensitive)
+                    if detail is not None
+                    else None
+                ),
             )
         )
     except Exception as exc:  # noqa: BLE001 - 审计写失败绝不上抛
