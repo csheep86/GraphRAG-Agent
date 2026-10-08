@@ -70,11 +70,21 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "ontology",
         "description": (
             "M6 本体增量演进（冷启动建议 / 确认生效 / 合并 / 拆分 / 改名 / 读 active）。"
-            "**全部要求租户上下文**。\n\n"
-            "⚠️ **当前全部为占位骨架，恒返回 501**：本批次（`changes/archive/2026-10-02-P0-m6-finalization` F2）"
-            "只做契约先行，实现归 P5-M6（Sprint 12）。"
-            "**只有 `POST /ontology/confirm` 会写生效状态**（其余端点不改本体），"
-            "这是 GAP-F2「严禁 LLM 自动修改本体」的落点。"
+            "**全部要求租户上下文**，全部挂在权限拦截（``require_permission``）之下。\n\n"
+            "**端点状态**（2026-10-08 更正 —— 上一版这里仍写「全部为占位骨架」，已不成立）：\n\n"
+            "- **已实装（P5-G）**：``POST /ontology/merge`` / ``/split`` / ``/rename`` —— "
+            "走「图操作 → 写 ``ontology_actions`` → 增量重算产出新版本」，返回 "
+            '``OntologyActionResponse{kg_version, status: "applied"}``（同步完成，无 pending）；'
+            "``entity_merge_candidates`` 对应行 ``human_review`` → ``applied``。\n"
+            "- **仍是占位**：``GET /ontology/active`` / ``POST /ontology/confirm`` / "
+            "``POST /ontology/cold-start``（批次 A）。\n\n"
+            "**GAP-F2 的准确口径**（也是这段话被更正的原因）：约束是「**严禁 LLM 自动修改本体**」，"
+            "**不是**「除 confirm 外任何端点都不改本体」。上面三个改本体的动作**全部由人工触发**"
+            "（人在 GUI 上回车才执行），LLM 侧只有 ``cold-start`` 产出**建议**，建议必须再经 "
+            "``confirm`` 才生效 —— 「仅建议不自动生效」这一点从未改变。\n\n"
+            "⚠️ **读过一个版本的含义**（ADR-0008）：一次校正会把 active 版本换成**只含受影响子图 "
+            "∪ 1 跳邻居**的增量版本，读侧须按**版本继承链**（active ∪ 祖先）读取，"
+            "**active 版本 ≠ 可见全集**。"
         ),
     },
     {

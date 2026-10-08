@@ -258,7 +258,11 @@
 > **契约状态（2026-10-02 更新）**：**7 个端点已全部进入 `contracts/openapi.yaml`**（契约路径
 > **19 → 26**），由 `backend/scripts/export_openapi.py` 从后端 Pydantic 模型导出，
 > 前端 `npm run gen:api` 已重导类型，`export_openapi.py --check` **零 diff**。
-> **当前 7 个端点均为 501 占位骨架**（业务实现归 P5-M6 / Sprint 12，见 §10.1）。
+> **当前**不再是**全部**占位（2026-10-08 **更正**，P5-I0）：
+> `merge` / `split` / `rename` **已实装**（P5-G，返 200 `OntologyActionResponse{kg_version, status: "applied"}`）；
+> 仍占位的只剩 `active` / `confirm` / `cold-start` 与 `GET /cost/dashboard`（批次 D）。
+> ⚠️ 同一段结论也写在 `backend/app/core/openapi.py` 的 `ontology` tag 描述里（契约的**真源**），
+> 本行更正时已同步 —— **改 `openapi.yaml` 本身是无效的**（它是 `export_openapi.py` 的导出产物）。
 >
 > **新增 7 个端点全部进入契约**：与 `OPENAPI` 门禁模式一致（M5 §3 同步契约铁律）；§3.2 B 段硬约束要求 §4 H10 契约先行。
 
@@ -381,6 +385,23 @@
 | 4 | 前端 `src/api/ontology.ts` / `src/api/mock/ontology.ts` **未建**（无 UI 消费，建了属强行同步开发） | 前端 A / P5-M6 |
 | 5 | `OntologySplitRequest.new_entities` 的 `min_length=2` 为**本批推断**，非 spec 原文 | 架构师 / P5-M6 复核 |
 | 6 | `GET /cost/dashboard` 的 `by_date[]` 字段集为**最小可用**，未与 §4.3 `cost_metrics` 全字段对齐 | 架构师 / P5-M6 复核 |
+
+#### 10.1.1 落地状态更新（**2026-10-08，P5-I0 登记；不重排、不覆盖上表原文**）
+
+> 上表是**定稿时**写下的遗留清单。下面逐条给出截至 2026-10-08 的**实际状态**
+> （编号与上表一一对应；**原结论保留**，此处只追加"后来发生了什么"）。
+
+| # | 遗留 | 现状（2026-10-08） | 批次 |
+|---|---|---|---|
+| 1 | `entity_merge_candidates.status = applied` | ✅ **已解决**：`merge` 端点真写 `applied`，并有真 PG 用例回读；M2 spec §4.5 注脚同期升版 | **P5-G** |
+| 2 | 7 个端点仍 501 占位 | 🟡 **部分**：`merge` / `split` / `rename` **已实装**（P5-G，含 RBAC 与 `ontology_actions` 写入）；<br>**仍占位**：`GET /ontology/active` / `POST /ontology/confirm` / `POST /ontology/cold-start` / `GET /cost/dashboard` | P5-C / **P5-G** / 批次 D |
+| 3 | 三个配置项尚无消费者 | 🟡 **部分**：`INCREMENT_REBUILD_BATCH_SIZE` ✅ 已落地（有真实消费者 + 判据 5 断言"改了真生效"）；<br>`ONTOLOGY_LLM_SUGGEST_TIMEOUT`（批次 A）、`COST_RATIO_ALERT_THRESHOLD`（批次 D / TBD-7 **Sprint 13** 才收敛）**仍未落地** | P5-F |
+| 4 | 前端 `api/ontology.ts` 未建 | ⏳ **仍未建**（正确）：GUI 尚无 UI 消费，建了属强行同步开发（CODEBUDDY §功能预留原则 1/2） | **下一批 GUI** |
+| 5 | `min_length=2` 为本批推断 | ⏳ **仍未复核**：等 GUI 批次（有了 UI 才有真实输入形态可对照） | GUI |
+| 6 | `cost.by_date[]` 最小可用 | ⏳ **未开工**：`cost_ratio` 阈值未收敛前拿不到判据 | 批次 D |
+
+> ⚠️ **本表不许被读成"M6 已完成"**：批次 **B（本体校正 GUI）仍未开工**，批次 **D（成本仪表盘）未开工**，
+> §3.2 验收 3 / 4 / 5 虽然端点已实装，但**没有 UI 就走不到人工触发**这一环。
 
 ---
 
