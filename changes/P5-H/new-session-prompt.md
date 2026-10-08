@@ -122,7 +122,7 @@ cd d:\AIProject\GraphRAG-Agent\backend
 uv run python scripts/check_startup_readiness.py      # 期望：[OK] 17 / [~~] 0 / [--] 0
 uv run python scripts/check_seams.py                  # 期望：ERROR 0 / WARN 0 / OK 12
 uv run python scripts/export_openapi.py --check       # 期望：零 diff（26 路径）
-uv run pytest -q                                      # 本地口径基线见 §8（须补 GRAPH_REAL_NEO4J_*）
+uv run pytest -q                                      # 本地口径基线见 §7（须补 GRAPH_REAL_NEO4J_*）
 cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是绿的（否则先别动代码）
 ```
 
