@@ -267,20 +267,32 @@ def policy_document_id(stem: str) -> uuid.UUID:
 
 
 def load_policy_clauses(
-    *, session: Any, kg_version: str, org_id: str
+    *,
+    session: Any,
+    kg_version: str,
+    org_id: str,
+    version_view: Any = None,
 ) -> tuple[_TextSegment, ...]:
     """读图谱里 ``POLICY_CLAUSE`` 的可判据文本（``mention`` + ``canonical_name``）。
 
     按 ``id`` 升序 ⇒ 多次调用**同解**。
+
+    :param version_view: P5-H 版本继承读视野（类型标注用 ``Any``：本模块被
+        ``policy_values`` 的上游多处复用，不为它牵一条新的 import 依赖）；
+        ``None`` ⇒ 按 ``kg_version`` 单版本读。
     """
+    from app.services.kg.version_scope import version_scope
+    from app.services.kg.version_view import VersionReadView
+
+    view = version_view or VersionReadView(versions=(kg_version,), selection={})
     rows = list(
         session.run(
-            "MATCH (n:Entity {entity_type: 'POLICY_CLAUSE', kg_version: $kg, "
-            "org_id: $org}) "
+            f"MATCH (n:Entity {{entity_type: 'POLICY_CLAUSE', org_id: $org}}) "
+            f"WHERE {version_scope('n')} "
             "RETURN n.id AS id, n.canonical_name AS name, n.mention AS mention "
             "ORDER BY n.id",
-            kg=kg_version,
             org=str(org_id),
+            **view.cypher_params(),
         )
     )
     segments: list[_TextSegment] = []

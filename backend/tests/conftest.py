@@ -307,6 +307,34 @@ def graph_reasoning_path_default(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+#: ...上面那个 autouse 桩**之前**抓下来的真身。
+#:
+#: **为什么要在模块级抓**：桩是 autouse 的，每个用例都会把它装上 ⇒ 等到用例体
+#: 里再去 ``GraphService.__dict__`` 找，找到的已经是那个 ``lambda`` 了。要在 conftest
+#: 的**导入期**（此时还只有真身）就把它们留下，给「要验路径本身」的用例一条退路。
+_REAL_FETCH_REASONING_PATH = GraphService.fetch_reasoning_path
+_REAL_FETCH_ANCHOR_ENTITY_IDS = GraphService.fetch_anchor_entity_ids
+
+
+@pytest.fixture
+def real_graph_read_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """撤掉 :func:`graph_reasoning_path_default` 的恒空桩 ⇒ 走**真实**读路径。
+
+    **什么时候该挂它**：用例要验的是推理路径本身（而不是把它当作无关依赖给
+    屏蔽掉）的场合，例如 P5-H 的「版本继承读」要证的就是「校正之后推理链仍能
+    读回来」—— 挂着恒空桩时这条判据**永远绿也永远没意义**。
+
+    **它不是放宽护栏**：桩的目的写得很清楚（防把基础设施故障插为别的语义），
+    这里是把"自己要验的那一段"交还给它本来的实现，其他用例的屏蔽不变。
+    """
+    monkeypatch.setattr(
+        GraphService, "fetch_reasoning_path", _REAL_FETCH_REASONING_PATH
+    )
+    monkeypatch.setattr(
+        GraphService, "fetch_anchor_entity_ids", _REAL_FETCH_ANCHOR_ENTITY_IDS
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def rbac_default_actor_is_admin() -> None:
     """给**默认 dev 主体**在两个租户里各授一份 `admin`（P2-B 的测试脚手架）。

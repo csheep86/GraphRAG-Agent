@@ -33,6 +33,8 @@ from loguru import logger
 
 from app.schemas.agent import ReasoningHopOrigin, ReasoningPathHop, ReasoningPathNode
 from app.schemas.document import GraphEdge, GraphNode
+from app.services.kg.version_scope import version_scope
+from app.services.kg.version_view import VersionReadView
 
 if TYPE_CHECKING:  # 仅类型标注：`graphs` 反向依赖本模块（延迟导入，见 graphs 内注释）
     from app.services.graphs import EvidenceChunk
@@ -170,9 +172,10 @@ PRIORITY_TERMINAL_TYPES: tuple[str, ...] = (
     AFFILIATION_PRIORITY_TYPE,
 )
 
-_CYPHER_ANCHOR_CANDIDATES = """
-MATCH (e:Entity {kg_version: $kg, org_id: $org})
-WHERE e.canonical_name IS NOT NULL
+_CYPHER_ANCHOR_CANDIDATES = f"""
+MATCH (e:Entity {{org_id: $org}})
+WHERE {version_scope("e")}
+  AND e.canonical_name IS NOT NULL
   AND size(e.canonical_name) >= $min_len
   AND e.id CONTAINS ':'
 RETURN e.id AS id, e.canonical_name AS name
@@ -210,13 +213,19 @@ def _cypher_paths() -> str:
 
     return (
         f"""
-MATCH p = (a:Entity {{kg_version: $kg, org_id: $org}})
+MATCH p = (a:Entity {{org_id: $org}})
           -[rels*1..{_MAX_HOPS}]-
-          (b:Entity {{kg_version: $kg, org_id: $org}})
-WHERE a.id IN $anchor_ids
+          (b:Entity {{org_id: $org}})
+WHERE {version_scope("a")}
+  AND {version_scope("b")}
+  AND a.id IN $anchor_ids
   AND b.entity_type IN $terminal_types
-  AND ALL(n IN nodes(p) WHERE n:Entity)
-  AND ALL(r IN rels WHERE r.kg_version = $kg AND r.org_id = $org)
+  // **变长路径的中间节点也逐一过选中表**：跨越了三个版本的路径，中间那一站
+  // 若已被 merge 删掉、或它不是该 id 的最新版本 ⇒ 这条路径不许存在
+  // （P5H-1 C 口径：不拼"表象存在、事实已不存在"的幽灵路径）。
+  AND ALL(n IN nodes(p) WHERE n:Entity AND {version_scope("n")})
+  // 边的版本 ∈ 版本链：两端可能被选中在不同版本上，边本身只要落在链上即可。
+  AND ALL(r IN rels WHERE r.kg_version IN $kgs AND r.org_id = $org)
   AND none(n IN nodes(p)[1..-1] WHERE n.entity_type = $hub)
   // as-of 视图（Sprint 10.5 / L2-③）：``$as_of`` 为 NULL ⇒ **不过滤**
   // （缺省行为必须零变化）；给定日期 ⇒ 要求**每一跳**在那日成立。
@@ -310,6 +319,7 @@ def resolve_anchors(
     org_id: Any,
     question: str,
     nodes: Sequence[GraphNode],
+    version_view: VersionReadView | None = None,
 ) -> tuple[str, ...]:
     """定位锚点：**先本轮子图，定位不到才按名字直查兜底**。
 
@@ -330,6 +340,7 @@ def resolve_anchors(
             kg_version=kg_version,
             org_id=org_id,
             question=question,
+            version_view=version_view,
         )
     if not anchors:
         logger.bind(
@@ -356,6 +367,7 @@ def build_reasoning_path(
     edges: Sequence[GraphEdge] = (),
     chunks: Sequence[EvidenceChunk] = (),
     as_of: str | None = None,
+    version_view: VersionReadView | None = None,
 ) -> list[ReasoningPathHop]:
     """取出本次问答的多跳推理路径（一跳一个 :class:`ReasoningPathHop`）。
 
@@ -367,15 +379,19 @@ def build_reasoning_path(
     :param as_of: 全生命周期 as-of 日期（``YYYY-MM-DD``）；``None`` = 当前视图
         （缺省必须零变化）。它只**剔除被日期证伪**的跳，缺日期的跳照旧保留
         （三值语义：不知道 ≠ 有效），详情见 :func:`_cypher_paths`。
+    :param version_view: P5-H **版本继承读**视野；``None`` ⇒ 按单版本
+        （``kg_version`` 自身）读，与改之前的行为**完全一致**。
     :returns: 逐跳链（首尾相接）；**零命中返回空列表**（不是 ``None``——
         ``None`` 的语义是「未产出」，留给拒答分支，见契约字段说明）。
     """
+    view = version_view or VersionReadView(versions=(kg_version,), selection={})
     anchors = resolve_anchors(
         session=session,
         kg_version=kg_version,
         org_id=org_id,
         question=question,
         nodes=nodes,
+        version_view=view,
     )
     if not anchors:
         return []
@@ -383,7 +399,6 @@ def build_reasoning_path(
     rows = list(
         session.run(
             _cypher_paths(),
-            kg=kg_version,
             org=str(org_id),
             anchor_ids=list(anchors),
             terminal_types=list(ALL_TERMINAL_TYPES),
@@ -391,6 +406,7 @@ def build_reasoning_path(
             prio_types=list(PRIORITY_TERMINAL_TYPES),
             limit=_PATH_CANDIDATE_LIMIT,
             as_of=as_of,
+            **view.cypher_params(),
         )
     )
     selected = _select_shortest_path(rows, as_of=as_of)
@@ -445,6 +461,7 @@ def _fallback_anchors(
     kg_version: str,
     org_id: Any,
     question: str,
+    version_view: VersionReadView | None = None,
 ) -> tuple[str, ...]:
     """按名字直查**确定性派生**实体作为锚点兜底（只在子图里定位不到时用）。
 
@@ -454,13 +471,14 @@ def _fallback_anchors(
     最小名字长度、长名优先、被更长名包含者让位），只是候选来源从「本轮子图」
     换成「图上同版本的同类实体」，且万一命中会打日志:func:`logger` 便于复盘。
     """
+    view = version_view or VersionReadView(versions=(kg_version,), selection={})
     rows = list(
         session.run(
             _CYPHER_ANCHOR_CANDIDATES,
-            kg=kg_version,
             org=str(org_id),
             min_len=_MIN_ANCHOR_NAME_LEN,
             limit=_ANCHOR_FALLBACK_LIMIT,
+            **view.cypher_params(),
         )
     )
 

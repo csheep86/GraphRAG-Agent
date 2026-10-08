@@ -40,6 +40,8 @@ from typing import Any
 
 from loguru import logger
 
+from app.services.kg.version_scope import version_scope
+from app.services.kg.version_view import VersionReadView
 from app.services.rules.policy_values import (
     RuleValueBook,
     RuleValueUnresolvedError,
@@ -182,31 +184,41 @@ class ComplianceReport:
 # --------------------------------------------------------------------------- #
 # Cypher
 # --------------------------------------------------------------------------- #
+#: P5-H：四条事实查询共用 :func:`version_scope` 的版本谓词 ——
+#: 缺省（版本链只有 active 一条、``$sel`` 为空）⇒ 它等价于原来的
+#: ``kg_version: $kg`` 内联属性匹配，**行为零变化**。
 #: 员工（**只取 CSV 派生**）
-_CYPHER_EMPLOYEES = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-WHERE e.id STARTS WITH 'EMPLOYEE:'
+_CYPHER_EMPLOYEES = f"""
+MATCH (e:Entity {{entity_type: 'EMPLOYEE', org_id: $org}})
+WHERE {version_scope("e")}
+  AND e.id STARTS WITH 'EMPLOYEE:'
 RETURN e.id AS node_id, e.canonical_name AS name,
        e.department AS department, e.position AS position,
        e.work_time_system AS wts
 ORDER BY e.id
 """
 
-_CYPHER_SHIFTS = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'HAS_SHIFT', kg_version: $kg}]->
-      (s:Entity {entity_type: 'SHIFT', kg_version: $kg})
-WHERE e.id STARTS WITH 'EMPLOYEE:'
+_CYPHER_SHIFTS = f"""
+MATCH (e:Entity {{entity_type: 'EMPLOYEE', org_id: $org}})
+      -[rel:RELATION {{relation_type: 'HAS_SHIFT'}}]->
+      (s:Entity {{entity_type: 'SHIFT'}})
+WHERE {version_scope("e")}
+  AND {version_scope("s")}
+  AND rel.kg_version IN $kgs
+  AND e.id STARTS WITH 'EMPLOYEE:'
 RETURN e.id AS employee, s.id AS node_id, s.date AS date,
        toFloat(s.planned_hours) AS hours, toInteger(s.is_rest_day) AS rest
 ORDER BY employee, date
 """
 
-_CYPHER_ATTENDANCE = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'HAS_ATTENDANCE', kg_version: $kg}]->
-      (a:Entity {entity_type: 'ATTENDANCE_RECORD', kg_version: $kg})
-WHERE e.id STARTS WITH 'EMPLOYEE:'
+_CYPHER_ATTENDANCE = f"""
+MATCH (e:Entity {{entity_type: 'EMPLOYEE', org_id: $org}})
+      -[rel:RELATION {{relation_type: 'HAS_ATTENDANCE'}}]->
+      (a:Entity {{entity_type: 'ATTENDANCE_RECORD'}})
+WHERE {version_scope("e")}
+  AND {version_scope("a")}
+  AND rel.kg_version IN $kgs
+  AND e.id STARTS WITH 'EMPLOYEE:'
 RETURN e.id AS employee, a.id AS node_id, a.date AS date,
        toFloat(a.actual_hours) AS hours,
        toFloat(a.core_hours_present) AS core,
@@ -214,11 +226,14 @@ RETURN e.id AS employee, a.id AS node_id, a.date AS date,
 ORDER BY employee, date
 """
 
-_CYPHER_OVERTIME = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'ACCUMULATED_OVERTIME', kg_version: $kg}]->
-      (o:Entity {entity_type: 'OVERTIME', kg_version: $kg})
-WHERE e.id STARTS WITH 'EMPLOYEE:'
+_CYPHER_OVERTIME = f"""
+MATCH (e:Entity {{entity_type: 'EMPLOYEE', org_id: $org}})
+      -[rel:RELATION {{relation_type: 'ACCUMULATED_OVERTIME'}}]->
+      (o:Entity {{entity_type: 'OVERTIME'}})
+WHERE {version_scope("e")}
+  AND {version_scope("o")}
+  AND rel.kg_version IN $kgs
+  AND e.id STARTS WITH 'EMPLOYEE:'
 RETURN e.id AS employee, o.id AS node_id, o.date AS date,
        toFloat(o.hours) AS hours, toInteger(o.approved) AS approved,
        toFloat(o.comp_off_hours) AS comp_off,
@@ -248,14 +263,22 @@ def _index_by_employee(
 
 
 def load_employee_facts(
-    *, session: Any, kg_version: str, org_id: str
+    *,
+    session: Any,
+    kg_version: str,
+    org_id: str,
+    version_view: VersionReadView | None = None,
 ) -> tuple[EmployeeFacts, ...]:
     """从图谱读出全部员工的事实（排班 / 打卡 / 加班）。
 
     四条查询各自独立，互不依赖 ⇒ 任一类型缺失只是该类事实为空，
     不会连带吞掉其它类（吞错是本项目反复踩的坑）。
+
+    :param version_view: P5-H 版本继承读视野；``None`` ⇒ 按 ``kg_version``
+        单版本读（改之前的既有行为）。
     """
-    params = {"kg": kg_version, "org": str(org_id)}
+    view = version_view or VersionReadView(versions=(kg_version,), selection={})
+    params = {"org": str(org_id), **view.cypher_params()}
 
     employees = list(session.run(_CYPHER_EMPLOYEES, **params))
     shifts = _index_by_employee(
@@ -664,6 +687,7 @@ def scan_compliance(
     org_id: Any,
     as_of: date | None = None,
     storage: Any = None,
+    version_view: VersionReadView | None = None,
 ) -> ComplianceReport:
     """扫一遍全部员工，产出风险清单。
 
@@ -672,9 +696,13 @@ def scan_compliance(
     :param org_id: 租户 ID（ADR-0003 强制过滤键）。
     :param as_of: 观察日；``None`` ⇒ 数据窗口末日（**可复现**，不取系统当天）。
     :param storage: 存储后端（读制度文档产物）；``None`` ⇒ ``get_storage()``。
+    :param version_view: P5-H 版本继承读视野；``None`` ⇒ 按单版本读。
     """
     employees = load_employee_facts(
-        session=session, kg_version=kg_version, org_id=str(org_id)
+        session=session,
+        kg_version=kg_version,
+        org_id=str(org_id),
+        version_view=version_view,
     )
     if not employees:
         raise ComplianceScanError(
@@ -684,7 +712,10 @@ def scan_compliance(
 
     book = resolve_rule_values(
         clauses=load_policy_clauses(
-            session=session, kg_version=kg_version, org_id=str(org_id)
+            session=session,
+            kg_version=kg_version,
+            org_id=str(org_id),
+            version_view=version_view,
         ),
         documents=load_policy_documents(org_id=org_id, storage=storage),
     )

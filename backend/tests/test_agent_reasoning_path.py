@@ -182,7 +182,12 @@ def test_query_is_parameterized_by_kg_version_and_org() -> None:
     )
 
     params = session.params[0]
-    assert params["kg"] == "v-test"
+    # P5-H（2026-10-08）：版本过滤由「单值 ``$kg``」换成「版本列表 ``$kgs`` +
+    # 选中表 ``$sel``」。**不带视野**的默认形态必须恰好等价于原来的 ``= $kg``：
+    # 列表里只有 active 一条、选中表为空 ⇒ 每个节点的版本判定退化为单版本。
+    # 这条断言是对既有守卫「Cypher 必带版本过滤」的**同义收紧**，不是放宽。
+    assert params["kgs"] == ["v-test"]
+    assert params["sel"] == {}
     assert params["org"] == "org-1"
     # Sprint 10 批次 B：终点类型由「考勤一套」扩为「已登记域的并集」
     assert set(params["terminal_types"]) == set(ALL_TERMINAL_TYPES)

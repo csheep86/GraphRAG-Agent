@@ -42,6 +42,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -69,6 +70,7 @@ _GRAPH_OVERVIEW_NODE_LIMIT = 500
 
 if TYPE_CHECKING:  # 仅类型检查：运行时走函数内延迟导入，避免加长依赖链
     from app.schemas.agent import ReasoningPathHop
+    from app.services.kg.version_view import VersionReadView
     from app.services.rules import (
         AnomalyCaseList,
         AttributionResult,
@@ -1065,36 +1067,84 @@ ORDER BY node_id, chunk_id
 LIMIT $limit
 """
 
+
 #: 批次 C：全局图谱概览的 Cypher（节点轻量投影 + 全部边）。
 #: 与 :data:`_QUERY_SUBGRAPH_BY_IDS`（问答注入用）不同：去掉了 ``total_nodes`` 字段（由服务层算），
 #: 投影阶段只取 ``id`` / ``canonical_name`` / ``type`` / ``category`` 4 个字段。
 #: 节点选取按**度数降序**（连接数多的枢纽优先，平局按 `id` 保证确定性）：
 #: 此前是 `all_nodes[0..$node_limit]` 无序截断——任意前 500 个节点之间几乎没有边
 #: （真机实测 500 节点仅 36 边，画出来全是孤点噪云），违背「保护前端渲染」的初衷。
-_QUERY_GRAPH_OVERVIEW = (
+@lru_cache(maxsize=1)
+def _query_graph_overview() -> str:
+    """图谱概览的 Cypher。
+
+    **为什么是函数而不是模块级常量**：这条查询要用 :func:`version_scope`
+    拼出版本谓词，而 ``version_scope`` 住在 ``app.services.kg`` 包里 ——
+    ``app.services.kg.__init__`` 会把 ``builder``（→ ``graphs``）一并拖进来，
+    在**模块级** import 它会立刻成环（``graphs → kg.__init__ → builder → graphs``），
+    2026-10-08 实测就是 ``ImportError``。于是把常量降级为「一次构建、永久复用」
+    的惰性函数，既拿到共享判据，又不把环形依赖写死在导入链上。
     """
-MATCH (n:Entity {kg_version: $kg_version})
-WHERE $org_id IS NULL
+    from app.services.kg.version_scope import version_scope
+
+    return (
+        """
+MATCH (n:Entity)
+// P5-H **版本继承读**：下面第一项用 :func:`version_scope` 生成 ——
+// 缺省（版本链只有 active 一条、选中表为空）时它等价于原来的
+// ``n:Entity {kg_version: $kg_version}`` —— 行为零变化。
+// 发生继承后：① 只认链上的版本；② 每个 id 只命中**被选中的那一个**版本
+// （链上最新者胜；被 merge 删掉的节点压根不在选中表里 ⇒ 读不到）。
+WHERE """
+        + version_scope("n")
+        + """
+  AND ($org_id IS NULL
    OR properties(n)['org_id'] IS NULL
-   OR properties(n)['org_id'] = $org_id
+   OR properties(n)['org_id'] = $org_id)
 WITH n, size([(n)--() | 1]) AS degree
 ORDER BY degree DESC, n.id
 WITH collect(n) AS all_nodes
 WITH all_nodes[0..$node_limit] AS nodes, size(all_nodes) AS total_nodes
-RETURN
-  nodes,
-  total_nodes,
-  [(a)-[r]->(b) WHERE a IN nodes AND b IN nodes AND (a <> b)"""
-    + _temporal_view("r")
-    + """ | {
+// **边按 id 空间投影，不按物理节点**（P5-H 的关键一刀）：
+// 同一个 id 在两个版本里是**两个物理节点**：``e2@v1`` 与 ``e2@base``。而编写侧
+// （P5F-3 +「只迁移两端都在受影响集内的边」）刻意**不**迁移「受影响集的边界边」
+// ``e2 - e3`` ⇒ 它只存在于旧版本。若按物理节点成员判断（``a IN nodes``），
+// 这类边会全部消失，读到的图会碎成孤岛 —— 那不算「看到全图」。
+//
+// 安全侧由 ``visible_ids`` 兜住：它来自**选中表**，被 merge 删掉的 id 不在里面
+// ⇒ 连不到任何边（判据 5 的幽灵路径，这里以更强的形式成立）。
+// 用 ``CALL { ... }`` 而不是把 MATCH 串在主管道后面：**一条边都没有**的图上，
+// 主管道会被空匹配吞掉整行 ⇒ Python 侧拿到 ``None`` ⇒ 空图被报成 501。
+// 子查询内有聚合 ⇒ 恒返回一行（``edges`` 为空列表）。
+CALL {
+  WITH nodes
+  WITH nodes, [x IN nodes | x.id] AS visible_ids
+  MATCH (a:Entity)-[r]->(b:Entity)
+  WHERE a.id IN visible_ids AND b.id IN visible_ids AND a.id <> b.id
+    AND r.kg_version IN $kgs
+    AND ($org_id IS NULL OR properties(a)['org_id'] IS NULL
+         OR properties(a)['org_id'] = $org_id)
+    AND ($org_id IS NULL OR properties(b)['org_id'] IS NULL
+         OR properties(b)['org_id'] = $org_id)"""
+        + _temporal_view("r")
+        + """
+  // 同一条边（同 source/target）可能在多个版本上各有一份物理边 ⇒ 取**链上最新**
+  // 的那一份（候选越少、值越新），缺省形态（只有一个版本）自然等价原语义。
+  WITH a.id AS source, b.id AS target,
+       [i IN range(0, size($kgs) - 1) WHERE $kgs[i] = r.kg_version][0] AS rank, r
+  ORDER BY source, target, rank
+  WITH source, target, head(collect(r)) AS r
+  RETURN collect({
     id: coalesce(r.id, elementId(r)),
     type: type(r),
-    source: a.id,
-    target: b.id,
+    source: source,
+    target: target,
     properties: properties(r)
-  }] AS edges
+  }) AS edges
+}
+RETURN nodes, total_nodes, edges
 """
-)
+    )
 
 
 #: 批次 C：实体详情 —— 单节点 + 1 跳出边邻居（带方向过滤：仅取指向其它 Entity 的边）。
@@ -1256,6 +1306,37 @@ class GraphService:
                 f"（scope={scope!r}；请先执行 scripts/import_to_neo4j.py）"
             )
         return KgVersion(version=version, scope=result["scope"] or "global")
+
+    # ------------------------------------------------------- P5-H 版本继承读
+
+    def _read_view(
+        self, *, db: Any, org_id: UUID | None, head: str, session: Any
+    ) -> VersionReadView:
+        """构造本次读的**版本视野**（P5-H：版本继承读）。
+
+        为什么单独抽成一个方法（而不是在三处各自拼参数）：三条读路径的「退化为
+        单版本」兜底必须是**同一个**，否则一处退回、一处继承，图上就会出现
+        「概览看得到、问答看不到」的半睁眼状态。
+
+        **两种兜底都退回单版本**（等价于改之前的 ``= $kg`` 语义）：
+
+        1. ``db`` / ``org_id`` 缺失 —— 解析版本链要 PG 真源 + 租户隔离键，
+           两者缺一则**不许**继承（缺 org_id 时放宽隔离键是越权面，绝对不做）；
+        2. `:func:`build_read_view` 返回空链（既没有 active 版本也没有父链）。
+
+        详细规则见 `app/services/kg/version_view.py` 与 ADR-0008。
+        """
+        from app.services.kg.version_view import (  # 延迟导入：与 :meth:`fetch_active_kg_version` 同口径
+            VersionReadView,
+            build_read_view,
+        )
+
+        if db is None or org_id is None:
+            return VersionReadView(versions=(head,), selection={})
+        view = build_read_view(db=db, session=session, org_id=org_id)
+        if not view.versions:
+            return VersionReadView(versions=(head,), selection={})
+        return view
 
     def fetch_kg_version_status(self, version: str) -> str | None:
         """返回指定 ``kg_version`` 的 ``status``；节点不存在返回 ``None``。
@@ -2033,12 +2114,16 @@ class GraphService:
 
         try:
             with self._session() as session:
+                # P5-H：概览按**版本继承读**（active ∪ 祖先；同 id 链上最新者胜）
+                view = self._read_view(
+                    db=db, org_id=org_id, head=version, session=session
+                )
                 result = session.run(
-                    _QUERY_GRAPH_OVERVIEW,
-                    kg_version=version,
+                    _query_graph_overview(),
                     org_id=str(org_id) if org_id else None,
                     node_limit=node_limit,
                     as_of=validate_as_of(as_of),
+                    **view.cypher_params(),
                 ).single()
         except GraphUnavailableError:
             raise
@@ -2268,6 +2353,7 @@ class GraphService:
         edges: Sequence[GraphEdge] = (),
         chunks: Sequence[EvidenceChunk] = (),
         as_of: str | None = None,
+        version_view: VersionReadView | None = None,
     ) -> list[ReasoningPathHop]:
         """M3 多跳推理路径（``reasoning_path`` 的服务层入口）。
 
@@ -2278,6 +2364,15 @@ class GraphService:
         :param as_of: 全生命周期 as-of 日期（``YYYY-MM-DD``）；``None`` = 当前视图。
             **格式校验在上游契约层做**（``AgentQueryRequest`` 的字段校验复用
             :func:`validate_as_of`）⇒ 非法值到这里之前已被挡成 422。
+        :param version_view: P5-H **版本继承读**视野。``None`` ⇒ 按 ``kg_version``
+            单版本读（改之前的既有行为）。
+
+        .. warning::
+           **D5 登记的边界**：本批**只**把视野透传下去，`agents.py` 的检索链路
+           **尚未**接到它 —— 也就是说 M4 端到端问答目前**仍然**按单版本走图。
+           接线属下一批（见 ADR-0008 §5「未切换的读路径清单」）：要接就得把 PG
+           会话传进这一段（`build_read_view` 必须读 PG 解析版本链），那是另一处改动。
+           本方法先把能力备好并**用真图用例钉住**，不许反过来宣称"问答已修复"。
 
         **延迟导入** :mod:`app.services.reasoning`：本模块被 ``agents`` 依赖，
         模块级牵上会加长依赖链（且 ``reasoning`` 只依赖 schema，无循环风险）。
@@ -2299,6 +2394,7 @@ class GraphService:
                     edges=edges,
                     chunks=chunks,
                     as_of=as_of,
+                    version_view=version_view,
                 )
         except GraphUnavailableError:
             raise
@@ -2381,6 +2477,11 @@ class GraphService:
                     kg_version=version,
                     org_id=str(org_id) if org_id else None,
                     as_of=as_of,
+                    # P5-H：合规扫描按**版本继承读**扫完好无损的那张图，
+                    # 而不是只扫校正动作触碰到的那一小撮节点。
+                    version_view=self._read_view(
+                        db=db, org_id=org_id, head=version, session=session
+                    ),
                 )
         except NoActiveKgVersionError:
             raise
