@@ -151,6 +151,39 @@ LLM 侧只有 `cold-start` 产出建议、建议必须再经 `confirm` 才生效
 | `export_openapi.py --check` | 零 diff，**28 路径不变**（比 P5-H 提示词写的 26 多 2 —— **以脚本为准**，已在 proposal 判据 7 更正） |
 | `frontend` `npm run gen:api` | 生成成功且 **`src/types/api.d.ts` 零变更**（tag 描述不进 TS 类型，与预期一致） |
 | `check_session_drift.py --since HEAD~2` | S1 读到 **10 条** Non-goals；S2 **8 文件 / 170 新增行**（阈值 25 / 600）；S3 无事；**S4 命中 ⇒ 已执行 `gen:api`（零变更）**；S5 无新增模块 —— 全部 `[OK]` |
+| 清理 filepath verification | 单独跑 `test_kg_incremental_rebuild.py`（11 passed）后回读 PG：该 org 下 `kg_versions` **只剩基线那 1 行**、`ontology_actions` **0 行** ⇒ 新的 `trace_id` 清理**没有漏删** |
+
+### 6.4 ⚠️ 一次**伪失败**（值得单独记一笔，避免下一个人绕远路）
+
+跑 `-k version` 子集时遇到过：
+
+```
+FAILED tests/test_kg_build_executor.py::test_kg_build_reuses_existing_kg_version_row
+E   AssertionError: assert 9 == 1
+```
+
+第一反应当然是"我把版本号改坏了"。实际不是 —— 那条用例的最后一句是
+
+```python
+rows = session.execute(select(KgVersion.id).where(KgVersion.org_id == org)).all()
+assert len(rows) == 1
+```
+
+它断言的是**整个 org 下只有一行**，而当时库里躺着 **8 行别的用例的残留**
+（我前面反复跑 `-k` 子集时中断留下的），只要脏一行就让
+`test_kg_build_executor` 红 —— **与本批改动无关**。
+
+核实方式（三条，都做了）：
+
+1. 手动回读 PG：把残留行逐条列出来，确认它们不是本批产出的；
+2. 清干净后**单独**跑 `test_kg_build_executor.py` ⇒ **5 passed**；
+3. 清干净后跑 `-k version` ⇒ **95 passed**，且**跑完残留为 0** ⇒ 本批改的那套
+   `trace_id` 清理没有泄漏。
+
+**留下的坑**：`assert len(rows) == N` 这种**全局计数断言**会被任何残留击穿，
+误报成本很高 —— 它看起来像"某个Assert 被修改坏了"，实际是环境污染。
+判据应该改成"与自己有关的行"而不是全表计数。本批没动它（不在边界内），
+登记为下一批顺手项。
 
 ## 7. 提交（分段，便于整笔 revert）
 
@@ -160,7 +193,12 @@ LLM 侧只有 `cold-start` 产出建议、建议必须再经 `confirm` 才生效
 | 2 | `0105e8d6` `docs(m6)`: 三处状态更正 | `backend/app/core/openapi.py` + `contracts/openapi.yaml` + `specs/m6-*.md` + `docs/delivery-requirements-and-guardrails.md` + `docs/acceptance-traceability-matrix.md` |
 | 3 | `docs(chore)`: 本批 SDD 产物 | `changes/P5-I0/` |
 
-CI 为终裁（R-10）：run id ____（推送后回登；四 job 全绿 + `gh run watch --exit-status` 退出码 0）
+| 4 | `166e4122` `docs(chore)`: 回登 CI 终裁 | `changes/P5-I0/integration-log.md` |
+
+CI 为终裁（R-10）：**run `37786962196`**（commit `166e4122`）**conclusion = success**，
+`gh run watch --exit-status` **退出码 0**；后端 job 内 `check_seams` **OK 12**、
+pytest **1139 passed / 5 skipped / 0 failed**（基线 1137 ⇒ **+2**，正是新增那两条）；
+前端 job `gen:api` 无漂移。
 
 ## 8. 本批**不许外推**（完成本批 ≠ 以下任何一条）
 
@@ -201,3 +239,7 @@ CI 为终裁（R-10）：run id ____（推送后回登；四 job 全绿 + `gh ru
     契约不会告诉你是占位 —— 现在只有 `openapi.py` 的 tag 描述会，
     ⇒ 实现它们之前**先看那一段**。
 11. **日志 `message` 正文的脱敏**：逐个把 `mask()` 补到写敏感值的日志语句上。
+12. **`test_kg_build_executor.py::test_kg_build_reuses_existing_kg_version_row` 的
+    `assert len(rows) == 1`**（§6.4）：全表计数断言 ⇒ 任何残留都会让它红，
+    且症状看起来像"最近的改动把它弄坏了"。改成"只数与本用例有关的行"。
+    **纯健壮性**，不涉及语义 ⇒ 并入任一批次顺手做，不单独开工。
