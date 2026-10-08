@@ -252,6 +252,14 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是绿的�
 推送偶发网络失败（本仓库近期 `github.com:443` 间歇性不可达——**`ebbdcb92` 曾连丢 8 次、等约 40 秒后第 2 次等待成功**），
 **加大间隔重试到位再报告**；期间**不许**拿估算的 run id 把表格填满。
 
+> 🔧 **2026-10-08 P5-E 收尾实测（先试这个，别干等）**：连丢 **4 次**
+> （`Recv failure: Connection was reset` → `Failed to connect to github.com:443 after 21s`），
+> 间隔加到 45 / 75 / 120 秒**都没用**；但同刻 `gh api user --jq '.login'` **正常返回** ⇒
+> 不是网络不通，是 **git 的 HTTP/2 传输层**握手失败。
+> 一次即通的写法：**`git -c http.version=HTTP/1.1 push origin main`**
+> （`-c` 是单次覆盖，**不改 git config**——本仓库禁止改 git config）。
+> ⇒ 重试 2 次仍失败时，直接上这条，别再靠加大间隔耗时间。
+
 **只在以下四类停下找我**：
 
 | # | 情况 | 例子 |
