@@ -253,6 +253,18 @@ class Settings(BaseSettings):
     #: 唯一消费点：app/core/egress.py::_matches_allowlist
     allowed_egress_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
+    # -- 敏感字段脱敏（M5 §3 验收 3 / §4.5 / §5.3）--
+    #: 哈希类脱敏（税号 / 法人姓名 / 身份证）的 salt。
+    #:
+    #: ⚠️ 与 ``license_fp_salt`` **同款**：它是**应用级 salt，不是密钥**
+    #: （ADR-0006 §2.1 同口径）——它防的是「同一份原文在不同部署里算出同一个哈希
+    #: 从而被彩虹表反查」，**不提供**机密性，也不得被写成"我们有加密"。
+    #:
+    #: 生产部署**应当**换成部署侧私有值（换值会让既有哈希不可比对，属预期行为：
+    #: 脱敏值本就不需要跨部署一致）。
+    #: 唯一消费点：app/core/masking.py::_mask_hashed。
+    mask_salt: str = "graphrag-mask-salt-v1"
+
     # -- 可观测导出（ADR-0004 §2.1 注：不单列接缝；§3 第 5 条的"合规占位"）--
     #: 统一日志平台 / OTLP 导出开关。**Demo-MVP 阶段未实现**：置 true 时
     #: core/logging.py 显式抛 NOT_IMPLEMENTED，绝不静默无效（占位≠假做）。
