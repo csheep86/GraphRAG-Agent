@@ -1,5 +1,15 @@
 # 新会话开场提示词 · P5-E（M5 收尾：`mask()` 统一脱敏 + 「无原文落库」机械判据）
 
+> 📌 **本文件是本批（P5-E）的开场提示词原文存档**（与本批次目录里的
+> `proposal.md` / `tasks.md` / `integration-log.md` 同批归档，便于事后回看"当时到底承诺了什么"）。
+> **本批已收口**：CI run `37723651857`（代码）/ `37724227049`（批次文档）四 job 全绿，
+> pytest **1094 passed / 5 skipped / 0 failed**。实录见 [`integration-log.md`](./integration-log.md)。
+> **下一批的提示词在 [`../P5-F/new-session-prompt.md`](../P5-F/new-session-prompt.md)**。
+>
+> 以下是 2026-10-08 交给执行会话的**原文**（未作删改）。
+
+---
+
 > 🔒 **执行模式：无人值守**（技能 `unattended-sprint-execution`，用户已预授权）—— **不索过程性确认**，
 > 只在 §10 列的四类升级边界停下找我。详见 §1。
 >
@@ -92,7 +102,7 @@
 
 ### 2.3 为什么不做 `alert` 表
 
-`specs/m5-permission-audit.md:50` 原文把「累计触发次数超阈值的 IP 写入 `alert` 表」标为 **（P2）** ⇒ 与 P5-D 同一原则：
+`specs/m5-permission-audit.md:50` 原文把「累计触发次数超阈值的 IP 写入 `alert` 表」标为 **（P2）**
 ⇒ 与 P5-D 同一原则：**spec 自己推迟的东西不顺手做**。
 
 ### 2.4 本批的三刀（建议范围）
@@ -134,7 +144,7 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是绿的�
 | 7 | **不做"可还原"** | mask 一律**单向**：哈希类加 salt 后不可逆，掩码类丢掉的部分不许留旁路可供拼回 |
 | 8 | **不改既有 `documents.filename_hash` 与 `:LegalPerson.id_hash` 的语义** | mask 的「文件名」类必须**产出同一个值**（§5 D4），不得另给一套 |
 | 9 | **不重构 loguru 的日志配置** | 只做脱敏接线；**不要**用 patcher / filter 重写整套日志配置，除非 D3 判定必需并在 integration-log 登记理由 |
-| 10 | **不做"自动识别字段类型"** | `category` 由调用方**显式**给。让代码去"猜"哪个字段是敏感字段 ⇒ 漏判无处可追责，属典型 scope creep |
+| 10 | **不做"自动识别字段类型"** | `category` 由调用方**显式**给。让代码去"猜"哪个字段是敏感字段 ⇒ 漏判无处追责，属典型 scope creep |
 | 11 | **不动前端 / 不动契约**（除非 D6 判定必需） | mask 是服务端内部行为 |
 
 > **回切点**：每个子任务收尾跑 `uv run python scripts/check_session_drift.py`，
@@ -270,7 +280,7 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是绿的�
 - **`mask_salt` 可配 ≠ 已做密钥管理**：它是「和 `license_fp_salt` 同款的应用级 salt」，**不是密钥**（ADR-0006 §2.1 同口径），
   不得写成"我们有加密"。
 - **H5 行登记了 P5-E ≠ H5 已达成**：矩阵 H5 行仍 🟡，**只有本批判据 4 / 5 双绿、.env.example 与 check_seams 都不红之后**
-  才能说"部分 → 完整”；届时也要**同时更新 H5 行 + M5 模块行**，并写明"alert 表仍缺（P2）"。
+  才能说"部分 → 完整"；届时也要**同时更新 H5 行 + M5 模块行**，并写明"alert 表仍缺（P2）"。
 - **M5 收尾了 ≠ M5 完成**：`alert` 表仍在（P2），M5 §3 验收 5 的 P2 部分依旧是缺口。
 - **契约零漂移 ≠ 功能可用**：判据只证明了"契约没被踩歪"。
 - **本地 1065 绿 ≠ CI 绿**：本地仍有 2 条 `affiliation-demo-v2` 已知 fail。
