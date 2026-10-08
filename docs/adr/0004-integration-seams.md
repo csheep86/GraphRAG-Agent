@@ -139,7 +139,14 @@
    - **与第 4 条的区别**：第 4 条管"实现类有几个"（集合不能多不能少）；第 6 条管"**接口长什么样**"（签名不能变）。两条互补，缺一则插件可能在客户现场静默失效。
    - 依据：[`ADR-0007`](./ADR-0007-plugin-delivery.md) §3.9；PRD **H16**。
 
-> **例外登记（合规占位）**：以下配置项在 Demo-MVP 阶段为**已登记占位**，合规形态必须是"**有读取代码行 + 显式报未实现**"，禁止静默无效：`PRIVATE_DEPLOY_ENABLED`（H6 私域禁外发，计划文档 §3.4）、`settings.log_export`（可观测导出，Sprint 8 批次 E）。**除这两项外不得新增占位配置**——新增即违反第 5 条。
+> **例外登记（合规占位）**：以下配置项在 Demo-MVP 阶段为**已登记占位**，合规形态必须是"**有读取代码行 + 显式报未实现**"，禁止静默无效：`settings.log_export`（可观测导出，Sprint 8 批次 E）。**除这一项外不得新增占位配置**——新增即违反第 5 条。
+>
+> ⚠️ **2026-10-08 更正（合规状态推进）**：原先列于此处的 `PRIVATE_DEPLOY_ENABLED` **已于 P5-D（2026-10-07）真实达成** ⇒ 移出占位清单：
+>
+> - **有读取代码行**：`app/core/egress.py::guard_egress`（LLM / MinerU / 评测 embedding 三处构造点消费）；
+> - **不再是"显式报未实现"，而是真实拦截**：违规 ⇒ 503 `PRIVATE_DEPLOY_BLOCKED` + `audit_log(action=private_deploy.violation, status=failure)`，且判据内含「构造期阻断、零出向」的机械断言。
+>
+> 证据：`changes/P5-D/integration-log.md` §6（CI run `37627112419` 四 job 全绿，pytest **1066 passed / 5 skipped / 0 failed**；真机 psql 直读 violation 行）。占位清单由此**从 2 项降为 1 项**（`log_export`）。
 
 ---
 

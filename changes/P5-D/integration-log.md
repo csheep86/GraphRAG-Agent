@@ -228,7 +228,7 @@ gh run watch 37627112419 --exit-status  => EXIT=0
 
 ## 11. 下一批指针（**按优先级，按实际结果更新**）
 
-0. **DR-D1 的出口判据已达成，但状态行还没改**：`docs/delivery-requirements-and-guardrails.md:114` 仍是 「未做」箭头 + ⏳，而该行出口判据原文是「PRIVATE_DEPLOY 路径可用」——本批的守卫 + 503 + 审计三项正是它的兑现。**本批有意不改那一行**：改需求基线属架构师范围的文档口径，须与验收追踪矩阵同批同步（非本批三刀）⇒ 登记在此，留待确认后单独一笔 docs 提交。
+0. **DR-D1 的出口判据已达成 ✅ —— 状态行已于 2026-10-08 更正**（本批有意留到单独的纯 docs 批次，因为它要连带三份文档同步）：`docs/delivery-requirements-and-guardrails.md` **DR-D1 → ✅ / DR-D2 → 🟡 在途（含两处过期口径更正）**；`docs/acceptance-traceability-matrix.md` **H6 → ✅ + M5 / M6 / H5 三行同期更正**；`docs/adr/0004-integration-seams.md` §3 **占位清单由 2 项降为 1 项**（PRIVATE_DEPLOY_ENABLED 已不再是占位，只剩 log_export）。⚠️ **更正时发现一处更大的过期口径**：DR-D2 与矩阵 M6 行都还写着「spec 仍草案 / v0.1」，而 `specs/m6-ontology-incremental.md` 头部实为 **v1.0（2026-10-02 定稿，§10 checklist 八项已全勾）** ⇒ 硬闸门 CP-3 **其实早已打开**——这直接改变了下一批的可行性判断，已在 P5-E 提示词里据此重排。**仍不做**：lert 表（spec §3 验收 5 自标 P2）、mask() 脱敏器（→ P5-E）。
 
 1. **M5 §3 验收 3 的缺口——脱敏器 `mask(field, category)`**：本批核对确认
    spec §4.5 的八类脱敏**未实现**（现行防线是"不写原文"）。它与"audit.detail 想写更多结构化字段"
