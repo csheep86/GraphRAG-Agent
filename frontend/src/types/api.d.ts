@@ -682,14 +682,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 合并两个实体（M6 §3.2 三动作之一，占位骨架）
+         * 合并两个实体（M6 §3.2 三动作之一）
          * @description 把 `right_entity_id` 并入 `left_entity_id`，产出**新的** `kg_version`。
          *
          *     **跨 org → 403** `FORBIDDEN`：两个实体必须同属当前租户，跨租户合并是数据污染，**不**降级为「只合并同租户的那个」。
          *
-         *     **当前状态**：占位骨架，恒返回 501。
+         *     **落点**：右侧属性并入左侧（`aliases` 吸收右名、`confidence` 取较大），右侧关系按原方向重挂到左侧，右侧节点不再独立存在；`entity_merge_candidates` 对应行 `human_review` → **`applied`**（M2 §4.5）。
          *
-         *     **错误语义**：跨租户 → 403；未实现 → 501。
+         *     **错误语义**：跨租户 → 403；实体不存在 / 不在 active 版本 → 404；无 active `kg_version` → 409；图谱不可用 → 501。
          */
         post: operations["mergeOntologyEntities"];
         delete?: never;
@@ -708,14 +708,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 改实体规范名（M6 §3.2 三动作之一，占位骨架）
+         * 改实体规范名（M6 §3.2 三动作之一）
          * @description 改实体的规范名，产出**新的** `kg_version`。
          *
          *     **为什么改名也算本体动作**：规范名进入抽取词表与消解键，改名等价于重跑一段图谱——所以它**必须**产新版本，而不是原地 UPDATE。
          *
-         *     **当前状态**：占位骨架，恒返回 501。
+         *     **旧名不丢**：改名后旧 `canonical_name` 写入 `:Entity.aliases`（沿用 M2 §4.3），否则历史证据会对不上人。
          *
-         *     **错误语义**：跨租户 → 403；未实现 → 501。
+         *     **错误语义**：跨租户 → 403；实体不存在 → 404；无 active `kg_version` → 409；图谱不可用 → 501。
          */
         post: operations["renameOntologyEntity"];
         delete?: never;
@@ -734,14 +734,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 拆分一个实体（M6 §3.2 三动作之一，占位骨架）
+         * 拆分一个实体（M6 §3.2 三动作之一）
          * @description 把一个实体拆成多个新实体（`new_entities[]` **至少 2 个**——只拆出 1 个等于改名，应走 `POST /ontology/rename`），产出**新的** `kg_version`。
          *
-         *     ⚠️ `new_entities[]` 每项目前**只有 `canonical_name`**：spec §5.5 写的是 `{canonical_name, ...}`，省略号部分本批**不自行展开**（功能预留原则），待 M6 实现批次按真实需求补字段并同步契约。
+         *     ⚠️ `new_entities[]` 每项目前**只有 `canonical_name`**：spec §5.5 写的是 `{canonical_name, ...}`，省略号部分**不自行展开**（功能预留原则）。
          *
-         *     **当前状态**：占位骨架，恒返回 501。
+         *     **关系迁移取 spec 的「默认同名」规则**：对端实体的 `canonical_name` 命中某个新实体 ⇒ 迁过去（保方向）；**命中不上 ⇒ 留在原节点**，不删也不猜。原节点置 `status='split'`（§4.5）。
          *
-         *     **错误语义**：跨租户 → 403；未实现 → 501。
+         *     **错误语义**：跨租户 → 403；实体不存在 → 404；无 active `kg_version` → 409；图谱不可用 / 入参不足 2 个新实体 → 501 / 400。
          */
         post: operations["splitOntologyEntity"];
         delete?: never;
@@ -4911,7 +4911,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            /** @description 实体不存在（`ENTITY_NOT_FOUND`）。**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1；Sprint 5 批次 C） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -4967,7 +4985,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            /** @description 实体不存在（`ENTITY_NOT_FOUND`）。**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1；Sprint 5 批次 C） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -5023,7 +5059,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            /** @description 实体不存在（`ENTITY_NOT_FOUND`）。**跨租户访问返回 403 而非 404**（ADR-0003 / M5 §3 验收 1；Sprint 5 批次 C） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 指定的 `kg_version` 非 active（`KG_VERSION_NOT_ACTIVE`）。**严禁静默降级**到最新 active 版本（ADR-0002 §3.2） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 基础设施不可用（Neo4j 连接失败 / 查询超时，或 LLM 未配置、装配失败）时返回 501（`NOT_IMPLEMENTED`） */
             501: {
                 headers: {
                     [name: string]: unknown;
