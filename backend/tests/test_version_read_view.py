@@ -232,9 +232,12 @@ def test_chain_stops_at_depth_limit_without_error(pg: str) -> None:
     """
     versions = [pg]
     for index in range(1, 6):
-        # ⚠️ 刻意用**最短**增量后缀（``-i<N>``）：``version`` 列是 ``String(64)``，
-        #    5 级 ``-inc-xxxxxx``（11 字符/级）会撑爆该列 —— 这条 live 限制本身
-        #    也值得另择时机裁决（多级校正的版本号会越积越长）。
+        # ⚠️ 刻意用**短**增量后缀（``-i<N>``），原因和测试数据有关、**与产品无关**：
+        # 这五个数会被写进 ``ontology_actions.kg_version`` / ``result_kg_version``，
+        # 两张表的这两列都是 ``String(64)``（``models.py:1069`` / ``:1071``）；
+        # 若这里用产品的真实后缀 ``-inc-<6hex>``（每级 +11），head 会到 72 字符 ⇒ 撑爆。
+        # 产品侧自 **P5-I0** 起版本号恒定 29 字符（不再把 base 拼进来），看门狗见
+        # ``test_kg_incremental_rebuild.py::test_legacy_nested_version_would_overflow_the_column``。
         versions.append(f"{versions[-1]}-i{index}")
         _action(base=versions[-2], result=versions[-1], entity_ids=[f"{pg}-e{index}"])
     head = versions[-1]

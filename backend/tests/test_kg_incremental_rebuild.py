@@ -44,6 +44,7 @@ from app.db.session import session_scope
 from app.services.graphs import GraphService
 from app.services.kg.incremental import (
     IncrementalRebuildError,
+    _next_version,
     rebuild_incrementally,
 )
 from app.services.kg.versioning import KgVersioningService
@@ -309,10 +310,15 @@ def pg_fixture():
     finally:
         with session_scope(org_id=_ORG_ID) as session:
             session.execute(delete(Document).where(Document.id.in_(doc_ids)))
+            # ⚠️ 为什么按 ``trace_id`` 而不是版本号前缀清理（P5-I0）：自 P5-I0 起
+            # 增量版本号**不再包含 base**（改为定长 `<stamp>-inc-<hex>`），
+            # ``version.like(f"{base}%")`` 会漏删本用例产出的版本 ⇒ 污染后续用例。
+            # trace_id 是这条链路唯一不变的标识（新版本行由 ``create_pending``
+            # 继承 action.trace_id），比任何命名约定都可靠。
             session.execute(
                 delete(KgVersion).where(
                     KgVersion.org_id == _ORG_ID,
-                    KgVersion.version.like(f"{base}%"),
+                    KgVersion.trace_id == trace_id,
                 )
             )
             session.execute(
@@ -600,6 +606,18 @@ def test_no_active_version_raises_and_writes_nothing(
 ) -> None:
     """PG 无 ready 版本 ⇒ `KG_VERSION_NOT_ACTIVE`，且**一行 `kg_versions` 都不落**。"""
     monkeypatch.setattr(KgVersioningService, "get_active", lambda self, *, org_id: None)
+
+    def _all_version_ids() -> set[Any]:
+        with session_scope(org_id=_ORG_ID) as session:
+            return set(
+                session.scalars(
+                    select(KgVersion.id).where(KgVersion.org_id == _ORG_ID)
+                ).all()
+            )
+
+    # 调用前后各拍一次快照 ⇒ 「一行都没落」是直接数出来的，而不是靠
+    # 版本号前缀推断出来的（P5-I0：前缀依赖已经不成立，见 fixture 里的注释）
+    before = _all_version_ids()
     with session_scope(org_id=_ORG_ID) as session:
         with pytest.raises(IncrementalRebuildError) as excinfo:
             rebuild_incrementally(
@@ -610,14 +628,7 @@ def test_no_active_version_raises_and_writes_nothing(
             )
 
     assert excinfo.value.error_code == ErrorCode.KG_VERSION_NOT_ACTIVE
-    with session_scope(org_id=_ORG_ID) as session:
-        rows = session.scalars(
-            select(KgVersion).where(
-                KgVersion.org_id == _ORG_ID,
-                KgVersion.version.like(f"{pg_fixture['base_version']}-inc-%"),
-            )
-        ).all()
-    assert rows == []
+    assert _all_version_ids() == before, "失败路径**一行** kg_versions 都不许落"
 
 
 def test_empty_affected_set_rejected(
@@ -633,3 +644,65 @@ def test_empty_affected_set_rejected(
                 affected_entity_ids=[],
             )
     assert excinfo.value.error_code == ErrorCode.VALIDATION_ERROR
+
+
+# --------------------------------------------------------------------------- #
+# 版本号**定长**（修的是一个 GUI 上线当天就会撞到的 500）
+# --------------------------------------------------------------------------- #
+#: `app/db/models.py:286` 的列宽 —— 版本号必须永远装得进它
+_VERSION_COLUMN_LIMIT = 64
+
+#: 一个**典型基线**版本号的长度：`scripts/import_to_neo4j.py::_default_kg_version`
+#: 的 `<%Y%m%dT%H%M%SZ>-<8hex>` = 25 字符
+_TYPICAL_BASE = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + "0" * 8
+
+#: 看门狗用的旧写法后缀长度：`-inc-`（5）+ 6 位 hex（6）= **每级 +11 字符**
+_LEGACY_SUFFIX = "-inc-" + "0" * 6
+
+
+def test_next_version_is_fixed_length_across_correction_levels() -> None:
+    """判据 1：**连续 N 次校正**产出的版本号长度**恒定**，且永远 ≤ `String(64)`。
+
+    这条用例存在的原因写在 :func:`~app.services.kg.incremental._next_version`
+    的 docstring 里：旧写法把 base 拼进来（每级 +11 字符），而列宽只有 64
+    ⇒ **连续第 4 次校正必然抛 PG 「value too long」**，形态是 500 ——
+    GUI 一旦把「连续校正」开放给人手，这就是上线当天的事。
+
+    **为什么直接调 ``_next_version`` 而不是跑一次真重建**：要验的是"第 N 级"
+    这个性质，跑 8 次全量重算会让它变成慢用例；而 ``_next_version`` 本身就是
+    唯一的生成入口（没别的调用方），测它等于测产品行为。
+    """
+    with session_scope(org_id=_ORG_ID) as session:
+        generated = [_next_version(db=session, org_id=_ORG_ID) for _ in range(8)]
+
+    lengths = {len(version) for version in generated}
+    assert len(lengths) == 1, (
+        f"版本号长度必须与校正级数无关，实际得到 {sorted(lengths)}"
+    )
+    assert max(lengths) <= _VERSION_COLUMN_LIMIT
+    # 同一秒内连生成 8 个 ⇒ 唯一性只靠 hex 尾巴撑住，这里顺手钉一下
+    assert len(set(generated)) == len(generated), "8 连生成必须互不重复"
+
+
+def test_legacy_nested_version_would_overflow_the_column() -> None:
+    """判据 2（**看门狗**）：把"为什么必须定长"钉成可执行的事实。
+
+    若有人把 ``_next_version`` 改回 ``f"{base}-inc-<hex>"``（比如为了"看版本号
+    就知道父子关系"），本用例会先变红 ⇒ 强迫他先回答"第 4 级怎么办"。
+
+    算的就是真实情形：典型基线 25 字符，每级 +11。
+    """
+    assert len(_TYPICAL_BASE) == 25, "基线号格式变了 ⇒ 本档 Rails 要跟着重算"
+
+    legacy = _TYPICAL_BASE
+    for level in range(1, 5):
+        legacy = f"{legacy}{_LEGACY_SUFFIX}"
+        if level < 4:
+            assert len(legacy) <= _VERSION_COLUMN_LIMIT, (
+                f"第 {level} 级本应还装得下（len={len(legacy)}）；"
+                "若这里就超了，说明列/格式已经动过，本用例的级数要重估"
+            )
+    assert len(legacy) > _VERSION_COLUMN_LIMIT, (
+        f"第 4 级长度 {len(legacy)} 应已越过 {_VERSION_COLUMN_LIMIT} 这一列的宽度 "
+        "—— 这正是 P5-I0 换成定长版本号的全部理由"
+    )

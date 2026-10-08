@@ -28,6 +28,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -240,7 +241,7 @@ def rebuild_incrementally(
         )
 
     trace = trace_id or action.trace_id
-    new_version = _next_version(db=db, org_id=org_id, base=base_version)
+    new_version = _next_version(db=db, org_id=org_id)
     record = versioning.create_pending(
         org_id=org_id,
         version=new_version,
@@ -516,10 +517,33 @@ def _mirror_version(
     )
 
 
-def _next_version(*, db: Session, org_id: uuid.UUID, base: str) -> str:
-    """生成同 org 唯一的增量版本号 ``<base>-inc-<suffix>``。"""
+def _next_version(*, db: Session, org_id: uuid.UUID) -> str:
+    """生成同 org 唯一的增量版本号 ``<%Y%m%dT%H%M%SZ>-inc-<8hex>``（**恒 29 字符**）。
+
+    ⚠️ **为什么不能把 base 拼进来**（2026-10-08 实测反哺，P5-I0）：
+
+    旧写法是 ``f"{base}-inc-{uuid4hex6}"`` —— 每级 **+11 字符**，而 base 自己又是
+    更早的版本拼出来的。基线号格式见 ``scripts/import_to_neo4j.py::_default_kg_version``
+    （``YYYYMMDDTHHMMSSZ-<8hex>`` = 25 字符），于是：
+
+    ```
+    1 级 36 ✓ ／ 2 级 47 ✓ ／ 3 级 58 ✓ ／ 4 级 69 ✗
+    ```
+
+    而 ``kg_versions.version`` 是 ``String(64)``（``app/db/models.py:286``）⇒
+    **连续第 4 次校正必然抛 PG 「value too long」**，形态是 **500**，
+    走不到任何既有业务错误码（不是 404 / 409 / 501），前端只能显示"未知错误"。
+    这不是推算：P5-H 写多级版本链用例时撞的就是它（当时被迫用最短后缀绕过）。
+
+    **版本号不承载父子关系**：某个版本"从哪个版本校正而来"的唯一真源是
+    ``ontology_actions.kg_version`` / ``result_kg_version`` 两列
+    （**ADR-0008 §3**），版本号字符串从来不是它的消费者；运营侧溯源查该表即可，
+    本模块完成日志本来就同时打了 ``base_version`` 与 ``new_version`` 两个字段。
+    ⇒ 丢掉 base 拼接**不丢任何语义**，换来的是"版本号长度与校正次数无关"。
+    """
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     for _ in range(8):
-        candidate = f"{base}-inc-{uuid.uuid4().hex[:6]}"
+        candidate = f"{stamp}-inc-{uuid.uuid4().hex[:8]}"
         exists = db.scalar(
             select(KgVersion.id).where(
                 KgVersion.org_id == org_id, KgVersion.version == candidate
@@ -529,7 +553,7 @@ def _next_version(*, db: Session, org_id: uuid.UUID, base: str) -> str:
             return candidate
     raise IncrementalRebuildError(
         error_code=ErrorCode.INTERNAL_ERROR,
-        message=f"连续 8 次未生成唯一增量版本号（base={base}）",
+        message="连续 8 次未生成唯一增量版本号",
     )
 
 
