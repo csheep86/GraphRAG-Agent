@@ -74,6 +74,7 @@ tests/test_ontology_correction_actions.py 12 passed
 
 | 项 | 结果 |
 |---|---|
+| **CI pytest**（终裁，run `37769050202` / commit `44ed3133`） | **1137 passed / 5 skipped / 0 failed**（基线 1118 ⇒ **+19**，不降） |
 | 本地全量 pytest（带 `GRAPH_REAL_NEO4J_*`） | **1136 passed / 4 skipped / 2 failed** —— 2 条 failed 是**已知的本地环境债**（`test_eval_ci_gate.py::test_g25_real_graph_detection_is_not_empty`、`test_eval_corpus_a8.py::test_g25_v2_corpus_meets_thresholds_by_confidence_bound`，依赖 CI 才有的受控种子语料；CI 上有导入步骤 ⇒ 那 2 条在 CI 上绿） |
 | `check_startup_readiness.py` | **`[OK]` 17 / `[~~]` 0 / `[--]` 0**（与基线一致） |
 | `check_seams.py` | ERROR 0 / WARN 0 / **OK 12** |
@@ -118,7 +119,9 @@ tests/test_ontology_correction_actions.py 12 passed
 | 2 | `docs(m6)`: ADR-0008 + m6 spec §5.1 注脚 + 矩阵 | `docs/adr/`、`specs/m6-*.md`、`docs/acceptance-traceability-matrix.md` |
 | 3 | `docs(chore)`: 本批 SDD 产物 | `changes/P5-H/` |
 
-CI 为终裁（R-10）：run id ____（推送后回登；四 job 全绿 + `gh run watch --exit-status` 退出码 0）
+CI 为终裁（R-10）：**run `37769050202`**（commit `44ed3133`）**四 job 全绿**，
+`gh run watch 37769050202 --exit-status` **退出码 0**；后端 job 内 `ruff` All checks passed、
+pytest **1137 passed / 5 skipped / 0 failed**。
 
 ## 8. 本批**不许外推**（完成本批 ≠ 以下任何一条）
 
