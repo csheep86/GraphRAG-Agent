@@ -142,13 +142,20 @@ $ uv run pytest tests/test_kg_incremental_rebuild.py -q
 | # | 提交 | 内容 |
 |---|---|---|
 | 1 | `ac20627c` `feat(M6): 增量重算服务 …` | 服务 + 配置 + `.env.example` + 测试（4 文件，1198 行） |
-| 2 | 本批文档 | `changes/P5-F/{proposal,tasks,integration-log}.md` + 矩阵 M6 行追加 |
+| 2 | `b581e240` `docs(P5-F): 批次 proposal / tasks / integration-log …` | `changes/P5-F/{proposal,tasks,integration-log}.md` + 矩阵 M6 行追加 |
+| 3 | `97b863be` `docs(P5-G): 写下批次开场提示词 …` | `changes/P5-G/new-session-prompt.md` —— **下一批**（M6 三端点接线）的开场提示词，本批收口时写下 |
 
 推送沿用 P5-E 收尾实测的解法：`git -c http.version=HTTP/1.1 push origin main`
 （**一次即通**；P5-E 那次连丢 4 次、间隔 45/75/120 秒都无效，根因是 git 的 HTTP/2 传输层握手，
 不是网络不通）。`-c` 是单次覆盖，**未改 git config**。
 
-**CI（代码）**：run `37730936882` / commit `ac20627c` —— 见 §7 结论。
+**CI**：代码 run `37730936882` / commit `ac20627c`；批次文档 run `37731281218` / commit `b581e240`
+—— **两次均四 job 全绿**（见 §7）。
+
+⚠️ **推送故障复发但解法不同**：本批第 3 笔推送时 `git -c http.version=HTTP/1.1` **这次失效**
+（连丢 4 次，`Failed to connect to github.com:443 after 21s`，而同刻 `gh api user` 正常返回）。
+最终**默认（HTTP/2）重试第 1 次即通** ⇒ 结论修正为：**两种传输层都可能间歇失败，
+交替重试比迷信某一条更省时间**。
 
 ---
 
