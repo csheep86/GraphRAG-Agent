@@ -1,19 +1,19 @@
 """M6 **本体增量演进**路由（`specs/m6-ontology-incremental.md` §5.5）。
 
-⚠️ **P5-C（2026-10-07）进度**：`cold-start` / `confirm` / `active` 三个端点**已接线**
-（`status='active'` 的唯一写入入口是 `confirm`）；
-`merge` / `split` / `rename` **仍是 501 占位**——它们依赖尚不存在的增量重算。
+**进度**：`cold-start` / `confirm` / `active` 由 P5-C（2026-10-07）接线；
+`merge` / `split` / `rename` 由 **P5-G（2026-10-08）**接线——增量重算（P5-F）
+落地后，这三个端点的最后一个硬前置消失了。
 
-剩下四个占位端点的语义不变（契约先行批次 F2）：
+**三端点只做编排，不写 Cypher**（D3）：图操作与增量重算的编排在
+`app.services.kg.correction`，路由层只负责「入参 → 服务 → 响应 / 错误映射」。
+与 `confirm` 端点的分工同款。
 
-- **为什么占位不返回 200**：返回 200 空结果会让前端以为接口可用 —— 业务未实现
-  却报成功，是本项目反复拦的那种"假做"；
-- ``merge`` / ``split`` / ``rename`` 都要产新 ``kg_version``、都要依赖**增量重算**，
-  而增量重算本身还不存在 ⇒ 三个端点整体留给后续批次。
+**RBAC**：六个端点全部挂 `require_permission(RESOURCE_ONTOLOGY, read/write)`
+（三端点从这一批起**真会写库与写图**，不挂等于给租户内任意主体开一个写入口）。
 
-**RBAC**：已实现的三个端点挂 `require_permission(RESOURCE_ONTOLOGY, read/write)`
-（2026-10-07：这三个从"没有数据可动"变成"真会写库"，不挂等于给租户内任意主体
-开一个写入口）；三个占位端点归实现批次随同批补登记。
+**为什么此前占位返回 501 而不是 200**：返回 200 空结果会让前端以为接口可用——
+业务未实现却报成功，是本项目反复拦的那种"假做"。现在它们返回 200，
+且 200 的**前提**是真产出了新 `kg_version`。
 """
 
 from __future__ import annotations
@@ -24,7 +24,9 @@ from fastapi import APIRouter
 
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
-    PLACEHOLDER_NOT_IMPLEMENTED,
+    ENTITY_NOT_FOUND,
+    KG_VERSION_NOT_ACTIVE,
+    NOT_IMPLEMENTED,
     SCHEMA_VERSION_NOT_ACTIVE,
     TENANT_ERROR_RESPONSES,
 )
@@ -40,6 +42,12 @@ from app.schemas.ontology import (
     OntologyRenameRequest,
     OntologySplitRequest,
 )
+from app.services.kg.correction import (
+    OntologyCorrectionError,
+    merge_entities,
+    rename_entity,
+    split_entity,
+)
 from app.services.ontology import (
     OntologySuggestError,
     OntologyVersionConflictError,
@@ -52,29 +60,18 @@ from app.services.rbac.policy import ACTION_READ, ACTION_WRITE, RESOURCE_ONTOLOG
 
 router = APIRouter(prefix="/ontology", tags=["ontology"])
 
-#: 501 的统一出处（**唯一消费点**在此，7 个端点共用）
-_BLOCKED_BY = "实现归 P5-M6 批次（Sprint 12）；本批只落契约与占位骨架"
-_SPEC = "specs/m6-ontology-incremental.md §5.5"
+#: 三端点共用的错误响应声明（**错误码一个都没新增**，Non-goal 7）
+_CORRECTION_ERROR_RESPONSES = {
+    **TENANT_ERROR_RESPONSES,
+    **ENTITY_NOT_FOUND,
+    **KG_VERSION_NOT_ACTIVE,
+    **NOT_IMPLEMENTED,
+}
 
 
-def _placeholder(endpoint: str, real_entry: str) -> AppError:
-    """构造占位端点的 501。
-
-    **为什么复用 `NOT_IMPLEMENTED` 而不新增错误码**：HTTP 501 本义即 Not Implemented，
-    新增一个只用 7 次、实现时必删的错误码，会让 `ErrorCode` 枚举背上临时债。
-    代价是与既有口径（501 = 基础设施不可用）重叠 ⇒ 靠 `detail.blocked_by` 区分，
-    并已登记为定稿增补项（F3 裁决，见 `responses.PLACEHOLDER_NOT_IMPLEMENTED`）。
-    """
-    return AppError(
-        ErrorCode.NOT_IMPLEMENTED,
-        "Endpoint is a placeholder: business logic not implemented yet",
-        detail={
-            "blocked_by": _BLOCKED_BY,
-            "endpoint": endpoint,
-            "real_entry": real_entry,
-            "spec": _SPEC,
-        },
-    )
+def _raise_correction_error(exc: OntologyCorrectionError) -> None:
+    """把服务层的失败**原样**转成统一错误体（**不**降级、**不**回落全量重建）。"""
+    raise AppError(exc.error_code, exc.message) from exc
 
 
 @router.post(
@@ -180,65 +177,114 @@ async def confirm_ontology(
     "/merge",
     response_model=OntologyActionResponse,
     operation_id="mergeOntologyEntities",
-    summary="合并两个实体（M6 §3.2 三动作之一，占位骨架）",
+    summary="合并两个实体（M6 §3.2 三动作之一）",
     description=(
         "把 `right_entity_id` 并入 `left_entity_id`，产出**新的** `kg_version`。\n\n"
         "**跨 org → 403** `FORBIDDEN`：两个实体必须同属当前租户，"
         "跨租户合并是数据污染，**不**降级为「只合并同租户的那个」。\n\n"
-        "**当前状态**：占位骨架，恒返回 501。\n\n"
-        "**错误语义**：跨租户 → 403；未实现 → 501。"
+        "**落点**：右侧属性并入左侧（`aliases` 吸收右名、`confidence` 取较大），"
+        "右侧关系按原方向重挂到左侧，右侧节点不再独立存在；"
+        "`entity_merge_candidates` 对应行 `human_review` → **`applied`**（M2 §4.5）。\n\n"
+        "**错误语义**：跨租户 → 403；实体不存在 / 不在 active 版本 → 404；"
+        "无 active `kg_version` → 409；图谱不可用 → 501。"
     ),
-    responses={**TENANT_ERROR_RESPONSES, **PLACEHOLDER_NOT_IMPLEMENTED},
+    responses=_CORRECTION_ERROR_RESPONSES,
+    dependencies=[require_permission(RESOURCE_ONTOLOGY, ACTION_WRITE)],
 )
 async def merge_ontology_entities(
     identity: CurrentIdentity,
+    db: DbSession,
+    trace_id: TraceId,
     payload: OntologyMergeRequest,
 ) -> OntologyActionResponse:
-    raise _placeholder("POST /api/v1/ontology/merge", "图谱实体合并 + 增量重算")
+    try:
+        result = merge_entities(
+            db=db,
+            org_id=identity.org_id,
+            actor_id=identity.actor_id,
+            trace_id=uuid.UUID(trace_id),
+            left_entity_id=payload.left_entity_id,
+            right_entity_id=payload.right_entity_id,
+        )
+    except OntologyCorrectionError as exc:
+        _raise_correction_error(exc)
+    return OntologyActionResponse(kg_version=result.kg_version, status="applied")
 
 
 @router.post(
     "/split",
     response_model=OntologyActionResponse,
     operation_id="splitOntologyEntity",
-    summary="拆分一个实体（M6 §3.2 三动作之一，占位骨架）",
+    summary="拆分一个实体（M6 §3.2 三动作之一）",
     description=(
         "把一个实体拆成多个新实体（`new_entities[]` **至少 2 个**——只拆出 1 个等于改名，"
         "应走 `POST /ontology/rename`），产出**新的** `kg_version`。\n\n"
         "⚠️ `new_entities[]` 每项目前**只有 `canonical_name`**：spec §5.5 写的是 "
-        "`{canonical_name, ...}`，省略号部分本批**不自行展开**（功能预留原则），"
-        "待 M6 实现批次按真实需求补字段并同步契约。\n\n"
-        "**当前状态**：占位骨架，恒返回 501。\n\n"
-        "**错误语义**：跨租户 → 403；未实现 → 501。"
+        "`{canonical_name, ...}`，省略号部分**不自行展开**（功能预留原则）。\n\n"
+        "**关系迁移取 spec 的「默认同名」规则**：对端实体的 `canonical_name` 命中某个"
+        "新实体 ⇒ 迁过去（保方向）；**命中不上 ⇒ 留在原节点**，不删也不猜。"
+        "原节点置 `status='split'`（§4.5）。\n\n"
+        "**错误语义**：跨租户 → 403；实体不存在 → 404；无 active `kg_version` → 409；"
+        "图谱不可用 / 入参不足 2 个新实体 → 501 / 400。"
     ),
-    responses={**TENANT_ERROR_RESPONSES, **PLACEHOLDER_NOT_IMPLEMENTED},
+    responses=_CORRECTION_ERROR_RESPONSES,
+    dependencies=[require_permission(RESOURCE_ONTOLOGY, ACTION_WRITE)],
 )
 async def split_ontology_entity(
     identity: CurrentIdentity,
+    db: DbSession,
+    trace_id: TraceId,
     payload: OntologySplitRequest,
 ) -> OntologyActionResponse:
-    raise _placeholder("POST /api/v1/ontology/split", "图谱实体拆分 + 增量重算")
+    try:
+        result = split_entity(
+            db=db,
+            org_id=identity.org_id,
+            actor_id=identity.actor_id,
+            trace_id=uuid.UUID(trace_id),
+            entity_id=payload.entity_id,
+            new_canonical_names=[item.canonical_name for item in payload.new_entities],
+        )
+    except OntologyCorrectionError as exc:
+        _raise_correction_error(exc)
+    return OntologyActionResponse(kg_version=result.kg_version, status="applied")
 
 
 @router.post(
     "/rename",
     response_model=OntologyActionResponse,
     operation_id="renameOntologyEntity",
-    summary="改实体规范名（M6 §3.2 三动作之一，占位骨架）",
+    summary="改实体规范名（M6 §3.2 三动作之一）",
     description=(
         "改实体的规范名，产出**新的** `kg_version`。\n\n"
         "**为什么改名也算本体动作**：规范名进入抽取词表与消解键，改名等价于"
         "重跑一段图谱——所以它**必须**产新版本，而不是原地 UPDATE。\n\n"
-        "**当前状态**：占位骨架，恒返回 501。\n\n"
-        "**错误语义**：跨租户 → 403；未实现 → 501。"
+        "**旧名不丢**：改名后旧 `canonical_name` 写入 `:Entity.aliases`（沿用 M2 §4.3），"
+        "否则历史证据会对不上人。\n\n"
+        "**错误语义**：跨租户 → 403；实体不存在 → 404；无 active `kg_version` → 409；"
+        "图谱不可用 → 501。"
     ),
-    responses={**TENANT_ERROR_RESPONSES, **PLACEHOLDER_NOT_IMPLEMENTED},
+    responses=_CORRECTION_ERROR_RESPONSES,
+    dependencies=[require_permission(RESOURCE_ONTOLOGY, ACTION_WRITE)],
 )
 async def rename_ontology_entity(
     identity: CurrentIdentity,
+    db: DbSession,
+    trace_id: TraceId,
     payload: OntologyRenameRequest,
 ) -> OntologyActionResponse:
-    raise _placeholder("POST /api/v1/ontology/rename", "图谱实体改名 + 增量重算")
+    try:
+        result = rename_entity(
+            db=db,
+            org_id=identity.org_id,
+            actor_id=identity.actor_id,
+            trace_id=uuid.UUID(trace_id),
+            entity_id=payload.entity_id,
+            new_canonical_name=payload.new_canonical_name,
+        )
+    except OntologyCorrectionError as exc:
+        _raise_correction_error(exc)
+    return OntologyActionResponse(kg_version=result.kg_version, status="applied")
 
 
 @router.get(

@@ -73,10 +73,14 @@ PROTECTED_ENDPOINTS: dict[str, str] = {
     #: P5-C（2026-10-07）：M6 第一批把这三个端点从 501 占位换成**真实现**
     #: （`/ontology/confirm` 会写库）⇒ 从这一刻起它们**必须**走 RBAC，
     #: 否则等于给租户内任意主体开一个改本体的写入口。
-    #: 三个仍占位的（merge / split / rename）留给它们自己的实现批次登记。
     "/ontology/active": "GET",
     "/ontology/cold-start": "POST",
     "/ontology/confirm": "POST",
+    #: P5-G（2026-10-08）：三个校正端点同步接线（会写库**且**会改图）⇒
+    #: 兑现 P5-C §11 第 1 条登记的 RBAC 债。
+    "/ontology/merge": "POST",
+    "/ontology/rename": "POST",
+    "/ontology/split": "POST",
 }
 PROTECTED_PATHS = set(PROTECTED_ENDPOINTS)
 
