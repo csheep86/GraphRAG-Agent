@@ -206,6 +206,27 @@
 - **M5 权限与审计**：调用 M5 校验用户对 `org_id` 的校正权限（`scene_scope = "ontology"` 新增）；每次校正动作写 `audit_log`
 - **M3 问答结果反馈**：M6 校正动作触发后，**问答结果应能立即反映**新图谱（沿用 M3 §3 验收 6 对 `kg_version` active 的消费）
 
+> **注脚 P5-H（2026-10-08 补，正文未改、编号未重排——守 `dev-doc-status.md` R5）**
+>
+> 上面第 3 条在 P5-F / P5-G 落地后**成立了一个隐含前提，而它并不成立**：
+> 「`kg_version` active」被消费侧当成「当前可见的**完整**图谱」，但 active 版本
+> 在**一次校正之后就是那个只含「受影响子图 ∪ 1 跳邻居」的增量版本**
+> （`rebuild_incrementally` 写出来的，见 §3.2 与 P5F-3）。于是按单一 `kg_version`
+> 过滤的读路径（概览 / 问答 / 合规）在校正后**几乎读空**——第 3 条实际未满足。
+>
+> 口径（**本注脚不新增需求，只是把隐含前提写明**）：
+>
+> 1. **active 版本 ≠ 可见全集**。写侧继续按 P5F-3 只写增量（不许为了读侧省事
+>    把新版本写全）；
+> 2. 读侧按**版本链继承**：active ∪ 其祖先版本（**新 → 旧**有序），同一 id
+>    取链上最新者胜；被本版本动作删掉的 id 不再向旧版本继承；
+> 3. 版本链的**真源是 `ontology_actions`**（`result_kg_version` → `kg_version`
+>    反推），**不是** `kg_versions` 表——后者没有 `parent_version` 列；
+> 4. 首批只切三条读路径（概览 / 多跳推理 / 合规扫描），其余仍是单版本，
+>    清单见 **ADR-0008 §5**。
+>
+> 完整决策与限制见 [`ADR-0008`](../docs/adr/ADR-0008-version-chain-read.md)。
+
 ### 5.2 下游被依赖
 
 - **M2 抽取参数注入**：M2 调用 `entity_relation_extract_v1.md` 时，`entity_types` / `relation_types` 从 `ontology_schemas`（`status = active` 最新版本）读取；**不修改 prompt v1**（符合 PRD §7 "MVP 不新增 Prompt 版本" + CODEBUDDY H9）
