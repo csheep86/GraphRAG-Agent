@@ -215,6 +215,9 @@ class Settings(BaseSettings):
     kg_build_batch_size: int = Field(default=500, gt=0)
     #: 唯一档位 'per_org'（全局版本留 Pro / Enterprise，ADR-0004 §3 第 2 条）
     kg_version_strategy: str = "per_org"
+    #: M6 §3.3 增量重算：单批重写受影响子图的**节点数**（避免大事务）。
+    #: 唯一消费点：app/services/kg/incremental.py::rebuild_incrementally
+    increment_rebuild_batch_size: int = Field(default=100, gt=0)
 
     # -- Agent fail-closed（ADR-0003 强化：跨租户子图必须由 PG documents 兜底校验）--
     #: True = 跨 org_id 即抛 KG_TENANT_LEAK（路由层转 403）；False 仅日志告警
