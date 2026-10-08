@@ -3,7 +3,7 @@
 > 🔒 **执行模式：无人值守**（技能 `unattended-sprint-execution`，用户已预授权）—— **不索过程性确认**，
 > 只在 §10 列的四类升级边界停下找我。详见 §1。
 >
-> 📦 **本文件自包含**：上一批（**P5-I0**）已收口（`main` = `c3371ad1`，CI run `37788289863` 四 job 全绿）、
+> 📦 **本文件自包含**：上一批（**P5-I0**）已收口（`main` = `bbe4388d`，CI run `37790726279` 四 job 全绿）、
 > 不会再回来。开工所需坐标、命令、基线、陷阱都在本文里。唯一需要你额外读的是 §0.5 的**五份仓库内文件**。
 >
 > ⚠️ **本批是跨角色批次**：契约（架构师）→ 后端（B）→ 前端（A）三段，**顺序不可颠倒**
@@ -30,6 +30,7 @@
 
 | 顺序 | 文件 | 为什么必须读 |
 |---|---|---|
+| 0 | **`changes/P5-I0/new-session-prompt.md`**（可选） | 上一批的开工提示词。不想读完整实录时，看它就能知道「为什么先做版本号定长」以及本批的前置是怎么被清掉的 |
 | 1 | **`changes/P5-I0/integration-log.md` §5 / §6.4** | 上一批实录。**重点 §5.1**（`String(64)` 的**两个面**：产品产物 vs 测试数据，别再把它们混成一件事）、**§6.4**（一次「看起来像改坏了」的伪失败，根因是全局计数断言被残留击穿） |
 | 2 | **`contracts/openapi.yaml:5006 / 5088 / 5170`** | 三端点的真契约：`POST /api/v1/ontology/merge` / `rename` / `split`；请求 `OntologyMergeRequest` / `OntologyRenameRequest` / `OntologySplitRequest`；响应统一 `OntologyActionResponse{kg_version, status}`（`status` 恒 `"applied"`，同步） |
 | 3 | **`backend/app/api/v1/routes/ontology.py:176-311`** | 三端点的路由与 RBAC（`require_permission`）现状；同文件另有 `GET /ontology/active`、`POST /ontology/confirm`、`POST /ontology/cold-start`（**仍是占位**） |
@@ -176,7 +177,7 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是绿的�
 | `CONTRACT_COVERED_PATTERNS` | `frontend/src/api/client.ts:32-61`，现 **19 条**（D6 追加后数字会变） |
 | 版本号长度 | 自 P5-I0 起 **恒 29 字符**（`app/services/kg/incremental.py::_next_version`） |
 | 前端 | `npm ci` + `typecheck` + `lint` **本地可跑**（CI 内亦绿）；`api.d.ts` 是 `gen:api` 生成物，**禁止手改** |
-| 最近一次绿 CI | **不要照抄写死的 run id**。开工时 `gh run list --limit 1` 实读；本文件成文时是 **run `37788289863` / commit `c3371ad1`** |
+| 最近一次绿 CI | **不要照抄写死的 run id**。开工时 `gh run list --limit 1` 实读；本文件成文时是 **run `37790726279` / commit `bbe4388d`** |
 
 > ⚠️ **跑子集前先看 `changes/P5-I0/integration-log.md` §6.4**：有一条既有用例的断言是
 > **全表计数**（`assert len(rows) == 1`），库里有任何残留都会让它红，
