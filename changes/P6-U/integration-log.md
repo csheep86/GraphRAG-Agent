@@ -156,7 +156,7 @@ git ls-files changes/P6-U       # 26 个文件全在版本库内
 | `export_openapi.py --check` | **零 diff** |
 | `check_seams.py` | **ERROR 0 / WARN 0 / OK 12** |
 | `check_startup_readiness.py` | **`[OK]` 17 / `[~~]` 0 / `[--]` 0** |
-| CI（终裁，R-10） | 见 §12（收口后回登 run id） |
+| CI（**终裁，R-10**） | ✅ run **37914433145**（`4c93974`）**四 job 全绿**，`gh run watch --exit-status` **EXIT=0**（见 §12） |
 
 ## 10. `check_session_drift`（实跑输出）
 
@@ -196,7 +196,19 @@ git ls-files changes/P6-U       # 26 个文件全在版本库内
 | 1 | `chore(changes): rename Sprint10.5 → P6-U` | 26 个重命名 + 全仓 44 行路径引用同步（§3） |
 | 2 | `docs(chore): P6-U 收口 —— 编号改指登记 + 三处过期口径更正 + P5 判据对账` | `proposal.md` §6 / `DR&G` / `dev-doc-status` / `delivery-plan` + 本日志 |
 
-> CI run id 在推送后回登本节（§9 末行）。
+| 3 | `docs(chore): P6-U 下一批（P6-V）开场提示词 + 集成日志 §12 CI 终裁读数` | `new-session-prompt.md`（工量已机械查实：读路径 **7 条**、`cost_metrics` 表不存在、成本端点恒 501）+ 本文档 §12 |
+
+**CI 终裁读数**（`gh run watch 37914433145 --exit-status` ⇒ **EXIT=0**）：
+
+| job | 结论 |
+|---|---|
+| 契约校验（前后端漂移门禁） | ✅ success（`export_openapi.py --check` 零 diff） |
+| 后端（ruff + pytest） | ✅ success |
+| 前端（lint + gen:api） | ✅ success |
+| 流水线汇总 | ✅ success |
+
+> ⚠️ 依 P5-B §5.3 的纪律：**此处停止回登 run id** —— 再提交只为"多记一个 run id"会触发
+> 「回登 ⇒ 新 commit ⇒ 新 run ⇒ 再回登」的无限递归。下一个 run 应由**下一批的实质改动**触发。
 
 ## 13. 下一批指针（按实际结果更新）
 
