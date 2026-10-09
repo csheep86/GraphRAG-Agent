@@ -51,6 +51,7 @@ from app.services.affiliation import (
     mark_task_processing,
     persist_detection_result,
 )
+from app.services.cost_metrics import record_extraction_usage
 from app.services.extraction import LangextractClient, LangextractError
 from app.services.extraction.langextract import ExtractionResult
 from app.services.graphs import GraphUnavailableError
@@ -551,6 +552,27 @@ async def _do_extract(
             full_md_text=markdown,
             trace_id=UUID(trace_id) if isinstance(trace_id, str) else trace_id,
         )
+
+        # P6-V2（偏离 **X-6**）：抽取侧 token 的**唯一**写库点。
+        # 为什么放在这里而不是 artifact 写完之后：记账的钱是 LLM 调用花掉的，
+        # 与产物是否顺利落盘无关；放后面会让「落盘失败 ⇒ 这次算力开销蒸发」。
+        # 为什么必须 try 包住：记账是**旁路**，它崩了不许把抽取主链路拖垮
+        # （LLM 已经花掉的钱不会因为没落账而退回，但抽取失败会让整篇文档白抽）。
+        # ``mock`` 档 / 无 usage ⇒ ``record_extraction_usage`` 跳过（不写 0）。
+        try:
+            record_extraction_usage(
+                org_id=document.org_id,
+                token_usage=result.llm_usage,
+                doc_ids=[document_id],
+                trace_id=trace_id,
+                db=db,
+            )
+        except Exception as exc:  # noqa: BLE001 - 旁路记账：异常只落日志，不上抛
+            logger.bind(
+                trace_id=trace_id,
+                document_id=str(document_id),
+                exc_type=type(exc).__name__,
+            ).error("document_extract_usage_record_failed")
 
         # Sprint 6 批次 A-2：用 content_list.json 给 chunk 判页（best-effort，失配 → None）
         result = _apply_page_numbers(

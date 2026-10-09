@@ -64,6 +64,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -1081,6 +1082,12 @@ class OntologyAction(Base):
     )
 
 
+#: M6 §4.3 偏离 **X-6**（P6-V2）：`cost_metrics` 的**成本口径**取值集合。
+#: (**2026-10-09 用户裁决**，只此两档；要加档需先改 spec 再改这里。)
+COST_STAGE_EXTRACTION = "extraction"  #: M2 抽取侧（LangExtract 的 LLM 调用）
+COST_STAGE_ANSWER = "answer"  #: M3 问答侧（AgentService 的真实 LLM 调用）
+
+
 class CostMetric(Base):
     """`cost_metrics` 表（M6 §4.3：成本审计的**日聚合**载体）。
 
@@ -1088,12 +1095,18 @@ class CostMetric(Base):
     （``single_doc_cost`` / ``cost_ratio``）——没有它，成本合规现状只能靠
     ``evaluation/`` 跑完后的离线表格，库里没有可复核的据。
 
-    **一行 = 一个租户的一天**（``UNIQUE (org_id, metric_date)``），由多次 LLM
-    调用**累加**而成；怎么累加、怎么去重都在 :mod:`app.services.cost_metrics` 里，
-    本文件只管形状。
+    **一行 = 一个租户一天的**一个成本口径** —— P6-V 是「一天一行」
+    （``UNIQUE (org_id, metric_date)``），P6-V2 加了 ``stage`` 之后粒度变成
+    「一天 × 每个 stage 一行」（``UNIQUE (org_id, metric_date, stage)``）。
+    由多次 LLM 调用**累加**而成；怎么累加、怎么去重都在
+    :mod:`app.services.cost_metrics` 里，本文件只管形状。
 
-    两处偏离（与上面的 X-2a / X-2b 同款登记写法）：
+    三处偏离（与上面的 X-2a / X-2b 同款登记写法）：
 
+    0. **X-6**（P6-V2）：多一列 ``stage``。spec §4.3 没写它，但没有它就只能用
+       「问答∪抽取」的混合口径报 ``single_doc_cost`` —— 抽取一篇文档的 token 会被
+       算到问答文档头上。可行取值见 :data:`COST_STAGE_EXTRACTION` /
+       :data:`COST_STAGE_ANSWER`，**不进**任何 API 契约；
     1. **X-3**：多一列 ``counted_doc_ids``（JSON 数组）。spec §4.3 没写它，但
        ``doc_count`` 要的是**去重后**的文档数、而累加发生在多次请求之间 ——
        没有这份清单就只能把同一份文档重复计数，``single_doc_cost`` 会被摊薄到不可信。
@@ -1101,14 +1114,25 @@ class CostMetric(Base):
     2. ``single_doc_cost`` 非空（契约要求 ``float``）、无数据时记 **0.0** ——
        语义是「本日没有 LLM 调用」，**不是**「成本为零」。
 
-    **本批唯一的写入方是 M3 问答**（``AgentService._execute_query``）；M2 抽取侧
-    的 token 尚未落点（langextract 只在日志里打印），注册为下一批作业面。
+    **两个写入方**（P6-V2 之后）：
+
+    - M3 问答：``AgentService._execute_query``（P6-V 起）；
+    - M2 抽取：``app.tasks.registry._do_extract``（P6-V2 新增，**唯一**一处，
+      usage 由 ``LangextractClient.extract_entities_relations`` 的
+      ``ExtractionResult.llm_usage`` 带出）。
+
+    仍未落的：``incremental_cost`` / ``full_rebuild_cost``（P6-V3，见 proposal §6）。
     """
 
     __tablename__ = "cost_metrics"
     __table_args__ = (
-        # 一天一行：写入一律靠 pg insert ... on conflict 累加
-        UniqueConstraint("org_id", "metric_date", name="uq_cost_metrics_org_date"),
+        # 一天一行 ⇒ 加 stage 之后变成「一天 × 每个 stage 一行」（偏离 X-6）：
+        # 写入一律靠 select for update + savepoint 累加（见
+        # :mod:`app.services.cost_metrics`）。**别改回两列**：两种口径落同一行 ⇒
+        # ``single_doc_cost`` 哪个口径都不是。
+        UniqueConstraint(
+            "org_id", "metric_date", "stage", name="uq_cost_metrics_org_date_stage"
+        ),
         CheckConstraint(
             "token_usage_input >= 0 AND token_usage_output >= 0 AND doc_count >= 0",
             name="ck_cost_metrics_non_negative",
@@ -1122,6 +1146,15 @@ class CostMetric(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     #: 聚合日（按 UTC 自然日切分，与 P6-U 的 "以 UTC 为准" 同口径）
     metric_date: Mapped[date] = mapped_column(Date, nullable=False)
+    #: M6 §4.3 偏离 **X-6**（P6-V2）：当行的**成本口径**。只有两档
+    #: （``COST_STAGE_EXTRACTION`` = M2 抽取 / ``COST_STAGE_ANSWER`` = M3 问答），
+    #: 扩建前先去改 spec —— 除此之外它**不是**任何业务表的
+    #: 扩展位（与新列有关的 default 必须同步落迁移的 ``server_default``）。
+    stage: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text(f"'{COST_STAGE_ANSWER}'"),
+    )
     #: 当日累计 LLM **输入** token
     token_usage_input: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
