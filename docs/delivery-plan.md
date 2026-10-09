@@ -254,6 +254,7 @@ P1 两条线**可并行**；A 组内部有严格先后：
 | **3** | **P6-T** | **多跳答对率 / C1 双侧 40×2 人工判分**（当前 `UNKNOWN`） | P6-S 出卷 | `--judgements <file> --judged-by <人>` ⇒ 判据从 `UNKNOWN` 翻成数 | **纯人工**（A3：脚本不得代判）。**📌 2026-10-09 状态更新（只追加）**：材料与工具**已齐备**、判分**未完成**（用户决定顺延至项目末期）⇒ 仍 `UNKNOWN`；**P8-Release「零缺口」对账前必须回来判完 86 题**，已判 2 题存于 `backend/data/eval/judging/judge-progress.json`。详见 [`changes/P6-T/integration-log.md`](../changes/P6-T/integration-log.md) |
 | **4** | **P6-U** | **D4 / Sprint10.5 收口**（知识时效 L2 ②③）+ 顺手修 `delivery-plan.md:80` 与 `DR&G:120` 两处过期口径 | 无 | P5 四条出口判据全达成 + 两处过期口径更正并登记 | AI |
 | **5** | **P6-V** | **P5-J：M6 剩余读路径 + `agents.py` 接线 + `cost_metrics`** ⇒ 解开 **C3-a / C3-b** 的 `BLOCKED` | P6-U（顺序同空） | `c3_a_single_doc_cost` / `c3_b_incremental_cost_ratio` 出数 | AI |
+| **5b** | **P6-V1** | **as-of 排序口径对齐**：`_cypher_paths()` 的 DB 侧 `ORDER BY (prio, size(rels), ids[-1]) LIMIT 400` 与 Python 侧 7 维口径对齐（`changes/P6-U/13-as-of-evidence-rank.md` §遗留；**2026-10-09 用户采纳**：旧称「是否对齐另开一轮」） | P6-V 之后（M4 / 检索域小修，不占 P6-W 的位置） | ① 两侧排序键**逐维比对**贴输出 ② 一条**候选 > 400** 时真胜者不被 DB 侧截断的用例 ③ `pytest` 不降 | AI |
 | **6** | **P6-W** | **DR-E4：`deployment-spec` §10 安装验收 10 项脚本化并逐条勾选** | 目标效环境 | 十项各自有可执行判据 + 迎接演练 | AI + 环境 |
 | **7** | **P6-X** | **演练留证**：恢复演练 + 升级演练（含回滚） | **独立环境**（由**固定 tag 镜像**起，不许源码起）；**执行者 ≠ 见证者** | 留证落 `docs/drills/` 并**标注「内部演练，非客户现场验收」** | **双人，AI 不能单独收口** |
 | **8** | **P6-Y** | **L2 端到端**（知识时效 L2 在真实链路上的端到端） | P6-U | 与 P6-U 若已覆盖则合并，不当两批报 | AI |
