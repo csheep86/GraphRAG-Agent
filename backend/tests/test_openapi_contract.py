@@ -41,6 +41,8 @@ CORE_PATHS = {
     # M6 契约先行批次（P0-m6-finalization F2）：spec §5.5 的 7 个端点，
     # **全部 501 占位骨架**（实现归 P5-M6 / Sprint 12）
     "/api/v1/ontology/cold-start",
+    # P5-I（2026-10-09）：候选读端点（GUI 的实体来源，paths 28 ⇒ **29**）
+    "/api/v1/ontology/candidates",
     "/api/v1/ontology/confirm",
     "/api/v1/ontology/merge",
     "/api/v1/ontology/split",
@@ -133,7 +135,8 @@ def test_operation_ids_are_unique(schema: dict) -> None:
     # （M6 契约先行批次 7 个占位端点；operation_id 不得重复）
     # （P4 License 自检端点 `getLicenseStatus`）→ 27
     # （P2-C 登录端点 `loginWithPassword`）→ **28**
-    assert len(operation_ids) == len(set(operation_ids)) == 28
+    # （P5-I 候选读端点 `listOntologyCandidates`）→ **29**
+    assert len(operation_ids) == len(set(operation_ids)) == 29
 
 
 def test_info_version_is_constant(schema: dict) -> None:
