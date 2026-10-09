@@ -141,7 +141,7 @@
 | `check_seams.py` | **ERROR 0 / WARN 0 / OK 12** |
 | `check_startup_readiness.py` | **`[OK]` 17 / `[~~]` 0 / `[--]` 0** |
 | `pytest`（有图口径） | **1157 passed / 3 skipped / 0 failed** = 基线 1154/3 **+ 新增 3 条** |
-| CI（收口） | run **37909829798**（`9ea62b6`）**success**，`gh run watch --exit-status` **EXIT=0**；中段 run **37902257091** / **37906937964** 均 success |
+| CI（收口） | run **37911774412**（`1b610fc`）**success**，`gh run watch --exit-status` **EXIT=0**；中段 run **37902257091** / **37906937964** / **37909829798** 均 success |
 | `tests/test_eval_baseline_a1.py` | **25 passed**（22 → 25） |
 
 ## 11. `check_session_drift`（实跑输出，五个判据全 OK）
