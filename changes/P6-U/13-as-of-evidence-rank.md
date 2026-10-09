@@ -76,3 +76,15 @@ as_of 为 NULL ⇒ 恒 0 ⇒ 缺省零变化
 > ✅ **2026-10-09 已裁决（用户采纳）**：**对齐**，排入队列 **`P6-V1`**（`docs/delivery-plan.md` §9.2 序 **5b**，
 > 位于 P6-V 与 P6-W 之间）。判据：两侧排序键**逐维比对**贴输出 + 一条**候选 > 400** 时真胜者不被 DB 侧截断的用例 + `pytest` 不降。
 > ⚠️ 上一句「是否对齐另开一轮」**已过期，勿再当作未排期项**。
+>
+> ✅✅ **2026-10-09 P6-V1 已收口**（证据见 [`changes/P6-V1/integration-log.md`](../P6-V1/integration-log.md)）：
+>
+> - **逐维比对**：`changes/P6-V1/probe_sort_key_alignment.py` 的输出——维 1 / 2 / 3 两侧一致
+>   （维 1 的 `IN $prio_types` 与维 2 缺失都已修：Cypher 改为读 Python 的同一份常量），
+>   维 4 / 5 / 7 DB 侧**仍不做**，理由与残留风险见 `changes/P6-V1/proposal.md` §6；
+> - **> 400 用例**：真图 401 条候选，旧键把真胜者截掉、新键保住
+>   （`tests/test_reasoning_db_order_by.py::test_db_truncation_drops_true_winner_only_under_legacy_key`）；
+> - `pytest` **1167 → 1173 passed**（+6），skipped 仍 5。
+>
+> ⚠️ 本条遗留**已消化**，勿再当作未做项；但**残留风险仍在**（前 3 维全打平且候选 > 400
+> 时，靠维 4 / 5 胜出的那条仍可能被截）——不许把本条读成「两侧已完全对齐」。
