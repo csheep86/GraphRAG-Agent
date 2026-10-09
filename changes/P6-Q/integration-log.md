@@ -175,7 +175,8 @@ return ChatOpenAI(
 
 | 项 | 读数 | 与起点对比 |
 |---|---|---|
-| **CI**（run **37881343417**） | 四 job 全 ✓，`gh run watch --exit-status` = **0** | 起点 run `37873512778` 亦绿 |
+| **CI**（run **37881343417**，覆盖三段实质提交） | 四 job 全 ✓，`gh run watch --exit-status` = **0** | 起点 run `37873512778` 亦绿 |
+| **CI**（run **37883366759**，覆盖收尾这条 docs-only 提交 `268d063c`） | 四 job 全 ✓，EXIT=**0** | CI pytest **1144 passed / 5 skipped**，与上一条逐位一致 ⇒ 无回退 |
 | CI 的 pytest | **1144 passed / 5 skipped** | 起点同位数 ⇒ **零增零回退** |
 | 本机 pytest（**有图**口径，`GRAPH_REAL_NEO4J_*`） | **1143 passed / 4 skipped / 2 failed** | 2 failed = 既有本地环境债（g25，依赖 CI 的受控种子语料） |
 | 本机 pytest（**无图**口径） | **1115 passed / 34 skipped / 0 failed** | — |
