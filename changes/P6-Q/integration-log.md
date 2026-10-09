@@ -169,7 +169,25 @@ return ChatOpenAI(
    躲着它会让整批结论失真。代价是多花了 200 多次调用（见 D7），这笔账算在本批头上，没有偷偷摊销。
 3. **验收是真跑还是读代码？** 全部实跑：探针两次、live 六趟、Q28 隔离 17 次；
    各种门禁（ruff / pytest / seams / openapi / readiness / drift）以**脚本输出**为准；
-   **CI 尚未出结果 ⇒ 本批结论在 CI 绿之前不作数（R-10）**。
+   **CI 已出结果并全绿 ⇒ 终裁已过（R-10）**。
+
+## 7.2 门禁读数（2026-10-09 实测）
+
+| 项 | 读数 | 与起点对比 |
+|---|---|---|
+| **CI**（run **37881343417**） | 四 job 全 ✓，`gh run watch --exit-status` = **0** | 起点 run `37873512778` 亦绿 |
+| CI 的 pytest | **1144 passed / 5 skipped** | 起点同位数 ⇒ **零增零回退** |
+| 本机 pytest（**有图**口径，`GRAPH_REAL_NEO4J_*`） | **1143 passed / 4 skipped / 2 failed** | 2 failed = 既有本地环境债（g25，依赖 CI 的受控种子语料） |
+| 本机 pytest（**无图**口径） | **1115 passed / 34 skipped / 0 failed** | — |
+| `ruff check .` / `ruff format --check .` | All passed / **267 files already formatted** | — |
+| `export_openapi.py --check` | 与 `contracts/openapi.yaml` 一致（**29 路径**） | 零 diff |
+| `check_seams.py` | ERROR 0 / WARN 0 / **OK 12** | 同基线 |
+| `check_startup_readiness.py` | **`[OK]` 17 / `[~~]` 0 / `[--]` 0** | 同基线 |
+| `check_session_drift.py` | S1 读到本批 **10 条边界**；S2 **4 文件 / 117 行**；S3~S5 无命中 | ✅ |
+
+> ⚠️ 有图口径那次跑出过一条 `test_kg_build_happy_path :: TASK_INTERRUPTED`，
+> **查明是我自己在上一轮 pytest 还在跑时 `Stop-Process` 杀进程造成的**（孤儿任务被回收 ⇒ executor 见到中断态）。
+> 干净状态重跑一次 ⇒ **全绿**。记在这里是为了避免后人把它当成代码债去修。
 
 ## 7.1 纪律反问备忘录（下一批不许忘）
 
