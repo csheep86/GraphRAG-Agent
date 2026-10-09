@@ -251,7 +251,7 @@ P1 两条线**可并行**；A 组内部有严格先后：
 |---|---|---|---|---|---|
 | **1** | **P6-R** | **拒答判据读数稳定化**：裁决 O1（全局钉 `temperature`）/ O2（只钉问答侧）/ O3（改判据口径为多趟取最大）并落地 | 先自跑 **≥3 趟** `--live` 复现抖动（不许复述 P6-Q 的 1/0/0） | ①≥3 趟读数一致为 0（或 O3 口径明确定义）②40 题 C2-c 恒 1.00 不退化 ③`missed_refusals` 恒空 ④**选 O1 必测抽取侧 gold 命中是否漂移** | AI + **用户裁决**（要碰接缝 3 / 可能新增配置项） |
 | **2** | **P6-S** | **A1：向量基线 + `BaselineRunner` 协议 + 双侧判分** ⇒ 让 C1 分母存在 | P6-R 之后（两侧都不许再改检索/采样，否则基线不同源） | `BaselineRunner` 协议落地 + `--live --criteria c1_graph_gain` 出数 + **基线分与 `baseline_spec` 落盘**（只落增益不可复核）+ 反向守卫三条 | AI，**判分靠人** |
-| **3** | **P6-T** | **多跳答对率 / C1 双侧 40×2 人工判分**（当前 `UNKNOWN`） | P6-S 出卷 | `--judgements <file> --judged-by <人>` ⇒ 判据从 `UNKNOWN` 翻成数 | **纯人工**（A3：脚本不得代判） |
+| **3** | **P6-T** | **多跳答对率 / C1 双侧 40×2 人工判分**（当前 `UNKNOWN`） | P6-S 出卷 | `--judgements <file> --judged-by <人>` ⇒ 判据从 `UNKNOWN` 翻成数 | **纯人工**（A3：脚本不得代判）。**📌 2026-10-09 状态更新（只追加）**：材料与工具**已齐备**、判分**未完成**（用户决定顺延至项目末期）⇒ 仍 `UNKNOWN`；**P8-Release「零缺口」对账前必须回来判完 86 题**，已判 2 题存于 `backend/data/eval/judging/judge-progress.json`。详见 [`changes/P6-T/integration-log.md`](../changes/P6-T/integration-log.md) |
 | **4** | **P6-U** | **D4 / Sprint10.5 收口**（知识时效 L2 ②③）+ 顺手修 `delivery-plan.md:80` 与 `DR&G:120` 两处过期口径 | 无 | P5 四条出口判据全达成 + 两处过期口径更正并登记 | AI |
 | **5** | **P6-V** | **P5-J：M6 剩余读路径 + `agents.py` 接线 + `cost_metrics`** ⇒ 解开 **C3-a / C3-b** 的 `BLOCKED` | P6-U（顺序同空） | `c3_a_single_doc_cost` / `c3_b_incremental_cost_ratio` 出数 | AI |
 | **6** | **P6-W** | **DR-E4：`deployment-spec` §10 安装验收 10 项脚本化并逐条勾选** | 目标效环境 | 十项各自有可执行判据 + 迎接演练 | AI + 环境 |
