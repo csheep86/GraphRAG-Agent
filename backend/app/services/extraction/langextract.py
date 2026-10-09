@@ -235,6 +235,13 @@ class ExtractionResult:
     #: 被跳过的 chunk（**诊断字段**：下游只消费 ``entities`` / ``relations`` /
     #: ``chunks`` 三个键，本字段供真机对账"这一份丢了多少证据"）
     failed_chunks: list[FailedChunk] = field(default_factory=list)
+    #: P6-V2：本次抽取的 LLM token 合计（``{"prompt_tokens" / "completion_tokens"
+    #: / "total_tokens"}`` 整数），是**抽取侧落 `cost_metrics` 的唯一来源**。
+    #: **空 dict = 本次没有真实 LLM 调用**（``mock`` 档 / 注入抽取器）⇒ 记帐方据此
+    #: **跳过**，既不写 0 也不造数（Y2）。
+    #: ⚠️ **刻意不进** :meth:`to_json_dict`：那是落 ``kg_versions`` 的产物形状，
+    #: 加键会改变既有工件的形状。
+    llm_usage: dict[str, int] = field(default_factory=dict)
 
     def to_json_dict(self) -> dict[str, object]:
         """导出 ``kg_versions`` 持久化 / Neo4j 写入共用的 JSON 结构。"""
@@ -291,9 +298,14 @@ class ExtractionResult:
 ChunkExtractorFn = Callable[
     [str, int], tuple[list[ExtractedEntity], list[ExtractedRelation]]
 ]
-#: 可注入的 LLM 调用签名（渲染后的 Prompt 进，模型原文出）。
-#: 单测注入假实现即可零外部依赖；默认实现走接缝 3 的 ``build_chat_model()``
-LlmInvokerFn = Callable[[str], str]
+#: 可注入的 LLM 调用签名（渲染后的 Prompt 进，**原文 + token 用量**出）。
+#: 单测注入假实现即可零外部依赖；默认实现走接缝 3 的 ``build_chat_model()``。
+#:
+#: **为什么返回二元组**（P6-V2，偏离 X-6 的第一步）：usage 此前只在
+#: :func:`_default_llm_invoke` 里 ``logger.bind(...)`` 打点——进过日志的结构化数据
+#: 就不再是数据了，抽取侧因此永远拿不到分子（``cost_metrics`` 的 M2 落点缺席）。
+#: 与其事后回查日志再解析一遍，不如让它**原样带出来**。
+LlmInvokerFn = Callable[[str], tuple[str, dict[str, int | None]]]
 
 
 # ------------------------------------------------------------------------------
@@ -370,7 +382,7 @@ def _default_extract_chunk(
 # ------------------------------------------------------------------------------
 
 
-def _default_llm_invoke(prompt: str) -> str:
+def _default_llm_invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
     """默认 LLM 调用：经接缝 3 的 ``build_chat_model()``，**不**自建客户端。
 
     同步 ``invoke``（抽取链路整体是同步的；``document.extract`` 执行体把它放进
@@ -379,6 +391,10 @@ def _default_llm_invoke(prompt: str) -> str:
 
     每次调用打点**耗时与 token 用量**（CODEBUDDY.md「日志与可观测性规则」）；
     日志只记数值，**不落** prompt 原文与密钥。
+
+    :returns: ``(模型原文, usage)`` —— usage **同时**返回给调用方（P6-V2）：
+        日志是给人看的，落 `cost_metrics` 需要的是**值**。缺项返回 ``None``，
+        由 :class:`_UsageTotals` 决定写 0 还是跳过（**不在此猜数**）。
     """
     from time import perf_counter
 
@@ -393,11 +409,10 @@ def _default_llm_invoke(prompt: str) -> str:
         ]
     )
     elapsed_ms = round((perf_counter() - started) * 1000)
+    usage = _extract_token_usage(response)
 
-    logger.bind(elapsed_ms=elapsed_ms, **_extract_token_usage(response)).info(
-        "langextract_llm_call"
-    )
-    return str(response.content)
+    logger.bind(elapsed_ms=elapsed_ms, **usage).info("langextract_llm_call")
+    return str(response.content), usage
 
 
 def _extract_token_usage(response: object) -> dict[str, int | None]:
@@ -415,6 +430,63 @@ def _extract_token_usage(response: object) -> dict[str, int | None]:
         "completion_tokens": usage.get("completion_tokens"),
         "total_tokens": usage.get("total_tokens"),
     }
+
+
+class _UsageTotals:
+    """一次抽取里**所有 chunk** 的 token 用量累加器（P6-V2）。
+
+    抽取是逐 chunk 调 LLM 的（一份年报可切几十段），``cost_metrics`` 要记的是
+    **这一份文档**的总量，不是单 chunk 的 —— 故需要一个跨调用累加的地方。
+
+    **``None`` 怎么处置**（决策 Y2）：某一项取不到就记 **0** 并累加一次
+    ``usage_missing`` 计数（由 :meth:`missing_fields` 读出后打点），**不猜不补**
+    （A15：严禁造数）。:meth:`snapshot` 返回**整数**，调用方不必再判空。
+    """
+
+    __slots__ = ("_prompt", "_completion", "_total", "_missing", "_calls")
+
+    def __init__(self) -> None:
+        self._prompt = 0
+        self._completion = 0
+        self._total = 0
+        self._missing = 0
+        self._calls = 0
+
+    def add(self, usage: Mapping[str, int | None] | None) -> None:
+        """累加一次 LLM 调用的用量；``None`` 项按 0 计并记一次缺失。"""
+        self._calls += 1
+        if usage is None:
+            self._missing += 3
+            return
+        prompt = usage.get("prompt_tokens")
+        completion = usage.get("completion_tokens")
+        total = usage.get("total_tokens")
+        self._prompt += int(prompt or 0)
+        self._completion += int(completion or 0)
+        # total 缺的那一档**不**在这里用 prompt+completion 顶上：那是**写库侧**
+        # （``cost_metrics``）自己的兜底口径，累加器只负责忠实相加。
+        self._total += int(total or 0)
+        self._missing += sum(
+            1 for value in (prompt, completion, total) if value is None
+        )
+
+    def snapshot(self) -> dict[str, int]:
+        """返回 {"prompt_tokens" / "completion_tokens" / "total_tokens"} 整数快照。"""
+        return {
+            "prompt_tokens": self._prompt,
+            "completion_tokens": self._completion,
+            "total_tokens": self._total,
+        }
+
+    @property
+    def missing_fields(self) -> int:
+        """累计有多少项用量没取到（据此打点，便于发现用量在悄悄失血）。"""
+        return self._missing
+
+    @property
+    def calls(self) -> int:
+        """累加过几次 LLM 调用。**0 次 = 没调过 LLM**（mock 档 / 没内容可抽）。"""
+        return self._calls
 
 
 def _render_extraction_prompt(
@@ -457,12 +529,17 @@ def _build_llm_chunk_extractor(
     invoker: LlmInvokerFn,
     vocabulary: TypeVocabulary = DEFAULT_VOCABULARY,
     document_date: date | None = None,
-) -> ChunkExtractorFn:
+) -> tuple[ChunkExtractorFn, _UsageTotals]:
     """构造 llm 档的 chunk 抽取器：单 chunk → 一次 LLM 调用 → 严格解析。
 
     与 mock 档**共用**外层的切分 / 裁剪逻辑（``_split_into_chunks`` /
     ``_clamp_*``），本函数只替换"文本 → entities/relations"这一步。
+
+    :returns: ``(抽取器, 用量累加器)`` —— 累加器跨 chunk 存活（P6-V2）：抽取是
+        逐 chunk 调用的，真正要落库的是**文档级**总量，单 chunk 的值无处可放，
+        由 :meth:`LangextractClient.extract_entities_relations` 读出来交给记帐侧。
     """
+    totals = _UsageTotals()
 
     def _extract_chunk(
         text: str, char_offset: int
@@ -480,7 +557,7 @@ def _build_llm_chunk_extractor(
         )
 
         try:
-            raw = invoker(prompt)
+            raw, usage = invoker(prompt)
         except LangextractError:
             raise
         except Exception as exc:  # noqa: BLE001 - 第三方异常统一包装为可重试业务错误
@@ -498,6 +575,9 @@ def _build_llm_chunk_extractor(
         )
         relations = _relations_from_payload(payload, id_map, vocabulary=vocabulary)
 
+        # **成功拿回 entities 之后**才累加：解析失败的 chunk 会抛出去，
+        # 一次被抛掉的调用已花的 token 本批记不到（见 proposal §6 残留 4）。
+        totals.add(usage)
         logger.bind(
             chunk_offset=char_offset,
             entity_count=len(entities),
@@ -505,7 +585,7 @@ def _build_llm_chunk_extractor(
         ).info("langextract_llm_chunk_done")
         return entities, relations
 
-    return _extract_chunk
+    return _extract_chunk, totals
 
 
 def _parse_llm_payload(raw: str) -> dict[str, Any]:
@@ -752,13 +832,17 @@ class LangextractClient:
         self._engine = engine
         # Sprint 9.5 批次 B2：None ⇒ 内置默认词表（金融域 v2 枚举）
         self._vocabulary = type_vocabulary or DEFAULT_VOCABULARY
+        # P6-V2：token 用量累加器。**注入抽取器 / mock 档都没有用量可累加** ⇒
+        # 保持空累加器 ⇒ :meth:`extract_entities_relations` 给出空 dict，
+        # 记帐方跳过（这是 A15「mock 档不调 LLM」在记帐侧的同一个事实）。
+        self._usage_totals = _UsageTotals()
         # 优先级：显式注入 > 引擎档位。注入永远是第一位的（单测零外部依赖靠它）
         if chunk_extractor is not None:
             self._chunk_extractor: ChunkExtractorFn = chunk_extractor
         elif engine == ENGINE_MOCK:
             self._chunk_extractor = _default_extract_chunk
         else:
-            self._chunk_extractor = _build_llm_chunk_extractor(
+            self._chunk_extractor, self._usage_totals = _build_llm_chunk_extractor(
                 prompt_version=prompt_version,
                 invoker=llm_invoker or _default_llm_invoke,
                 vocabulary=self._vocabulary,
@@ -891,6 +975,10 @@ class LangextractClient:
                     f"{failed_chunks[0].reason}）"
                 )
 
+        # P6-V2：**0 次调用 ⇒ 空 dict**，让记帐方一眼能区分「抽了但没用量」与
+        # 「压根没调 LLM（mock 档 / 注入抽取器）」——后者跳过，前者记 0。
+        llm_usage = self._usage_totals.snapshot() if self._usage_totals.calls else {}
+
         entities = _clamp_entities(all_entities, self._max_entities_per_doc)
         relations = _clamp_relations(
             all_relations, entities, self._max_relations_per_doc
@@ -910,6 +998,11 @@ class LangextractClient:
             entity_count=len(entities),
             relation_count_before_clamp=len(all_relations),
             relation_count=len(relations),
+            # P6-V2：让「花了多少 token」与安全 band 同 telemetry 流出；
+            # usage_missing > 0 ⇒ 有人踩到"响应里没有用量"的路径，不必等到月底对账。
+            usage_prompt_tokens=llm_usage.get("prompt_tokens", 0),
+            usage_completion_tokens=llm_usage.get("completion_tokens", 0),
+            usage_missing_fields=self._usage_totals.missing_fields,
         ).info("langextract_done")
 
         return ExtractionResult(
@@ -919,6 +1012,7 @@ class LangextractClient:
             relations=relations,
             chunks=chunks,
             failed_chunks=failed_chunks,
+            llm_usage=llm_usage,
         )
 
     # -------------------------------------------------------------- 容错
