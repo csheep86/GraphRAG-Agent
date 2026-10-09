@@ -26,11 +26,11 @@
 | 顺序 | 文件 | 为什么必须读 |
 |---|---|---|
 | 1 | **`changes/archive/2026-10-07-P5-A/integration-log.md`** | 上一批以「**依据失效、停下升级**」收尾。它用**四条实测**证明了 P5-A 的立项依据全部过期 —— 不读就可能重做一遍已被推翻的 recon，或以为还要去"裁决 A/B/C"（那事 09-30 就做完了）。**本批 §6 坐标表是它的续篇** |
-| 2 | `changes/Sprint10.5/13-as-of-evidence-rank.md` | J3 的**渲染前提**在此确立（§验收：2025 时点落到 `valid_to=2025-12-31`）。同时它 §遗留 登记了一个本批**不动**的口径不一致（见 §6.5） |
-| 3 | `changes/Sprint10.5/12-document-scope-inheritance.md` | 出路 B / R4-b 的核准与验收回填（`inconsistent` 259→352）。解释了为什么后端侧"已经做完了" |
+| 2 | `changes/P6-U/13-as-of-evidence-rank.md` | J3 的**渲染前提**在此确立（§验收：2025 时点落到 `valid_to=2025-12-31`）。同时它 §遗留 登记了一个本批**不动**的口径不一致（见 §6.5） |
+| 3 | `changes/P6-U/12-document-scope-inheritance.md` | 出路 B / R4-b 的核准与验收回填（`inconsistent` 259→352）。解释了为什么后端侧"已经做完了" |
 | 4 | `backend/scripts/ingest_attendance_policies.py` | T3 的主脚本。看它的 docstring / `POLICY_FILES` / `verify_and_close` 再动手，别照猜 |
 
-> ⚠️ `changes/Sprint10.5/` **没有归档**（`docs/delivery-plan.md:198` 既定处置：由 P5-D4 承接）。
+> ⚠️ `changes/P6-U/` **没有归档**（`docs/delivery-plan.md:198` 既定处置：由 P5-D4 承接）。
 > 它仍被 ADR / spec / 代码多处引用，**不要顺手 `git mv` 它**。
 
 ---

@@ -166,7 +166,7 @@
 - **不**碰 `users` 表 / RBAC / SSO（P2）、License（P4）、插件运行期装配
 - **不**改 `deploy/docker-compose.yml`（PG 服务 P1-B 已加）
 - **不**回退切 PG 后暴露的任何缺陷（ADR-0003 §3.6.2 已裁决为预期代价）—— 本次实测**没有**暴露任何缺陷
-- 在途批次 `changes/Sprint10.5/` 已冻结，不接
+- 在途批次 `changes/P6-U/` 已冻结，不接
 
 ---
 

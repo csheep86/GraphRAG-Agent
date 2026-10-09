@@ -14,7 +14,7 @@
 
 用法::
 
-    uv run python changes/Sprint10.5/probe_current_view_composition.py
+    uv run python changes/P6-U/probe_current_view_composition.py
 """
 
 from __future__ import annotations

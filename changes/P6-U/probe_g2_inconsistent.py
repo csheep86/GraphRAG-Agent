@@ -11,7 +11,7 @@
 可判定集远小于 19 万（绝大多数 2 跳链含 CSV 边，缺 ``valid_from`` ⇒ unknown），
 故全量判**不贵**且**可复现**。
 
-用法：``cd backend && uv run python ../changes/Sprint10.5/probe_g2_inconsistent.py``
+用法：``cd backend && uv run python ../changes/P6-U/probe_g2_inconsistent.py``
 """
 
 from __future__ import annotations

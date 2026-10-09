@@ -257,7 +257,7 @@
 #### 4.6.4 文档级作用域继承（R4-b 的实现边界）
 
 > 出处：[ADR-0005 §5 R4-b](../docs/adr/ADR-0005-temporal-knowledge-model.md)，
-> 实测记录 [`changes/Sprint10.5/12-document-scope-inheritance.md`](../../changes/Sprint10.5/12-document-scope-inheritance.md)。
+> 实测记录 [`changes/P6-U/12-document-scope-inheritance.md`](../../changes/P6-U/12-document-scope-inheritance.md)。
 > 11 号记录定的是「桥接边继承**条款自身**窗口」；本节定的是「条款**自身没有**窗口时怎么办」。
 
 - **适用对象**：仅作用域继承的落点是**确定性派生的桥接边**（`:RELATION` 上的
@@ -277,7 +277,7 @@
 
 > 出处：[ADR-0005 §5 R5](../docs/adr/ADR-0005-temporal-knowledge-model.md)，
 > 诊断记录
-> [`changes/Sprint10.5/probe_as_of_ranking.py`](../../changes/Sprint10.5/probe_as_of_ranking.py)。
+> [`changes/P6-U/probe_as_of_ranking.py`](../../changes/P6-U/probe_as_of_ranking.py)。
 
 - **触发条件**：仅 `as_of` 非 `None`。缺省视图该位次恒为 `0` ⇒ **缺省零变化**。
 - **判定对象**：候选链**最后一跳**的 `valid_from` / `valid_to`；日期缺失 ⇒ `1`

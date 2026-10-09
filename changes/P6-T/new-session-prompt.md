@@ -17,7 +17,7 @@
 
 ## 0. 本批一句话
 
-把**在途未提交**的知识时效 L2 ②③（= **DR-D4**）收口：按 §6.4 的裁决把 `changes/Sprint10.5/`
+把**在途未提交**的知识时效 L2 ②③（= **DR-D4**）收口：按 §6.4 的裁决把 `changes/P6-U/`
 改指新阶段编号（`git mv` 到 `changes/P6-U/`）、承接 `backend/` 的未提交改动、
 把 P5 四条出口判据补齐，并更正两处已过期的口径。
 
@@ -33,7 +33,7 @@
 | 2 | `docs/delivery-requirements-and-guardrails.md` **§6.4**（约 380-392 行） | 在途工作与**旧编号 `Sprint10.5` 冲突**的裁决原文：工作内容保留、编号作废、`git mv` 时机 = **本批开工第一步** |
 | 3 | `docs/delivery-requirements-and-guardrails.md` **DR-D4 行（117）** + **DR-D7 行（120）** | D4 = 知识时效 L2 ②③；DR-D7（`question` 参与检索）仍写「⏳ 未做」⇒ **两处过期口径之一** |
 | 4 | `docs/delivery-plan.md` **第 80 行**（P5 阶段行） | P5 出口判据 ①~④；判据 ④ 即 D4 承接，判据 ③ 原写 `qa_logs` 建表**已于 2026-09-26 达成** ⇒ **过期口径之二** |
-| 5 | `changes/Sprint10.5/` 目录内的 `00-recon.md` / `proposal.md`（若仍在） | 在途工作的真实范围：`11-derived-window-inheritance` / `12-document-scope-inheritance` / `13-as-of-evidence-rank` + probe 脚本 |
+| 5 | `changes/P6-U/` 目录内的 `00-recon.md` / `proposal.md`（若仍在） | 在途工作的真实范围：`11-derived-window-inheritance` / `12-document-scope-inheritance` / `13-as-of-evidence-rank` + probe 脚本 |
 
 ---
 
@@ -97,7 +97,7 @@ git status --short                                    # ⚠️ 先看清**在途
 
 | # | 决策 | 现状 / 提示 |
 |---|---|---|
-| **U1** ⚠️ | `changes/Sprint10.5/` 的**落点与编号** | §6.4 已裁：内容保留、`Sprint10.5` 编号失效 ⇒ `git mv changes/Sprint10.5 changes/P6-U/`（**P5 开工第一步**，即本批）并同步目录内编号引用。**只改名，不重排内容**（R-5） |
+| **U1** ⚠️ | `changes/P6-U/` 的**落点与编号** | §6.4 已裁：内容保留、`Sprint10.5` 编号失效 ⇒ `git mv changes/Sprint10.5 changes/P6-U/`（**P5 开工第一步**，即本批）并同步目录内编号引用。**只改名，不重排内容**（R-5） |
 | **U2** ⚠️ | `backend/` 在途未提交改动怎么接 | 先 `git status` 归因；属 D4 的收进来，**不属的登记保留**；**不许**顺手格式化 / 重构 |
 | **U3** | P5 四条出口判据的达成度 | 判据 ③（`qa_logs` 建表）2026-09-26 已达成 ⇒ 与 §6.4 一并更正；判据 ①②④ 逐条核对并**只追加**登记 |
 | **U4** | 两处过期口径更正 | `DR&G:120`（DR-D7 仍写「⏳ 未做」）与 `delivery-plan.md:80`（P5 出口判据③）⇒ **只追加不重排（R-5）**，写明「上一句已过期，勿再引用」 |
@@ -139,7 +139,7 @@ git status --short                                    # ⚠️ 先看清**在途
 
 | # | 判据 | 怎么验 |
 |---|---|---|
-| 1 | **`changes/Sprint10.5/` 已改指新编号** | `git mv` 后的目录存在且目录内编号引用已同步；工作区无残留旧编号引用（贴 `git status` / grep 结果） |
+| 1 | **`changes/P6-U/` 已改指新编号** | `git mv` 后的目录存在且目录内编号引用已同步；工作区无残留旧编号引用（贴 `git status` / grep 结果） |
 | 2 | **P5 四条出口判据逐条对账** | 贴 `delivery-plan.md:80` 的对账结果（✅/⏳ + 证据） |
 | 3 | **两处过期口径已更正** | 贴 `DR&G:120` 与 `delivery-plan.md:80` 的**追加**前后文本（**只追加不重排**） |
 | 4 | **契约零漂移** | `export_openapi.py --check` 零 diff（若在途改动动了契约 ⇒ 先同步契约再过这关） |

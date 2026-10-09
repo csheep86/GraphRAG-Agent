@@ -19,7 +19,7 @@
 
 用法::
 
-    uv run python changes/Sprint10.5/probe_as_of_ranking.py
+    uv run python changes/P6-U/probe_as_of_ranking.py
 """
 
 from __future__ import annotations

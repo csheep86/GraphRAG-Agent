@@ -10,7 +10,7 @@
 
 用法（工作目录任意）::
 
-    uv run python changes/Sprint10.5/probe_valid_to.py
+    uv run python changes/P6-U/probe_valid_to.py
 """
 
 from __future__ import annotations

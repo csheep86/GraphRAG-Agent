@@ -4,7 +4,7 @@
 > 只在 §10 列的四类升级边界停下找我。详见 §1。
 >
 > 复制本文件全文到新会话作为第一条消息。本批**不**从零探索——冻结批次的 recon、13 个 probe、
-> A/B/C 三条出路都已在 `changes/Sprint10.5/` 里，直接开工。
+> A/B/C 三条出路都已在 `changes/P6-U/` 里，直接开工。
 > 上一批：**P2-C（真实登录）**，三轮 CI 全绿，已归档至 `changes/archive/2026-10-07-P2-C/`。
 
 ---
@@ -30,7 +30,7 @@
 
 | 技能步骤 | 原真源 | 本批替代真源 |
 |---|---|---|
-| 1 定位进度 | `sprint-calendar.md` §5 | 本提示词 §5 决策表 + `changes/Sprint10.5/proposal.md:41-58`（顺序不可调换） |
+| 1 定位进度 | `sprint-calendar.md` §5 | 本提示词 §5 决策表 + `changes/P6-U/proposal.md:41-58`（顺序不可调换） |
 | 2 SDD 事前 | `dev-doc-status.md` §9.1（仍在，`:320`） | 照做；`proposal.md` + `tasks.md` 落在 **`changes/P5-A/`** |
 | 3 契约先行 | `backend/CODEBUDDY.md` §3（仍在，`:67`） | 照做。**本批预期零契约改动**（见 §4 Non-goal 6） |
 | 5 免请求提交 | — | 沿用：任务验证通过即自行 Conventional Commits 提交 |
@@ -46,8 +46,8 @@
 ## 2. 确认起点：为什么是 P5-A（三条机械理由）
 
 1. **排期指名 D4 是 P5 的第一个**：`docs/delivery-plan.md:198` 明写 P5 内部顺序 =
-   **D4 承接 `changes/Sprint10.5/` → D2 M6 → D1 → D3/D5/D7/D8**。P2-C 已完成、P4 已归档 ⇒ 下一个就是 P5。
-2. **它是仓库里唯一一笔"冻结在途"的工作**（`changes/Sprint10.5/proposal.md:3` ⏸️ 冻结）。
+   **D4 承接 `changes/P6-U/` → D2 M6 → D1 → D3/D5/D7/D8**。P2-C 已完成、P4 已归档 ⇒ 下一个就是 P5。
+2. **它是仓库里唯一一笔"冻结在途"的工作**（`changes/P6-U/proposal.md:3` ⏸️ 冻结）。
    P6-P1 已替它登记了一笔**没有任何 CI 会提醒**的债务：演示库被不可逆改动
    （+2 份 2025 版文档 / 图谱 +22 实体 / +11 关系，`R19` 已登记无 DELETE 接口）
    ⇒ **`G3` 受控题集必须再跑一次**（`proposal.md:16-19` 原话：「不能就这么搁着」）。
@@ -79,7 +79,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 ## 4. 边界纪律 · **11 条 Non-goals**（改一条都要先回来登记理由）
 
-**继承自 `changes/Sprint10.5/proposal.md:60-66`「明确不做」5 条（原样继承，不擅自放宽）：**
+**继承自 `changes/P6-U/proposal.md:60-66`「明确不做」5 条（原样继承，不擅自放宽）：**
 
 1. **不改 L1 失效仲裁去覆盖通用层**（`builder.py:1100-1102` 已写明原因：通用层仲裁要等实体消解，属 M4 完整化）。
 2. **不 flush 手写 `valid_to`** —— 抽不到就抽不到，报告 + 讨论 prompt，**禁止脚本补**。
@@ -119,7 +119,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 | 项 | 坐标 | 要点 |
 |---|---|---|
-| 冻结状态 | `changes/Sprint10.5/proposal.md:3-19` | ⏸️ 冻结；解冻第一件事 = 裁 A/B/C；G3 债务 |
+| 冻结状态 | `changes/P6-U/proposal.md:3-19` | ⏸️ 冻结；解冻第一件事 = 裁 A/B/C；G3 债务 |
 | 判据 J1–J6 | 同上 `:30-39` | J1 `valid_to` 非空且出处可指行数 / J2 `inconsistent` 由 0 变非零 / J3 前端虚线 / J4 as-of 双时点 / J5 受控题集不回归 / J6 三条门禁 |
 | 顺序（不可调换） | 同上 `:41-58` | 写双文档 → 重生成 → 入库重建 → **G1 闸门** → **G2 闸门** → ② → ③ → **G3** → 收尾 |
 | 明确不做 5 条 | 同上 `:60-66` | 已原样继承为 §4 的 Non-goals 1–5 |
@@ -132,7 +132,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | DR-D4 状态 | `docs/delivery-requirements-and-guardrails.md:117` | 🟡 **在途（未提交）**；编号须改指新阶段（处置见 §6.4） |
 | 风险原文 | `docs/dev-doc-status.md:310` | **R23**（`document_date` 数据侧已闭合，失效侧见 R24）/ **R24**（`valid_to` 全库 0 ⇒ L2「失效视觉语义」与「inconsistent 分支」**没有对象可判**） |
 | 现状实测（10.4） | `probe_l2_path_temporal.py` | consistent 1424 / unknown 2576 / **inconsistent 0**；`valid_from` 覆盖 3410/4064 = 83.9%，`valid_to` **0 条** |
-| 本批可用脚本 | `changes/Sprint10.5/` | `bootstrap_rebuild_graph.py` / `regen_docx_only.py` / `verify_docx_dates.py` / `probe_valid_to.py` / `probe_g2_*.py`（4 个）/ `probe_temporal_coverage.py` / `probe_undated_edges.py` / `probe_regen_validity.py` / `probe_document_date.py` / `probe_as_of_*.py`（2 个） |
+| 本批可用脚本 | `changes/P6-U/` | `bootstrap_rebuild_graph.py` / `regen_docx_only.py` / `verify_docx_dates.py` / `probe_valid_to.py` / `probe_g2_*.py`（4 个）/ `probe_temporal_coverage.py` / `probe_undated_edges.py` / `probe_regen_validity.py` / `probe_document_date.py` / `probe_as_of_*.py`（2 个） |
 | 抽取入口 | `backend/scripts/ingest_attendance_policies.py` | ⚠️ docstring 写 v2、实际 v3（见上） |
 | 受控题集 | `backend/scripts/eval_controlled_qset.py` | G3 用；`QSET_KG_VERSION` **不同源即全拒答**（v1→v2→v3 已踩两次） |
 | **陈旧口径（发现但不修）** | `delivery-plan.md:173` / `requirements:115` / `:120` | 仍写 m6 spec「v0.1 草案」、DR-D2 / D7「⏳ 未做」，而实测 **m6 spec v1.0 已由 P0-m6-finalization 定稿**、**D7/R22 已由 P6-N 关闭** ⇒ 本批**只登记**，Non-goal 11 |

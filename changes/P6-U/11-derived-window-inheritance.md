@@ -16,7 +16,7 @@
                               202 条里 191 条（95%）没有 valid_from
 ```
 
-`changes/Sprint10.5/probe_bridge_windows.py` 实测结果：
+`changes/P6-U/probe_bridge_windows.py` 实测结果：
 
 | GOVERNED_BY 形状 | 总数 | 缺 valid_from | 缺 valid_to |
 |---|---|---|---|
@@ -60,7 +60,7 @@ R4 禁止的是**凭空造出一个文本没写的日期**。本提案没有造�
 
 ## 4. 可行性（决策依据，实测）
 
-`changes/Sprint10.5/probe_clause_windows.py`：136 条 `POLICY_CLAUSE` 里
+`changes/P6-U/probe_clause_windows.py`：136 条 `POLICY_CLAUSE` 里
 
 | 候选窗口数 | 条款数 | 处理 |
 |---|---|---|

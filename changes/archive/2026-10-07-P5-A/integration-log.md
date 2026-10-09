@@ -46,7 +46,7 @@
 
 ## 2. 依据失效①：出路 **A** 已于 2026-09-30 裁决**并执行过**
 
-`changes/Sprint10.5/11-derived-window-inheritance.md:9` 原文：
+`changes/P6-U/11-derived-window-inheritance.md:9` 原文：
 
 > 施行 forward 补的 2026 版语料后（**用户裁决 A：语料逐条写明施行日、重抽 4 份**），
 > 带失效期的关系已从 **2 条 → 48 条**，2026 侧带 `valid_from` 的关系 **7 条 → 108 条**。

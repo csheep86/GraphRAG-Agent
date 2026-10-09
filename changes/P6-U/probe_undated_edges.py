@@ -15,7 +15,7 @@ R4-b 落地后两个时点的路径确实不同了（as-of 翻面），但 2025 
 
 用法::
 
-    uv run python changes/Sprint10.5/probe_undated_edges.py
+    uv run python changes/P6-U/probe_undated_edges.py
 """
 
 from __future__ import annotations

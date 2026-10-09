@@ -16,7 +16,7 @@
 
 用法::
 
-    uv run python changes/Sprint10.5/probe_document_scope.py
+    uv run python changes/P6-U/probe_document_scope.py
 """
 
 from __future__ import annotations

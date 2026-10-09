@@ -176,7 +176,7 @@ Graphiti 是**开放抽取**，事实写作是自由文本（"为张三" vs "变
 > 与「不给日期」同样假，却**更难被发现**。此为 R4 措辞边界的增补，**不是放松 R4**。
 >
 > 完整实测与验收基线见
-> [`changes/Sprint10.5/12-document-scope-inheritance.md`](../../changes/Sprint10.5/12-document-scope-inheritance.md)。
+> [`changes/P6-U/12-document-scope-inheritance.md`](../../changes/P6-U/12-document-scope-inheritance.md)。
 
 ### R5 as-of 视图的证据位次（Sprint 10.5 增补，用户 2026-09-30 裁决）
 
@@ -205,7 +205,7 @@ as_of 为 NULL ⇒ 该维度恒为 0 ⇒ 缺省视图零变化（硬要求）
 > `as_of='2025-06-01'` 下的 12 条候选，其终点类型优先标志、`_TERMINAL_RANK`、跳数、
 > 时序裁决四项**全部相同**，胜出者纯由 `ids` 字典序决定 ⇒ 答案事实上随机。
 > 诊断记录见
-> [`changes/Sprint10.5/probe_as_of_ranking.py`](../../changes/Sprint10.5/probe_as_of_ranking.py)。
+> [`changes/P6-U/probe_as_of_ranking.py`](../../changes/P6-U/probe_as_of_ranking.py)。
 
 ---
 

@@ -13,7 +13,7 @@
 
 用法（工作目录任意）::
 
-    uv run python changes/Sprint10.5/probe_document_date.py
+    uv run python changes/P6-U/probe_document_date.py
 """
 
 from __future__ import annotations
