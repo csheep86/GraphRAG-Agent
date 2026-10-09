@@ -30,10 +30,11 @@ from app.services.graphs import (
     KgVersion,
 )
 from app.services.reasoning import (
+    _TERMINAL_RANK,
     ALL_TERMINAL_TYPES,
     HUB_EMPLOYEE_TYPE,
-    PRIORITY_TERMINAL_TYPES,
     TERMINAL_ENTITY_TYPES,
+    TERMINAL_PRIORITY_TYPE,
     anchor_ids_for_question,
     build_reasoning_path,
 )
@@ -531,6 +532,11 @@ def test_build_path_queries_with_union_terminal_types() -> None:
     sent = session.params[-1]
     assert "SUBJECT" in sent["terminal_types"]
     assert "POLICY_CLAUSE" in sent["terminal_types"]
-    assert set(sent["prio_types"]) == set(PRIORITY_TERMINAL_TYPES)
+    # P6-V1（2026-10-09）：排序口径不再下发 ``prio_types``（它把 LEGAL_PERSON 也算
+    # 优先终点，与 Python 侧第 1 维只认 POLICY_CLAUSE **不等价**）。改为下发
+    # ``prio_type`` / ``terminal_rank``，值取自 Python 侧精排同一份常量。
+    assert sent["prio_type"] == TERMINAL_PRIORITY_TYPE
+    assert sent["terminal_rank"] == dict(_TERMINAL_RANK)
+    assert sent["terminal_rank_default"] == len(_TERMINAL_RANK)
     # hub 约束保留：中途禁止穿员工（考勤域实测：不禁会每条都出"员工→员工"废链）
     assert sent["hub"] == HUB_EMPLOYEE_TYPE
