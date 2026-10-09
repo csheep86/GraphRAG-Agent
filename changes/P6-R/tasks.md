@@ -57,5 +57,6 @@
 - [x] `integration-log.md`（含「收尾三问」自答 + Non-goals 核销 + 决策登记 + 下一批指针）
 - [x] 全部门禁：ruff（check / format）/ pytest 有图口径 **1146 passed / 3 skipped / 0 failed** /
       接缝 OK 12 / 契约零 diff / readiness 17-0-0 / `check_session_drift`（S1 读到 10 条边界）
-- [ ] Conventional Commits **分段提交**（后端 B / 架构师文档）→ 推送 → `gh run watch --exit-status` = 0
-- [ ] 下一批提示词 `changes/P6-R/new-session-prompt.md`（**MD 文件，不在聊天里贴**）
+- [x] Conventional Commits **分段提交**（4 段：llm.py / 探针 / 口径回登 / 批次产物）→ 推送
+- [x] CI run **37890415841**：四 job 全 ✓，`--exit-status` = **0**，pytest **1144 passed / 5 skipped**（零增零回退）
+- [x] 下一批提示词 `changes/P6-R/new-session-prompt.md`（**MD 文件，不在聊天里贴**）

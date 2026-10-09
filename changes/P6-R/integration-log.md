@@ -198,6 +198,7 @@ C2-a / C2-b 走 `AffiliationService.detect()` **只读 Neo4j、零 LLM** ⇒
 
 | 项 | 读数 | 说明 |
 |---|---|---|
+| **CI**（run **37890415841**，覆盖本批四段提交） | 四 job 全 ✓，`gh run watch --exit-status` = **0**；CI pytest **1144 passed / 5 skipped** | 与 P6-Q 收口读数**逐位一致** ⇒ **零增零回退** |
 | `ruff check .` | All checks passed | — |
 | `ruff format --check .` | **268** files already formatted | 267 + 本批新探针 |
 | `check_seams.py` | ERROR 0 / WARN 0 / **OK 12** | 同基线 |
