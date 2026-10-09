@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from app.evaluation.baseline import (
@@ -240,8 +242,6 @@ def _chunk(chunk_id: str, text: str):  # noqa: ANN202
 
 
 def test_judged_answers_leaves_unjudged_as_none() -> None:
-    from typing import Any
-
     answers: tuple[Any, ...] = (
         AnswerRecord(refused=False, citations=(), correct=None, judged_by=None),
         AnswerRecord(refused=True, citations=(), correct=None, judged_by=None),
@@ -277,6 +277,100 @@ def test_offline_mode_gives_no_number() -> None:
     assert result.blocked_by and "live" in result.blocked_by
     assert result.threshold == C1_GAIN_THRESHOLD
     assert result.threshold_source == "provisional"
+
+
+# ---------------------------------------------------------------------------
+# P6-S：双侧共因清单与可比性断言**必须早于人工判分**可见
+# ---------------------------------------------------------------------------
+
+
+def _live_snapshot() -> Any:
+    """一次"已经有答案、还没有判分"的问答快照（无 LLM / 无网络）。"""
+    from app.evaluation.runner import _QaRun
+
+    answers = tuple(
+        AnswerRecord(
+            refused=False,
+            citations=(CitationRef(chunk_id=f"c_{i}", has_span=True),),
+            correct=None,
+            judged_by=None,
+        )
+        for i in (1, 2)
+    )
+    return _QaRun(
+        answers=answers,
+        answered_indices=(1, 2),
+        false_refusals=(),
+        missed_refusals=(),
+        failures=(),
+        kg_versions=("attendance-demo-v1",),
+        asked=2,
+    )
+
+
+def _patch_deps(monkeypatch: pytest.MonkeyPatch, *, comparable: bool) -> list[str]:
+    """把下游依赖换成替身；返回**调用记录**（用于断言"没乱花钱"）。"""
+    calls: list[str] = []
+    monkeypatch.setattr("app.evaluation.runner._qa_run", lambda _ctx: _live_snapshot())
+    monkeypatch.setattr(
+        "app.evaluation.runner._build_embedder_or_none", lambda: object()
+    )
+    #: 不可比那一档：**故意**把基线侧 k 压到 8（< 图侧 32）——正是 A1 反向守卫要拦的
+    base_spec = _baseline_spec() if comparable else _baseline_spec(top_k=8)
+    monkeypatch.setattr(
+        "app.evaluation.runner._load_pool_and_specs",
+        lambda _ctx, _embedder: (_graph_spec(), base_spec, _pool(), ()),
+    )
+
+    def _fake_baseline(_ctx: object) -> tuple:  # type: ignore[type-arg]
+        calls.append("baseline_side")
+        raise AssertionError("不可比时不该跑到基线侧（那 40 次 LLM 是白花钱）")
+
+    monkeypatch.setattr("app.evaluation.runner._run_baseline_side", _fake_baseline)
+    return calls
+
+
+def test_missing_judgement_still_reports_both_specs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**本批的核心**：没判分 ⇒ 不给数字，但两侧怎么比的必须**看得见**。
+
+    为什么必须钉：原先 spec 排在判分闸门之后 ⇒ 人工判完 80 题才发现两侧不可比
+    ⇒ 人工劳动全部作废，且期间报告里连"怎么比的"一个字都没有。
+    """
+    _patch_deps(monkeypatch, comparable=True)
+    #: 缺判分这一档要走到「已跑到基线侧」：替身放回成功能的版本
+    monkeypatch.setattr(
+        "app.evaluation.runner._run_baseline_side",
+        lambda _ctx: (None, _live_snapshot().answers, (1, 2)),
+    )
+    result = eval_graph_gain({"ctx": RunnerContext(mode="live", git_hash="deadbeef")})
+
+    assert result.value is None
+    assert result.blocked_by and "判分" in result.blocked_by
+    detail = result.detail or {}
+    assert detail["graph_spec"]["retriever"] == RETRIEVER_GRAPH
+    assert detail["baseline_spec"]["retriever"] == RETRIEVER_BASELINE
+    #: 同源性读点：两侧的 k / 生成模型 / prompt 版本必须逐字一致（D4）
+    assert detail["graph_spec"]["top_k"] == detail["baseline_spec"]["top_k"]
+    assert (
+        detail["graph_spec"]["generation_model"]
+        == detail["baseline_spec"]["generation_model"]
+    )
+    assert detail["graph_spec"]["prompt_id"] == detail["baseline_spec"]["prompt_id"]
+
+
+def test_incomparable_blocks_before_running_baseline_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """不可比 ⇒ **先**报不可比，且。**不许**再去跑一遍注定作废的基线侧（省钱 + 早失败）。"""
+    calls = _patch_deps(monkeypatch, comparable=False)
+    result = eval_graph_gain({"ctx": RunnerContext(mode="live", git_hash="deadbeef")})
+
+    assert result.value is None
+    assert result.blocked_by and "L10-A1 反向守卫" in result.blocked_by
+    assert result.detail and result.detail["baseline_spec"]["top_k"] == 8
+    assert calls == []
 
 
 def test_missing_embedding_blocks_c1_without_number(

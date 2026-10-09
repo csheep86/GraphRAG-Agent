@@ -64,6 +64,26 @@ def test_non_numeric_key_is_rejected(tmp_path: Path) -> None:
         module._load_judgements(path)
 
 
+def test_null_value_is_rejected(tmp_path: Path) -> None:
+    """**P6-S**：未判分的题不许混进分母。
+
+    ``bool(None)`` == ``False`` ⇒ 一张**没判完**的表（留下 ``"7": null``）会把没判的题
+    静默判成"答错"——表格看着完全正常，答対率已经是假的，且**没有任何机器能看出来**。
+    """
+    module = _load_module()
+    path = _write(tmp_path, "half.json", {"1": True, "7": None})
+    with pytest.raises(ValueError, match="必须是 true / false"):
+        module._load_judgements(path)
+
+
+def test_string_value_is_rejected(tmp_path: Path) -> None:
+    """``bool("false")`` == ``True`` ⇒ 写成字符串的判分会**反着算**。"""
+    module = _load_module()
+    path = _write(tmp_path, "str.json", {"1": "false", "2": 0})
+    with pytest.raises(ValueError, match="必须是 true / false"):
+        module._load_judgements(path)
+
+
 def test_same_file_for_both_sides_is_rejected(tmp_path: Path) -> None:
     """A1 裁决 3：两侧共用一张表 = 替基线预设答案 ⇒ 直接拒绝执行。"""
     module = _load_module()
