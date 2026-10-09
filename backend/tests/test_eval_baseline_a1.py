@@ -37,6 +37,7 @@ from app.evaluation.runner import (
     _judged_answers,
     _run_baseline_side,
     eval_graph_gain,
+    eval_multihop_accuracy,
 )
 
 
@@ -416,3 +417,129 @@ def test_citation_has_span_flag_shape() -> None:
     """``CitationRef.has_span`` 的形状校验——它是 C2-a / C2-b 的共同判据输入。"""
     ref = CitationRef(chunk_id="c_1", has_span=True)
     assert ref.chunk_id == "c_1" and ref.has_span is True
+
+
+# ---------------------------------------------------------------------------
+# P6-T：出数那一趟必须留下「被判答案的原文」（D2 / 判据 4 + D3 多跳）
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_with_text() -> Any:
+    """带**答案原文**的问答快照——出数分支要留证的正是这条原文。"""
+    from app.evaluation.runner import _QaRun
+
+    answers = tuple(
+        AnswerRecord(
+            refused=False,
+            citations=(CitationRef(chunk_id=f"c_{i}", has_span=True),),
+            correct=None,
+            judged_by=None,
+            answer_text=f"图侧答案原文-{i}",
+        )
+        for i in (1, 2)
+    )
+    return _QaRun(
+        answers=answers,
+        answered_indices=(1, 2),
+        false_refusals=(),
+        missed_refusals=(),
+        failures=(),
+        kg_versions=("attendance-demo-v1",),
+        asked=2,
+    )
+
+
+def test_c1_number_carries_answer_texts_on_both_sides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """出数那一趟：detail **必须**带两侧答案原文。
+
+    为什么必须钉：判分是在 P6-S 定格的那份答卷上做的，而出数会**重新生成答案**。
+    报告里没有原文 ⇒ 「人判的 80 条」是否就是「出数这趟的 80 条」**无从证明**
+    ⇒ 判据 4（不许判在别人头上）会变成一句空话。
+    """
+    _patch_deps(monkeypatch, comparable=True)
+    monkeypatch.setattr(
+        "app.evaluation.runner._qa_run", lambda _ctx: _snapshot_with_text()
+    )
+    monkeypatch.setattr(
+        "app.evaluation.runner._run_baseline_side",
+        lambda _ctx: (None, _snapshot_with_text().answers, (1, 2)),
+    )
+    ctx = RunnerContext(
+        mode="live",
+        git_hash="deadbeef",
+        #: 基线侧**必须 > 0**：`graph_gain` 的分母是基线分，≤ 0 ⇒ 增益无定义（A7）
+        judgements={1: True, 2: True},
+        baseline_judgements={1: True, 2: False},
+        judged_by="architect",
+    )
+    result = eval_graph_gain({"ctx": ctx})
+
+    assert result.value is not None
+    detail = result.detail or {}
+    graph_rows = detail["answer_texts_graph"]
+    baseline_rows = detail["answer_texts_baseline"]
+    assert [row["index"] for row in graph_rows] == [1, 2]
+    assert [row["index"] for row in baseline_rows] == [1, 2]
+    assert all(row["answer"] for row in graph_rows + baseline_rows)
+
+
+def _fake_ask(_question: str, ctx: object) -> tuple[dict[str, Any], None]:  # noqa: ARG001
+    """多跳的问答替身：只回一条**带原文**的答案（不碰网络 / 不碰 LLM）。"""
+    return (
+        {
+            "answer": "多跳答案原文",
+            "refused": False,
+            "citations": [{"chunk_id": "c_1", "char_offset": 0, "char_end": 9}],
+        },
+        None,
+    )
+
+
+def test_multihop_without_judgement_exposes_answer_texts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """多跳缺判分时**必须**吐答案原文（D3：人不该盲判）。
+
+    原先 detail 只有 ``{"asked": 6, "judged": 0}`` ⇒ 人拿着它无从判分。
+    """
+    monkeypatch.setattr("app.evaluation.runner.ask_safe", _fake_ask)
+    result = eval_multihop_accuracy(
+        {"ctx": RunnerContext(mode="live", git_hash="deadbeef")}
+    )
+
+    assert result.value is None
+    assert result.blocked_by and "A3" in result.blocked_by
+    rows = (result.detail or {})["answer_texts"]
+    assert len(rows) == 6  # gold-multihop-v1 = 6 题
+    assert [row["index"] for row in rows] == [1, 2, 3, 4, 5, 6]
+    assert all(row["answer"] for row in rows)
+
+
+def test_multihop_number_carries_answer_texts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """多跳出数那一趟同样要留原文（与 C1 同口径：判分与出数同源可复核）。"""
+    from types import SimpleNamespace
+
+    from app.evaluation.dataset import load_multihop_set
+
+    judged = [
+        SimpleNamespace(
+            index=item.index,
+            question=item.question,
+            correct=True,
+            judged_by="architect",
+        )
+        for item in load_multihop_set()
+    ]
+    monkeypatch.setattr("app.evaluation.runner.load_multihop_set", lambda: judged)
+    monkeypatch.setattr("app.evaluation.runner.ask_safe", _fake_ask)
+    result = eval_multihop_accuracy(
+        {"ctx": RunnerContext(mode="live", git_hash="deadbeef")}
+    )
+
+    assert result.value == 1.0
+    rows = (result.detail or {})["answer_texts"]
+    assert len(rows) == 6 and all(row["answer"] for row in rows)

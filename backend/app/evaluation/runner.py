@@ -486,6 +486,7 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
     items = load_multihop_set()
     judgements = runner_ctx.judgements or {}
     answers: list[AnswerRecord] = []
+    indices: list[int] = []
     failures: list[dict[str, Any]] = []
     for item in items:
         response, error = ask_safe(item.question, ctx=runner_ctx)
@@ -502,6 +503,7 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
                 judged_by=runner_ctx.judged_by if correct is not None else None,
             )
         )
+        indices.append(item.index)
 
     if not answers:
         first = failures[0]["error"] if failures else "无响应"
@@ -522,9 +524,18 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
             status=CriterionStatus.UNKNOWN,
             value=None,
             provenance=_provenance(runner_ctx, dataset_version="gold-multihop-v1"),
-            blocked_by="A3：无已判分答案（请用 --judgements 提供人工判分，脚本不自动判分）",
+            blocked_by=(
+                "A3：无已判分答案（请用 --judgements 提供人工判分，"
+                "或把判分写回 gold-multihop-v1.json 的 correct 字段）；脚本不自动判分"
+            ),
             verdict=Verdict.INDETERMINATE,
-            detail={"asked": len(items), "judged": 0},
+            detail={
+                "asked": len(items),
+                "judged": 0,
+                #: **P6-T（D3）**：多跳此前**只报数字不报原文** ⇒ 人拿着它无从判分。
+                #: 与 C1 同一条理由（A3：人不该盲判）⇒ 缺判分时把答案原文一并摊开。
+                "answer_texts": _awaiting_judgement(tuple(answers), tuple(indices)),
+            },
         )
     status, reason = resolve_status(
         link_ready=True, dataset_ready=True, rubric_defined=True, corpus_is_final=False
@@ -543,6 +554,9 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
             "asked": len(items),
             "judged": sum(1 for a in answers if a.correct is not None),
             "judged_by": runner_ctx.judged_by,
+            #: **P6-T（D2）**：与 C1 同一条留证要求——出数这一趟的答案原文**必须落盘**，
+            #: 否则无从证明「人判的那 6 条」==「出数这一趟的 6 条」（判据 4）。
+            "answer_texts": _awaiting_judgement(tuple(answers), tuple(indices)),
         },
     )
 
@@ -1174,6 +1188,15 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
             "graph_spec": graph_spec.as_dict(),
             "baseline_spec": base_spec.as_dict(),
             "regression_warning": "基线反超图谱（增益为负）" if regression else None,
+            #: **P6-T（D2）**：出数这一趟的答案原文**必须落盘** —— 判分是在 P6-S 定格的
+            #: 那份答卷上做的，而出数会**重新生成答案**；没有原文就无从逐题证明
+            #: 「人判的 80 条」==「出数这一趟的 80 条」（判据 4：不许判在别人头上）。
+            "answer_texts_graph": _awaiting_judgement(
+                snapshot.answers, snapshot.answered_indices
+            ),
+            "answer_texts_baseline": _awaiting_judgement(
+                baseline_answers, baseline_indices
+            ),
         },
     )
 
