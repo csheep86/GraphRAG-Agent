@@ -40,7 +40,8 @@
 
 - [x] `dev-doc-status.md:385` **A6 行**：「含拒答档从未输出，P6 第一步补」⇒ 改为**已兑现**（`runner.py:347-351`）
 - [x] A6 行**误伤状态**由 FAIL 按实测更新（PASS ⇒ 贴证据；否则保留 FAIL 并写明）
-- [x] 如需同步：`delivery-plan.md` / release notes 的同一处口径
+- [x] 同步了 `acceptance-traceability-matrix.md` C2-c 行与 `delivery-requirements-and-guardrails.md` §473 排期结论
+- [x] `release-notes/v1.6.0.md` **刻意不动** —— 它是已发布版本的版本史，当前状态以 `dev-doc-status.md` 为准（理由见 `integration-log.md` §8）
 
 ## T6 · 收尾
 

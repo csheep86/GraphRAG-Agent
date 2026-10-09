@@ -157,7 +157,7 @@ uv run python scripts/probe_p6q_refusal_rootcause.py --index 28 --key 自动补�
 
 | 项 | 基线值 |
 |---|---|
-| 最近一次绿 CI | **不要照抄**：开工时 `gh run list --limit 1` 实读（P6-Q 收口 run id 见其 integration-log 末节） |
+| 最近一次绿 CI | **不要照抄**：开工时 `gh run list --limit 1` 实读。参考：P6-Q 收口 = run **37881343417**（四 job 全绿，CI pytest **1144 passed / 5 skipped**） |
 | `pytest`（本地口径） | P5-I 实读 **1143 passed / 4 skipped / 2 failed** —— 2 条 failed 是**本地特有的既有环境债**（g25 两条，依赖 CI 才有的受控种子语料）；**以 CI 为终裁**（R-10） |
 | `check_startup_readiness.py` | **`[OK]` 17 / `[~~]` 0 / `[--]` 0** |
 | `check_seams.py` | ERROR 0 / WARN 0 / **OK 12** |
