@@ -34,11 +34,19 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import OntologyAction, OntologySchema
+from app.core.errors import AppError, ErrorCode
+from app.db.models import EntityMergeCandidate, OntologyAction, OntologySchema
 from app.prompts import load_prompt
 from app.schemas import GraphCategory
+from app.schemas.ontology import (
+    OntologyCandidate,
+    OntologyCandidateListResponse,
+)
 
 __all__ = [
+    "CANDIDATE_PAGE_SIZE_DEFAULT",
+    "CANDIDATE_PAGE_SIZE_MAX",
+    "CANDIDATE_STATUS_VALUES",
     "CONFIRM_ACTION_TYPE",
     "DEFAULT_MAX_ENTITY_TYPES",
     "DEFAULT_MAX_RELATION_TYPES",
@@ -48,6 +56,7 @@ __all__ = [
     "confirm_ontology_schema",
     "entity_type_categories",
     "extraction_type_vocabulary",
+    "list_merge_candidates",
     "load_active_ontology",
     "suggest_ontology_types",
 ]
@@ -55,6 +64,20 @@ __all__ = [
 #: `ontology_actions.action_type` 里本批次写入的那一档（偏离 **X-2a**，
 #: 理由见 `app/db/models.py::ONTOLOGY_ACTION_TYPES`）。
 CONFIRM_ACTION_TYPE = "confirm"
+
+#: `GET /ontology/candidates` 分页口径（与 `GET /audit` 同款：默认 50 / 上限 100）
+CANDIDATE_PAGE_SIZE_DEFAULT = 50
+CANDIDATE_PAGE_SIZE_MAX = 100
+
+#: `entity_merge_candidates.status` 的**合法过滤值**（取自模型 CHECK 约束，与
+#: :class:`app.schemas.ontology.OntologyCandidate` 的 Literal 五值一致）。
+CANDIDATE_STATUS_VALUES = (
+    "pending",
+    "auto_merged",
+    "human_review",
+    "rejected",
+    "applied",
+)
 
 #: 冷启动建议用的 Prompt 名（``prompts/ontology_suggest_v1.md``）。
 #: **为什么不复用既有 Prompt**：spec §3.1 验收 1 原文写「调用 ``kg_qa_v1.md``」，
@@ -98,6 +121,80 @@ def load_active_ontology(*, db: Any, org_id: Any) -> OntologySchema | None:
             OntologySchema.org_id == org_id,
             OntologySchema.status == "active",
         )
+    )
+
+
+def list_merge_candidates(
+    *,
+    db: Session,
+    org_id: Any,
+    status: str | None = None,
+    page: int = 1,
+    page_size: int = CANDIDATE_PAGE_SIZE_DEFAULT,
+) -> OntologyCandidateListResponse:
+    """`GET /ontology/candidates`：本租户的**实体消解候选对**（M2 §4.5）。
+
+    **它是本体校正 GUI 的实体来源**（m6 §1.1 第 2 条：批次 B 与 `entity_merge_candidates`
+    表**绑定**）——GUI 不另造实体搜索端点，人从候选行上挑实体再发 merge / split / rename。
+
+    三条口径：
+
+    1. **`org_id` 强制来自认证态**（ADR-0003 §3.3）：本函数**不**接受 org 入参来自
+       query / body，跨租户 ⇒ **空集**（列表类端点泄露不了单条资源存在性，
+       返回 403 会让「队列为空」与「无权访问」在 UI 上无法区分）；
+    2. **`status` 非法值 → 400 `VALIDATION_ERROR`**：**不**静默当全量返回
+       （与 `app.services.audit.list_audit_logs` 同口径）；
+    3. **分页 Python 切片**（全量取 → 切片）：与 `list_audit_logs` 同款，演示量级足够，
+       且避免深 OFFSET。
+    """
+    stmt = select(EntityMergeCandidate).where(EntityMergeCandidate.org_id == org_id)
+
+    if status:
+        _assert_valid_candidate_status(status)
+        stmt = stmt.where(EntityMergeCandidate.status == status)
+
+    rows = list(db.scalars(stmt.order_by(EntityMergeCandidate.created_at.desc())).all())
+    total = len(rows)
+
+    start = (page - 1) * page_size
+    page_rows = rows[start : start + page_size]
+
+    logger.bind(org_id=str(org_id), status=status, total=total).info(
+        "ontology_candidates_listed"
+    )
+
+    return OntologyCandidateListResponse(
+        total=total,
+        items=[_to_candidate(row) for row in page_rows],
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _assert_valid_candidate_status(status: str) -> None:
+    """`status` 过滤值合法性（非法值 400，不静默当"全不过滤"处理）。"""
+    if status not in CANDIDATE_STATUS_VALUES:
+        raise AppError(
+            ErrorCode.VALIDATION_ERROR,
+            "Invalid candidate status filter",
+            detail={
+                "field": "status",
+                "value": status,
+                "allowed": list(CANDIDATE_STATUS_VALUES),
+            },
+        )
+
+
+def _to_candidate(row: EntityMergeCandidate) -> OntologyCandidate:
+    """把候选行投影成契约模型（**不补默认值**：没有就没有）。"""
+    return OntologyCandidate(
+        id=row.id,
+        left_entity_id=row.left_entity_id,
+        right_entity_id=row.right_entity_id,
+        similarity=row.similarity,
+        status=row.status,  # type: ignore[arg-type]
+        signals=row.signals,
+        created_at=row.created_at,
     )
 
 

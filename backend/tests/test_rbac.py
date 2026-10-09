@@ -74,6 +74,9 @@ PROTECTED_ENDPOINTS: dict[str, str] = {
     #: （`/ontology/confirm` 会写库）⇒ 从这一刻起它们**必须**走 RBAC，
     #: 否则等于给租户内任意主体开一个改本体的写入口。
     "/ontology/active": "GET",
+    #: P5-I（2026-10-09）：候选读端点（GUI 的实体来源）。它只读，但读的正是
+    #: 「谁和谁可能被合并」——属租户内本体资产，与三动作同一资源 ⇒ 同样受保护。
+    "/ontology/candidates": "GET",
     "/ontology/cold-start": "POST",
     "/ontology/confirm": "POST",
     #: P5-G（2026-10-08）：三个校正端点同步接线（会写库**且**会改图）⇒

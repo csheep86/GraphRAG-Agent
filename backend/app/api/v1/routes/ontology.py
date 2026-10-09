@@ -19,8 +19,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.api.deps import CurrentIdentity, DbSession, TraceId
 from app.api.v1.responses import (
@@ -29,11 +30,13 @@ from app.api.v1.responses import (
     NOT_IMPLEMENTED,
     SCHEMA_VERSION_NOT_ACTIVE,
     TENANT_ERROR_RESPONSES,
+    VALIDATION_ERROR,
 )
 from app.core.errors import AppError, ErrorCode
 from app.schemas.ontology import (
     OntologyActionResponse,
     OntologyActiveResponse,
+    OntologyCandidateListResponse,
     OntologyColdStartRequest,
     OntologyColdStartResponse,
     OntologyConfirmRequest,
@@ -49,9 +52,12 @@ from app.services.kg.correction import (
     split_entity,
 )
 from app.services.ontology import (
+    CANDIDATE_PAGE_SIZE_DEFAULT,
+    CANDIDATE_PAGE_SIZE_MAX,
     OntologySuggestError,
     OntologyVersionConflictError,
     confirm_ontology_schema,
+    list_merge_candidates,
     load_active_ontology,
     suggest_ontology_types,
 )
@@ -285,6 +291,63 @@ async def rename_ontology_entity(
     except OntologyCorrectionError as exc:
         _raise_correction_error(exc)
     return OntologyActionResponse(kg_version=result.kg_version, status="applied")
+
+
+@router.get(
+    "/candidates",
+    response_model=OntologyCandidateListResponse,
+    operation_id="listOntologyCandidates",
+    summary="读取本租户的实体消解候选（M6 §1.1 批次 B：GUI 的实体来源）",
+    description=(
+        "返回当前租户的 `entity_merge_candidates` 候选对，**按 `created_at DESC`**、"
+        "分页返回（`page` 1-based，`page_size` 默认 **50**、上限 100）。\n\n"
+        "**它是校正 GUI 的实体来源**——m6 §1.1 第 2 条要求 GUI 与该表**绑定**，"
+        "因此 GUI **不**另造实体搜索端点：人从候选行上挑出实体，再发 "
+        "`POST /ontology/merge` / `/split` / `/rename`。\n\n"
+        "**过滤**：`status` 取 `pending` / `auto_merged` / `human_review` / "
+        "`rejected` / `applied` 之一；**非法值 → 400** `VALIDATION_ERROR`，"
+        "**不**静默当全量返回（与 `GET /audit` 同口径）。\n\n"
+        "**跨租户 ⇒ 空集**（`items=[]` 且 `total=0`）：列表类端点泄露不了单条资源的"
+        "存在性，返回 403 会让「队列为空」和「无权访问」在 UI 上无法区分。\n\n"
+        "**错误语义**：非法 `status` → 400；跨租户 → 403；未认证 → 401。"
+    ),
+    responses={**TENANT_ERROR_RESPONSES, **VALIDATION_ERROR},
+    dependencies=[require_permission(RESOURCE_ONTOLOGY, ACTION_READ)],
+)
+async def list_ontology_candidates(
+    identity: CurrentIdentity,
+    db: DbSession,
+    status: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=32,
+            description=(
+                "按处置档位过滤：`pending` / `auto_merged` / `human_review` / "
+                "`rejected` / `applied`"
+            ),
+        ),
+    ] = None,
+    page: Annotated[int, Query(ge=1, description="1-based 页码")] = 1,
+    page_size: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=CANDIDATE_PAGE_SIZE_MAX,
+            description=(
+                f"每页条目数（默认 {CANDIDATE_PAGE_SIZE_DEFAULT}，"
+                f"上限 {CANDIDATE_PAGE_SIZE_MAX}）"
+            ),
+        ),
+    ] = CANDIDATE_PAGE_SIZE_DEFAULT,
+) -> OntologyCandidateListResponse:
+    return list_merge_candidates(
+        db=db,
+        org_id=identity.org_id,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get(

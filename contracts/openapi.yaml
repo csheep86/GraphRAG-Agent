@@ -2590,6 +2590,141 @@ components:
       - status
       title: OntologyActiveResponse
       type: object
+    OntologyCandidate:
+      description: '`GET /ontology/candidates` 里的一行：一对**待消解候选**（M2 §4.5 / §4.5.1）。
+
+
+        **它是校正 GUI 的实体来源**（m6 §1.1 第 2 条：批次 B 与 `entity_merge_candidates` 表
+
+        **绑定**）——GUI 不另造实体搜索端点，人从候选行上挑实体再发 merge / split / rename。
+
+
+        字段是 `entity_merge_candidates` 行的**投影**：`status` 五值取自模型的 CHECK 约束
+
+        （`pending` / `auto_merged` / `human_review` / `rejected` / `applied`）；
+
+        `signals` 是「为什么判这一档」的判分依据（``{name_sim, struct_bonus, tax_conflict…}``），
+
+        **可空**——早期行没有它，不替它编默认值。
+
+
+        **不带 `trace_id`**：spec §5.5 只有 `cold-start` 响应列了 `trace_id`，其余端点没有；
+
+        两者冲突时**以 spec 为准**（本文件头已登记该取舍）。'
+      example:
+        created_at: '2026-10-09T08:15:00Z'
+        id: 6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d
+        left_entity_id: SUBJECT:91310000MA1FL0Q23K
+        right_entity_id: RAW:affiliation.csv:91310000MA1FL0Q23K
+        signals:
+          name_sim: 0.82
+          struct_bonus: 0.0
+        similarity: 0.82
+        status: human_review
+      properties:
+        created_at:
+          description: 候选落库时间（UTC）
+          format: date-time
+          title: Created At
+          type: string
+        id:
+          description: 候选行 id（`entity_merge_candidates.id`）
+          format: uuid
+          title: Id
+          type: string
+        left_entity_id:
+          description: 保留侧实体 id（**图侧字符串 id**，见 M2 §4.5 偏离 S9.13-1）
+          title: Left Entity Id
+          type: string
+        right_entity_id:
+          description: 被并入侧实体 id（图侧字符串 id）
+          title: Right Entity Id
+          type: string
+        signals:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          description: 判分依据（**可空**）：只有分数回答不了「为什么是这一档」
+          title: Signals
+        similarity:
+          description: 相似度（M2 §4.5.1：名称相似度 + 结构加分）
+          maximum: 1.0
+          minimum: 0.0
+          title: Similarity
+          type: number
+        status:
+          description: 处置档位。`applied` 由 `POST /ontology/merge` 写入（P5-G）；其余档位本阶段无写入方（<0.70 的候选不落表）
+          enum:
+          - pending
+          - auto_merged
+          - human_review
+          - rejected
+          - applied
+          title: Status
+          type: string
+      required:
+      - id
+      - left_entity_id
+      - right_entity_id
+      - similarity
+      - status
+      - created_at
+      title: OntologyCandidate
+      type: object
+    OntologyCandidateListResponse:
+      description: '`GET /ontology/candidates` 响应：本租户的候选对（`created_at DESC` + 分页）。
+
+
+        **跨租户 ⇒ 空集**（`items=[]` / `total=0`）：列表类端点泄露不了单条资源的存在性，
+
+        返回 403 会让「队列为空」与「无权访问」在 UI 上无法区分（P5I-1）。
+
+
+        **不带 `trace_id`**：同 :class:`OntologyCandidate`，以 spec §5.5 为准。'
+      example:
+        items:
+        - created_at: '2026-10-09T08:15:00Z'
+          id: 6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d
+          left_entity_id: SUBJECT:91310000MA1FL0Q23K
+          right_entity_id: RAW:affiliation.csv:91310000MA1FL0Q23K
+          signals:
+            name_sim: 0.82
+            struct_bonus: 0.0
+          similarity: 0.82
+          status: human_review
+        page: 1
+        page_size: 50
+        total: 1
+      properties:
+        items:
+          description: 当前页结果（按 `created_at DESC`）
+          items:
+            $ref: '#/components/schemas/OntologyCandidate'
+          title: Items
+          type: array
+        page:
+          description: 当前页码（1-based）
+          minimum: 1.0
+          title: Page
+          type: integer
+        page_size:
+          description: 每页条目数（请求参数回显）
+          minimum: 1.0
+          title: Page Size
+          type: integer
+        total:
+          description: 当前租户下满足过滤条件的候选总数
+          minimum: 0.0
+          title: Total
+          type: integer
+      required:
+      - total
+      - items
+      - page
+      - page_size
+      title: OntologyCandidateListResponse
+      type: object
     OntologyColdStartRequest:
       description: '`POST /ontology/cold-start` 请求：一段业务域描述换一组类型建议。'
       example:
@@ -4864,6 +4999,106 @@ paths:
       security:
       - bearerAuth: []
       summary: 读取当前生效的本体 schema（M6 §3.1）
+      tags:
+      - ontology
+  /api/v1/ontology/candidates:
+    get:
+      description: '返回当前租户的 `entity_merge_candidates` 候选对，**按 `created_at DESC`**、分页返回（`page` 1-based，`page_size` 默认 **50**、上限 100）。
+
+
+        **它是校正 GUI 的实体来源**——m6 §1.1 第 2 条要求 GUI 与该表**绑定**，因此 GUI **不**另造实体搜索端点：人从候选行上挑出实体，再发 `POST /ontology/merge` / `/split` / `/rename`。
+
+
+        **过滤**：`status` 取 `pending` / `auto_merged` / `human_review` / `rejected` / `applied` 之一；**非法值 → 400** `VALIDATION_ERROR`，**不**静默当全量返回（与 `GET /audit` 同口径）。
+
+
+        **跨租户 ⇒ 空集**（`items=[]` 且 `total=0`）：列表类端点泄露不了单条资源的存在性，返回 403 会让「队列为空」和「无权访问」在 UI 上无法区分。
+
+
+        **错误语义**：非法 `status` → 400；跨租户 → 403；未认证 → 401。'
+      operationId: listOntologyCandidates
+      parameters:
+      - description: 按处置档位过滤：`pending` / `auto_merged` / `human_review` / `rejected` / `applied`
+        in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - maxLength: 32
+            minLength: 1
+            type: string
+          - type: 'null'
+          description: 按处置档位过滤：`pending` / `auto_merged` / `human_review` / `rejected` / `applied`
+          title: Status
+      - description: 1-based 页码
+        in: query
+        name: page
+        required: false
+        schema:
+          default: 1
+          description: 1-based 页码
+          minimum: 1
+          title: Page
+          type: integer
+      - description: 每页条目数（默认 50，上限 100）
+        in: query
+        name: page_size
+        required: false
+        schema:
+          default: 50
+          description: 每页条目数（默认 50，上限 100）
+          maximum: 100
+          minimum: 1
+          title: Page Size
+          type: integer
+      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+        in: header
+        name: X-Org-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          title: X-Org-Id
+      - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+        in: header
+        name: X-Actor-Id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
+          title: X-Actor-Id
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OntologyCandidateListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 缺少或无法解析认证态（`UNAUTHORIZED`）
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1）
+      security:
+      - bearerAuth: []
+      summary: 读取本租户的实体消解候选（M6 §1.1 批次 B：GUI 的实体来源）
       tags:
       - ontology
   /api/v1/ontology/cold-start:

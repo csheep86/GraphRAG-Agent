@@ -76,6 +76,8 @@ ACTION_BY_ROUTE_NAME: dict[str, str] = {
     "list_affiliation_suspicions": "affiliation.list",
     "review_affiliation_suspicion": "affiliation.review",
     # M5 审计自身（自举记录：查审计也是一次 API 调用）
+    # P5-I（2026-10-09）：校正 GUI 的候选读端点（读也是一次 API 调用 ⇒ 留痕）
+    "list_ontology_candidates": "ontology.candidates",
     "list_audit_logs_endpoint": "audit.list",
     "list_audit_logs_by_trace_endpoint": "audit.trace",
     # Sprint 9.5 批次 C3：考勤域合规扫描（合规结论必须留痕——它是可对外引用的判断）

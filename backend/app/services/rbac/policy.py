@@ -73,6 +73,8 @@ CONTRACT_PATH_RESOURCE: dict[str, str] = {
     "/api/v1/graph/versions/{version}/activate": RESOURCE_GRAPH,
     "/api/v1/license/status": RESOURCE_LICENSE,
     "/api/v1/ontology/active": RESOURCE_ONTOLOGY,
+    # P5-I（2026-10-09）：校正 GUI 的候选读端点（绑定 entity_merge_candidates）。
+    "/api/v1/ontology/candidates": RESOURCE_ONTOLOGY,
     "/api/v1/ontology/cold-start": RESOURCE_ONTOLOGY,
     "/api/v1/ontology/confirm": RESOURCE_ONTOLOGY,
     "/api/v1/ontology/merge": RESOURCE_ONTOLOGY,
