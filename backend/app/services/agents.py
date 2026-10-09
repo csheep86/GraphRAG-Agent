@@ -56,6 +56,7 @@ from app.schemas.agent import (
 )
 from app.schemas.document import GraphEdge, GraphNode
 from app.services.audit import record_audit_entry
+from app.services.cost_metrics import record_answer_usage
 from app.services.graphs import (
     EntitySpan,
     EvidenceChunk,
@@ -514,6 +515,17 @@ class AgentService:
                 ),
             )
 
+        # 5b) **成本落点**（M6 §4.3 / DR-C1p）：本次真实 LLM 调用累加到当日那一行。
+        #     拒答分支**不落**（token_usage 为 None ⇒ 服务侧直接跳过并记日志）——
+        #     把没有调用记成 0，等于让仪表盘看起来"有数据"。
+        record_answer_usage(
+            org_id=org_id,
+            token_usage=token_usage,
+            doc_ids=_cited_doc_ids(citations=citations, chunks=chunk_index),
+            db=db,
+            trace_id=trace_id,
+        )
+
         # 正常回答：kg_nodes / kg_relations 来自第 2 步的结构化检索结果，
         # token_usage 来自 LLM 响应的真实提取（拿不到则为 None）
         return AgentQueryResponse(
@@ -938,6 +950,27 @@ def _resolve_citation_span(chunk: EvidenceChunk, item: str) -> EntitySpan | None
             continue
         return span
     return None
+
+
+def _cited_doc_ids(
+    *,
+    citations: Sequence[Citation],
+    chunks: Mapping[str, EvidenceChunk],
+) -> tuple[UUID | None, ...]:
+    """本次答案**真正用到**的文档 id（``None`` 项由记帐侧丢弃）。
+
+    只认**通过引用闸门**的那几条 citation —— LLM 挂出来的引用才是这次调用的
+    「产出依据」；把整份子图的 doc 都算进来，会把从未被读过的文档也摊进成本
+    （``single_doc_cost`` 随之失真）。回查不到 chunk 的条目跳过：**不猜**——
+    猜出来的 id 会永久污染去重清单（``counted_doc_ids``）。
+    """
+    seen: dict[str, UUID | None] = {}
+    for citation in citations:
+        chunk = chunks.get(citation.chunk_id)
+        if chunk is None:
+            continue
+        seen.setdefault(citation.chunk_id, getattr(chunk, "doc_id", None))
+    return tuple(seen.values())
 
 
 def _build_citations(

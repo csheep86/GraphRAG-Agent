@@ -1079,3 +1079,78 @@ class OntologyAction(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
+
+
+class CostMetric(Base):
+    """`cost_metrics` 表（M6 §4.3：成本审计的**日聚合**载体）。
+
+    P6-V（2026-10-09）落地。它承载**成本维度的第一手计数**
+    （``single_doc_cost`` / ``cost_ratio``）——没有它，成本合规现状只能靠
+    ``evaluation/`` 跑完后的离线表格，库里没有可复核的据。
+
+    **一行 = 一个租户的一天**（``UNIQUE (org_id, metric_date)``），由多次 LLM
+    调用**累加**而成；怎么累加、怎么去重都在 :mod:`app.services.cost_metrics` 里，
+    本文件只管形状。
+
+    两处偏离（与上面的 X-2a / X-2b 同款登记写法）：
+
+    1. **X-3**：多一列 ``counted_doc_ids``（JSON 数组）。spec §4.3 没写它，但
+       ``doc_count`` 要的是**去重后**的文档数、而累加发生在多次请求之间 ——
+       没有这份清单就只能把同一份文档重复计数，``single_doc_cost`` 会被摊薄到不可信。
+       它是**内部结构**，不进任何 API 契约；
+    2. ``single_doc_cost`` 非空（契约要求 ``float``）、无数据时记 **0.0** ——
+       语义是「本日没有 LLM 调用」，**不是**「成本为零」。
+
+    **本批唯一的写入方是 M3 问答**（``AgentService._execute_query``）；M2 抽取侧
+    的 token 尚未落点（langextract 只在日志里打印），注册为下一批作业面。
+    """
+
+    __tablename__ = "cost_metrics"
+    __table_args__ = (
+        # 一天一行：写入一律靠 pg insert ... on conflict 累加
+        UniqueConstraint("org_id", "metric_date", name="uq_cost_metrics_org_date"),
+        CheckConstraint(
+            "token_usage_input >= 0 AND token_usage_output >= 0 AND doc_count >= 0",
+            name="ck_cost_metrics_non_negative",
+        ),
+        # ADR-0003 §3.1：复合索引必须 org_id 打头
+        Index("ix_cost_metrics_org_id_metric_date", "org_id", "metric_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    #: 租户隔离键（ADR-0003）⇒ 本表**自动**成为租户表，G-26 会盯着它的 RLS
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    #: 聚合日（按 UTC 自然日切分，与 P6-U 的 "以 UTC 为准" 同口径）
+    metric_date: Mapped[date] = mapped_column(Date, nullable=False)
+    #: 当日累计 LLM **输入** token
+    token_usage_input: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    #: 当日累计 LLM **输出** token
+    token_usage_output: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    #: 当日累计 token（= 输入 + 输出；冗余一列是为了读侧不做表内计算）
+    token_usage_total: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    #: 当日**去重后**的文档数（X-3：靠下面的清单实现去重）
+    doc_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: X-3：当日已计过数的文档 id（``str(uuid)`` 列表），只为去重存在
+    counted_doc_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    #: 单文档平均成本 = ``token_usage_total / doc_count``（无文档时为 0.0）
+    single_doc_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    #: 增量重算 token / 全量重算 token（**本批尚无落点**，见类 docstring）
+    incremental_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    full_rebuild_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: ``incremental_cost / full_rebuild_cost``；无分母时为 0.0
+    cost_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )

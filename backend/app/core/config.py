@@ -299,6 +299,22 @@ class Settings(BaseSettings):
     #:            + `scripts/eval_acceptance.py::_calibrate`（校准建议）。
     eval_single_doc_token_ceiling: int = Field(default=32_000, gt=0)
 
+    # -- 成本仪表盘告警线（spec §6；P6-V 落地）--
+    #: ``cost_ratio``（增量 / 全量成本比）超过本值 ⇒ 打 ``cost_ratio_above_threshold``
+    #: warning，**不阻断**请求（spec §6 的原话是「只告警不阻断」）。
+    #:
+    #: **为什么这时能落**：上一轮 D3 判定的「不落 config」理由是**无消费者**——
+    #: 那时 ``cost_metrics`` 表不存在，压根没有比值可算。P6-V 表已建、
+    #: :func:`app.services.cost_metrics.build_dashboard` 会算这个比值 ⇒
+    #: **消费者已到位**，D3 那条理由失效。
+    #:
+    #: ⚠️ 它与 :data:`COST_RATIO_SIGNIFICANT`（``app/evaluation/metrics.py``，=1.00）
+    #: **同族但不同用**：后者是 C3-b 的**准入线**（能不能放行），本值是**运行期告警**，
+    #: 按 spec §6 取 0.5。两者都改要分别说明理由，不要互相套用。
+    #:
+    #: 唯一消费点：`app/services/cost_metrics.py::build_dashboard`（超阈值告警）
+    cost_ratio_alert_threshold: float = Field(default=0.5, gt=0.0)
+
     @field_validator("allowed_mime_types")
     @classmethod
     def _normalize_mime_types(cls, value: list[str]) -> list[str]:

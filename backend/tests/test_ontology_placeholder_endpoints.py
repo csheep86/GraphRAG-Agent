@@ -45,7 +45,14 @@ def _purge_default_org() -> None:
 #: 已实现的六个**从这里移除**，断言换成了 `test_ontology_confirm_flow.py` 与
 #: `test_ontology_correction_actions.py` 里的真行为。
 PLACEHOLDERS: list[tuple[str, str, dict | None]] = [
-    ("get", "/api/v1/cost/dashboard", None),
+    #: **P6-V（2026-10-09）清空**：最后一个占位端点 `cost/dashboard` 已真实现
+    #: （表 `cost_metrics` + `app/services/cost_metrics.py`），它**连同 `blocked_by`
+    #: 断言一起**移到了下面的 `IMPLEMENTED`，真行为断言在
+    #: `tests/test_cost_metrics.py`（不是删测试，是把 oracle 换成真的）。
+    #:
+    #: ⚠️ 这里**不再有任何占位端点** ⇒ 上面两条参数化用例会自动变成"空集合"。
+    #: 留着它们的理由是**：下一个进契约的占位**有地方落；别把这个文件删掉，
+    #: 删了等于拆掉「占位≠假做」这条护栏。
 ]
 
 #: **已实现**的端点（反向守卫用）：它们**不再**是占位，故绝不能再返回
@@ -68,6 +75,8 @@ IMPLEMENTED: list[tuple[str, str, dict | None]] = [
         },
     ),
     ("get", "/api/v1/ontology/active", None),
+    #: **P6-V**：成本仪表盘 —— 真行为断言见 `tests/test_cost_metrics.py`
+    ("get", "/api/v1/cost/dashboard", None),
     #: P5-G：三个校正端点（真行为断言见 `test_ontology_correction_actions.py`）
     (
         "post",
@@ -147,14 +156,29 @@ def test_placeholder_requires_tenant_context(
 def test_cost_dashboard_accepts_date_range(
     client: TestClient, dev_headers: dict[str, str]
 ) -> None:
-    """`date_from` / `date_to` 是 spec §5.5 明列的查询参数 —— 少一个就接不上仪表盘。"""
+    """`date_from` / `date_to` 是 spec §5.5 明列的查询参数 —— 少一个就接不上仪表盘。
+
+    **P6-V：本条的 oracle 由「占位 501」换成「真出数」**——那时这条只要求
+    「别把日期区间判成 422」；现在要求更高：**200 + 契约四字段**，空区间必须是
+    空的 `by_date`，而不是一张看着像"成本为 0"的图。
+    """
     response = client.get(
         "/api/v1/cost/dashboard",
         params={"date_from": "2026-10-01", "date_to": "2026-10-02"},
         headers=dev_headers,
     )
-    # 占位仍是 501，但**不能**是 422 / 400 —— 那说明查询参数没被契约接受
-    assert response.status_code == 501, response.text
+    # 不是 422 / 400 —— 那说明查询参数没被契约接受
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert set(payload) == {
+        "token_usage_total",
+        "single_doc_cost",
+        "cost_ratio",
+        "by_date",
+    }
+    # 该窗口历史上没有成本落点 ⇒ 空盘（X-4），不是伪造的数值
+    assert payload["by_date"] == []
+    assert payload["token_usage_total"] == 0
 
 
 @pytest.mark.parametrize(("method", "path", "body"), IMPLEMENTED, ids=_IMPLEMENTED_IDS)
