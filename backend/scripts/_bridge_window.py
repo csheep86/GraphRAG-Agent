@@ -1,6 +1,6 @@
 """派生边的时间窗口继承（ADR-0005 §4 增补）。
 
-口径见 ``changes/Sprint10.5/11-derived-window-inheritance.md``（待核准记录）：
+口径见 ``changes/P6-U/11-derived-window-inheritance.md``（待核准记录）：
 
     **派生边的有效窗口 := 它所指 POLICY_CLAUSE 节点自身的窗口；
       条款有多个候选窗口或没有窗口 ⇒ 派生边保持空，不猜。**
@@ -92,7 +92,7 @@ def document_window(
 
     用途只有一个：条款自身一个候选窗口都没有时（既有 ``clause_windows`` 判为
     ``none`` 的那些）的**兜底**，见
-    ``changes/Sprint10.5/12-document-scope-inheritance.md``。
+    ``changes/P6-U/12-document-scope-inheritance.md``。
 
     两侧的值都从正文里**确定性**读出，一个字符都不新造：
 

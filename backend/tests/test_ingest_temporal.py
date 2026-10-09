@@ -138,7 +138,7 @@ def test_no_reserved_ingest_dimension_is_written() -> None:
     只允许**继承**得来，且写入必须幂等、不得补值。
 
     **为什么不再断言"Cypher 里不得出现 valid_to"**（2026-09-30 修正，勿改回）：
-    口径 11（``changes/Sprint10.5/11-derived-window-inheritance.md``，已核准）规定
+    口径 11（``changes/P6-U/11-derived-window-inheritance.md``，已核准）规定
     派生桥接边继承所指条款的窗口，**其中包括 valid_to**。原断言是基于"valid_to
     没有来源 ⇒ 出现即为编造"写的，前提在继承口径生效后不成立。此处换成三条更准的防线，
     守住原意图（不臆造、不覆盖），不再用"文本是否出现"代替语义判断：

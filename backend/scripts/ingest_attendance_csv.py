@@ -74,7 +74,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import yaml  # noqa: E402
 
 # 派生边窗口继承（ADR-0005 §4 增补）：两处 Rule-generated 桥接边共用同一份口径，
-# 避免「同形状的边一边有日期一边没有」。见 changes/Sprint10.5/11-derived-window-inheritance.md
+# 避免「同形状的边一边有日期一边没有」。见 changes/P6-U/11-derived-window-inheritance.md
 from _bridge_window import (  # noqa: E402
     DEFAULT_SCOPE_STORE,
     apply_clause_window,

@@ -63,7 +63,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 # 派生边窗口继承（ADR-0005 §4 增补）：与 CSV 脚本共用同一份口径与同一句 Cypher，
 # 免得同形状的 GOVERNED_BY 一边有日期一边没有。
-# 见 changes/Sprint10.5/11-derived-window-inheritance.md
+# 见 changes/P6-U/11-derived-window-inheritance.md
 from _bridge_window import (  # noqa: E402
     DEFAULT_SCOPE_STORE,
     apply_clause_window,
