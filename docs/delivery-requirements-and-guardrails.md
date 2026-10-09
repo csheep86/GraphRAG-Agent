@@ -114,10 +114,10 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **DR-D1** | **M5 完整化 + 内网双轨** | ✅ **已达成（2026-10-07，P5-D）** — ⚠️ **免责更正**：本行原写「⏳ 未做」为**过期口径**，2026-10-08 回交互日志与 CI 核实后更正 | 原 S11 | PRIVATE_DEPLOY 路径可用 | 出口判据已兑现：两个配置项**逐字照抄** spec §4.6（`PRIVATE_DEPLOY_ENABLED` / `ALLOWED_EGRESS_HOSTS`，**均有真实消费者**，`check_seams.py` 判据 2 已登记）+ **构造期**出向守卫 `app/core/egress.py`（挂在 LLM / MinerU / 评测 embedding 三处客户端**构造之前**，而非"发出去再判"）+ 503 `PRIVATE_DEPLOY_BLOCKED` + `audit_log(action=private_deploy.violation, status=failure)`；内网 / 回环**天然放行**（本地 embedding `127.0.0.1:8009` 不被自己的守卫误杀）⇒ 内网双轨 = 只换 `base_url`。**证据**：`changes/P5-D/integration-log.md` §6（CI run `37627112419` 四 job 全绿、pytest **1066 passed / 5 skipped / 0 failed**；真机 psql 直读 violation 行）。⚠️ **本条仍未做、且属 M5 §3 验收 5 的 P2 部分**：`alert` 表与限流超阈值联动。**另（2026-10-08 P5-E 达成后更正）**：M5 §3 验收 3 的 `mask()` 脱敏器**已实现并接线** —— `app/core/masking.py` 八类策略逐字照 spec §4.5 示例列；两处接线 = `audit_log.detail` 写入**之前**（`services/audit.py`）+ loguru JSON 出口 patcher（`core/logging.py`）；判据是**机械的**——断言**已落库的 `detail` JSON** 与**运行期捕获的日志输出**均无八类原文（不是断言函数返回值，避 R-9 恒绿）。**证据**：`changes/P5-E/integration-log.md` §6（CI run `37723651857` 四 job 全绿、pytest **1094 passed / 5 skipped / 0 failed**，+28 全为本批；`export_openapi.py --check` 零漂移、26 路径不变）。⚠️ **不许外推**：脱敏只认**登记表收录的 key 名** —— 日志 `message` 正文、第九类字段、未登记 key **照样漏**；`alert` 表仍缺 ⇒ **仍不得宣称 M5 已全部达成** |
 | **DR-D2** | **M6：本体冷启动 + 校正 GUI + 增量重算 + 成本仪表盘**；前置 `specs/m6` v0.1 → **v1.0 定稿** | 🟡 **在途** — ⚠️ **免责更正**：本行原写「⏳ 未做（spec 仍草案）」为**过期口径**，2026-10-08 核实更正：① **spec 前置已完成**（`specs/m6-ontology-incremental.md` 头部为 **v1.0，2026-10-02 定稿**，§10 checklist 八项已全勾）；② **实现第一批已交付**（2026-10-07 **P5-C**：`ontology_schemas` / `ontology_actions` 两表 + 迁移 `3f7c1b90ad24` + `GET /ontology/active` / `POST /ontology/cold-start` / `POST /ontology/confirm` 三端点） | `dev-doc-status.md` P1-3 | m6 spec 定稿为 S12 开工硬闸门（**已打开**）；**剩余四块**：① `merge` / `split` / `rename` —— **硬前置**是先升 **M2 spec §4.5 加 `applied` 枚举**并走完契约同步五步（m6 §4.4 明写"未走完前 5 步，`/ontology/merge` 不得对外实现"，属 §10 第 2 类升级）；② 增量重算（§3.3 验收 6）；③ `cost_metrics` 表 + `GET /cost/dashboard`（§3.4 验收 8 / 9，与 MVP 准入 C3 一起）；④ 前端校正 GUI |
 | **DR-D3** | **schema-suggestion 端到端 PoC**（应用层封装 + v1 参数注入） | ✅ **已达成（2026-10-02，P0-m6-finalization 批次）** — ⚠️ **免责更正**：本行原写「⏳ 未做」为**过期口径**，2026-10-08 回归档交互日志核实后更正 | P1-5 / 闸门 CP-2（= 4 类升级用户情况之一：PoC 不通即升级） | **必须"跑通"**，不接受写一半 | 出口判据已兑现：① v1 参数注入侧**本就已通**（`tasks/registry.py` / `graphs.py` 在真消费），PoC 只需补冷启动建议一段；② `suggest_ontology_types()` **签名无会话参数** ⇒ 结构上写不出"未确认即生效"；③ **真机留证**：deepseek-chat 定向调用产出 **12 实体 + 12 关系类型**（双双命中上限 ⇒ 截断逻辑真实生效）。诚实记账：因终端截断**实际执行 2 次**而非 1 次（见源日志第 1 项）。同时新增 `prompts/ontology_suggest_v1.md` —— spec §3.1 验收 1 原写复用 `kg_qa_v1.md`，该差异**已登记为定稿增补项，F3 必须裁决**。证据：`changes/archive/2026-10-02-P0-m6-finalization/integration-log.md` §1.2–§1.3；状态源：`docs/dev-doc-status.md` **P1-5 ✅（2026-10-02）**。⇒ **风险 R2 解除**；遗留 = F3 裁决（prompt 冲突，与终端会话无关） |
-| **DR-D4** | **知识时效 L2 ②③** | 🟡 **在途（未提交）**——**2026-10-01 核实**：`changes/Sprint10.5/` 正在推进（`11-derived-window-inheritance` / `12-document-scope-inheritance` / `13-as-of-evidence-rank` + 大量 probe 脚本）；`backend/` 有对应未提交改动（`agents.py` / `graphs.py` / `reasoning.py` / `document_date.py` / temporal 测试） | 风险 R24 | ⚠️ **编号冲突**：该在途工作使用**旧编号 `Sprint10.5`**，而旧排期**已全废**。⇒ **工作内容（= 本条 D4）保留有效，但编号须改指新阶段**，处置见 **§6.4** |
+| **DR-D4** | **知识时效 L2 ②③** | 🟡 **代码已收口（2026-10-07，P5-B）+ 编号已改指（2026-10-09，P6-U）** — ⚠️ **免责更正**：本行原写「**在途（未提交）**」为**过期口径**，2026-10-09 P6-U 开工实测后更正：① `backend/` **已无**未提交改动（`git status --short backend` 仅剩 P6-T 判分产物 `judge-progress.json`，非代码）；② 目录**已 git 跟踪**（原 `changes/Sprint10.5/`，26 文件），并已于本批 `git mv changes/Sprint10.5 changes/P6-U`（**只改名，不重排内容**，R-5）+ 全仓 **26 文件 / 44 行**路径引用同步；③ **收口内容**（`changes/P5-B/integration-log.md` §5 T5）= **J3 前端虚线** + 演示图谱恢复 + **G3 受控题集回归**，CI run `37594891877` 四 job 全绿。**⚠️ 完成度按判据记账，不许整条宣称达成**：② 视觉语义**已交付但前端行为验证是降级的**（P5-B §9 自陈）；③ as-of **后端判据已真机取样**（`POST /api/v1/agent/query` 带 `as_of=2025-06-01`，链末端 `valid_to=2025-12-31`），但**前端 as-of 入口未做**；**L2 端到端 = P6-Y，仍未做** ⇒ 本行**不标达成** | 风险 R24 | 原「编号须改指新阶段」**已执行**：目录改指 **P6-U**（处置见 **§6.4**，该节已追加「2026-10-09 已执行」）。⚠️ **不许外推**：D4 收口 ≠ L2 端到端达标 |
 | **DR-D5** | **M4 完整化**：四源对齐 + PRD 三类算法 + 实体消解 | ⏳ 未做（原 S9） | plan §16 | — |
 | **DR-D6** | ~~**`qa_logs` 建表**~~ | ✅ **已达成（2026-09-26，S8 批次 A）** — ⚠️ **免责更正**：本行原写「⏳ 未建表」为**过期口径**，2026-10-01 回代码与矩阵核实后更正 | `backend/app/db/models.py`（`org_id` 列 + `ix_qa_logs_org_id_{created_at,trace_id}`）；矩阵 §3.4 **M3-3 已记「已闭合」**；真机累计 **16 行**（2026-09-26 真实 LLM 问答后落库） | **已闭合**。M3 验收 3 / 7 的「打点」**成立**；验收矩阵 M3-7 与第 127 行的「未建」口径**同步更正**（见 §5 不粉饰声明） |
-| **DR-D7** | **R22：`question` 参与检索** | ⏳ 未做 | 风险 R22 | 检索不再只靠实体 |
+| **DR-D7** | **R22：`question` 参与检索** | 🟡 **部分落地（2026-10-05，P6-J）** — ⚠️ **免责更正**：本行原写「⏳ 未做」为**过期口径**，2026-10-09 P6-U 核实后更正：`graphs.py:693` `select_evidence_chunks(..., question=..., snippets=...)` **已接 `question` 入参**，并参与**候选内字面量重排**（`RETRIEVER_GRAPH` 由 `graph_mentions` → `graph_mentions+lexical_rerank`）⇒ 问句**已影响最终 32 条里有哪些**。⚠️ **但这不等于「参与检索」**：**候选集仍是结构性窗口**（active 版本全量实体保底取 500 → `MENTIONS` 反查 chunk），`question` **不参与候选集生成** ⇒ 目标片段**不在候选里照样救不回来**；R22 明确**「不关闭」**（方向②实体链接召回 / ③向量召回 + 「扩候选集」仍待排期）⇒ 本行**不标达成** | 风险 R22 | 检索不再只靠实体 —— **判据层 = 候选集生成**（不是候选内排序） |
 | **DR-D8** | **`list_in_flight_task_ids()` 覆盖 `affiliation_tasks`**（现只扫 `documents`） | ⏳ 未做 | 缺口 S7.2-2 | 任务回收完整 |
 | **DR-D9** | **SSO / AD / LDAP（接缝 1 第二实现）** | ⏳ 未做 → **2026-10-01 裁决：提前进 MVP** | P1-9 / 风险 R8 / **用户裁决** | **窗口由 Post-v2.0.0 提前**：企业客户通常第一个就要 AD 域账号登录 ⇒ 不提前则 `v2.0.0` **对首个企业客户不可交付**（R8）。**纪律**：接入时**先扩写 ADR-0004 §2.1 登记行、再改 `check_seams.py`**（G-2 拦） |
 | **DR-D10** | **MVP 准入线 C1–C3 评测**：图谱增益 ≥10% / 召回 ≥0.80 / 误报 ≤0.15 / 引用覆盖 100% | 🟡 **评测脚本已建（2026-10-03，批次 `changes/P0-m6-eval/`）**：`backend/scripts/eval_acceptance.py`（`--offline` 默认 / `--live` / `--criteria` / `--out` / `--compare` / `--calibrate`）+ `backend/app/evaluation/`（指标纯函数 / 四态状态机 / 双模式执行器 / 报告）+ `backend/data/eval/`（版本化数据集 5 件）。**实测**：C2-c = **1.00**、C2-a 召回 = **1.00**、C2-b 误报 = **0.00**（均为演示语料 ⇒ `measured_provisional`）；C1 分母（`BLOCKED`，A1）/ C3-a·C3-b（`BLOCKED`，P5-M6）/ 多跳（`UNKNOWN`，待人工判分 A3）。**TBD-7 阈值已落** `EVAL_SINGLE_DOC_TOKEN_CEILING=32000`（provisional，非达标线，须 `--calibrate` 校准）。**A8 已扩标（2026-10-04，P6-A）**：语料 200 合同 / 500 发票 / 100 凭证 / **20 组植入**（`demo/affiliation/generated/`，生成器 seed 固定 ⇒ 可复现）+ **判定改用 95% 单侧置信界**（`app/evaluation/stats.py`，Clopper-Pearson **精确**）；实测 **20/20 全中 / 误报 0** ⇒ 下界 **0.8609 ≥ 0.80**、上界 **0.1391 ≤ 0.15** ⇒ **C2-a / C2-b 在 L1 算法层达标**（阈值未校准 ⇒ `PASS(provisional)`，CI 仍只判不退化）。⚠️ **同时订正**：L10-A8 裁决表里的界值是近似值，**19/20 的精确下界是 0.7839 而非 ≈0.82** ⇒ 20 组须 **20/20 全中**才支持达标（门槛比原表更严）；v1 的 9 组现在如实判 **`UNDERPOWERED`**（原先会误标 PASS(provisional)）。⚠️ **L2 端到端未做** ⇒ 不得说成端到端达标。**A6+L8 已兑现（2026-10-04，P6-B）**：① C2-c **两档并列输出**（判据值 = 排除拒答档 **1.00**，detail 同时给含拒答档 **0.786 = 11/14**）——此前 `runner` 两处都传 `include_refused=False` ⇒ **含拒答档从未输出**（L11(b)2 登记的"已承诺未兑现"）；② **拒答误伤立独立判据** `refusal_false_refusal`（值 = 误伤条数，阈值 **0**，锚 Sprint 6 §5.3 验收第 1 条），当前 **FAIL（1 条 Q8，归 P6 必修）**；误伤与漏拒**方向分家**。⇒ **C2-c 的 1.00 不含拒答题，拒答误伤单独计且当前未达标**（两条判据**不许互相顶替**）。⚠️ 本批**未实测**（本地 `agent/query` 恒 501 = PG 无 ready kg_version，演示图重建卡在 `GOVERNED_BY 连边为 0`）⇒ 数字沿用 P0-m6-eval 的历史实测 | PRD H11 / H12 | 终局判据：全量语料 + gold 扩标后，各判据由 `UNKNOWN`/`BLOCKED` 升为 `MEASURED`；口径缺陷登记见 `docs/dev-doc-status.md` §10（A1–A9） |
@@ -379,7 +379,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
 ### 6.4 ⚠️ 在途工作与旧编号冲突（**2026-10-01 发现**）
 
-**现状**：`git status` 显示工作区存在**未提交的代码改动**（`backend/app/services/{agents,graphs,reasoning}.py`、`document_date.py`、temporal 测试、`contracts/openapi.yaml`、`demo/attendance/`）与一个**未归档的 `changes/Sprint10.5/`** 目录（内容 = 知识时效 L2 剩余项，即 **DR-D4**）。
+**现状**：`git status` 显示工作区存在**未提交的代码改动**（`backend/app/services/{agents,graphs,reasoning}.py`、`document_date.py`、temporal 测试、`contracts/openapi.yaml`、`demo/attendance/`）与一个**未归档的 `changes/P6-U/`** 目录（内容 = 知识时效 L2 剩余项，即 **DR-D4**）。
 
 **冲突点**：该在途工作使用**旧排期编号 `Sprint10.5`**，而旧排期已按 §6.2 **全废**。
 
@@ -387,7 +387,7 @@ cd backend && uv run python scripts/check_startup_readiness.py
 |---|---|
 | **工作内容**（知识时效 L2 ②③） | ✅ **保留有效**——它对应需求 **DR-D4**，是真实需要的工作，**不因编号作废而推翻** |
 | **编号 `Sprint10.5`** | ❌ **失效**，须改指新阶段（**P5**） |
-| **`changes/Sprint10.5/` 目录** | 落点目录本身**仍有效**（SDD 落点方案 A′ 未被废），但**应重命名为新阶段编号**，避免"旧编号惯性"把超载结构带回来 |
+| **`changes/P6-U/` 目录** | 落点目录本身**仍有效**（SDD 落点方案 A′ 未被废），但**应重命名为新阶段编号**，避免"旧编号惯性"把超载结构带回来 |
 | **未提交代码** | **不在本轮处置范围**（本轮**零代码**）；开工时由 **P5** 承接并收尾 |
 | **改名时机** | **P5 开工第一步**——**不是现在**。理由：改目录名会**打断在途工作**；且 `changes/` 落点方案 A′ **未废**，废的只是**编号**。步骤：`git mv changes/Sprint10.5 changes/P5-<主题>`，并同步更新目录内 `00-recon.md` / `proposal.md` 的编号引用 |
 
@@ -395,6 +395,20 @@ cd backend && uv run python scripts/check_startup_readiness.py
 > 任何在途工作应先**映射到 DR 编号**——**映射得上就继续并改名，映射不上才停下重估**。
 
 > **补充事实**：最近提交为 `8daf439c`（Sprint 10.4 收尾 + **tag `v1.6.0` 已打**）⇒ 当前 `app_version = 1.6.0` 的来源，与 §7 版本语义一致。
+
+### 6.4.1 ✅ 改名已执行（**2026-10-09，批次 P6-U**）
+
+> 本节**只追加不重排**（R-5）：上方 §6.4 是 2026-10-01 的裁决原文，原样保留作史料。
+
+| 项 | 执行情况 |
+|---|---|
+| **改名动作** | ✅ 已执行：`git mv changes/Sprint10.5 changes/P6-U`（**只改名，不重排内容**） |
+| **目录内引用** | ✅ 已同步（新增 `changes/P6-U/proposal.md` §6 登记本批边界 10 条 / 决策表 / P5 判据对账） |
+| **全仓路径引用** | ✅ **26 文件 / 44 行** `changes/Sprint10.5/…` → `changes/P6-U/…`（**只改路径**；叙述性旧编号史实如「旧编号 `Sprint10.5` 已废」**保留不动**） |
+| **「未提交代码」一行** | ⚠️ **已过期**：该批代码**已于 2026-10-07 由 P5-B 收口进库**（`changes/P5-B/integration-log.md` §5 T5）；2026-10-09 实测 `git status --short backend` **无代码改动** |
+
+⚠️ **上一句（§6.4「现状」段）关于「工作区存在未提交代码改动 / 目录未归档」的描述已过期，勿再引用** ——
+以本节的实测与 **DR-D4 行的免责更正**为准。
 
 ---
 
