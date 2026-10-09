@@ -64,9 +64,14 @@ _ANCHOR_FALLBACK_LIMIT = 5000
 #: 侧做」的前提是候选**全量**返回，但真机数据下无向 1..3 跳候选有数万条，
 #: ``LIMIT``（无 ORDER BY）任意截断 ⇒ 排序器再对也只对「截断后的幸存者」生效，
 #: 3 跳条款链（EMPLOYEE→POSITION→WORK_TIME_SYSTEM→POLICY_CLAUSE，R10 连通后
-#: 真实存在）被淹没在候选海里，从未进过排序。故 Cypher 侧先按「条款优先 ⇒
-#: 跳数升序 ⇒ 终点 id 字典序」排好序再截断；Python 侧 :func:`_select_shortest_path`
-#: 保留完整精排（含 ``_TERMINAL_RANK`` 次级口径）作为兜底，两者口径一致。
+#: 真实存在）被淹没在候选海里，从未进过排序。故 Cypher 侧先排好序再截断。
+#:
+#: ⚠️ **2026-10-09（P6-V1）订正**：上一段原写「两者口径一致」，**那是过期口径**——
+#: Cypher 侧当时只有 3 维，Python 侧 :func:`_select_shortest_path` 是 7 维，且第 1
+#: 维两侧当时就**不等价**（Cypher 把 ``LEGAL_PERSON`` 也算优先终点，Python 只认
+#: ``POLICY_CLAUSE``）。此后 Cypher 侧是**粗排（保底）**、Python 侧是**精排**，
+#: 两者的关系由 :data:`DB_ORDER_BY_DIMENSIONS` 一处登记并机械断言，
+#: **不许**再靠注释互相保证。
 _PATH_CANDIDATE_LIMIT = 400
 
 #: 路径的**合法终点类型**＝「命中的条款 / 事实」（proposal §5.5）。
@@ -165,12 +170,75 @@ ALL_TERMINAL_TYPES: tuple[str, ...] = tuple(
     dict.fromkeys(TERMINAL_ENTITY_TYPES + AFFILIATION_TERMINAL_TYPES)
 )
 
-#: 各域"最有解释力"的终点（并集）：终点命中其一 ⇒ 排序优先。
-#: 考勤 = 制度条款；关联方 = 共享法人（疑点的核心落点）。
+#: 各域"最有解释力"的终点（并集）：考勤 = 制度条款；关联方 = 共享法人（疑点的核心落点）。
+#:
+#: ⚠️ **2026-10-09（P6-V1）订正**：上句原写「终点命中其一 ⇒ 排序优先」，
+#: **那是过期口径**——Python 侧精排的第 1 维只认 :data:`TERMINAL_PRIORITY_TYPE`，
+#: ``AFFILIATION_PRIORITY_TYPE`` 并不在 :data:`_TERMINAL_RANK` 里 ⇒ 它**从未**
+#: 拿到过排序优先权；Cypher 侧却把它当优先终点 ⇒ 两侧第 1 维**不等价**。
+#: P6-V1 修的方向是**Cypher 侧向 Python 侧对齐**，不是反过来改 Python 侧——
+#: 那会动 P6-V 刚接线的关联方域既有排序结果。
+#: 本常量保留给探针 / 排障脚本取用（``changes/P6-U/probe_as_of_ranking.py`` 等
+#: 历史探针仍在引用它），生产排序不再读它。
 PRIORITY_TERMINAL_TYPES: tuple[str, ...] = (
     TERMINAL_PRIORITY_TYPE,
     AFFILIATION_PRIORITY_TYPE,
 )
+
+
+# --------------------------------------------------------------------------- #
+# 两侧排序口径的**唯一事实源**（2026-10-09 P6-V1）
+# --------------------------------------------------------------------------- #
+#: Python 侧精排键的**具名维**（顺序即优先级）——见
+#: :func:`_select_shortest_path` 里同序的 sort key。
+#:
+#: 它就是"两侧逐维比对"那一栏的左边：改排序口径前先看
+#: :data:`DB_ORDER_BY_DIMENSIONS`，DB 侧必须是本元组的**连续前缀**。
+PATH_SORT_DIMENSIONS: tuple[str, ...] = (
+    "terminal_priority",  # 终点 == TERMINAL_PRIORITY_TYPE ⇒ 0（只有 POLICY_CLAUSE）
+    "terminal_rank",  # _TERMINAL_RANK 次级档；不在表内 ⇒ len(_TERMINAL_RANK)
+    "hops",  # size(rels)
+    "temporal_verdict",  # 整链时序三值档（consistent / unknown / inconsistent）
+    "as_of_evidence",  # 最后一跳是否被 as_of 证实（R5）
+    "path_ids",  # tuple(ids)：整链 id 元组
+    "position",  # 原始位次（确定性同解）
+)
+
+#: DB 侧（Cypher ``ORDER BY``）真正参与排序的维。
+#:
+#: **必须是 :data:`PATH_SORT_DIMENSIONS` 的连续前缀**——Cypher 侧 ``LIMIT`` 是
+#: **截断**，Python 侧精排只对「截断后的幸存者」生效。只要 DB 侧是前缀，被截掉的
+#: 候选就一定排在保留者之后（排序的加粗/coarsening），真胜者不会被截；一旦
+#: **跳维**（如做 1,2,3,5 而漏掉 4）⇒ 截断会丢真胜者，**比不做更糟**。
+#:
+#: 为什么停在第 3 维而不是把 7 维全搬：搬第 4 维就得把 ``_temporal_verdict`` 的
+#: max/min 三值语义在 Cypher 里**再写一遍**，那与 :func:`_cypher_paths` docstring
+#: 记着的「同一判断散写成多份」是同款事故（初版写错 ⇒ 图上同时出现两位"当前法定
+#: 代表人"）。第 5 维又排在第 4 维之后，跳过第 4 维搬它 ⇒ 破坏前缀 ⇒ 不许。
+#:
+#: 残留风险（**不许被读成"已完全对齐"**）：当前 3 维全打平的候选数 > 400 时，
+#: DB 侧按 ``ids[-1]`` 截断，仍可能丢掉靠第 4 / 5 维胜出的那条。此时丢的是
+#: **同档内的次优**（同样有解释力、同样短），不改变答案的解释力层级；
+#: 详见 `changes/P6-V1/proposal.md` §6。
+DB_ORDER_BY_DIMENSIONS: tuple[str, ...] = PATH_SORT_DIMENSIONS[:3]
+
+#: DB 侧第 1 维「终点档位」= Python 键第 1 + 2 维的**合并**（字典序与之严格等价：
+#: ``POLICY_CLAUSE`` 恒 0，其余 = 1 + rank ∈ [1, 9]）。
+#:
+#: 类型名**不**硬写在 Cypher 里：``$prio_type`` / ``$terminal_rank`` 由生产代码从
+#: :data:`TERMINAL_PRIORITY_TYPE` / :data:`_TERMINAL_RANK` **这同一份常量**传下来
+#: ——两侧各抄一份类型表，抄了就必然漂移。
+_DB_TERMINAL_TIER_EXPR = (
+    "CASE WHEN types[-1] = $prio_type THEN 0 "
+    "ELSE 1 + coalesce($terminal_rank[types[-1]], $terminal_rank_default) END"
+)
+
+#: **修复前**的口径（P6-V1 之前的样子）：把 ``LEGAL_PERSON`` 也算作优先终点，
+#: 与 Python 侧第 1 维不等价；且完全没有 Python 的第 2 维。
+#:
+#: 它只为**回归对照**而保留：判据 2 要「同一批数据、同一条查询，只换 ``ORDER BY``
+#: ⇒ 旧键丢真胜者、新键不丢」。删了它，这条对照就退化成"读代码得出的结论"。
+_DB_TERMINAL_TIER_LEGACY_EXPR = "CASE WHEN types[-1] IN $prio_types THEN 0 ELSE 1 END"
 
 _CYPHER_ANCHOR_CANDIDATES = f"""
 MATCH (e:Entity {{org_id: $org}})
@@ -232,14 +300,19 @@ WHERE {version_scope("a")}
   // 缺日期的跳由谓词的 NULL 分支放行：只剔除**被日期证伪**的跳，不猜未知。
   AND ($as_of IS NULL OR ALL(r IN rels WHERE TRUE"""
         + _temporal_view("r")
-        + """))
+        # ⚠️ 这一段**必须是 f-string**：``ORDER BY`` 里的档位表达式是插值进去的。
+        # 原来这里写的是普通字符串（ORDER BY 那句是硬写的，不需要插值）⇒ 2026-10-09
+        # 第一次接入 ``{_DB_TERMINAL_TIER_EXPR}`` 时它被当成字面文本下发给了 Neo4j，
+        # 是 `tests/test_reasoning_db_order_by.py` 的「Cypher 必须真的用登记表达式」
+        # 那条断言当场抓住的——**没有那条断言，这个 bug 在候选 < 400 时永远不显形**。
+        + f"""))
 RETURN [n IN nodes(p) | n.id] AS ids,
        [n IN nodes(p) | n.canonical_name] AS names,
        [n IN nodes(p) | n.entity_type] AS types,
        [r IN relationships(p) | coalesce(r.relation_type, type(r))] AS rels,
        [r IN relationships(p) | toString(properties(r)['valid_from'])] AS valid_froms,
        [r IN relationships(p) | toString(properties(r)['valid_to'])] AS valid_tos
-ORDER BY (CASE WHEN types[-1] IN $prio_types THEN 0 ELSE 1 END),
+ORDER BY {_DB_TERMINAL_TIER_EXPR},
          size(rels),
          ids[-1]
 LIMIT $limit
@@ -403,7 +476,12 @@ def build_reasoning_path(
             anchor_ids=list(anchors),
             terminal_types=list(ALL_TERMINAL_TYPES),
             hub=HUB_EMPLOYEE_TYPE,
-            prio_types=list(PRIORITY_TERMINAL_TYPES),
+            # 排序口径的**实参**必须与 Python 侧精排读的是同一份常量
+            # （详见 :data:`_DB_TERMINAL_TIER_EXPR`）：$prio_type / $terminal_rank
+            # 分别来自 TERMINAL_PRIORITY_TYPE / _TERMINAL_RANK。
+            prio_type=TERMINAL_PRIORITY_TYPE,
+            terminal_rank=dict(_TERMINAL_RANK),
+            terminal_rank_default=len(_TERMINAL_RANK),
             limit=_PATH_CANDIDATE_LIMIT,
             as_of=as_of,
             **view.cypher_params(),
@@ -716,6 +794,12 @@ def _select_shortest_path(
         candidates=len(candidates),
         verdict=_row_temporal_verdict(row),
         temporal_ranks=sorted({item[3] for item in candidates}),
+        # 2026-10-09（P6-V1）：**截断必须可观测**。DB 侧 ``LIMIT`` 一截断，
+        # Python 侧精排的范围就只剩幸存者——静默丢候选曾是"答案看着对、其实
+        # 换了条链"的温床。达到上限即视为截断（返回值条数恰好等于上限时无法
+        # 区分"刚好够"与"被截"，宁可多报）。
+        candidate_limit=_PATH_CANDIDATE_LIMIT,
+        truncated=len(rows) >= _PATH_CANDIDATE_LIMIT,
     ).info("reasoning_path_temporal_verdict")
     return (
         [str(item) for item in (row["ids"] or [])],
