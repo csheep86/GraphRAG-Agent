@@ -618,6 +618,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ontology/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取本租户的实体消解候选（M6 §1.1 批次 B：GUI 的实体来源）
+         * @description 返回当前租户的 `entity_merge_candidates` 候选对，**按 `created_at DESC`**、分页返回（`page` 1-based，`page_size` 默认 **50**、上限 100）。
+         *
+         *     **它是校正 GUI 的实体来源**——m6 §1.1 第 2 条要求 GUI 与该表**绑定**，因此 GUI **不**另造实体搜索端点：人从候选行上挑出实体，再发 `POST /ontology/merge` / `/split` / `/rename`。
+         *
+         *     **过滤**：`status` 取 `pending` / `auto_merged` / `human_review` / `rejected` / `applied` 之一；**非法值 → 400** `VALIDATION_ERROR`，**不**静默当全量返回（与 `GET /audit` 同口径）。
+         *
+         *     **跨租户 ⇒ 空集**（`items=[]` 且 `total=0`）：列表类端点泄露不了单条资源的存在性，返回 403 会让「队列为空」和「无权访问」在 UI 上无法区分。
+         *
+         *     **错误语义**：非法 `status` → 400；跨租户 → 403；未认证 → 401。
+         */
+        get: operations["listOntologyCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ontology/cold-start": {
         parameters: {
             query?: never;
@@ -2988,6 +3016,125 @@ export interface components {
             version: number;
         };
         /**
+         * OntologyCandidate
+         * @description `GET /ontology/candidates` 里的一行：一对**待消解候选**（M2 §4.5 / §4.5.1）。
+         *
+         *     **它是校正 GUI 的实体来源**（m6 §1.1 第 2 条：批次 B 与 `entity_merge_candidates` 表
+         *     **绑定**）——GUI 不另造实体搜索端点，人从候选行上挑实体再发 merge / split / rename。
+         *
+         *     字段是 `entity_merge_candidates` 行的**投影**：`status` 五值取自模型的 CHECK 约束
+         *     （`pending` / `auto_merged` / `human_review` / `rejected` / `applied`）；
+         *     `signals` 是「为什么判这一档」的判分依据（``{name_sim, struct_bonus, tax_conflict…}``），
+         *     **可空**——早期行没有它，不替它编默认值。
+         *
+         *     **不带 `trace_id`**：spec §5.5 只有 `cold-start` 响应列了 `trace_id`，其余端点没有；
+         *     两者冲突时**以 spec 为准**（本文件头已登记该取舍）。
+         * @example {
+         *       "created_at": "2026-10-09T08:15:00Z",
+         *       "id": "6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d",
+         *       "left_entity_id": "SUBJECT:91310000MA1FL0Q23K",
+         *       "right_entity_id": "RAW:affiliation.csv:91310000MA1FL0Q23K",
+         *       "signals": {
+         *         "name_sim": 0.82,
+         *         "struct_bonus": 0
+         *       },
+         *       "similarity": 0.82,
+         *       "status": "human_review"
+         *     }
+         */
+        OntologyCandidate: {
+            /**
+             * Created At
+             * Format: date-time
+             * @description 候选落库时间（UTC）
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description 候选行 id（`entity_merge_candidates.id`）
+             */
+            id: string;
+            /**
+             * Left Entity Id
+             * @description 保留侧实体 id（**图侧字符串 id**，见 M2 §4.5 偏离 S9.13-1）
+             */
+            left_entity_id: string;
+            /**
+             * Right Entity Id
+             * @description 被并入侧实体 id（图侧字符串 id）
+             */
+            right_entity_id: string;
+            /**
+             * Signals
+             * @description 判分依据（**可空**）：只有分数回答不了「为什么是这一档」
+             */
+            signals?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Similarity
+             * @description 相似度（M2 §4.5.1：名称相似度 + 结构加分）
+             */
+            similarity: number;
+            /**
+             * Status
+             * @description 处置档位。`applied` 由 `POST /ontology/merge` 写入（P5-G）；其余档位本阶段无写入方（<0.70 的候选不落表）
+             * @enum {string}
+             */
+            status: "pending" | "auto_merged" | "human_review" | "rejected" | "applied";
+        };
+        /**
+         * OntologyCandidateListResponse
+         * @description `GET /ontology/candidates` 响应：本租户的候选对（`created_at DESC` + 分页）。
+         *
+         *     **跨租户 ⇒ 空集**（`items=[]` / `total=0`）：列表类端点泄露不了单条资源的存在性，
+         *     返回 403 会让「队列为空」与「无权访问」在 UI 上无法区分（P5I-1）。
+         *
+         *     **不带 `trace_id`**：同 :class:`OntologyCandidate`，以 spec §5.5 为准。
+         * @example {
+         *       "items": [
+         *         {
+         *           "created_at": "2026-10-09T08:15:00Z",
+         *           "id": "6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d",
+         *           "left_entity_id": "SUBJECT:91310000MA1FL0Q23K",
+         *           "right_entity_id": "RAW:affiliation.csv:91310000MA1FL0Q23K",
+         *           "signals": {
+         *             "name_sim": 0.82,
+         *             "struct_bonus": 0
+         *           },
+         *           "similarity": 0.82,
+         *           "status": "human_review"
+         *         }
+         *       ],
+         *       "page": 1,
+         *       "page_size": 50,
+         *       "total": 1
+         *     }
+         */
+        OntologyCandidateListResponse: {
+            /**
+             * Items
+             * @description 当前页结果（按 `created_at DESC`）
+             */
+            items: components["schemas"]["OntologyCandidate"][];
+            /**
+             * Page
+             * @description 当前页码（1-based）
+             */
+            page: number;
+            /**
+             * Page Size
+             * @description 每页条目数（请求参数回显）
+             */
+            page_size: number;
+            /**
+             * Total
+             * @description 当前租户下满足过滤条件的候选总数
+             */
+            total: number;
+        };
+        /**
          * OntologyColdStartRequest
          * @description `POST /ontology/cold-start` 请求：一段业务域描述换一组类型建议。
          * @example {
@@ -4754,6 +4901,65 @@ export interface operations {
             };
             /** @description 本体 schema 版本冲突（`SCHEMA_VERSION_NOT_ACTIVE`，M6 §5.5）：① `POST /ontology/confirm` 对同一 version **重复确认**；② `GET /ontology/active` 时本租户**尚无 active schema**。与 409 `KG_VERSION_NOT_ACTIVE` 同一纪律——**严禁**静默降级到旧版本 / 默认schema（那会让用户以为自己配过） */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listOntologyCandidates: {
+        parameters: {
+            query?: {
+                /** @description 按处置档位过滤：`pending` / `auto_merged` / `human_review` / `rejected` / `applied` */
+                status?: string | null;
+                /** @description 1-based 页码 */
+                page?: number;
+                /** @description 每页条目数（默认 50，上限 100） */
+                page_size?: number;
+            };
+            header?: {
+                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                "X-Org-Id"?: string | null;
+                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OntologyCandidateListResponse"];
+                };
+            };
+            /** @description 请求校验失败（`VALIDATION_ERROR`），`detail.errors` 给出字段级原因 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 缺少或无法解析认证态（`UNAUTHORIZED`） */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 跨租户访问被拒（`FORBIDDEN`，ADR-0003 §3.3 / M5 §3 验收 1） */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

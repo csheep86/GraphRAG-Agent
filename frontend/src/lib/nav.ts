@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  Split,
   UserCog,
   Users,
   Wrench,
@@ -49,6 +50,14 @@ export const workspaceNav: NavItem[] = [
     breadcrumb: "疑点清单",
     href: "/affiliation",
     icon: ShieldAlert,
+  },
+  // P5-I（2026-10-09）：M6 批次 B 本体校正 GUI。真实接后端四端点（候选读 +
+  // merge / rename / split），**不是** placeholder。
+  {
+    label: "本体校正",
+    breadcrumb: "本体校正",
+    href: "/ontology",
+    icon: Split,
   },
 ];
 

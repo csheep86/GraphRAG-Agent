@@ -58,6 +58,13 @@ const CONTRACT_COVERED_PATTERNS: RegExp[] = [
   /^\/api\/v1\/attendance\/anomalies\/explain$/,
   // Sprint 9.5 批次 C3：问答端点（D1 起带 reasoning_path）。同理，漏登记会让政策问答页走 Mock。
   /^\/api\/v1\/agent\/query$/,
+  // P5-I（2026-10-09）：M6 校正 GUI 的四条端点（候选读 + merge / rename / split）。
+  // ⚠️ 漏登记的后果不是报错而是**静默走假数据**：USE_MOCK=false 时点三动作打到的是
+  // 本地 mock，页面看起来"成功"、图谱其实一行没变 —— 与本仓「不假造成功」直接冲突。
+  /^\/api\/v1\/ontology\/candidates$/,
+  /^\/api\/v1\/ontology\/merge$/,
+  /^\/api\/v1\/ontology\/rename$/,
+  /^\/api\/v1\/ontology\/split$/,
 ];
 
 /**
