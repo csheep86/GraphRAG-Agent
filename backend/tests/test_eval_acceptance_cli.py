@@ -68,8 +68,14 @@ def test_blocked_criteria_name_their_blocker(tmp_path: Path) -> None:
     report = json.loads(out.read_text(encoding="utf-8"))
     blocked = {item["criterion"]: item["blocked_by"] for item in report["criteria"]}
 
-    assert "P5-M6" in blocked["c3_a_single_doc_cost"]
-    assert "P5-M6" in blocked["c3_b_incremental_cost_ratio"]
+    #: **2026-10-09 P6-V 订正（第三轮）**：`cost_metrics` 表**已建**（P6-V），
+    #: 故 C3-a / C3-b 的 blocked_by **不再**是批次名 "P5-M6"。本断言的意图**从未变过**
+    #: （blocked_by 必须点名"到底缺什么"）——下面改判具体内容，比批次名更严格：
+    #: C3-a 必须点出「M2 抽取侧 token 落点」与「TBD-7 未校准」这两条真实缺口，
+    #: C3-b 必须点名「增量重算」缺失。
+    assert "M2" in blocked["c3_a_single_doc_cost"]
+    assert "TBD-7" in blocked["c3_a_single_doc_cost"]
+    assert "增量重算" in blocked["c3_b_incremental_cost_ratio"]
     #: **2026-10-05 P6-C 订正**：A1（dense top-k 基线）**已实现** ⇒ C1 不再报
     #: "baseline-not-implemented"，它现在欠的是**真链路**（同 C2-a / C2-b 的口径：点名 live）。
     #: 本断言的**意图不变**——blocked_by 必须点名"到底缺什么"，只是缺的东西变了。
@@ -105,12 +111,19 @@ def test_report_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_upgrade_todo_is_printed(tmp_path: Path) -> None:
-    """报告必须回答「升为 MEASURED 还缺什么」（不许留成黑箱）。"""
+    """报告必须回答「升为 MEASURED 还缺什么」（不许留成黑箱）。
+
+    **2026-10-09 P6-V 订正**：原先拿批次名 "P5-M6" 当锚 —— 一旦那个批次做掉，
+    这条断言就失去意义（批次名不是内容）。改成锚实处：Todo 必须点名
+    「M2 抽取侧 token 落点」与「增量重算」这两条**仍然真实**的缺口。
+    """
     out = tmp_path / "offline.json"
     assert _run("--offline", "--out", str(out)).returncode == 0
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["upgrade_todo"]
-    assert any("P5-M6" in item for item in report["upgrade_todo"])
+    joined = "\n".join(report["upgrade_todo"])
+    assert "M2" in joined, joined
+    assert "增量重算" in joined, joined
 
 
 def test_live_link_unavailable_is_unknown_not_a_crash(
@@ -198,8 +211,13 @@ def test_cost_ceiling_env_override_is_flagged(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_cost_criteria_are_blocked_but_carry_their_threshold(tmp_path: Path) -> None:
-    """C3-a / C3-b **没有值**（P5-M6）但**带出阈值**——「判据存在、阈值已定、没数据」
+    """C3-a / C3-b **没有值**但**带出阈值**——「判据存在、阈值已定、取不到数」
     必须和「还没做」长得不一样，否则 TBD-7 停在"不可判"的死状态（D2）。
+
+    **2026-10-09 P6-V 订正**：原文写的是「没有值（P5-M6）」——批次名留成了永久
+    占位。`cost_metrics` 表已建 ⇒ 真正的缺口写在
+    `tests/test_eval_acceptance_cli.py::test_blocked_criteria_name_their_blocker`
+    的新断言里（点名 M2 落点 / TBD-7 / 增量重算）。
     """
     out = tmp_path / "offline.json"
     assert _run("--offline", "--out", str(out)).returncode == 0
@@ -207,13 +225,13 @@ def test_cost_criteria_are_blocked_but_carry_their_threshold(tmp_path: Path) -> 
     by_name = {item["criterion"]: item for item in report["criteria"]}
 
     c3a = by_name["c3_a_single_doc_cost"]
-    assert c3a["value"] is None and "P5-M6" in c3a["blocked_by"]
+    assert c3a["value"] is None and c3a["blocked_by"]
     assert c3a["threshold"] == 32_000
     assert c3a["threshold_source"] == THRESHOLD_PROVISIONAL
     assert c3a["unit"] == "token/doc"
 
     c3b = by_name["c3_b_incremental_cost_ratio"]
-    assert c3b["value"] is None and "P5-M6" in c3b["blocked_by"]
+    assert c3b["value"] is None and c3b["blocked_by"]
     #: D3：C3-b 阈值**不落 config**，来自 metrics 常量（矩阵「显著 < 1.00」）
     assert c3b["threshold"] == COST_RATIO_SIGNIFICANT
 

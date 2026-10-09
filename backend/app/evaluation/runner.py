@@ -832,12 +832,19 @@ def resolve_cost_ceiling() -> tuple[int, str]:
 
 
 def eval_single_doc_cost(ctx: dict[str, Any]) -> CriterionResult:
-    """**C3-a 单文档成本**（TBD-7）：**阈值已定、值还没有**。
+    """**C3-a 单文档成本**（TBD-7）：**阈值已定、值还取不到**。
 
-    ``P5-M6`` 之前没有 ``cost_metrics`` ⇒ **无真实分母** ⇒ 状态仍是 ``BLOCKED``
-    （``value=null``，**不是** 0）。但**阈值与来源照实带出**——
-    「判据存在、阈值未校准」和「还没做」在报告里必须长得不一样，
-    否则 TBD-7 永远停在"不可判"的死状态（D2 的裁决理由）。
+    **P6-V（2026-10-09）订正**：``cost_metrics`` 表**已建**（含 RLS 迁移），M3 问答的
+    token **已在落**（探针实测：一次问答 29 104 token / 5 份文档）。但本批**仍不让它出数**，
+    理由是剩下的两个缺口都会让这个数失去意义：
+
+    1. **缺 M2 抽取侧落点**：本项的口径是「（全量）单文档抽取成本」，而落点目前只有
+       M3 问答 ⇒ 能算的是「问答的单文档成本」，与 C3-a 的口径**不是同一个东西**；
+    2. **TBD-7 未校准**：阈值 32 000 是 provisional（2026-10-03 推算），未校准前
+       出数也只能给 ``PASS(provisional)``，**不构成达标证据**。
+
+    ⇒ 状态维持 ``BLOCKED``（``value=null``，**不是** 0），**blocked_by 换成真实缺口**
+    （照抄旧理由"表未建"会让后来人以为还差一整张表）。
     """
     runner_ctx: RunnerContext = ctx["ctx"]
     ceiling, source = resolve_cost_ceiling()
@@ -847,12 +854,13 @@ def eval_single_doc_cost(ctx: dict[str, Any]) -> CriterionResult:
         value=None,
         provenance=_provenance(
             runner_ctx,
-            dataset_version="n/a（cost_metrics 未落库，无分母）",
+            dataset_version="n/a（缺 M2 抽取侧 token 落点，无可比分母）",
             kg_version="n/a",
-            corpus="n/a（无成本数据）",
+            corpus="n/a（cost_metrics 只有 M3 问答口径）",
         ),
         unit=UNIT_TOKEN_PER_DOC,
-        blocked_by="P5-M6（cost_metrics 表未建、token 未落库 ⇒ 无真实分母）",
+        blocked_by="P6-V 后仍缺：① M2 抽取侧 token 落点（当前只有 M3 问答在记）；"
+        "② TBD-7 阈值校准（EVAL_SINGLE_DOC_TOKEN_CEILING=32000 为 provisional）",
         threshold=float(ceiling),
         threshold_source=source,
         verdict=Verdict.INDETERMINATE,
@@ -876,15 +884,20 @@ def eval_incremental_cost_ratio(ctx: dict[str, Any]) -> CriterionResult:
             runner_ctx,
             dataset_version="n/a（无增量重算，无分母）",
             kg_version="n/a",
-            corpus="n/a（无成本数据）",
+            corpus="n/a（无增量重算 ⇒ 分子不存在）",
         ),
-        blocked_by="P5-M6（增量重算未实现）",
+        # P6-V（2026-10-09）订正：原写「P5-M6（增量重算未实现）」把批次名留成了
+        # 永久占位。真实缺口是**增量重算本身**（`cost_metrics.incremental_cost`
+        # / `full_rebuild_cost` 至今没有任何写入方）⇒ 分子不存在，比值无从谈起。
+        blocked_by="缺增量重算（cost_metrics 的 incremental_cost / "
+        "full_rebuild_cost 无写入方 ⇒ 无分子）",
         threshold=COST_RATIO_SIGNIFICANT,
         threshold_source=THRESHOLD_CALIBRATED,
         verdict=Verdict.INDETERMINATE,
         detail={
             "threshold_origin": "矩阵 §5.1「显著 < 1.00」，人工裁决定值（非实测推算）",
-            "note": "D3：本阈值**不落 config**（无真实消费者 ⇒ 落了即幽灵配置）",
+            "note": "D3：本阈值**不落 config**；注意它与 spec §6 的告警线 "
+            "COST_RATIO_ALERT_THRESHOLD（P6-V 落地，运行期告警）不是同一个东西",
         },
     )
 
@@ -1368,7 +1381,11 @@ def upgrade_todo() -> list[str]:
         #: （`app/evaluation/baseline.py`）⇒ 原句「定义与实现（A1 待裁决）」已过期。
         #: 真实缺口换成了 A3：**两侧各 40 题的人工判分**（缺判分 ⇒ 无分母，属 P6-T）。
         f"{C_GAIN}: 需要两侧各 40 题的**人工判分**（A3：脚本不代判 ⇒ P6-T）",
-        f"{C_COST} / {C_COST_RATIO}: 需要 P5-M6 落 cost_metrics 与增量重算",
+        # **2026-10-09 P6-V 订正**：cost_metrics **已落**（上一句已过期）⇒ 剩下的是
+        # ① M2 抽取侧 token 落点（当前只有 M3 问答在记）② 增量重算（C3-b 的分子）
+        # ③ TBD-7 阈值校准（32 000 仍是 provisional）。
+        f"{C_COST} / {C_COST_RATIO}: cost_metrics **已建**（P6-V），但 C3-a 还缺 M2 "
+        f"抽取侧 token 落点与 TBD-7 校准；C3-b 还缺增量重算（无分子）",
     ]
     blocked_by, verified = _affiliation_blocked_by()
     if not verified:
