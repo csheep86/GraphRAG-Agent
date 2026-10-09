@@ -1135,6 +1135,7 @@ def test_anomaly_paths_still_see_employees_outside_the_corrected_subgraph(
                 new_canonical_name="张伟（已更改）",
                 graph_service=graph_service,
             )
+            view = _snapshot_view(graph_service, db)
             with_view = graph_service.list_attendance_anomalies(org_id=_ORG_ID, db=db)
             without_view = graph_service.list_attendance_anomalies(org_id=_ORG_ID)
             # 归因端点：`kept` 的异常只在旧版本里 ⇒ 改前会抛 AnomalyNotFoundError
@@ -1142,6 +1143,10 @@ def test_anomaly_paths_still_see_employees_outside_the_corrected_subgraph(
                 org_id=_ORG_ID, db=db, employee_id="E002"
             )
 
+        # 场景自检：如果这压根没造出继承场景，下面的全部断言都失去证明力
+        assert view.inherits_history, (
+            "本用例没造出版本继承场景（只有一条链 ⇒ 下面的断言全失去证明力）"
+        )
         employees = {case.employee_id for case in with_view.cases}
         assert employees == {"E001", "E002"}, (
             f"异常清单丢了未被本次校正触碰的员工：实读={sorted(employees)}"
@@ -1151,8 +1156,17 @@ def test_anomaly_paths_still_see_employees_outside_the_corrected_subgraph(
             case for case in with_view.cases if case.employee_id == "E001"
         )
         assert moved_case.employee_name == "张伟（已更改）"
-        # 改前形态：只看得见被校正的那一个
-        assert {case.employee_id for case in without_view.cases} == {"E001"}
+        # **改前形态**：单版本读看不到从未被本次校正触碰的员工。
+        #
+        # ⚠️ 这里**刻意不断言** `== {"E001"}`：增量重建会不会把 E001 的考勤
+        # 关系一并重写进新版本，取决于重建实现的邻居复制口径（本机在新版本里
+        # 还留着这条关系、CI 那台没有 ⇒ CI 返回空集）。那样写就把**与本题无关的
+        # 实现细节**钉成了判据。真正要钉的是"E002 看不见"这一条。
+        before = {case.employee_id for case in without_view.cases}
+        assert "E002" not in before, (
+            f"改前形态竟然也读到了被继承的员工：实读={sorted(before)}"
+        )
+        assert before < {"E001", "E002"}, "改前必须**漏掉**一些人，否则本用例失去证明力"
         # 归因端点确实读的是那条继承来的异常（2026-10-17 属 E002）
         assert explained_version == with_view.kg_version
         assert explained.date == "2026-10-17"
