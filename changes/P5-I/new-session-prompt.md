@@ -247,9 +247,17 @@ cd d:\AIProject\GraphRAG-Agent ; gh run list --limit 1 # 确认起点是绿的�
 
 ---
 
-## 11. 下一批指针（**本批收口时按实际结果更新，别照抄**）
+## 11. 下一批指针（**2026-10-09 收口时按实际结果更新**）
+
+> **本批已收口**：`main` = `dac5eb59`，CI run `37870995287` 四 job 全绿，
+> CI 口径 pytest **1144 passed / 5 skipped / 0 failed**。
+> 下一批开场提示词已落成 **`changes/P5-J/new-session-prompt.md`**（取下面第 1 条）。
 
 1. **剩余读路径切换** + **`agents.py` 接线**（P5-H §9 指针 1）：M4 端到端才算真正吃到版本继承读。
+   **本批新增的消费者**：`/ontology` 页动作成功后会刷新图谱视图 ⇒ 它已经吃到继承读，
+   但 `fetch_all_subgraph` / `fetch_entity_detail` / `fetch_anchor_entity_ids` /
+   `list_attendance_anomalies` / `explain_attendance_anomaly` / `fetch_document_subgraph`
+   与 `agents.py` 检索**仍单版本**（本批逐条登记未动，Non-goal 3）。
 2. **多跳推理改为 id 级图遍历**（取消 **P5H-6** 限制）。
 3. **`GET /cost/dashboard` + `cost_metrics`**（m6 §3.4 验收 8 / 9）与 MVP 准入 **C3-a / C3-b**；
    `cost_ratio` 阈值 TBD-7 **Sprint 13** 收敛前拿不到判据。

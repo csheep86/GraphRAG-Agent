@@ -91,6 +91,19 @@
 3. **验收判据是真跑出来的吗？** —— 是：全部来自脚本 / CI 输出（§4 第 4 条是编译后实跑
    `shouldMock()`，不是读代码推断）。
 
-## 7. CI 终裁（回登）
+## 7. CI 终裁（**已回登**）
 
-> 待推送后回登：`gh run watch <id> --exit-status` 退出码 0，四 job 全绿。
+- **run `37870995287`**（commit `dac5eb59`，2026-10-09）：`gh run watch 37870995287 --exit-status` ⇒ **EXIT=0**
+- 四 job：`前端（lint + gen:api）` / `契约校验（前后端漂移门禁）` / `后端（ruff + pytest）` / `流水线汇总` **全 success**
+- CI 口径 pytest：**1144 passed / 5 skipped / 0 failed**（≥ 判据 10 要求的 1139 passed / 5 skipped / 0 failed）
+- Ruff：`All checks passed!`
+
+> **本地 vs CI 差 1 条 passed / 1 条 skipped**（本地 1143 passed / 4 skipped / 2 failed）：
+> 本地那 2 条 g25 红是缺 CI 的受控种子语料（既有环境债），CI 上它们绿且另有一条按环境 skip
+> ⇒ **以 CI 为终裁**（R-10）。
+
+## 8. 下一批指针（**本批收口时的实际结果**）
+
+已按实际结果更新 [`new-session-prompt.md`](./new-session-prompt.md) §11，
+下一批开场提示词落成 `changes/P5-J/new-session-prompt.md`
+（**取指针 1：剩余读路径切换 + `agents.py` 接线** —— M4 端到端才算真正吃到版本继承读）。
