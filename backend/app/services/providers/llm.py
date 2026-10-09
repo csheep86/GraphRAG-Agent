@@ -12,6 +12,18 @@
 
 抽象原则（批次 A2 CP 闸门）：「只多一层」——工厂仅做构造参数收敛，
 不引入额外消息转换 / 会话管理。
+
+采样确定性（**P6-R 裁决 O1**，2026-10-09）：``temperature`` **钉 0，且不留配置开关**。
+
+- **为什么钉**：默认采样下产物**不可复现**——① 问答侧：同一份代码 / 同一份数据连跑，
+  拒答误伤读数 **1 / 0 / 0** 抖动（P6-Q 实测，翻转题 Q28）；
+  ② **抽取侧**：同一份固定文本连跑两次，实体 **14 vs 19** 条、关系 **7 vs 8** 条
+  （P6-R 实测，探针 ``scripts/probe_p6r_extraction_drift.py``）
+  ⇒ 出问题的不只是某一条判据的读数，而是**入图产物本身**。
+- **为什么不留开关**：做成配置项会让不同部署取到不同值 ⇒ 历史数字不可比；
+  且「无消费者的配置不得提交」。钉成常量**不新增配置字段**。
+- **它不是放宽判定**：``no_grounded_evidence`` 判定一行未改，``missed_refusals`` 恒空
+  （该拒答的库外题仍拒答）——这条是 A6 第 2 条的反向护栏。
 """
 
 from __future__ import annotations
@@ -58,6 +70,9 @@ def build_chat_model() -> ChatOpenAI:
         base_url=settings.llm_base_url,
         timeout=settings.llm_request_timeout_seconds,
         max_retries=0,  # 重试由调用方（AgentService / 执行体）tenacity 统一管控
+        # P6-R 裁决 O1：钉 0 ⇒ 采样确定化（问答 / 抽取 / 本体建议三条路径一并生效）。
+        # 理由见模块 docstring「采样确定性」；**不留配置开关**是裁决的一部分。
+        temperature=0,
     )
 
 
