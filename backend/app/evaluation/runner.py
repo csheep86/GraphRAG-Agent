@@ -1018,6 +1018,8 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
        ChatModel、同一个解析器、同一套引用回查** ⇒ 唯一变量是**检索方式**；
     2. **可比性前置断言**：两侧池指纹 / k / 生成模型 / prompt 版本任一不一致
        ⇒ **返回 UNKNOWN，不给数字**（不公平条件下算出的增益比没有数字更糟）；
+       **P6-S**：它与双侧 spec 已提到**判分闸门之前**执行——否则「判完 80 题才发现
+       两侧不可比」会让人工劳动全部作废（详见函数体注释）；
     3. **反向守卫**：增益**保号**——基线反超 ⇒ 值为负且 ``regression_warning`` 显式出现，
        **不许**取绝对值，也不许被 10% 阈值判定悄悄吞掉。
 
@@ -1033,6 +1035,31 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
     snapshot = _qa_run(runner_ctx)
     if not snapshot.answers:
         return _qa_unavailable(C_GAIN, runner_ctx, snapshot)
+
+    #: **P6-S：双侧共因清单与可比性断言必须在人工判分之前可见**
+    #:
+    #: 为什么提到最前面（原本排在判分闸门之后）：那时一旦判分缺失就把整个函数
+    #: return 掉 ⇒ 没有判分就完全看不到两侧是怎么比的 ⇒
+    #: 「判完 80 题才发现两侧不可比」会让人工劳动**全部作废**。提到前面之后：
+    #: ① 缺判分时报告照样**不带任何数字**，但把两侧 spec 与可比性结论摊开；
+    #: ② 不可比 ⇒ **在此即返回**，不再花 40 次 LLM 去跑一趟注定作废的基线侧。
+    from app.evaluation.baseline import comparability_error  # noqa: PLC0415
+
+    embedder = _build_embedder_or_none()
+    if embedder is None:
+        return _c1_unknown(
+            runner_ctx,
+            "基线侧不可用：embedding 未配置（EVAL_EMBEDDING_MODEL / *_API_KEY）",
+        )
+    graph_spec, base_spec, _pool_ref, _pool = _load_pool_and_specs(runner_ctx, embedder)
+    incomparable = comparability_error(graph_spec, base_spec)
+    if incomparable is not None:
+        return _c1_unknown(
+            runner_ctx,
+            f"L10-A1 反向守卫：{incomparable}",
+            graph_spec=graph_spec.as_dict(),
+            baseline_spec=base_spec.as_dict(),
+        )
 
     graph_answers = _judged_answers(
         snapshot.answers,
@@ -1066,27 +1093,22 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
                 snapshot.answers, snapshot.answered_indices
             ),
             awaiting_baseline=_awaiting_judgement(baseline_answers, baseline_indices),
+            graph_spec=graph_spec.as_dict(),
+            baseline_spec=base_spec.as_dict(),
         )
     if baseline_error is not None:
-        return _c1_unknown(runner_ctx, f"基线侧不可用：{baseline_error}")
+        return _c1_unknown(
+            runner_ctx,
+            f"基线侧不可用：{baseline_error}",
+            graph_spec=graph_spec.as_dict(),
+            baseline_spec=base_spec.as_dict(),
+        )
     if baseline_metric.value is None:  # type: ignore[union-attr]
         return _c1_unknown(
             runner_ctx,
             "A3：基线侧没有一题被人工判分（用 --baseline-judgements 提供）；"
             "只判图谱侧 ⇒ 增益无从计算",
             awaiting_baseline=_awaiting_judgement(baseline_answers, baseline_indices),
-        )
-
-    #: 可比性前置断言（此处才装 embedder：缺 key ⇒ 上面会先以 baseline_error 返回）
-    from app.evaluation.baseline import comparability_error  # noqa: PLC0415
-
-    embedder = _build_embedder_or_none()
-    graph_spec, base_spec, _pool_ref, _pool = _load_pool_and_specs(runner_ctx, embedder)
-    incomparable = comparability_error(graph_spec, base_spec)
-    if incomparable is not None:
-        return _c1_unknown(
-            runner_ctx,
-            f"L10-A1 反向守卫：{incomparable}",
             graph_spec=graph_spec.as_dict(),
             baseline_spec=base_spec.as_dict(),
         )
@@ -1319,7 +1341,10 @@ def self_test() -> dict[str, Any]:
 def upgrade_todo() -> list[str]:
     """报告顶部要打印的「升为 `MEASURED` 还缺什么」（proposal §4.2 第 3 条）。"""
     todo = [
-        f"{C_GAIN}: 需要 RAG 基线检索的定义与实现（A1 待裁决）",
+        #: **P6-S 订正**：A1 **已裁决**（2026-10-03）且 dense top-k 基线**已实现**
+        #: （`app/evaluation/baseline.py`）⇒ 原句「定义与实现（A1 待裁决）」已过期。
+        #: 真实缺口换成了 A3：**两侧各 40 题的人工判分**（缺判分 ⇒ 无分母，属 P6-T）。
+        f"{C_GAIN}: 需要两侧各 40 题的**人工判分**（A3：脚本不代判 ⇒ P6-T）",
         f"{C_COST} / {C_COST_RATIO}: 需要 P5-M6 落 cost_metrics 与增量重算",
     ]
     blocked_by, verified = _affiliation_blocked_by()

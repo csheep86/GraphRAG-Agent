@@ -107,7 +107,17 @@ def _load_judgements(path: Path) -> dict[int, bool]:
             raise ValueError(
                 f"判分文件 {path} 的键必须是题号（元信息键请用下划线开头），收到 {key!r}"
             ) from exc
-        table[index] = bool(value)
+        #: **P6-S**：值必须是**真正的布尔**，其余一律报错。
+        #: 为什么必须这么严：`bool(None)` = **False**、`bool("false")` = **True** ⇒
+        #: ① 半张没填完的判分表会把未判的题**静默判成错**（未判混进分母 ⇒ C1 的分母失真）；
+        #: ② 字符串写反了也照样被当成对。两种都是"表格看着正常、数字已经是假的"，
+        #: 与同一函数里「非题号键不许静默通过」是同一条防线，只是这次防的是**值**。
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"判分文件 {path} 第 {index} 题的值必须是 true / false，收到 {value!r}"
+                "（留空 / 字符串都会被静默换算成布尔 ⇒ 未判分题混进分母）"
+            )
+        table[index] = value
     return table
 
 
