@@ -146,7 +146,9 @@ def test_v1_still_renders_without_new_variables() -> None:
 
     def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         seen.append(prompt)
-        return json.dumps({"entities": [], "relations": []}, ensure_ascii=False), _FAKE_USAGE
+        return json.dumps(
+            {"entities": [], "relations": []}, ensure_ascii=False
+        ), _FAKE_USAGE
 
     LangextractClient(
         provider="langextract",

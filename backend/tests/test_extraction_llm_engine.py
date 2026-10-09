@@ -163,6 +163,74 @@ def test_llm_engine_offsets_are_absolute_across_chunks() -> None:
         assert text[entity.char_start : entity.char_end] == "北京青云科技有限公司"
 
 
+# --------------------------------------------------------------------------- #
+# P6-V2（偏离 X-6）：token 用量的带出与累加
+# --------------------------------------------------------------------------- #
+
+
+def test_usage_totals_accumulate_across_all_chunks() -> None:
+    """三 chunk ⇒ usage **累加**：``cost_metrics`` 抽取侧的分子就是这一个数。
+
+    为什么要逐 chunk 累加：**一次抽取 = N 次 LLM 调用**，落在成本表里的是「这篇
+    文档花了多少」，不是「单次调用花了多少」。漏乘会让抽取侧成本被系统性低估。
+    """
+    text = "甲方：北京青云科技有限公司。" * 30  # 140 字切片 ⇒ 3 个 chunk
+    payload = {"entities": [_PAYLOAD["entities"][0]], "relations": []}
+
+    client = _client(max_chars_per_chunk=140, llm_invoker=_invoker_returning(payload))
+    result = client.extract_entities_relations(
+        document_id=uuid4(), full_md_text=text, trace_id=uuid4()
+    )
+
+    assert len(result.chunks) == 3
+    assert result.llm_usage == {
+        "prompt_tokens": 11 * 3,
+        "completion_tokens": 7 * 3,
+        "total_tokens": 18 * 3,
+    }
+
+
+def test_missing_usage_fields_count_as_zero_not_fabricated() -> None:
+    """响应里没有用量字段 ⇒ 记 **0**，**不猜数**（A15 / 决策 Y2）。"""
+
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
+        return json.dumps(_PAYLOAD, ensure_ascii=False), {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+        }
+
+    result = _client(llm_invoker=_invoke).extract_entities_relations(
+        document_id=uuid4(), full_md_text=_TEXT, trace_id=uuid4()
+    )
+
+    assert result.llm_usage == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def test_mock_engine_reports_no_usage_and_never_calls_llm() -> None:
+    """``extraction_engine='mock'``：不调 LLM，**也不许**给出用量（A15 反向守卫）。
+
+    这条守卫的意义在下游：``llm_usage`` 为空 ⇒ 记账侧**跳过**，`cost_metrics`
+    不会收到一行「成本为 0」的伪数据（见 ``test_cost_metrics_extraction.py``）。
+    """
+    calls: list[str] = []
+
+    def _llm(prompt: str) -> tuple[str, dict[str, int | None]]:
+        calls.append(prompt)
+        return json.dumps(_PAYLOAD, ensure_ascii=False), _FAKE_USAGE
+
+    result = _client(engine="mock", llm_invoker=_llm).extract_entities_relations(
+        document_id=uuid4(), full_md_text=_TEXT, trace_id=uuid4()
+    )
+
+    assert calls == [], "mock 档竟然调了 LLM"
+    assert result.llm_usage == {}, "没调 LLM 却给出用量 ⇒ 记账侧会误判为真实调用"
+
+
 def test_llm_engine_resolves_missing_offsets_by_mention() -> None:
     """模型没给偏移 → 用 mention 在 chunk 内回查（原文定位，不是伪造 0）。"""
     payload = {
@@ -206,7 +274,9 @@ def test_llm_engine_invalid_json_raises() -> None:
 
 def test_llm_engine_fenced_json_is_accepted() -> None:
     def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
-        return "```json\n" + json.dumps(_PAYLOAD, ensure_ascii=False) + "\n```", _FAKE_USAGE
+        return "```json\n" + json.dumps(
+            _PAYLOAD, ensure_ascii=False
+        ) + "\n```", _FAKE_USAGE
 
     result = _client(llm_invoker=_invoke).extract_entities_relations(
         document_id=uuid4(), full_md_text=_TEXT, trace_id=uuid4()
