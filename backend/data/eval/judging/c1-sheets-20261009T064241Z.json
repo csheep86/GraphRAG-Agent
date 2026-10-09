@@ -1,0 +1,1160 @@
+{
+  "_notice": "这是 C1 的**试题 / 答卷**，不是判分表 —— 不含任何 correct 值。判分请另建文件（键为题号、值为 true/false），并与另一张表分开（A1 条款 3）。",
+  "_source_report": "reports\\eval\\p6s-c1-02.json",
+  "_criterion": "c1_graph_gain",
+  "_generated_at": "2026-10-09T06:42:41.506637+00:00",
+  "_git_hash": "101773e7",
+  "_dataset_version": "controlled-qset-v4",
+  "_kg_version": "attendance-demo-v1",
+  "_blocked_by": "A3：图侧没有一题被人工判分（用 --judgements 提供）；脚本不自动判分 ⇒ 不判就等于没跑",
+  "_rubric": {
+    "id": "rubric-v2",
+    "supersedes": {
+      "id": "rubric-v1",
+      "correct_rule": "①②③ 全部满足 ⇒ true；任一不满足 ⇒ false",
+      "why_changed": "v1 把『出处 / 算式 / 附加条件』这类**补充要点**与主体答案等权 ⇒ 答对主体、漏了出处即判 false（P6-I 实测 Q5「依据劳动法第四十一条」、Q7「已履行审批」均属此类）⇒ **系统性低估**。详见 changes/P6-I/proposal.md §3.2。",
+      "applies_to_numbers": "rubric-v1 下 C1 = 0.0294（graph 35/40 vs baseline 34/40）；该数字属于 v1，**不得与 rubric-v2 的结果混用**。"
+    },
+    "note": "**A3**：脚本不做关键词判分（关键词命中会把答非所问读成达标）⇒ 答对率只能人工判；本 rubric 写死判分规则，使两次运行可比。",
+    "per_question": [
+      "① 拒答判定与 should_refuse 一致；",
+      "② 答案覆盖 **core 要点**（core = expected_points − secondary_points；未标注 secondary_points 的数据集，其全部要点一律为 core）；",
+      "③ 无与语料矛盾的事实（幻觉）。"
+    ],
+    "correct_rule": "①②③ 全部满足 ⇒ correct=true；任一不满足 ⇒ correct=false；未判分 ⇒ correct=null（**不入分母**，不是 0）。secondary 要点**缺失不扣主分**，可另记「答案完整度」子指标，但不参与本判据。",
+    "tier_rule": "core = 直接回答问题的主体；secondary = 出处 / 算式 / 枚举细节 / 附加条件 / 例外情形。分级必须写在题集 JSON 的 secondary_points 字段里（**显式、可复核**），不得临场裁量。",
+    "monotonicity_note": "core ⊆ expected_points ⇒ 较之 v1，本规则**只会把 false 翻成 true，不会反向**（单调放宽）。换 rubric 时因此**只需重判当时判为 false 的题**——这是 P6-I 实测得出的 80 → 11 条降本依据。",
+    "judged_by_rule": "判分人必须写入 judged_by，禁止匿名判分。"
+  },
+  "_manifest_version": "v2-2026-10-05",
+  "_graph_spec": {
+    "retriever": "graph_mentions+lexical_rerank",
+    "embedding_model": null,
+    "embedding_dimension": null,
+    "pool": {
+      "kg_version": "attendance-demo-v1",
+      "org_id": "00000000-0000-4000-8000-000000000001",
+      "fingerprint": "e36322bb2d86865f",
+      "size": 213
+    },
+    "top_k": 32,
+    "generation_model": "deepseek-chat",
+    "prompt_id": "kg_qa_v5",
+    "graph_context": true,
+    "judged_by": "architect"
+  },
+  "_baseline_spec": {
+    "retriever": "dense_top_k",
+    "embedding_model": "BAAI/bge-small-zh-v1.5",
+    "embedding_dimension": null,
+    "pool": {
+      "kg_version": "attendance-demo-v1",
+      "org_id": "00000000-0000-4000-8000-000000000001",
+      "fingerprint": "e36322bb2d86865f",
+      "size": 213
+    },
+    "top_k": 32,
+    "generation_model": "deepseek-chat",
+    "prompt_id": "kg_qa_v5",
+    "graph_context": false,
+    "judged_by": "architect"
+  },
+  "graph": [
+    {
+      "index": 1,
+      "question": "每名员工每月的补卡次数上限是多少？",
+      "should_refuse": false,
+      "expected_points": [
+        "每名员工每月补卡不超过 3 次",
+        "超出按事假处理"
+      ],
+      "secondary_points": [
+        "超出按事假处理"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "每名员工每月补卡次数不超过 3 次，超出部分按事假处理 [source: chunk-c38c7c21aa45]。"
+    },
+    {
+      "index": 2,
+      "question": "迟到是怎么认定的？超过 30 分钟怎么算？",
+      "should_refuse": false,
+      "expected_points": [
+        "晚于排班上班时间 30 分钟以内记迟到",
+        "超过 30 分钟按事假半天"
+      ],
+      "secondary_points": [
+        "超过 30 分钟按事假半天"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "迟到的认定标准是：实际到岗时间晚于排班上班时间 30 分钟以内的，记为迟到；超过 30 分钟的，按事假半天处理，早退的认定标准相同 [source: chunk-2e5424af3395#实际到岗时间晚于排班上班时间 30 分钟以内的，记为迟到；超过 30 分钟的，按事假半天处理]。"
+    },
+    {
+      "index": 3,
+      "question": "外勤与出差考勤补充规定适用于哪些员工？",
+      "should_refuse": false,
+      "expected_points": [
+        "因公外出（外勤）或出差期间",
+        "无法按常规方式打卡的员工"
+      ],
+      "secondary_points": [
+        "无法按常规方式打卡的员工"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "《外勤与出差考勤补充规定》适用于因公外出（外勤）或出差期间无法按常规方式打卡的员工 [source: chunk-7b61481754b5#因公外出（外勤）或出差期间无法按常规方式打卡的员工]。该适用范围在 2026 版中仍为现行有效条款，自 2026 年 1 月 1 日起施行 [source: chunk-7b61481754b5]。"
+    },
+    {
+      "index": 4,
+      "question": "能不能因为没有门禁刷卡记录就认定外勤员工未出勤？",
+      "should_refuse": false,
+      "expected_points": [
+        "不能",
+        "门禁仅覆盖公司自有场所",
+        "不得以无门禁记录否定出勤"
+      ],
+      "secondary_points": [
+        "门禁仅覆盖公司自有场所",
+        "不得以无门禁记录否定出勤"
+      ],
+      "refused": false,
+      "citations": 5,
+      "answer": "不能。外勤及出差期间，打卡记录不作为认定出勤的唯一依据 [source: chunk-7b61481754b5]；门禁刷卡记录仅覆盖公司自有场所，外勤地点无门禁设备，故不得以无门禁记录为由否定出勤 [source: chunk-7b61481754b5]。认定外勤出勤应依据《外勤与出差考勤补充规定》第四条所列证据及其优先级：出差审批单、工单或任务闭环记录、移动应用定位轨迹、门禁刷卡记录（仅适用于公司场所内）[source: chunk-0c7b712dc257]；同时满足第 2 项与第 3 项的，或同时满足第 1、2、3 项的，认定为外勤出勤成立 [source: chunk-0c7b712dc257]。此外，员工在外勤或出差期间产生缺卡的，由系统按第四条自动取证并完成补卡，无需手工提交申请 [source: chunk-0c7b712dc257][source: chunk-346a989405e6]。"
+    },
+    {
+      "index": 5,
+      "question": "每月加班时间不得超过多少小时？",
+      "should_refuse": false,
+      "expected_points": [
+        "每月不得超过 36 小时",
+        "依据劳动法第四十一条"
+      ],
+      "secondary_points": [
+        "依据劳动法第四十一条"
+      ],
+      "refused": false,
+      "citations": 3,
+      "answer": "每月加班时间不得超过 36 小时 [source: chunk-e74cddbf7598]。该上限的依据为《中华人民共和国劳动法》第四十一条 [source: chunk-e74cddbf7598]。此外，综合计算工时制岗位的加班上限按周期核算：周期内超出周期标准工时且按每月 36 小时折算不超标的，视为合规 [source: chunk-e74cddbf7598]。"
+    },
+    {
+      "index": 6,
+      "question": "员工自愿延长在岗时间、未经审批的，算加班吗？",
+      "should_refuse": false,
+      "expected_points": [
+        "不认定为加班",
+        "须经审批"
+      ],
+      "secondary_points": [
+        "须经审批"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "不算加班。员工自愿延长在岗时间、未经审批的，不认定为加班 [source: chunk-e74cddbf7598]。加班须事前提交加班申请并经审批；因紧急情况未能事前审批的，须在加班发生后 3 个工作日内补办审批 [source: chunk-e74cddbf7598]。"
+    },
+    {
+      "index": 7,
+      "question": "销售经理适用哪种工时制？",
+      "should_refuse": false,
+      "expected_points": [
+        "不定时工作制",
+        "已履行审批"
+      ],
+      "secondary_points": [
+        "已履行审批"
+      ],
+      "refused": false,
+      "citations": 4,
+      "answer": "销售经理适用不定时工作制 [source: chunk-13f2695c708a]。该岗位的工时制由《工时制实施细则》第三章的岗位适用表确定，不得由部门自行变更 [source: chunk-cc75924988e4]。不定时工作制不适用该细则关于加班的规定，但公司须保障员工休息休假权利 [source: chunk-eb5f28fb5e2a]。"
+    },
+    {
+      "index": 8,
+      "question": "标准工时制岗位的核心在岗时段是什么时候？",
+      "should_refuse": false,
+      "expected_points": [
+        "核心在岗时段 10:00 至 16:00"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "标准工时制岗位的核心在岗时段为 10:00 至 16:00，员工须在此时段内在岗 [source: chunk-2867eb84cd00]。该弹性时段安排仅适用于标准工时制岗位 [source: chunk-2867eb84cd00]。"
+    },
+    {
+      "index": 9,
+      "question": "张伟在哪个部门、担任什么岗位？",
+      "should_refuse": false,
+      "expected_points": [
+        "售后部",
+        "售后工程师"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "张伟属于售后部，担任售后工程师 [source: chunk-6c17ea368cd3]。"
+    },
+    {
+      "index": 10,
+      "question": "张伟适用哪种工时制？",
+      "should_refuse": false,
+      "expected_points": [
+        "综合计算工时制"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "张伟（E001）的岗位为售后工程师，适用综合计算工时制 [source: chunk-6c17ea368cd3]。根据岗位适用表，售后工程师因外勤频繁、作息不固定，适用综合计算工时制 [source: chunk-13f2695c708a]。"
+    },
+    {
+      "index": 11,
+      "question": "E004 在 2026 年 10 月 25 日请的是什么假，共几天？",
+      "should_refuse": false,
+      "expected_points": [
+        "病假",
+        "3 天"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "E004（陈敏）在 2026 年 10 月 25 日请的是病假，共 3 天（2026-10-25 至 2026-10-27）[source: chunk-435393647b3c]。"
+    },
+    {
+      "index": 12,
+      "question": "工单 SO-2026-0912 的处理地点在哪里？",
+      "should_refuse": false,
+      "expected_points": [
+        "武汉光谷希尔顿酒店",
+        "武汉光谷"
+      ],
+      "secondary_points": [
+        "武汉光谷"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "工单 SO-2026-0912 的处理地点为武汉光谷希尔顿酒店，所属区域为武汉光谷 [source: chunk-668c182c834e]。"
+    },
+    {
+      "index": 13,
+      "question": "比亚迪 2025 年新能源汽车销量是多少？",
+      "should_refuse": true,
+      "expected_points": [
+        "应拒答"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "无法回答"
+    },
+    {
+      "index": 14,
+      "question": "《红楼梦》中贾宝玉的妻子是谁？",
+      "should_refuse": true,
+      "expected_points": [
+        "应拒答"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "无法回答"
+    },
+    {
+      "index": 15,
+      "question": "员工每日需要打卡几次？",
+      "should_refuse": false,
+      "expected_points": [
+        "须按排班时段打卡",
+        "每日上下班各打卡一次"
+      ],
+      "secondary_points": [
+        "须按排班时段打卡"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "员工须按排班时段打卡，每日上下班各打卡一次 [source: chunk-2e5424af3395]。打卡方式包括门禁刷卡、移动应用定位打卡 [source: chunk-2e5424af3395]。"
+    },
+    {
+      "index": 16,
+      "question": "什么情况会被认定为缺卡？",
+      "should_refuse": false,
+      "expected_points": [
+        "当日打卡记录不完整记为一次缺卡",
+        "仅有上班打卡、仅有下班打卡或当日无任何打卡记录均属缺卡"
+      ],
+      "secondary_points": [
+        "仅有上班打卡、仅有下班打卡或当日无任何打卡记录均属缺卡"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "缺卡的认定标准是：当日打卡记录不完整，即仅有上班打卡或仅有下班打卡，或当日无任何打卡记录，系统会自动记为一次缺卡 [source: chunk-2e5424af3395#当日打卡记录不完整（仅有上班打卡或仅有下班打卡，或当日无任何打卡记录）的，系统自动记为一次缺卡]。该认定规则在现行《员工考勤管理制度（2026 版）》第五条中规定 [source: chunk-2e5424af3395#第五条]。"
+    },
+    {
+      "index": 17,
+      "question": "员工缺卡后应在多长时间内提交补卡申请？",
+      "should_refuse": false,
+      "expected_points": [
+        "缺卡发生之日起 3 个工作日内提交",
+        "说明理由并附证明材料"
+      ],
+      "secondary_points": [
+        "说明理由并附证明材料"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "员工缺卡后应在缺卡发生之日起 3 个工作日内提交补卡申请，说明理由并附证明材料 [source: chunk-c38c7c21aa45]。该时限同样适用于因外勤或出差产生的缺卡 [source: chunk-ac2170f85968]。"
+    },
+    {
+      "index": 18,
+      "question": "员工请假需要什么手续？病假有什么额外要求？",
+      "should_refuse": false,
+      "expected_points": [
+        "请假须事前提交申请并经审批",
+        "病假须提供医疗机构证明"
+      ],
+      "secondary_points": [
+        "病假须提供医疗机构证明"
+      ],
+      "refused": false,
+      "citations": 3,
+      "answer": "请假须事前提交申请并经审批 [source: chunk-c38c7c21aa45]。病假的额外要求是须提供医疗机构证明 [source: chunk-c38c7c21aa45]。员工享有法定节假日、年休假、婚丧假、病假、事假等假期，按国家规定及公司假期管理办法执行 [source: chunk-c38c7c21aa45]。"
+    },
+    {
+      "index": 19,
+      "question": "标准工时制下每日和每周的工作时间是多少？",
+      "should_refuse": false,
+      "expected_points": [
+        "每日工作 8 小时",
+        "每周工作 40 小时"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "标准工时制下，员工每日工作 8 小时、每周工作 40 小时 [source: chunk-cc75924988e4]。日工作超过 8 小时或周工作超过 40 小时的部分，计为加班 [source: chunk-cc75924988e4]。"
+    },
+    {
+      "index": 20,
+      "question": "月标准工时是多少小时？",
+      "should_refuse": false,
+      "expected_points": [
+        "月标准工时 174 小时",
+        "月计薪天数 21.75 天 × 8 小时"
+      ],
+      "secondary_points": [
+        "月计薪天数 21.75 天 × 8 小时"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "综合计算工时制的月标准工时为 174 小时（月计薪天数 21.75 天 × 8 小时）[source: chunk-cc75924988e4]。"
+    },
+    {
+      "index": 21,
+      "question": "综合计算工时制下，某个月的一个休息日出勤，是否构成加班？",
+      "should_refuse": false,
+      "expected_points": [
+        "仅在月累计工时超过月标准工时后超出部分才计为加班",
+        "某一休息日出勤不当然构成加班，须结合当月累计工时判定"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 5,
+      "answer": "综合计算工时制下，某个月内的某一个休息日出勤，并不当然构成加班，须结合当月累计工时判定 [source: chunk-eb5f28fb5e2a]。具体而言，综合计算工时制下仅在月累计工时超过月标准工时后，超出部分才计为加班 [source: chunk-eb5f28fb5e2a]。该工时制以月为计算周期，月标准工时为 174 小时（月计薪天数 21.75 天 × 8 小时）[source: chunk-cc75924988e4]。此外，出差期间遇休息日且员工实际提供劳动的，认定为出勤并计入工时累计；该休息日是否计为加班，按员工所适用工时制判定，适用综合计算工时制的，须结合周期累计工时是否超出周期标准工时认定，不当然构成加班 [source: chunk-346a989405e6]。"
+    },
+    {
+      "index": 22,
+      "question": "不定时工作制在实施前需要履行什么程序？",
+      "should_refuse": false,
+      "expected_points": [
+        "须经劳动行政部门审批后方可实施"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "不定时工作制须经劳动行政部门审批后方可实施 [source: chunk-eb5f28fb5e2a]。该要求出自《工时制实施细则》第九条、第十条所在的「不定时工作制」一节，其中第十条明确规定不定时工作制须经劳动行政部门审批后方可实施 [source: chunk-eb5f28fb5e2a]。此外，各岗位适用何种工时制由该细则第三章的岗位适用表确定，不得由部门自行变更 [source: chunk-cc75924988e4]。"
+    },
+    {
+      "index": 23,
+      "question": "调休应在什么期限内完成？逾期如何处理？",
+      "should_refuse": false,
+      "expected_points": [
+        "调休应在加班所在季度内完成",
+        "逾期未调休的按小时工资 200% 计付"
+      ],
+      "secondary_points": [
+        "逾期未调休的按小时工资 200% 计付"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "调休应在加班所在季度内完成 [source: chunk-fcbb10b3484f#调休应在加班所在季度内完成]。逾期未调休的，按小时工资的 200% 计付 [source: chunk-fcbb10b3484f#逾期未调休的，按小时工资的 200% 计付]。"
+    },
+    {
+      "index": 24,
+      "question": "休息日加班后，公司优先怎么处理？已调休的还要付加班工资吗？",
+      "should_refuse": false,
+      "expected_points": [
+        "休息日加班优先安排调休",
+        "已安排调休的不再计付 200% 加班工资"
+      ],
+      "secondary_points": [
+        "已安排调休的不再计付 200% 加班工资"
+      ],
+      "refused": false,
+      "citations": 3,
+      "answer": "休息日加班，公司优先安排调休 [source: chunk-fcbb10b3484f#休息日加班，公司优先安排调休]。已安排调休的休息日加班，不再计付 200% 加班工资 [source: chunk-fcbb10b3484f#已安排调休的休息日加班，不再计付 200% 加班工资]。此外，调休应在加班所在季度内完成，逾期未调休的，按小时工资的 200% 计付 [source: chunk-fcbb10b3484f#调休应在加班所在季度内完成]。"
+    },
+    {
+      "index": 25,
+      "question": "法定休假日安排工作的，加班工资按什么标准计付？",
+      "should_refuse": false,
+      "expected_points": [
+        "法定休假日安排工作不低于小时工资的 300%"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "法定休假日安排工作的，加班工资按不低于小时工资的 300% 计付 [source: chunk-fcbb10b3484f]。"
+    },
+    {
+      "index": 26,
+      "question": "合规预警等级为『高』时，部门负责人须在多长时间内处置？",
+      "should_refuse": false,
+      "expected_points": [
+        "预警等级为高时部门负责人须在 5 个工作日内提交处置方案"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "合规预警等级为“高”的，部门负责人须在 5 个工作日内提交处置方案 [source: chunk-80577ef6ea9a]。等级为“中”的，则由系统记录并由部门自行跟进 [source: chunk-80577ef6ea9a]。"
+    },
+    {
+      "index": 27,
+      "question": "员工在外勤或出差期间产生缺卡的，怎么处理？",
+      "should_refuse": false,
+      "expected_points": [
+        "由系统按第四条所列证据自动取证",
+        "系统自动完成补卡"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 3,
+      "answer": "员工在外勤或出差期间产生缺卡的，由系统按《外勤与出差考勤补充规定》第四条自动取证并完成补卡，员工无需手工提交申请 [source: chunk-0c7b712dc257#由系统按本规定第四条自动取证并完成补卡]。该自动补卡不占用《员工考勤管理制度》第八条规定的月度补卡次数 [source: chunk-346a989405e6#自动补卡不占用《员工考勤管理制度》第八条规定的月度补卡次数]。原《外勤与出差考勤补充规定（2025 版）》第五条要求外勤缺卡须由员工手工提交补卡申请并附证明材料，该条自 2026 年 1 月 1 日起废止 [source: chunk-346a989405e6#该条自 2026 年 1 月 1 日起废止]。"
+    },
+    {
+      "index": 28,
+      "question": "外勤缺卡的自动补卡，是否占用每月 3 次的补卡次数？",
+      "should_refuse": false,
+      "expected_points": [
+        "不占用月度补卡次数",
+        "员工无需手工提交补卡申请"
+      ],
+      "secondary_points": [
+        "员工无需手工提交补卡申请"
+      ],
+      "refused": false,
+      "citations": 3,
+      "answer": "不占用。因外勤或出差产生缺卡，且经《外勤与出差考勤补充规定》第四条所列证据自动取证的，自动补卡，不占用月度补卡次数 [source: chunk-c38c7c21aa45#自动补卡，不占用本条规定的月度补卡次数]。该条为 2026 版新增，原 2025 版要求外勤亦须手工提交补卡申请 [source: chunk-c38c7c21aa45#2026 版新增，原 2025 版要求外勤亦须手工提交补卡申请]。相应地，2026 版《外勤与出差考勤补充规定》第八条明确废止了 2025 版第五条“外勤缺卡须由员工手工提交补卡申请并附证明材料”的规定 [source: chunk-346a989405e6#该条自 2026 年 1 月 1 日起废止]。"
+    },
+    {
+      "index": 29,
+      "question": "出差期间遇到休息日且员工实际提供了劳动，如何认定？",
+      "should_refuse": false,
+      "expected_points": [
+        "认定为出勤",
+        "计入工时累计"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 3,
+      "answer": "出差期间遇休息日且员工实际提供劳动的，认定为出勤并计入工时累计 [source: chunk-346a989405e6#认定为出勤并计入工时累计]。该休息日是否计为加班，按员工所适用工时制判定：适用综合计算工时制的，须结合周期累计工时是否超出周期标准工时认定，不当然构成加班 [source: chunk-346a989405e6#不当然构成加班]。综合计算工时制以月为计算周期，仅在月累计工时超过月标准工时后，超出部分才计为加班，因此某一个月内的某一个休息日出勤并不当然构成加班，须结合当月累计工时判定 [source: chunk-eb5f28fb5e2a#并不当然构成加班，须结合当月累计工时判定]。"
+    },
+    {
+      "index": 30,
+      "question": "认定外勤出勤的证据有哪几类，优先级如何排序？",
+      "should_refuse": false,
+      "expected_points": [
+        "出差审批单",
+        "工单或任务闭环记录",
+        "移动应用定位轨迹",
+        "门禁刷卡记录"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 5,
+      "answer": "认定外勤出勤的证据共四类，按优先级从高到低排序为：1. 出差审批单（事前审批，含起止日期与目的地）；2. 工单或任务闭环记录（含到场时间与处理结果）；3. 移动应用定位轨迹（需与出差目的地一致）；4. 门禁刷卡记录（仅适用于公司场所内）[source: chunk-0c7b712dc257]。同时满足第 2 项与第 3 项的，或同时满足第 1、2、3 项的，认定为外勤出勤成立 [source: chunk-0c7b712dc257]。"
+    },
+    {
+      "index": 31,
+      "question": "李静在哪个部门、担任什么岗位？",
+      "should_refuse": false,
+      "expected_points": [
+        "生产部",
+        "产线操作工"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "李静属于生产部，担任产线操作工 [source: chunk-3cfac2acfd03]。"
+    },
+    {
+      "index": 32,
+      "question": "李静适用哪种工时制？",
+      "should_refuse": false,
+      "expected_points": [
+        "综合计算工时制"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 3,
+      "answer": "李静适用的工时制为综合计算工时制 [source: chunk-3cfac2acfd03]。其岗位为产线操作工，该岗位适用综合计算工时制，受订单淡旺季影响，按季度综合核算 [source: chunk-13f2695c708a]。"
+    },
+    {
+      "index": 33,
+      "question": "LV0002 是谁的请假申请，请的是什么假，共几天？",
+      "should_refuse": false,
+      "expected_points": [
+        "E027",
+        "年休假",
+        "3 天"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "LV0002 是 E027 的请假申请，请假类型为年休假，共 3 天（2026-10-16 至 2026-10-18）[source: chunk-68b1edb01765]。"
+    },
+    {
+      "index": 34,
+      "question": "E004 在 2026 年 10 月 11 日加班了多少小时，属于哪种加班类型？",
+      "should_refuse": false,
+      "expected_points": [
+        "6.0 小时",
+        "休息日加班"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "E004（陈敏）在 2026 年 10 月 11 日加班 6.0 小时，加班类型为休息日加班（rest_day）[source: chunk-77d2a7667e48]。该记录显示当日加班 6.0 小时，已调休 0.0 小时 [source: chunk-77d2a7667e48]。"
+    },
+    {
+      "index": 35,
+      "question": "出差单 BT-2026-0017 的目的地和起止日期是什么？",
+      "should_refuse": false,
+      "expected_points": [
+        "武汉光谷（武汉）",
+        "2026-10-16 至 2026-10-18"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "出差单 BT-2026-0017 的目的地为武汉（武汉光谷），起止日期为 2026-10-16 至 2026-10-18 [source: chunk-1d9ec98da373]。"
+    },
+    {
+      "index": 36,
+      "question": "工单 SO-2026-0913 报修的是什么故障？",
+      "should_refuse": false,
+      "expected_points": [
+        "同批次设备复检"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "工单 SO-2026-0913 报修的故障为「同批次设备复检」[source: chunk-668c182c834e]。"
+    },
+    {
+      "index": 37,
+      "question": "E001 在 2026 年 10 月 1 日的门禁进出时间是几点，走的是哪个门？",
+      "should_refuse": false,
+      "expected_points": [
+        "进厂 08:49",
+        "出厂 17:40",
+        "厂区东门"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "E001 在 2026 年 10 月 1 日的门禁刷卡记录为：上班刷卡 08:49，下班刷卡 17:40，通行门为厂区东门 [source: chunk-5fd2c2849aca]。"
+    },
+    {
+      "index": 38,
+      "question": "E001 在 2026 年 10 月 1 日的排班时段是什么，计划工时多少？",
+      "should_refuse": false,
+      "expected_points": [
+        "09:00 至 18:00",
+        "计划工时 8.0 小时"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "E001 在 2026 年 10 月 1 日的排班为正常班，时段为 09:00 至 18:00，计划工时 8.0 小时 [source: chunk-769db757abb1]。"
+    },
+    {
+      "index": 39,
+      "question": "本公司在科创板上市的保荐机构是哪家券商？",
+      "should_refuse": true,
+      "expected_points": [
+        "应拒答"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "无法回答"
+    },
+    {
+      "index": 40,
+      "question": "2026 年世界杯亚洲区预选赛的出线规则是什么？",
+      "should_refuse": true,
+      "expected_points": [
+        "应拒答"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "无法回答"
+    }
+  ],
+  "baseline": [
+    {
+      "index": 1,
+      "question": "每名员工每月的补卡次数上限是多少？",
+      "should_refuse": false,
+      "expected_points": [
+        "每名员工每月补卡不超过 3 次",
+        "超出按事假处理"
+      ],
+      "secondary_points": [
+        "超出按事假处理"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "每名员工每月补卡次数不超过 3 次，超出部分按事假处理 [source: chunk-c38c7c21aa45]。"
+    },
+    {
+      "index": 2,
+      "question": "迟到是怎么认定的？超过 30 分钟怎么算？",
+      "should_refuse": false,
+      "expected_points": [
+        "晚于排班上班时间 30 分钟以内记迟到",
+        "超过 30 分钟按事假半天"
+      ],
+      "secondary_points": [
+        "超过 30 分钟按事假半天"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "迟到与早退的认定标准为：实际到岗时间晚于排班上班时间 30 分钟以内的，记为迟到；超过 30 分钟的，按事假半天处理；早退的认定标准相同 [source: chunk-2e5424af3395]。"
+    },
+    {
+      "index": 3,
+      "question": "外勤与出差考勤补充规定适用于哪些员工？",
+      "should_refuse": false,
+      "expected_points": [
+        "因公外出（外勤）或出差期间",
+        "无法按常规方式打卡的员工"
+      ],
+      "secondary_points": [
+        "无法按常规方式打卡的员工"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "《外勤与出差考勤补充规定（2026 版）》适用于因公外出（外勤）或出差期间无法按常规方式打卡的员工 [source: chunk-7b61481754b5]。该规定第一条明确其适用范围即为上述员工 [source: chunk-7b61481754b5]。"
+    },
+    {
+      "index": 4,
+      "question": "能不能因为没有门禁刷卡记录就认定外勤员工未出勤？",
+      "should_refuse": false,
+      "expected_points": [
+        "不能",
+        "门禁仅覆盖公司自有场所",
+        "不得以无门禁记录否定出勤"
+      ],
+      "secondary_points": [
+        "门禁仅覆盖公司自有场所",
+        "不得以无门禁记录否定出勤"
+      ],
+      "refused": false,
+      "citations": 4,
+      "answer": "不能。门禁刷卡记录仅覆盖公司自有场所，外勤地点无门禁设备，故不得以无门禁记录为由否定出勤 [source: chunk-1e74a2344f49#不得以无门禁记录为由否定出勤]。现行规定同样明确：外勤及出差期间，打卡记录不作为认定出勤的唯一依据 [source: chunk-7b61481754b5#打卡记录不作为认定出勤的唯一依据]。外勤出勤应依据第四条所列证据及其优先级认定，即出差审批单、工单或任务闭环记录、移动应用定位轨迹、门禁刷卡记录（仅适用于公司场所内）[source: chunk-0c7b712dc257#门禁刷卡记录]，其中同时满足第 2 项与第 3 项的，或同时满足第 1、2、3 项的，认定为外勤出勤成立 [source: chunk-0c7b712dc257#认定为外勤出勤成立]。"
+    },
+    {
+      "index": 5,
+      "question": "每月加班时间不得超过多少小时？",
+      "should_refuse": false,
+      "expected_points": [
+        "每月不得超过 36 小时",
+        "依据劳动法第四十一条"
+      ],
+      "secondary_points": [
+        "依据劳动法第四十一条"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "每月加班时间不得超过 36 小时 [source: chunk-e74cddbf7598]。"
+    },
+    {
+      "index": 6,
+      "question": "员工自愿延长在岗时间、未经审批的，算加班吗？",
+      "should_refuse": false,
+      "expected_points": [
+        "不认定为加班",
+        "须经审批"
+      ],
+      "secondary_points": [
+        "须经审批"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "不算加班。员工自愿延长在岗时间、未经审批的，不认定为加班 [source: chunk-e74cddbf7598]。加班须事前提交加班申请并经审批；因紧急情况未能事前审批的，须在加班发生后 3 个工作日内补办审批 [source: chunk-e74cddbf7598]。"
+    },
+    {
+      "index": 7,
+      "question": "销售经理适用哪种工时制？",
+      "should_refuse": false,
+      "expected_points": [
+        "不定时工作制",
+        "已履行审批"
+      ],
+      "secondary_points": [
+        "已履行审批"
+      ],
+      "refused": false,
+      "citations": 3,
+      "answer": "销售经理适用不定时工作制 [source: chunk-13f2695c708a]。该岗位已履行审批 [source: chunk-13f2695c708a]，且不定时工作制不适用本细则关于加班的规定 [source: chunk-eb5f28fb5e2a]。"
+    },
+    {
+      "index": 8,
+      "question": "标准工时制岗位的核心在岗时段是什么时候？",
+      "should_refuse": false,
+      "expected_points": [
+        "核心在岗时段 10:00 至 16:00"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "标准工时制岗位的核心在岗时段为 10:00 至 16:00，员工须在此时段内在岗 [source: chunk-2867eb84cd00]。"
+    },
+    {
+      "index": 9,
+      "question": "张伟在哪个部门、担任什么岗位？",
+      "should_refuse": false,
+      "expected_points": [
+        "售后部",
+        "售后工程师"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "张伟在售后部，担任售后工程师 [source: chunk-6c17ea368cd3]。"
+    },
+    {
+      "index": 10,
+      "question": "张伟适用哪种工时制？",
+      "should_refuse": false,
+      "expected_points": [
+        "综合计算工时制"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "张伟适用综合计算工时制 [source: chunk-6c17ea368cd3]。"
+    },
+    {
+      "index": 11,
+      "question": "E004 在 2026 年 10 月 25 日请的是什么假，共几天？",
+      "should_refuse": false,
+      "expected_points": [
+        "病假",
+        "3 天"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "E004 在 2026 年 10 月 25 日请的是病假，共 3 天（2026-10-25 至 2026-10-27）[source: chunk-435393647b3c]。"
+    },
+    {
+      "index": 12,
+      "question": "工单 SO-2026-0912 的处理地点在哪里？",
+      "should_refuse": false,
+      "expected_points": [
+        "武汉光谷希尔顿酒店",
+        "武汉光谷"
+      ],
+      "secondary_points": [
+        "武汉光谷"
+      ],
+      "refused": true,
+      "citations": 0,
+      "answer": "INSUFFICIENT_CONTEXT"
+    },
+    {
+      "index": 13,
+      "question": "比亚迪 2025 年新能源汽车销量是多少？",
+      "should_refuse": true,
+      "expected_points": [
+        "应拒答"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "INSUFFICIENT_CONTEXT"
+    },
+    {
+      "index": 14,
+      "question": "《红楼梦》中贾宝玉的妻子是谁？",
+      "should_refuse": true,
+      "expected_points": [
+        "应拒答"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "INSUFFICIENT_CONTEXT"
+    },
+    {
+      "index": 15,
+      "question": "员工每日需要打卡几次？",
+      "should_refuse": false,
+      "expected_points": [
+        "须按排班时段打卡",
+        "每日上下班各打卡一次"
+      ],
+      "secondary_points": [
+        "须按排班时段打卡"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "员工须按排班时段打卡，每日上下班各打卡一次 [source: chunk-2e5424af3395]。"
+    },
+    {
+      "index": 16,
+      "question": "什么情况会被认定为缺卡？",
+      "should_refuse": false,
+      "expected_points": [
+        "当日打卡记录不完整记为一次缺卡",
+        "仅有上班打卡、仅有下班打卡或当日无任何打卡记录均属缺卡"
+      ],
+      "secondary_points": [
+        "仅有上班打卡、仅有下班打卡或当日无任何打卡记录均属缺卡"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "当日打卡记录不完整（仅有上班打卡或仅有下班打卡，或当日无任何打卡记录）的，系统自动记为一次缺卡 [source: chunk-2e5424af3395]。"
+    },
+    {
+      "index": 17,
+      "question": "员工缺卡后应在多长时间内提交补卡申请？",
+      "should_refuse": false,
+      "expected_points": [
+        "缺卡发生之日起 3 个工作日内提交",
+        "说明理由并附证明材料"
+      ],
+      "secondary_points": [
+        "说明理由并附证明材料"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "员工缺卡后应在缺卡发生之日起 3 个工作日内提交补卡申请，说明理由并附证明材料 [source: chunk-c38c7c21aa45]。"
+    },
+    {
+      "index": 18,
+      "question": "员工请假需要什么手续？病假有什么额外要求？",
+      "should_refuse": false,
+      "expected_points": [
+        "请假须事前提交申请并经审批",
+        "病假须提供医疗机构证明"
+      ],
+      "secondary_points": [
+        "病假须提供医疗机构证明"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "员工请假须事前提交申请并经审批 [source: chunk-c38c7c21aa45]。病假的额外要求是须提供医疗机构证明 [source: chunk-c38c7c21aa45]。"
+    },
+    {
+      "index": 19,
+      "question": "标准工时制下每日和每周的工作时间是多少？",
+      "should_refuse": false,
+      "expected_points": [
+        "每日工作 8 小时",
+        "每周工作 40 小时"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "标准工时制下，员工每日工作 8 小时、每周工作 40 小时 [source: chunk-cc75924988e4]。日工作超过 8 小时或周工作超过 40 小时的部分，计为加班 [source: chunk-cc75924988e4]。"
+    },
+    {
+      "index": 20,
+      "question": "月标准工时是多少小时？",
+      "should_refuse": false,
+      "expected_points": [
+        "月标准工时 174 小时",
+        "月计薪天数 21.75 天 × 8 小时"
+      ],
+      "secondary_points": [
+        "月计薪天数 21.75 天 × 8 小时"
+      ],
+      "refused": false,
+      "citations": 1,
+      "answer": "月标准工时为 174 小时（月计薪天数 21.75 天 × 8 小时）[source: chunk-cc75924988e4]。"
+    },
+    {
+      "index": 21,
+      "question": "综合计算工时制下，某个月的一个休息日出勤，是否构成加班？",
+      "should_refuse": false,
+      "expected_points": [
+        "仅在月累计工时超过月标准工时后超出部分才计为加班",
+        "某一休息日出勤不当然构成加班，须结合当月累计工时判定"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 5,
+      "answer": "综合计算工时制下，某一个月内的某一个休息日出勤，并不当然构成加班，须结合当月累计工时判定：仅在月累计工时超过月标准工时后，超出部分才计为加班 [source: chunk-eb5f28fb5e2a]。该工时制以月为计算周期，月标准工时为 174 小时（月计薪天数 21.75 天 × 8 小时）[source: chunk-cc75924988e4]。经月度核算确认为加班的，按延长工作时间计付，标准为小时工资的 150% [source: chunk-eb5f28fb5e2a]。出差期间遇休息日且员工实际提供劳动的，认定为出勤并计入工时累计，但是否计为加班仍按上述规则判定，不当然构成加班 [source: chunk-346a989405e6]。"
+    },
+    {
+      "index": 22,
+      "question": "不定时工作制在实施前需要履行什么程序？",
+      "should_refuse": false,
+      "expected_points": [
+        "须经劳动行政部门审批后方可实施"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "不定时工作制须经劳动行政部门审批后方可实施 [source: chunk-eb5f28fb5e2a]。此外，适用不定时工作制的岗位，其考勤要求另行规定 [source: chunk-2e5424af3395]。"
+    },
+    {
+      "index": 23,
+      "question": "调休应在什么期限内完成？逾期如何处理？",
+      "should_refuse": false,
+      "expected_points": [
+        "调休应在加班所在季度内完成",
+        "逾期未调休的按小时工资 200% 计付"
+      ],
+      "secondary_points": [
+        "逾期未调休的按小时工资 200% 计付"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "调休应在加班所在季度内完成 [source: chunk-fcbb10b3484f]。逾期未调休的，按小时工资的 200% 计付 [source: chunk-fcbb10b3484f]。"
+    },
+    {
+      "index": 24,
+      "question": "休息日加班后，公司优先怎么处理？已调休的还要付加班工资吗？",
+      "should_refuse": false,
+      "expected_points": [
+        "休息日加班优先安排调休",
+        "已安排调休的不再计付 200% 加班工资"
+      ],
+      "secondary_points": [
+        "已安排调休的不再计付 200% 加班工资"
+      ],
+      "refused": false,
+      "citations": 2,
+      "answer": "休息日加班，公司优先安排调休 [source: chunk-fcbb10b3484f]。已安排调休的休息日加班，不再计付 200% 加班工资 [source: chunk-fcbb10b3484f]。"
+    },
+    {
+      "index": 25,
+      "question": "法定休假日安排工作的，加班工资按什么标准计付？",
+      "should_refuse": false,
+      "expected_points": [
+        "法定休假日安排工作不低于小时工资的 300%"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "法定休假日安排工作的，加班工资按不低于小时工资的 300% 计付 [source: chunk-fcbb10b3484f]。"
+    },
+    {
+      "index": 26,
+      "question": "合规预警等级为『高』时，部门负责人须在多长时间内处置？",
+      "should_refuse": false,
+      "expected_points": [
+        "预警等级为高时部门负责人须在 5 个工作日内提交处置方案"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "合规预警等级为『高』的，部门负责人须在 5 个工作日内提交处置方案 [source: chunk-80577ef6ea9a]。"
+    },
+    {
+      "index": 27,
+      "question": "员工在外勤或出差期间产生缺卡的，怎么处理？",
+      "should_refuse": false,
+      "expected_points": [
+        "由系统按第四条所列证据自动取证",
+        "系统自动完成补卡"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 3,
+      "answer": "员工在外勤或出差期间产生缺卡的，由系统按《外勤与出差考勤补充规定》第四条自动取证并完成补卡 [source: chunk-0c7b712dc257]。此类自动补卡不占用《员工考勤管理制度》第八条规定的月度补卡次数，员工无需手工提交申请 [source: chunk-346a989405e6]。原 2025 版要求外勤亦须手工提交补卡申请的规定，自 2026 年 1 月 1 日起废止 [source: chunk-346a989405e6]。"
+    },
+    {
+      "index": 28,
+      "question": "外勤缺卡的自动补卡，是否占用每月 3 次的补卡次数？",
+      "should_refuse": false,
+      "expected_points": [
+        "不占用月度补卡次数",
+        "员工无需手工提交补卡申请"
+      ],
+      "secondary_points": [
+        "员工无需手工提交补卡申请"
+      ],
+      "refused": false,
+      "citations": 3,
+      "answer": "不占用。因外勤或出差产生缺卡，且经《外勤与出差考勤补充规定》第四条所列证据自动取证的，自动补卡，不占用月度补卡次数（2026 版新增，原 2025 版要求外勤亦须手工提交补卡申请）[source: chunk-c38c7c21aa45]。同时，2026 版《员工考勤管理制度》第七条规定自动补卡不占用第八条规定的月度补卡次数，员工无需手工提交申请 [source: chunk-346a989405e6]。作为对照，2025 版规定因外勤或出差产生缺卡的，仍须由员工手工提交补卡申请，且此类补卡计入月度补卡次数 [source: chunk-ac2170f85968]。"
+    },
+    {
+      "index": 29,
+      "question": "出差期间遇到休息日且员工实际提供了劳动，如何认定？",
+      "should_refuse": false,
+      "expected_points": [
+        "认定为出勤",
+        "计入工时累计"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 3,
+      "answer": "出差期间遇休息日且员工实际提供劳动的，认定为出勤并计入工时累计 [source: chunk-346a989405e6]。该休息日是否计为加班，按员工所适用工时制判定：适用综合计算工时制的，须结合周期累计工时是否超出周期标准工时认定，不当然构成加班 [source: chunk-346a989405e6]。综合计算工时制下，仅在月累计工时超过月标准工时后，超出部分才计为加班，因此某一个月内的某一个休息日出勤，并不当然构成加班，须结合当月累计工时判定 [source: chunk-eb5f28fb5e2a]。"
+    },
+    {
+      "index": 30,
+      "question": "认定外勤出勤的证据有哪几类，优先级如何排序？",
+      "should_refuse": false,
+      "expected_points": [
+        "出差审批单",
+        "工单或任务闭环记录",
+        "移动应用定位轨迹",
+        "门禁刷卡记录"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 5,
+      "answer": "认定外勤出勤的证据共四类，按优先级排序为：1. 出差审批单（事前审批，含起止日期与目的地）；2. 工单或任务闭环记录（含到场时间与处理结果）；3. 移动应用定位轨迹（需与出差目的地一致）；4. 门禁刷卡记录（仅适用于公司场所内）[source: chunk-273e36e6ff0e]。同时满足第 2 项与第 3 项的，或同时满足第 1、2、3 项的，认定为外勤出勤成立 [source: chunk-273e36e6ff0e]。"
+    },
+    {
+      "index": 31,
+      "question": "李静在哪个部门、担任什么岗位？",
+      "should_refuse": false,
+      "expected_points": [
+        "生产部",
+        "产线操作工"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "李静的工号为 E002，所属部门为生产部，担任的岗位是产线操作工 [source: chunk-3cfac2acfd03]。"
+    },
+    {
+      "index": 32,
+      "question": "李静适用哪种工时制？",
+      "should_refuse": false,
+      "expected_points": [
+        "综合计算工时制"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "李静适用综合计算工时制 [source: chunk-3cfac2acfd03]。其岗位为生产部产线操作工 [source: chunk-3cfac2acfd03]，而产线操作工岗位适用的工时制为综合计算工时制 [source: chunk-13f2695c708a]。"
+    },
+    {
+      "index": 33,
+      "question": "LV0002 是谁的请假申请，请的是什么假，共几天？",
+      "should_refuse": false,
+      "expected_points": [
+        "E027",
+        "年休假",
+        "3 天"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 1,
+      "answer": "LV0002 是 E027 的请假申请，请假类型为年休假，共 3 天 [source: chunk-68b1edb01765]。"
+    },
+    {
+      "index": 34,
+      "question": "E004 在 2026 年 10 月 11 日加班了多少小时，属于哪种加班类型？",
+      "should_refuse": false,
+      "expected_points": [
+        "6.0 小时",
+        "休息日加班"
+      ],
+      "secondary_points": [],
+      "refused": false,
+      "citations": 2,
+      "answer": "在检索到的证据中，没有 E004 于 2026 年 10 月 11 日的加班记录，因此无法给出该员工当日加班的小时数与加班类型 [source: chunk-3c848b790283]。检索到的加班记录（如 OT0005、OT0020、OT0021、OT0022）均属于其他员工，且日期分别为 2026-10-09、2026-10-22、2026-10-27、2026-10-10，均非 2026-10-11 [source: chunk-8c9cc1a698ec]。"
+    },
+    {
+      "index": 35,
+      "question": "出差单 BT-2026-0017 的目的地和起止日期是什么？",
+      "should_refuse": false,
+      "expected_points": [
+        "武汉光谷（武汉）",
+        "2026-10-16 至 2026-10-18"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "INSUFFICIENT_CONTEXT"
+    },
+    {
+      "index": 36,
+      "question": "工单 SO-2026-0913 报修的是什么故障？",
+      "should_refuse": false,
+      "expected_points": [
+        "同批次设备复检"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "INSUFFICIENT_CONTEXT"
+    },
+    {
+      "index": 37,
+      "question": "E001 在 2026 年 10 月 1 日的门禁进出时间是几点，走的是哪个门？",
+      "should_refuse": false,
+      "expected_points": [
+        "进厂 08:49",
+        "出厂 17:40",
+        "厂区东门"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "未在检索到的上下文中找到 E001 在 2026 年 10 月 1 日的门禁进出记录，因此无法给出该员工当日的进出时间与通行门岗 [source: chunk-7b2db4755761]。"
+    },
+    {
+      "index": 38,
+      "question": "E001 在 2026 年 10 月 1 日的排班时段是什么，计划工时多少？",
+      "should_refuse": false,
+      "expected_points": [
+        "09:00 至 18:00",
+        "计划工时 8.0 小时"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "E001 在 2026 年 10 月 1 日的排班时段为 09:00 至 18:00，班次类型为正常班，计划工时为 8.0 小时 [source: chunk-b77d18645938]。"
+    },
+    {
+      "index": 39,
+      "question": "本公司在科创板上市的保荐机构是哪家券商？",
+      "should_refuse": true,
+      "expected_points": [
+        "应拒答"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "INSUFFICIENT_CONTEXT"
+    },
+    {
+      "index": 40,
+      "question": "2026 年世界杯亚洲区预选赛的出线规则是什么？",
+      "should_refuse": true,
+      "expected_points": [
+        "应拒答"
+      ],
+      "secondary_points": [],
+      "refused": true,
+      "citations": 0,
+      "answer": "无法回答"
+    }
+  ]
+}
