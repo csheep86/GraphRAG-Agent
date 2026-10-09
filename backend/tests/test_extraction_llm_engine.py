@@ -76,9 +76,18 @@ def _client(**overrides: object) -> LangextractClient:
     return LangextractClient(**kwargs)  # type: ignore[arg-type]
 
 
+#: P6-V2：``LlmInvokerFn`` 现在返回 ``(原文, usage)``。注入替身一律带这一份**定值**
+#: 用量，好让「用量有没有被累加」也是可断言的（不是随口写 0）。
+_FAKE_USAGE: dict[str, int | None] = {
+    "prompt_tokens": 11,
+    "completion_tokens": 7,
+    "total_tokens": 18,
+}
+
+
 def _invoker_returning(payload: object) -> lx.LlmInvokerFn:
-    def _invoke(prompt: str) -> str:
-        return json.dumps(payload, ensure_ascii=False)
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
+        return json.dumps(payload, ensure_ascii=False), _FAKE_USAGE
 
     return _invoke
 
@@ -121,9 +130,9 @@ def test_llm_engine_renders_prompt_from_filesystem() -> None:
     """Prompt 必须来自 ``prompts/kg_extraction_v1.md``（禁止硬编码模板文本）。"""
     seen: list[str] = []
 
-    def _invoke(prompt: str) -> str:
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         seen.append(prompt)
-        return json.dumps(_PAYLOAD, ensure_ascii=False)
+        return json.dumps(_PAYLOAD, ensure_ascii=False), _FAKE_USAGE
 
     _client(llm_invoker=_invoke).extract_entities_relations(
         document_id=uuid4(), full_md_text=_TEXT, trace_id=uuid4()
@@ -186,8 +195,8 @@ def test_llm_engine_resolves_missing_offsets_by_mention() -> None:
 
 
 def test_llm_engine_invalid_json_raises() -> None:
-    def _invoke(prompt: str) -> str:
-        return "抱歉，我无法完成该任务。"
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
+        return "抱歉，我无法完成该任务。", _FAKE_USAGE
 
     with pytest.raises(LangextractError, match="非法 JSON"):
         _client(llm_invoker=_invoke).extract_entities_relations(
@@ -196,8 +205,8 @@ def test_llm_engine_invalid_json_raises() -> None:
 
 
 def test_llm_engine_fenced_json_is_accepted() -> None:
-    def _invoke(prompt: str) -> str:
-        return "```json\n" + json.dumps(_PAYLOAD, ensure_ascii=False) + "\n```"
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
+        return "```json\n" + json.dumps(_PAYLOAD, ensure_ascii=False) + "\n```", _FAKE_USAGE
 
     result = _client(llm_invoker=_invoke).extract_entities_relations(
         document_id=uuid4(), full_md_text=_TEXT, trace_id=uuid4()
@@ -206,8 +215,8 @@ def test_llm_engine_fenced_json_is_accepted() -> None:
 
 
 def test_llm_engine_blank_response_raises() -> None:
-    def _invoke(prompt: str) -> str:
-        return "   \n "
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
+        return "   \n ", _FAKE_USAGE
 
     with pytest.raises(LangextractError, match="返回内容为空"):
         _client(llm_invoker=_invoke).extract_entities_relations(
@@ -218,7 +227,7 @@ def test_llm_engine_blank_response_raises() -> None:
 def test_llm_engine_call_failure_raises_not_mock_fallback() -> None:
     """调用失败 → LangextractError；**绝不**回落正则抽取器伪造"抽到了"。"""
 
-    def _invoke(prompt: str) -> str:
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         raise RuntimeError("upstream 500")
 
     client = _client(llm_invoker=_invoke)

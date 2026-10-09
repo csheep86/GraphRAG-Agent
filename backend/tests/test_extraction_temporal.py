@@ -68,10 +68,18 @@ def _client(**overrides: object) -> LangextractClient:
     return LangextractClient(**kwargs)  # type: ignore[arg-type]
 
 
+#: P6-V2：``LlmInvokerFn`` 返回 ``(原文, usage)``
+_FAKE_USAGE: dict[str, int | None] = {
+    "prompt_tokens": 11,
+    "completion_tokens": 7,
+    "total_tokens": 18,
+}
+
+
 def _invoker_capturing(payload: object, seen: list[str]) -> lx.LlmInvokerFn:
-    def _invoke(prompt: str) -> str:
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         seen.append(prompt)
-        return json.dumps(payload, ensure_ascii=False)
+        return json.dumps(payload, ensure_ascii=False), _FAKE_USAGE
 
     return _invoke
 

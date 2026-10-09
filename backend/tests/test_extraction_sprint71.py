@@ -83,9 +83,17 @@ def _client(**overrides: object) -> LangextractClient:
     return LangextractClient(**kwargs)  # type: ignore[arg-type]
 
 
+#: P6-V2：``LlmInvokerFn`` 返回 ``(原文, usage)``（与 test_extraction_llm_engine 同值）
+_FAKE_USAGE: dict[str, int | None] = {
+    "prompt_tokens": 11,
+    "completion_tokens": 7,
+    "total_tokens": 18,
+}
+
+
 def _invoker_returning(payload: object) -> lx.LlmInvokerFn:
-    def _invoke(prompt: str) -> str:
-        return json.dumps(payload, ensure_ascii=False)
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
+        return json.dumps(payload, ensure_ascii=False), _FAKE_USAGE
 
     return _invoke
 
@@ -109,9 +117,9 @@ def test_v2_template_declares_parameterised_placeholders() -> None:
 def test_v2_renders_new_types_and_leaves_no_placeholder() -> None:
     seen: list[str] = []
 
-    def _invoke(prompt: str) -> str:
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         seen.append(prompt)
-        return json.dumps(_V2_PAYLOAD, ensure_ascii=False)
+        return json.dumps(_V2_PAYLOAD, ensure_ascii=False), _FAKE_USAGE
 
     _client(llm_invoker=_invoke).extract_entities_relations(
         document_id=uuid4(), full_md_text=_TEXT, trace_id=uuid4()
@@ -136,9 +144,9 @@ def test_v1_still_renders_without_new_variables() -> None:
     """v1 渲染时**不会**收到 v2 的变量（否则 prompt_loader 会报未声明变量）。"""
     seen: list[str] = []
 
-    def _invoke(prompt: str) -> str:
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         seen.append(prompt)
-        return json.dumps({"entities": [], "relations": []}, ensure_ascii=False)
+        return json.dumps({"entities": [], "relations": []}, ensure_ascii=False), _FAKE_USAGE
 
     LangextractClient(
         provider="langextract",
@@ -263,9 +271,9 @@ def test_vocabulary_replaces_builtin_types_in_prompt() -> None:
     """注入本体词表后，Prompt 里应**只有**本体类型，不得与内置枚举混杂。"""
     seen: list[str] = []
 
-    def _invoke(prompt: str) -> str:
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         seen.append(prompt)
-        return json.dumps(_ATTENDANCE_PAYLOAD, ensure_ascii=False)
+        return json.dumps(_ATTENDANCE_PAYLOAD, ensure_ascii=False), _FAKE_USAGE
 
     _client(
         llm_invoker=_invoke, type_vocabulary=_ATTENDANCE_VOCAB
@@ -349,10 +357,10 @@ def test_failed_chunk_is_retried_once_then_skipped_and_accounted() -> None:
     text = "北京青云科技有限公司。" * 3 + "上海临港智能装备有限公司。" * 3
     bad_calls: list[int] = []
 
-    def _invoke(prompt: str) -> str:
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         if "临港" in prompt:
             bad_calls.append(1)
-            return "抱歉，我无法完成该任务。"  # 非法 JSON
+            return "抱歉，我无法完成该任务。", _FAKE_USAGE  # 非法 JSON
         return json.dumps(
             {
                 "entities": [
@@ -367,7 +375,7 @@ def test_failed_chunk_is_retried_once_then_skipped_and_accounted() -> None:
                 "relations": [],
             },
             ensure_ascii=False,
-        )
+        ), _FAKE_USAGE
 
     records, handler_id = _capture_logs()
     from loguru import logger
@@ -400,9 +408,9 @@ def test_all_chunks_failed_raises_instead_of_empty_result() -> None:
     """全败 = 基础设施故障：抛错交外层 tenacity，**不许**当成"这份文档没有实体"。"""
     calls: list[int] = []
 
-    def _invoke(prompt: str) -> str:
+    def _invoke(prompt: str) -> tuple[str, dict[str, int | None]]:
         calls.append(1)
-        return "抱歉，我无法完成该任务。"
+        return "抱歉，我无法完成该任务。", _FAKE_USAGE
 
     with pytest.raises(LangextractError, match="非法 JSON"):
         _client(llm_invoker=_invoke).extract_entities_relations(
