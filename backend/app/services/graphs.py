@@ -419,49 +419,88 @@ WHERE properties(n)['org_id'] IS NOT NULL
 RETURN count(n) AS leaked
 """
 
+
 #: Cypher 查询：**全部**已导入实体子图（不依赖 PG ``document_id``）。
 #: 供 ``bridge_web_demo`` 阶段六产物（``:Entity`` + 实体间关系）查询使用。
 #: ``elementId`` 用于稳定去重，``id`` 属性作为对外节点标识（与边的 source/target 对齐）。
 #:
 #: **Sprint 10 批次 C（裁决 D-K）拆成两段**：
 #:
-#: 1. :data:`_QUERY_SUBGRAPH_NODE_INDEX` —— 只回 ``id / type / degree`` 的**轻量索引**，
+#: 1. :func:`_query_subgraph_node_index` —— 只回 ``id / type / degree`` 的**轻量索引**，
 #:    选谁由 :func:`select_subgraph_nodes` 在 Python 侧决定；
-#: 2. :data:`_QUERY_SUBGRAPH_BY_IDS` —— 按选中 id 取**完整节点 + 边**。
+#: 2. :func:`_query_subgraph_by_ids` —— 按选中 id 取**完整节点 + 边**。
 #:
 #: 为什么不在 Cypher 里一步做完：选节点要「按类型保底 + 余量按度数补齐」，Cypher
 #: 侧得靠 ``reduce`` 叠加 + ``UNWIND`` 排序，而 **``UNWIND`` 空列表会吞掉整行**
 #: （余量为 0 时整条查询返回空 ⇒ 空图，把"没数据"伪装成正常结果）。纯函数则
 #: 可单测、可读，且索引查询只传三个字段，不比一次全量投影贵。
-_QUERY_SUBGRAPH_NODE_INDEX = """
-MATCH (n:Entity {kg_version: $kg_version})
+@lru_cache(maxsize=1)
+def _query_subgraph_node_index() -> str:
+    """全量实体子图的**轻量索引**（``id / type / degree``）。
+
+    **为什么是惰性函数而不是模块级常量**：P6-V 起它要用 :func:`version_scope`
+    拼版本谓词，而 ``version_scope`` 住在 ``app.services.kg`` 包里 ⇒ 与
+    :func:`_query_graph_overview` 同款理由（模块级 import 会立刻成环）。
+    """
+    from app.services.kg.version_scope import version_scope
+
+    return (
+        """
+MATCH (n:Entity)
+// P6-V **版本继承读**：下一行由 :func:`version_scope` 生成 ——
+// 缺省（版本链只有 active 一条、选中表为空）时它等价于原来的
+// ``MATCH (n:Entity {kg_version: $kg_version})`` —— 行为零变化。
+WHERE """
+        + version_scope("n")
+        + """
 // 用 properties(n)['org_id'] 而非 n.org_id：后者在库中尚无该属性键时
 // 会触发 ``01N52 property key does not exist`` 通知（噪声日志）。
-WITH n
-WHERE $org_id IS NULL
+  AND ($org_id IS NULL
    OR properties(n)['org_id'] IS NULL
-   OR properties(n)['org_id'] = $org_id
+   OR properties(n)['org_id'] = $org_id)
 RETURN n.id AS id,
        coalesce(n.entity_type, 'UNKNOWN') AS type,
        size([(n)--() | 1]) AS degree
 ORDER BY degree DESC, id
 """
+    )
 
-_QUERY_SUBGRAPH_BY_IDS = (
+
+@lru_cache(maxsize=1)
+def _query_subgraph_by_ids() -> str:
+    """按选中 ``$ids`` 取**完整节点 + 边**（同上是惰性函数，理由见上）。
+
+    节点侧两段Predicate必须**都**带上版本谓词：同一个 id 在链上可能有
+    ``e2@v1`` 与 ``e2@base`` 两个物理节点，只按 ``n.id IN $ids`` 取会把
+    **两个都返回** ⇒ 同一实体在图上出现两次（前端两个点、LLM 两份不同值）。
     """
-MATCH (n:Entity {kg_version: $kg_version})
+    from app.services.kg.version_scope import version_scope
+
+    return (
+        """
+MATCH (n:Entity)
 WHERE n.id IN $ids
-WITH n
-WHERE $org_id IS NULL
+  AND """
+        + version_scope("n")
+        + """
+  AND ($org_id IS NULL
    OR properties(n)['org_id'] IS NULL
-   OR properties(n)['org_id'] = $org_id
+   OR properties(n)['org_id'] = $org_id)
 WITH n ORDER BY n.id
 WITH collect(n) AS nodes
 RETURN
   nodes,
   [(a)-[r]->(b) WHERE a.id IN $ids AND b.id IN $ids"""
-    + _temporal_view("r")
-    + """ | {
+        + """
+    AND """
+        + version_scope("a")
+        + """
+    AND """
+        + version_scope("b")
+        + """
+    AND r.kg_version IN $kgs"""
+        + _temporal_view("r")
+        + """ | {
     id: coalesce(r.id, elementId(r)),
     type: type(r),
     source: a.id,
@@ -469,7 +508,7 @@ RETURN
     properties: properties(r)
   }] AS edges
 """
-)
+    )
 
 
 def select_subgraph_nodes(
@@ -529,36 +568,79 @@ def select_subgraph_nodes(
 
 #: Cypher 查询：单个文档的子图（节点 + 关系），受 doc_id + kg_version 双重约束。
 #: 规模上限 500 节点，超限由 Python 侧裁剪 + ``truncated = true`` 标记。
-_QUERY_DOCUMENT_SUBGRAPH = """
-MATCH (d:Document {id: $doc_id, kg_version: $kg_version})
+@lru_cache(maxsize=1)
+def _query_document_subgraph() -> str:
+    """单个文档的子图 Cypher（``Document → Chunk → Entity``）。
+
+    **P6-V 版本继承读**：``Document`` / ``Chunk`` 只按 ``kg_version IN $kgs``
+    放宽到整条版本链，``Entity`` 走完整的 :func:`version_scope`（含选中表）。
+
+    为什么两者**不同口径**（本批最容易写错的一处）：选中表 ``$sel`` 的键只有
+    **`:Entity` 的 id**（由 :func:`resolve_entity_selection` 扫 ``MATCH (n:Entity)``
+    得来）。若给 ``Document`` / ``Chunk`` 也套上 ``$sel[d.id] = d.kg_version``，
+    继承一旦发生（``size(keys($sel)) > 0``）它们就会被**整批判为未选中** ⇒
+    文档子图直接读空——那正是 ADR-0008 §1 要修的那类事故。
+
+    **实体为什么要绕一圈按 id 空间反查**：``MENTIONS`` 是**物理边**，它指向的是
+    ``e1@base``；而选中表要求 e1 可见于 ``v1`` ⇒ 直接给目标节点套选中谓词会把
+    **被校正过的那个实体**从文档图里丢掉（其余实体照旧出现，于是
+    「改过名的那一条恰好不见了」，比整份丢更难发现）。故先取被提及的 **id 集合**，
+    再按选中表把每个 id 反查到它唯一的那个物理节点。缺省形态下两者同解。
+    """
+    from app.services.kg.version_scope import version_scope
+
+    return (
+        """
+MATCH (d:Document {id: $doc_id})
+WHERE d.kg_version IN $kgs
+// 同一份文档在多个版本上可能各有一个物理节点 ⇒ 取**链上最新**的那一份
+WITH d, [i IN range(0, size($kgs) - 1) WHERE $kgs[i] = d.kg_version][0] AS rank
+ORDER BY rank ASC
+WITH collect(d) AS docs
+WITH docs WHERE size(docs) > 0
+WITH docs[0] AS d
 OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-WHERE c.kg_version = $kg_version
-OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
-WHERE e.kg_version = $kg_version
+WHERE c.kg_version IN $kgs
+WITH d, collect(DISTINCT c) AS chunks
+// ① 取**被提及的 id 集合**（此时不看选中表：MENTIONS 指向的是旧物理节点）
+OPTIONAL MATCH (d)-[:HAS_CHUNK]->(cx:Chunk)-[:MENTIONS]->(e0:Entity)
+WHERE cx.kg_version IN $kgs
+  AND e0.kg_version IN $kgs
+  AND ($org_id IS NULL OR e0.org_id = $org_id)
+WITH d, chunks, collect(DISTINCT e0.id) AS mentioned_ids
+// ② 再按**选中表**把每个 id 反查到唯一的那个可见版本
+OPTIONAL MATCH (e:Entity)
+WHERE e.id IN mentioned_ids
+  AND """
+        + version_scope("e")
+        + """
   AND ($org_id IS NULL OR e.org_id = $org_id)
-WITH d, collect(DISTINCT c) AS chunks,
-     collect(DISTINCT e) AS entities
+WITH d, chunks, collect(DISTINCT e) AS entities,
+     [(cx)-[r:MENTIONS]->(ex:Entity) WHERE r.kg_version IN $kgs AND """
+        + version_scope("ex")
+        + """ | {
+    id: toString(id(r)),
+    type: type(r),
+    source: toString(id(cx)),
+    target: toString(id(ex)),
+    properties: properties(r)
+  }] AS mentions
 LIMIT $node_limit
 RETURN
   d,
   chunks,
   entities,
-  [(c)-[r:MENTIONS]->(e) | {
-    id: toString(id(r)),
-    type: type(r),
-    source: toString(id(c)),
-    target: toString(id(e)),
-    properties: properties(r)
-  }] AS mentions
+  mentions
 """
+    )
 
 
 #: Sprint 6 批次 B：按实体反查证据片段（``(:Chunk)-[:MENTIONS]->(:Entity)``）。
-#: 读侧（``_QUERY_DOCUMENT_SUBGRAPH``）早已按证据链查询，本段把 chunk **文本**取出，
+#: 读侧（``_query_document_subgraph``）早已按证据链查询，本段把 chunk **文本**取出，
 #: 注入 ``kg_qa`` Prompt 的 ``text_chunks``——批次 B「子图注入时携带 chunk 文本」的落点。
 #: ``OPTIONAL MATCH`` 取 ``:Document``：chunk 未挂文档时 ``doc_id`` 为 ``null``，
 #: 由服务层投影为 ``None``（**不**伪造 UUID）。
-#: Sprint 10 批次 C 残留缺口：**证据片段也拆两段**（与 :data:`_QUERY_SUBGRAPH_NODE_INDEX`
+#: Sprint 10 批次 C 残留缺口：**证据片段也拆两段**（与 :func:`_query_subgraph_node_index`
 #: 同套路）。原来是一条 ``LIMIT 20`` 且**无 ORDER BY** 的查询 ⇒ 谁进 Prompt 全凭扫描序。
 #: 真机实测（``changes/Sprint10.2/probe_c4_chunk_quota.py``）：注入的 20 条里
 #: **CSV 18 / 制度 docx 0 / 带 span 0** —— 问"制度"必然答不到制度内容。
@@ -1069,7 +1151,7 @@ LIMIT $limit
 
 
 #: 批次 C：全局图谱概览的 Cypher（节点轻量投影 + 全部边）。
-#: 与 :data:`_QUERY_SUBGRAPH_BY_IDS`（问答注入用）不同：去掉了 ``total_nodes`` 字段（由服务层算），
+#: 与 :func:`_query_subgraph_by_ids`（问答注入用）不同：去掉了 ``total_nodes`` 字段（由服务层算），
 #: 投影阶段只取 ``id`` / ``canonical_name`` / ``type`` / ``category`` 4 个字段。
 #: 节点选取按**度数降序**（连接数多的枢纽优先，平局按 `id` 保证确定性）：
 #: 此前是 `all_nodes[0..$node_limit]` 无序截断——任意前 500 个节点之间几乎没有边
@@ -1149,20 +1231,41 @@ RETURN nodes, total_nodes, edges
 
 #: 批次 C：实体详情 —— 单节点 + 1 跳出边邻居（带方向过滤：仅取指向其它 Entity 的边）。
 #: ``has_neighbor_more`` 表示是否还有更多邻居（用于前端分页 / 「展开更多」按钮）。
-_QUERY_ENTITY_DETAIL = (
+@lru_cache(maxsize=1)
+def _query_entity_detail() -> str:
+    """实体详情 Cypher（单节点 + 1 跳出边邻居）。
+
+    **P6-V 版本继承读**：``e`` / ``n`` 都走 :func:`version_scope`，关系额外
+    限 ``r.kg_version IN $kgs``。缺省（链长 1 / 选中表空）与改前的
+    ``{kg_version: $kg_version}`` 内联匹配**逐字等价**。
+
+    为什么 ``e`` 也要换成谓词而不是留在 ``MATCH (e:Entity {id, kg_version})``：
+    校正之后实体只在**某个祖先版本**上存在物理节点（受影响子图的等位期在链上，
+    未受影响的还在旧版本）⇒ 写死 active 版本会把详情页打空（404）。
     """
-MATCH (e:Entity {id: $entity_id, kg_version: $kg_version})
-WHERE $org_id IS NULL
+    from app.services.kg.version_scope import version_scope
+
+    return (
+        """
+MATCH (e:Entity {id: $entity_id})
+WHERE """
+        + version_scope("e")
+        + """
+  AND ($org_id IS NULL
    OR properties(e)['org_id'] IS NULL
-   OR properties(e)['org_id'] = $org_id
-OPTIONAL MATCH (e)-[r]->(n:Entity {kg_version: $kg_version})
+   OR properties(e)['org_id'] = $org_id)
+OPTIONAL MATCH (e)-[r]->(n:Entity)
 WHERE n <> e
+  AND """
+        + version_scope("n")
+        + """
+  AND r.kg_version IN $kgs
   AND ($org_id IS NULL
        OR properties(n)['org_id'] IS NULL
        OR properties(n)['org_id'] = $org_id)"""
-    # r 为 null（OPTIONAL MATCH 无命中）时谓词恒真 ⇒ 行为与加之前一致
-    + _temporal_view("r")
-    + """
+        # r 为 null（OPTIONAL MATCH 无命中）时谓词恒真 ⇒ 行为与加之前一致
+        + _temporal_view("r")
+        + """
 WITH e,
      collect({rel: r, neighbor: n}) AS all_neighbors
 WITH e,
@@ -1172,10 +1275,14 @@ RETURN
   e,
   first_page,
   has_more,
-  size([(e)-[r2]->(:Entity {kg_version: $kg_version}) | r2]) AS out_degree,
-  size([(:Entity {kg_version: $kg_version})-[r3]->(e) | r3]) AS in_degree
+  size([(e)-[r2]->(x:Entity) WHERE """
+        + version_scope("x")
+        + """ AND r2.kg_version IN $kgs | r2]) AS out_degree,
+  size([(x:Entity)-[r3]->(e) WHERE """
+        + version_scope("x")
+        + """ AND r3.kg_version IN $kgs | r3]) AS in_degree
 """
-)
+    )
 
 
 class GraphService:
@@ -1455,6 +1562,10 @@ class GraphService:
         若 ``kg_version`` 为 ``None``，自动取 :meth:`fetch_active_kg_version`
         （**始终**只查 active 版本，ADR-0002 §3.2）。
 
+        **P6-V**：本路径改按**版本继承读**（:meth:`_read_view`）。此前它是写死的
+        单版本过滤，校正之后只存在于祖先版本上的节点会整批读不到。
+        ``db`` 缺失（脚本 / bridge demo 直连）⇒ 退回单版本（:meth:`_read_view` 的兜底 1）。
+
         :returns: ``(nodes, edges, truncated)``
         """
         if node_limit <= 0:
@@ -1467,24 +1578,27 @@ class GraphService:
         org_param = str(org_id) if org_id else None
         try:
             with self._session() as session:
+                view = self._read_view(
+                    db=db, org_id=org_id, head=version, session=session
+                )
                 # ① 轻量索引（id / 类型 / 度数）→ ② Python 侧选节点 → ③ 按 id 取节点 + 边
                 index = [
                     (row["id"], row["type"], int(row["degree"] or 0))
                     for row in session.run(
-                        _QUERY_SUBGRAPH_NODE_INDEX,
-                        kg_version=version,
+                        _query_subgraph_node_index(),
                         org_id=org_param,
+                        **view.cypher_params(),
                     )
                 ]
                 selected = select_subgraph_nodes(index, node_limit)
                 if not selected:
                     return [], [], False
                 result = session.run(
-                    _QUERY_SUBGRAPH_BY_IDS,
-                    kg_version=version,
+                    _query_subgraph_by_ids(),
                     org_id=org_param,
                     ids=selected,
                     as_of=validate_as_of(as_of),
+                    **view.cypher_params(),
                 ).single()
         except GraphUnavailableError:
             raise
@@ -1521,8 +1635,13 @@ class GraphService:
         kg_version: str,
         org_id: UUID | None = None,
         node_limit: int = 500,
+        db: Any = None,
     ) -> tuple[list[GraphNode], list[GraphEdge], bool]:
         """取文档子图（节点 + 关系），超限时裁剪并返回 ``truncated=True``。
+
+        **P6-V**：改按**版本继承读**——文档 / chunk 放宽到 ``$kgs`` 整条链，实体走
+        完整选中表（两者的口径差见 :func:`_query_document_subgraph` 的注释）。
+        ``db`` 缺失 ⇒ 退回单版本。
 
         :returns: ``(nodes, edges, truncated)``
         """
@@ -1531,12 +1650,15 @@ class GraphService:
 
         try:
             with self._session() as session:
+                view = self._read_view(
+                    db=db, org_id=org_id, head=kg_version, session=session
+                )
                 result = session.run(
-                    _QUERY_DOCUMENT_SUBGRAPH,
+                    _query_document_subgraph(),
                     doc_id=str(doc_id),
-                    kg_version=kg_version,
                     org_id=str(org_id) if org_id else None,
                     node_limit=node_limit,
+                    **view.cypher_params(),
                 ).single()
         except Exception as exc:  # noqa: BLE001 - 统一包装
             raise GraphUnavailableError(
@@ -2245,6 +2367,9 @@ class GraphService:
 
         查询范围：当前 active kg_version 内、``Entity`` 标签节点 + 1 跳出边邻居。
 
+        **P6-V**：改按**版本继承读**（实体本身与邻居都由选中表定版）——校正之后该实体
+        可能只在祖先版本上有物理节点 ⇒ 写死 active 会把详情页打空成 404。
+
         Sprint 9 批次 B2 新增 ``as_of``：**默认**只展示未被取代的关系
         （``valid_to IS NULL``）；传入 ``YYYY-MM-DD`` 则把邻居视图倒回那一天。
         不存在（无该实体节点 / org_id 不符）→ 抛 :class:`EntityNotFoundError` 或
@@ -2262,13 +2387,16 @@ class GraphService:
 
         try:
             with self._session() as session:
+                view = self._read_view(
+                    db=db, org_id=org_id, head=version, session=session
+                )
                 result = session.run(
-                    _QUERY_ENTITY_DETAIL,
+                    _query_entity_detail(),
                     entity_id=entity_id,
-                    kg_version=version,
                     org_id=str(org_id) if org_id else None,
                     neighbor_limit=neighbor_limit,
                     as_of=validate_as_of(as_of),
+                    **view.cypher_params(),
                 ).single()
         except GraphUnavailableError:
             raise
@@ -2353,6 +2481,7 @@ class GraphService:
         edges: Sequence[GraphEdge] = (),
         chunks: Sequence[EvidenceChunk] = (),
         as_of: str | None = None,
+        db: Any = None,
         version_view: VersionReadView | None = None,
     ) -> list[ReasoningPathHop]:
         """M3 多跳推理路径（``reasoning_path`` 的服务层入口）。
@@ -2367,12 +2496,15 @@ class GraphService:
         :param version_view: P5-H **版本继承读**视野。``None`` ⇒ 按 ``kg_version``
             单版本读（改之前的既有行为）。
 
-        .. warning::
-           **D5 登记的边界**：本批**只**把视野透传下去，`agents.py` 的检索链路
-           **尚未**接到它 —— 也就是说 M4 端到端问答目前**仍然**按单版本走图。
-           接线属下一批（见 ADR-0008 §5「未切换的读路径清单」）：要接就得把 PG
-           会话传进这一段（`build_read_view` 必须读 PG 解析版本链），那是另一处改动。
-           本方法先把能力备好并**用真图用例钉住**，不许反过来宣称"问答已修复"。
+        .. note::
+           **P6-V 接线完成**：``agents.py`` 的检索链路已把 PG 会话（``db``）传进来
+           ⇒ 本方法在会话内自建 :meth:`_read_view`，M4 端到端问答**不再**按单版本
+           走图。仍保留的两点边界，别把它读成"多跳已无限制"：
+
+           1. **跨版本边**仍不连（P5H-6 / ADR-0008 §5）——跨版本的那条边在物理上
+              压根不存在，串联它属 id 级图遍历（ADR §7 指针 5）的作业面；
+           2. ``version_view`` 显式传入时**优先**用它（既有用例靠这条钉住
+              「退回单版本」的等价性），``None`` 才由本方法按 ``db`` 解析。
 
         **延迟导入** :mod:`app.services.reasoning`：本模块被 ``agents`` 依赖，
         模块级牵上会加长依赖链（且 ``reasoning`` 只依赖 schema，无循环风险）。
@@ -2394,7 +2526,10 @@ class GraphService:
                     edges=edges,
                     chunks=chunks,
                     as_of=as_of,
-                    version_view=version_view,
+                    version_view=version_view
+                    or self._read_view(
+                        db=db, org_id=org_id, head=kg_version, session=session
+                    ),
                 )
         except GraphUnavailableError:
             raise
@@ -2410,6 +2545,7 @@ class GraphService:
         org_id: Any,
         question: str,
         nodes: Sequence[GraphNode],
+        db: Any = None,
     ) -> tuple[str, ...]:
         """本次问句的锚点实体 id（供**证据注入**与推理路径共用）。
 
@@ -2420,6 +2556,10 @@ class GraphService:
         「资料中没有李静的任何信息」**却带着 1 条引用**（引的是制度条款）。
         答案与引用不符，比拒答更危险。与推理路径共用同一套锚点即可闭合。
 
+        **P6-V**：改按**版本继承读**传入 ``version_view``——``resolve_anchors`` 早在
+        P5-H 就留了 ``version_view`` 形参（当时只有推理路径在用），本批把证据注入
+        这一侧的口也接上 ⇒ 两条路径从同一个视野取锚点，不再半睁眼。
+
         :raises GraphUnavailableError: Neo4j 不可用（**不**返回空——空会让
             上层以为"这个问题没有锚点"，把故障伪装成正常结论）
         """
@@ -2427,12 +2567,16 @@ class GraphService:
 
         try:
             with self._session() as session:
+                view = self._read_view(
+                    db=db, org_id=org_id, head=kg_version, session=session
+                )
                 return resolve_anchors(
                     session=session,
                     kg_version=kg_version,
                     org_id=str(org_id) if org_id is not None else "",
                     question=question,
                     nodes=nodes,
+                    version_view=view,
                 )
         except GraphUnavailableError:
             raise

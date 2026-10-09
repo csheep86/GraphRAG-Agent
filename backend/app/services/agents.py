@@ -286,6 +286,10 @@ class AgentService:
                 org_id=org_id,
                 scope=request.scope,
                 as_of=as_of_date,
+                # **P6-V：检索接上版本继承读**——此前这一段没有 PG 会话，
+                # 解析不了版本链（`build_read_view` 必须读 PG），因此问答
+                # 一直在按单版本走图（ADR-0008 §6 误读第 3 条点名的状态）。
+                db=db,
             )
         except GraphUnavailableError as exc:
             logger.bind(trace_id=trace_id, reason=str(exc)).error(
@@ -360,6 +364,7 @@ class AgentService:
                 org_id=org_id,
                 question=request.question,
                 nodes=subgraph.nodes,
+                db=db,  # P6-V：锚点兜底直查也按继承读，与子图同一视野
             )
         except GraphUnavailableError as exc:
             logger.bind(trace_id=trace_id, reason=str(exc)).error(
@@ -412,6 +417,9 @@ class AgentService:
                 # 全生命周期 as-of（Sprint 10.5 / L2-③）：由请求传入，缺省 None
                 # ⇒ 当前视图，与加此参数之前完全同解（缺省必须零变化）。
                 as_of=request.as_of,
+                # P6-V：推理路径也按继承读（此前它虽有 `version_view` 形参，
+                # 但没人传 ⇒ 恒退回单版本，ADR-0008 §7 第 6 行的状态）。
+                db=db,
             )
         except GraphUnavailableError as exc:
             logger.bind(trace_id=trace_id, reason=str(exc)).error(
@@ -588,6 +596,7 @@ class AgentService:
         org_id: UUID,
         scope: str,
         as_of: str | None = None,
+        db: Any = None,
     ) -> _SubgraphResult:
         """拉取与问题相关的子图：Prompt 文本 + 结构化节点 / 关系。
 
@@ -614,6 +623,7 @@ class AgentService:
                 org_id=org_id,
                 node_limit=_GRAPH_NODE_LIMIT,
                 as_of=as_of,
+                db=db,  # P6-V：版本继承读（校正后的祖先版本也要读得到）
             )
         else:
             nodes, edges, truncated = graph.fetch_document_subgraph(
@@ -621,6 +631,7 @@ class AgentService:
                 kg_version=kg_version,
                 org_id=org_id,
                 node_limit=_GRAPH_NODE_LIMIT,
+                db=db,  # 同上单文档
             )
 
         if not nodes:

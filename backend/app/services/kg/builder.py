@@ -21,7 +21,7 @@ Sprint 6 批次 A-3 新增的证据层（**均为可跳过段**：无 ``document
      分批写入证据节点（``char_start`` / ``char_end`` / ``page`` / ``text``）；
 4.   **stage-4 evidence links**——``(:Document)-[:HAS_CHUNK]->(:Chunk)`` 与
      ``(:Chunk)-[:MENTIONS]->(:Entity)``（实体按字符区间归属，见
-     :func:`_assign_entities_to_chunks`）。读侧 ``graphs.py::_QUERY_DOCUMENT_SUBGRAPH``
+     :func:`_assign_entities_to_chunks`）。读侧 ``graphs.py::_query_document_subgraph``
      自 Sprint 4 起就是按这条链路查的——**读侧等写侧两年，本批次补齐**。
 
 Sprint 7.1 批次 A 新增的主体层（`specs/m4-affiliation-detection.md` §4.1 / §4.2 的
@@ -171,7 +171,8 @@ _CYPHER_STAGE1B_INDEXES = (
 )
 
 #: stage-1.5（Sprint 6 批次 A-3）：MERGE ``:Document`` 节点。
-#: 读侧 ``graphs.py::_QUERY_DOCUMENT_SUBGRAPH`` 正是按 ``(:Document {id, kg_version})``
+#: 读侧 ``graphs.py::_query_document_subgraph`` 正是按 ``(:Document {id, kg_version})``
+#: （P6-V 起：``kg_version IN $kgs``，按版本链取最新一份）
 #: 起查 ``-[:HAS_CHUNK]->(:Chunk)-[:MENTIONS]->(:Entity)``——**读侧早已就位，本段补齐写侧**。
 #: ``acl_scope`` 从 ``documents.acl_scope`` 继承（预留字段，不进契约，ADR-0004）。
 _CYPHER_STAGE1C_DOCUMENT = """

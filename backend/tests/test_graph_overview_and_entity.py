@@ -24,13 +24,13 @@ from app.schemas.graph import (
     GraphOverviewResponse,
 )
 from app.services.graphs import (
-    _QUERY_ENTITY_DETAIL,
     EntityNotFoundError,
     GraphService,
     KgVersion,
     NoActiveKgVersionError,
     _category_from_entity_type,
     _entity_type_from_properties,
+    _query_entity_detail,
     _relation_name,
 )
 
@@ -239,7 +239,7 @@ def test_entity_detail_cypher_has_no_nested_aggregate() -> None:
     assert not re.search(
         r"(?:count|collect|sum|min|max|avg)\s*\(\s*"
         r"(?:count|collect|sum|min|max|avg)\s*\(",
-        _QUERY_ENTITY_DETAIL,
+        _query_entity_detail(),
     )
 
 

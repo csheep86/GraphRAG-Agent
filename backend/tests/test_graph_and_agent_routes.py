@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -137,6 +138,9 @@ def _patch_graph_ok(
         kg_version: str,
         org_id: UUID | None = None,
         node_limit: int = 500,
+        # P6-V：路由把 PG 会话传下来供版本继承读解析版本链；本桩照收
+        # （断言仍只核对下面的四个业务参数，不因新增形参而放宽）
+        db: Any = None,
     ) -> tuple[list[GraphNode], list[GraphEdge], bool]:
         calls["doc_id"] = doc_id
         calls["kg_version"] = kg_version

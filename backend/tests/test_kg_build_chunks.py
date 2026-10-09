@@ -10,7 +10,7 @@ Neo4j 零依赖：经 ``session_factory`` 注入桩记录每段 Cypher 与参数
 5. 无 ``document`` 引用 → 跳过证据段（保持 v1.1.0 三段式行为）；
 6. 空 entities / relations / chunks → 零调用短路。
 
-读侧对齐：``graphs.py::_QUERY_DOCUMENT_SUBGRAPH`` 查的正是
+读侧对齐：``graphs.py::_query_document_subgraph`` 查的正是
 ``(:Document)-[:HAS_CHUNK]->(:Chunk)-[:MENTIONS]->(:Entity)``。
 """
 
@@ -114,7 +114,7 @@ def _find(calls: list[tuple[str, dict[str, Any]]], needle: str) -> dict[str, Any
 
 
 def test_five_stage_order_with_evidence_layers() -> None:
-    """写侧顺序必须能让读侧 ``_QUERY_DOCUMENT_SUBGRAPH`` 查到：Document→Chunk→Entity。"""
+    """写侧顺序必须能让读侧 ``_query_document_subgraph`` 查到：Document→Chunk→Entity。"""
     calls: list[tuple[str, dict[str, Any]]] = []
     builder = _make_builder(calls)
 

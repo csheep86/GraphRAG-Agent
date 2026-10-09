@@ -30,6 +30,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import pytest
 from sqlalchemy import delete
@@ -38,7 +39,10 @@ from app.core.config import get_settings
 from app.db.models import KgVersion, OntologyAction
 from app.db.session import session_scope
 from app.schemas.document import GraphNode
-from app.services.graphs import GraphService
+from app.services.graphs import (
+    EntityNotFoundError,
+    GraphService,
+)
 from app.services.kg.correction import merge_entities, rename_entity
 from app.services.kg.version_view import build_read_view
 
@@ -805,4 +809,330 @@ def test_compliance_scan_still_sees_employees_outside_the_corrected_subgraph(
             f"合规扫描只读到了 {report.employee_count} 名员工（应为 2）"
         )
     finally:
+        _wipe(real_driver, base)
+
+
+# --------------------------------------------------------------------------- #
+# P6-V：剩余读路径 —— 全量子图 / 实体详情 / 锚点兜底 / 文档子图 / 问答检索
+#
+# 判据口径与上面三条同款：**改前 vs 改后都要贴出来**。上面三条（概览 / 推理 / 合规）
+# 在 P5-H 已切且留了 ``version_view`` 形参 ⇒ 不传它就是改前形态；本批三条切换的是
+# service **内部自己解析视野**（没有形参可传）⇒ 改前形态改用**不传 db** 复现
+# （``_read_view`` 的两条兜底都退回单版本，见其 docstring）。
+# --------------------------------------------------------------------------- #
+def _seed_document_with_chunks(
+    driver, base: str, *, doc_id: str, chunk_id: str, entity_id: str
+) -> None:
+    """按写侧（`kg/builder.py` stage-1.5/1.6）的口径种一棵 Document→Chunk→Entity。"""
+    with driver.session() as session:
+        session.run(
+            "MERGE (d:Document {id: $doc_id, kg_version: $base}) "
+            "SET d.org_id = $org_id, d.title = $title "
+            "MERGE (c:Chunk {id: $chunk_id, kg_version: $base}) "
+            "SET c.org_id = $org_id, c.text = $text, c.page = 1, "
+            "    c.char_start = 0, c.char_end = 8 "
+            "MERGE (d)-[:HAS_CHUNK]->(c)",
+            doc_id=doc_id,
+            chunk_id=chunk_id,
+            base=base,
+            org_id=str(_ORG_ID),
+            title="演示文档",
+            text="甲方：甲公司（原文片段）",
+        )
+        # 实体用 ``MATCH`` 而不是 ``MERGE``：它已由 :func:`_seed_entities` 建好，
+        # 同一条 Cypher 里先建 chunk 再 MERGE 这颗实体会被 Neo4j 判为「尝试新建」
+        # ⇒ 撞上 (id, kg_version) 唯一约束（ConstraintValidationFailed）。
+        session.run(
+            "MATCH (c:Chunk {id: $chunk_id, kg_version: $base}) "
+            "MATCH (e:Entity {id: $entity_id, kg_version: $base}) "
+            "MERGE (c)-[r:MENTIONS]->(e) "
+            "SET r.kg_version = $base, r.org_id = $org_id",
+            chunk_id=chunk_id,
+            entity_id=entity_id,
+            base=base,
+            org_id=str(_ORG_ID),
+        )
+
+
+def test_all_subgraph_reads_the_whole_graph_after_a_rename(
+    graph_service: GraphService, real_driver, pg_base: str, real_pg_get_active: None
+) -> None:
+    """`fetch_all_subgraph`（`/documents/{id}/graph` 之外的那条全量读）按继承读。
+
+    它是**问答注入子图**的底座：单版本读 ⇒ 校正之后 LLM 拿到的子图只剩受影响
+    那一小撮 ⇒ 答非所问却带着引用（2026-09-28 真机事故的同族形态）。
+    """
+    base = pg_base
+    ids = [f"{base}-{suffix}" for suffix in ("e1", "e2", "e3", "e4", "e5")]
+    _seed_entities(
+        real_driver,
+        base,
+        [
+            {
+                "id": entity_id,
+                "kg_version": base,
+                "org_id": str(_ORG_ID),
+                "entity_type": "COMPANY",
+                "name": f"公司{suffix}",
+                "aliases": [],
+                "wts": None,
+            }
+            for entity_id, suffix in zip(
+                ids, ("e1", "e2", "e3", "e4", "e5"), strict=True
+            )
+        ],
+    )
+
+    try:
+        with session_scope(org_id=_ORG_ID) as db:
+            rename_entity(
+                db=db,
+                org_id=_ORG_ID,
+                actor_id=_ACTOR_ID,
+                trace_id=uuid.uuid4(),
+                entity_id=ids[0],
+                new_canonical_name="甲公司（已更名）",
+                graph_service=graph_service,
+            )
+            version = graph_service.fetch_active_kg_version(
+                org_id=_ORG_ID, db=db
+            ).version
+            with_view, _, _ = graph_service.fetch_all_subgraph(
+                kg_version=version, org_id=_ORG_ID, db=db
+            )
+            without_view, _, _ = graph_service.fetch_all_subgraph(
+                kg_version=version, org_id=_ORG_ID
+            )
+
+        seen = {node.id for node in with_view}
+        assert seen == set(ids), (
+            f"校正后全量子图丢失了未受影响的节点：期望 5 个，实读 {len(seen)}"
+            f"（缺 {sorted(set(ids) - seen)}）"
+        )
+        # ① 同一 id **不得**出现两次（``e2@v1`` 与 ``e2@base`` 都在链上；
+        #    只按 ``n.id IN $ids`` 取会把两个物理节点一并返回）
+        assert len(with_view) == len(seen), "同一实体读出了多个版本副本"
+        # ② 改前形态（不传 db ⇒ 退回单版本）读不到，证明切换**真的**生效
+        assert {node.id for node in without_view} < set(ids), (
+            "不传 db 时应当退回单版本（只读到受影响子图），说明本例改前就是坏的"
+        )
+    finally:
+        _wipe(real_driver, base)
+
+
+def test_entity_detail_reads_a_node_that_only_lives_in_the_old_version(
+    graph_service: GraphService, real_driver, pg_base: str, real_pg_get_active: None
+) -> None:
+    """校正**没碰**的那个实体，详情页仍必须打得开（此前会 404）。
+
+    这是"改侧生态反而更差"的典型：单版本读时，未被本次校正写入新版本的实体
+    在详情查询里等于不存在 ⇒ 前端「点开实体 404」，而同一张概览图上看得到它。
+    """
+    base = pg_base
+    renamed = f"{base}-e1"
+    untouched = f"{base}-e5"
+    _seed_entities(
+        real_driver,
+        base,
+        [
+            {
+                "id": entity_id,
+                "kg_version": base,
+                "org_id": str(_ORG_ID),
+                "entity_type": "COMPANY",
+                "name": name,
+                "aliases": [],
+                "wts": None,
+            }
+            for entity_id, name in ((renamed, "甲公司"), (untouched, "戊公司"))
+        ],
+    )
+
+    try:
+        with session_scope(org_id=_ORG_ID) as db:
+            rename_entity(
+                db=db,
+                org_id=_ORG_ID,
+                actor_id=_ACTOR_ID,
+                trace_id=uuid.uuid4(),
+                entity_id=renamed,
+                new_canonical_name="甲公司（已更名）",
+                graph_service=graph_service,
+            )
+            with_view = graph_service.fetch_entity_detail(
+                entity_id=untouched, org_id=_ORG_ID, trace_id="t-p6v-detail", db=db
+            )
+            corrected = graph_service.fetch_entity_detail(
+                entity_id=renamed, org_id=_ORG_ID, trace_id="t-p6v-detail", db=db
+            )
+            # 改前形态（不传 db ⇒ 退回单版本）：同一实体在这一版里没有物理节点
+            with pytest.raises(EntityNotFoundError):
+                graph_service.fetch_entity_detail(
+                    entity_id=untouched, org_id=_ORG_ID, trace_id="t-p6v-detail"
+                )
+
+        assert with_view.canonical_name == "戊公司"
+        # 被校正的那条读到的是**校正后**的名字（链路最新者胜）
+        assert corrected.canonical_name == "甲公司（已更名）"
+    finally:
+        _wipe(real_driver, base)
+
+
+def test_anchor_fallback_finds_a_node_only_present_in_an_older_version(
+    graph_service: GraphService,
+    real_driver,
+    pg_base: str,
+    real_pg_get_active: None,
+    # 必挂：`conftest.graph_reasoning_path_default` 是 autouse 恒空桩
+    # （默认把锚点查询打成「无锚点」）⇒ 不撤桩这条判据永远绿也永远没意义。
+    real_graph_read_path: None,
+) -> None:
+    """锚点兜底直查（`_CYPHER_ANCHOR_CANDIDATES`）同样吃版本视野。
+
+    锚点与推理路径共用一套（2026-09-28 真机事故：两者不一致会产出带引用的错答案）
+    ⇒ 这一条不切，证据注入那侧就成了半睁眼。
+    """
+    base = pg_base
+    far = f"EMPLOYEE:{base}-E9"
+    near = f"EMPLOYEE:{base}-E1"
+    _seed_entities(
+        real_driver,
+        base,
+        [
+            {
+                "id": entity_id,
+                "kg_version": base,
+                "org_id": str(_ORG_ID),
+                "entity_type": "EMPLOYEE",
+                "name": name,
+                "aliases": [],
+                "wts": "标准工时制",
+            }
+            for entity_id, name in ((near, "赵四方"), (far, "钱五福"))
+        ],
+    )
+
+    try:
+        with session_scope(org_id=_ORG_ID) as db:
+            rename_entity(
+                db=db,
+                org_id=_ORG_ID,
+                actor_id=_ACTOR_ID,
+                trace_id=uuid.uuid4(),
+                entity_id=near,
+                new_canonical_name="赵四方（已更改）",
+                graph_service=graph_service,
+            )
+            version = graph_service.fetch_active_kg_version(
+                org_id=_ORG_ID, db=db
+            ).version
+            # nodes 为空 ⇒ 必然走**按名字直查**的兜底分支
+            view = _snapshot_view(graph_service, db)
+            with_view = graph_service.fetch_anchor_entity_ids(
+                kg_version=version,
+                org_id=_ORG_ID,
+                question="钱五福的加班时长是多少",
+                nodes=[],
+                db=db,
+            )
+            without_view = graph_service.fetch_anchor_entity_ids(
+                kg_version=version,
+                org_id=_ORG_ID,
+                question="钱五福的加班时长是多少",
+                nodes=[],
+            )
+        assert far in with_view, (
+            f"锚点未继承：实读={with_view}（期望含 {far}）；"
+            f"版本链={view.versions}；选中表={dict(sorted(view.selection.items()))}"
+        )
+        assert far not in without_view, "改前形态竟然也读到了 ⇒ 本用例失去证明力"
+    finally:
+        _wipe(real_driver, base)
+
+
+def test_document_subgraph_reads_chunks_from_the_old_version_and_the_corrected_entity(
+    graph_service: GraphService, real_driver, pg_base: str, real_pg_get_active: None
+) -> None:
+    """文档子图：`Document`/`Chunk` 从旧版本继承，**被校正的实体也不丢**。
+
+    两个断言分别对应本批在这条路径上最容易写错的两处：
+
+    1. 选中表只覆盖 ``:Entity`` 的 id ⇒ ``Document`` / ``Chunk`` **不能**套选中谓词
+       （套了会整份读空）；
+    2. ``MENTIONS`` 是物理边、指向旧版本的 entity 节点 ⇒ 实体必须按 **id 空间**
+       反查，直接给目标节点套选中谓词会把"被校正过的那一条"悄悄丢掉。
+    """
+    base = pg_base
+    doc_id = str(uuid.uuid4())
+    entity = f"COMPANY:{base}-e1"
+    neighbor = f"COMPANY:{base}-e2"
+    _seed_entities(
+        real_driver,
+        base,
+        [
+            {
+                "id": entity_id,
+                "kg_version": base,
+                "org_id": str(_ORG_ID),
+                "entity_type": "COMPANY",
+                "name": name,
+                "aliases": [],
+                "wts": None,
+            }
+            for entity_id, name in ((entity, "甲公司"), (neighbor, "乙厂"))
+        ],
+    )
+    _seed_document_with_chunks(
+        real_driver,
+        base,
+        doc_id=doc_id,
+        chunk_id=f"{base}-chunk-1",
+        entity_id=entity,
+    )
+
+    try:
+        with session_scope(org_id=_ORG_ID) as db:
+            rename_entity(
+                db=db,
+                org_id=_ORG_ID,
+                actor_id=_ACTOR_ID,
+                trace_id=uuid.uuid4(),
+                entity_id=entity,
+                new_canonical_name="甲公司（已更名）",
+                graph_service=graph_service,
+            )
+            version = graph_service.fetch_active_kg_version(
+                org_id=_ORG_ID, db=db
+            ).version
+            nodes, edges, _truncated = graph_service.fetch_document_subgraph(
+                doc_id=UUID(doc_id),
+                kg_version=version,
+                org_id=_ORG_ID,
+                db=db,
+            )
+            without_view, _, _ = graph_service.fetch_document_subgraph(
+                doc_id=UUID(doc_id),
+                kg_version=version,
+                org_id=_ORG_ID,
+            )
+
+        seen = {node.id for node in nodes}
+        # ① Chunk 在 base 上（从未被重写）⇒ 必须继承得到
+        assert f"{base}-chunk-1" in seen, (
+            f"文档子图丢了旧版本的 chunk：实读={sorted(seen)}"
+        )
+        # ② 被校正的实体按 id 空间反查 ⇒ 仍在（且只有一个副本）
+        assert entity in seen, "被校正的实体丢了（MENTIONS 指向旧物理节点所致）"
+        assert all(
+            node.canonical_name != "甲公司" for node in nodes if node.id == entity
+        )
+        # ③ 改前形态：active 版本里没有 Doc/Chunk ⇒ 整份读空
+        assert without_view == [] or {node.id for node in without_view} == {doc_id}
+    finally:
+        with real_driver.session() as neo:
+            neo.run(
+                "MATCH (n) WHERE n.kg_version STARTS WITH $base DETACH DELETE n",
+                base=base,
+            )
+            neo.run("MATCH (d:Document {id: $doc_id}) DETACH DELETE d", doc_id=doc_id)
         _wipe(real_driver, base)

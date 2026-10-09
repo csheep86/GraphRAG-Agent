@@ -281,6 +281,8 @@ async def read_document_graph(
             kg_version=kg_version.version,
             org_id=identity.org_id,
             node_limit=_GRAPH_NODE_LIMIT,
+            # P6-V：文档子图改按**版本继承读**（要看 PG 里的版本链 ⇒ 必须给它会话）
+            db=session,
         )
     except GraphUnavailableError as exc:
         raise _graph_not_available(document_id=document_id, exc=exc) from exc

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -53,6 +54,7 @@ def _patch_graph(
         org_id: UUID,
         scope: str,
         as_of: str | None = None,  # Sprint 9 批次 B2：时态视图
+        db: Any = None,  # P6-V：版本继承读要拿 PG 会话解析版本链（本桩不使用）
     ) -> object:
         calls["subgraph_org_id"] = org_id
         calls["subgraph_as_of"] = as_of
