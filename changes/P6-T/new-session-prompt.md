@@ -120,7 +120,7 @@ git status --short                                    # ⚠️ 先看清**在途
 
 | 项 | 基线值 |
 |---|---|
-| 最近一次绿 CI | run **37909829798**（`9ea62b6`）success；`gh run watch --exit-status` EXIT=0 |
+| 最近一次绿 CI | run **37912090743**（`4887c32`）success；`gh run watch --exit-status` EXIT=0 |
 | `pytest`（本地**有图**口径） | **1157 passed / 3 skipped / 0 failed**（= P6-S 1154 + P6-T 新增 3） |
 | `check_startup_readiness.py` | **`[OK]` 17 / `[~~]` 0 / `[--]` 0** |
 | `check_seams.py` | ERROR 0 / WARN 0 / **OK 12** |
