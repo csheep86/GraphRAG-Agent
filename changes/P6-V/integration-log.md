@@ -137,5 +137,6 @@ AssertionError: assert set() == {'E001'}      # tests/test_version_chain_readers
 | **跨版本边**（P5H-6） | 仍不连（物理边不存在） | ADR §7 指针 5 |
 | **as-of 排序口径** DB / Py 不一致 | 未动（候选 165 行够不着 400 才没触发） | **P6-V1** |
 | **P6-T 判分 86 题** | 仍是 `UNKNOWN`（**人是瓶颈**，顺延至项目末期） | 必须传承到每一批 |
+| **C3-a / C3-b 的出数前提** | **2026-10-09 已裁决**（不再是"悬着"）：C3-a ⇒ 序 **5c = P6-V2**（抽取侧 token 落点 + `stage` 列 X-6）；C3-b ⇒ 序 **5d = P6-V3**（分母取首次全量构建 X-7，不新建全量入口）。⚠️ P6-V3 仍挂在**未决前提**上：增量重算零 LLM ⇒ token 分子恒 ≈ 0 ⇒ 假性达标风险 | P6-V2 / P6-V3 |
 | `alert` 表 / R27 / R30 | 有意不做 | P2 遗留 |
 <｜hy_place▁holder▁no▁813｜><arg_key:opensource>filePath</arg_key:opensource><arg_value:opensource>d:/AIProject/GraphRAG-Agent/changes/P6-V/integration-log.md
