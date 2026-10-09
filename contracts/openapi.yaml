@@ -5261,13 +5261,15 @@ tags:
   name: agent
 - description: M5 审计留痕（只读查询）。写入由审计中间件统一完成，本 tag 下只有两个查询端点；**全部要求租户上下文**，返回项已按 `org_id` 过滤。
   name: audit
-- description: 'M6 本体增量演进（冷启动建议 / 确认生效 / 合并 / 拆分 / 改名 / 读 active）。**全部要求租户上下文**，全部挂在权限拦截（``require_permission``）之下。
+- description: 'M6 本体增量演进（冷启动建议 / 确认生效 / 合并 / 拆分 / 改名 / 读候选 / 读 active）。**全部要求租户上下文**，全部挂在权限拦截（``require_permission``）之下。
 
 
     **端点状态**（2026-10-08 更正 —— 上一版这里仍写「全部为占位骨架」，已不成立）：
 
 
     - **已实装（P5-G）**：``POST /ontology/merge`` / ``/split`` / ``/rename`` —— 走「图操作 → 写 ``ontology_actions`` → 增量重算产出新版本」，返回 ``OntologyActionResponse{kg_version, status: "applied"}``（同步完成，无 pending）；``entity_merge_candidates`` 对应行 ``human_review`` → ``applied``。
+
+    - **已实装（P5-I）**：``GET /ontology/candidates`` —— 读本租户的 ``entity_merge_candidates`` 候选对（分页 + ``status`` 过滤），**校正 GUI 的实体来源**（m6 §1.1 批次 B 要求 GUI 与该表绑定）。列表类端点：跨租户 ⇒ **空集**（不是 403），``status`` 非法值 ⇒ 400 ``VALIDATION_ERROR``。
 
     - **仍是占位**：``GET /ontology/active`` / ``POST /ontology/confirm`` / ``POST /ontology/cold-start``（批次 A）。
 

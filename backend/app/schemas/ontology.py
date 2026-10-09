@@ -23,7 +23,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -253,6 +255,98 @@ class OntologyRenameRequest(BaseModel):
     new_canonical_name: str = Field(
         min_length=1, max_length=128, description="新的规范名"
     )
+
+
+class OntologyCandidate(BaseModel):
+    """`GET /ontology/candidates` 里的一行：一对**待消解候选**（M2 §4.5 / §4.5.1）。
+
+    **它是校正 GUI 的实体来源**（m6 §1.1 第 2 条：批次 B 与 `entity_merge_candidates` 表
+    **绑定**）——GUI 不另造实体搜索端点，人从候选行上挑实体再发 merge / split / rename。
+
+    字段是 `entity_merge_candidates` 行的**投影**：`status` 五值取自模型的 CHECK 约束
+    （`pending` / `auto_merged` / `human_review` / `rejected` / `applied`）；
+    `signals` 是「为什么判这一档」的判分依据（``{name_sim, struct_bonus, tax_conflict…}``），
+    **可空**——早期行没有它，不替它编默认值。
+
+    **不带 `trace_id`**：spec §5.5 只有 `cold-start` 响应列了 `trace_id`，其余端点没有；
+    两者冲突时**以 spec 为准**（本文件头已登记该取舍）。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d",
+                "left_entity_id": "SUBJECT:91310000MA1FL0Q23K",
+                "right_entity_id": "RAW:affiliation.csv:91310000MA1FL0Q23K",
+                "similarity": 0.82,
+                "status": "human_review",
+                "signals": {"name_sim": 0.82, "struct_bonus": 0.0},
+                "created_at": "2026-10-09T08:15:00Z",
+            }
+        }
+    )
+
+    id: UUID = Field(description="候选行 id（`entity_merge_candidates.id`）")
+    left_entity_id: str = Field(
+        description="保留侧实体 id（**图侧字符串 id**，见 M2 §4.5 偏离 S9.13-1）"
+    )
+    right_entity_id: str = Field(description="被并入侧实体 id（图侧字符串 id）")
+    similarity: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="相似度（M2 §4.5.1：名称相似度 + 结构加分）",
+    )
+    status: Literal["pending", "auto_merged", "human_review", "rejected", "applied"] = (
+        Field(
+            description=(
+                "处置档位。`applied` 由 `POST /ontology/merge` 写入（P5-G）；"
+                "其余档位本阶段无写入方（<0.70 的候选不落表）"
+            )
+        )
+    )
+    signals: dict[str, Any] | None = Field(
+        default=None,
+        description="判分依据（**可空**）：只有分数回答不了「为什么是这一档」",
+    )
+    created_at: datetime = Field(description="候选落库时间（UTC）")
+
+
+class OntologyCandidateListResponse(BaseModel):
+    """`GET /ontology/candidates` 响应：本租户的候选对（`created_at DESC` + 分页）。
+
+    **跨租户 ⇒ 空集**（`items=[]` / `total=0`）：列表类端点泄露不了单条资源的存在性，
+    返回 403 会让「队列为空」与「无权访问」在 UI 上无法区分（P5I-1）。
+
+    **不带 `trace_id`**：同 :class:`OntologyCandidate`，以 spec §5.5 为准。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "total": 1,
+                "items": [
+                    {
+                        "id": "6d1e3f9a-4b2c-4a8b-8c2d-5e7f0a1b3c5d",
+                        "left_entity_id": "SUBJECT:91310000MA1FL0Q23K",
+                        "right_entity_id": "RAW:affiliation.csv:91310000MA1FL0Q23K",
+                        "similarity": 0.82,
+                        "status": "human_review",
+                        "signals": {"name_sim": 0.82, "struct_bonus": 0.0},
+                        "created_at": "2026-10-09T08:15:00Z",
+                    }
+                ],
+                "page": 1,
+                "page_size": 50,
+            }
+        }
+    )
+
+    total: int = Field(ge=0, description="当前租户下满足过滤条件的候选总数")
+    items: list[OntologyCandidate] = Field(
+        description="当前页结果（按 `created_at DESC`）"
+    )
+    page: int = Field(ge=1, description="当前页码（1-based）")
+    page_size: int = Field(ge=1, description="每页条目数（请求参数回显）")
 
 
 class OntologyActionResponse(BaseModel):
