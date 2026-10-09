@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
+from functools import cache
 from typing import Any
 
 from loguru import logger
@@ -127,79 +128,138 @@ class AttributionResult:
 
 # --------------------------------------------------------------------------- #
 # Cypher
+#
+# **P6-V：本模块全部六条都改成版本继承读**（此前 ``{kg_version: $kg}`` 写死单版本）。
+# 形态照 :mod:`app.services.rules.engine` 那四条：节点由 :func:`version_scope`
+# 定版、关系另加 ``rel.kg_version IN $kgs``。缺省（链长 1 / 选中表空）与改前
+# **逐字等价**（``IN [head]`` ≡ ``= $kg``）。
 # --------------------------------------------------------------------------- #
+def _version_scope() -> Any:
+    """取 :func:`version_scope`（**延迟**：与 :mod:`app.services.kg.version_view`
+    走同一条"不许在模块级牵\"builder → graphs\"" 的理由，见
+    ``policy_values.load_policy_clauses`` 内的同款注释）。"""
+    from app.services.kg.version_scope import version_scope
+
+    return version_scope
+
+
+def _view_cypher_params(version_view: Any, kg_version: str) -> dict[str, Any]:
+    """把（可能为 ``None`` 的）视野折成 Cypher 参数。
+
+    ``None`` ⇒ 单版本兜底（``VersionReadView(versions=(kg_version,), selection={})``），
+    与 P5-H 之前的行为完全一致。
+    """
+    from app.services.kg.version_view import VersionReadView
+
+    view = version_view or VersionReadView(versions=(kg_version,), selection={})
+    return view.cypher_params()
+
+
 _CYPHER_TRIP = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'ON_BUSINESS_TRIP', kg_version: $kg}]->
-      (t:Entity {entity_type: 'BUSINESS_TRIP', kg_version: $kg})
+MATCH (e:Entity {entity_type: 'EMPLOYEE', org_id: $org})
+      -[rel:RELATION {relation_type: 'ON_BUSINESS_TRIP'}]->
+      (t:Entity {entity_type: 'BUSINESS_TRIP'})
 WHERE e.id = $emp AND t.start_date <= $day AND t.end_date >= $day
+  AND @@e_scope@@ AND @@t_scope@@ AND rel.kg_version IN $kgs
 RETURN t.id AS node_id, t.destination AS destination, t.site AS site,
        t.status AS status, t.start_date AS start_date, t.end_date AS end_date
 ORDER BY t.id
 """
 
 _CYPHER_ORDER = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'HANDLED_ORDER', kg_version: $kg}]->
-      (w:Entity {entity_type: 'WORK_ORDER', kg_version: $kg})
+MATCH (e:Entity {entity_type: 'EMPLOYEE', org_id: $org})
+      -[rel:RELATION {relation_type: 'HANDLED_ORDER'}]->
+      (w:Entity {entity_type: 'WORK_ORDER'})
 WHERE e.id = $emp AND w.dispatched_at STARTS WITH $day
+  AND @@e_scope@@ AND @@w_scope@@ AND rel.kg_version IN $kgs
 RETURN w.id AS node_id, w.dispatched_at AS dispatched_at, w.closed_at AS closed_at,
        w.site AS site, w.status AS status
 ORDER BY w.id
 """
 
 _CYPHER_LOCATION = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'LOCATED_AT', kg_version: $kg}]->
-      (l:Entity {entity_type: 'LOCATION_RECORD', kg_version: $kg})
+MATCH (e:Entity {entity_type: 'EMPLOYEE', org_id: $org})
+      -[rel:RELATION {relation_type: 'LOCATED_AT'}]->
+      (l:Entity {entity_type: 'LOCATION_RECORD'})
 WHERE e.id = $emp AND l.date = $day
+  AND @@e_scope@@ AND @@l_scope@@ AND rel.kg_version IN $kgs
 RETURN l.id AS node_id, l.time AS time, l.site AS site
 ORDER BY l.id
 """
 
 _CYPHER_DAY_STATUS = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'HAS_ATTENDANCE', kg_version: $kg}]->
-      (r:Entity {entity_type: 'ATTENDANCE_RECORD', kg_version: $kg})
+MATCH (e:Entity {entity_type: 'EMPLOYEE', org_id: $org})
+      -[rel:RELATION {relation_type: 'HAS_ATTENDANCE'}]->
+      (r:Entity {entity_type: 'ATTENDANCE_RECORD'})
 WHERE e.id = $emp AND r.date = $day
+  AND @@e_scope@@ AND @@r_scope@@ AND rel.kg_version IN $kgs
 RETURN r.status AS status
 ORDER BY r.id
 """
 
 _CYPHER_ACCESS = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'SWIPED_AT', kg_version: $kg}]->
-      (a:Entity {entity_type: 'ACCESS_RECORD', kg_version: $kg})
+MATCH (e:Entity {entity_type: 'EMPLOYEE', org_id: $org})
+      -[rel:RELATION {relation_type: 'SWIPED_AT'}]->
+      (a:Entity {entity_type: 'ACCESS_RECORD'})
 WHERE e.id = $emp AND a.date = $day
+  AND @@e_scope@@ AND @@a_scope@@ AND rel.kg_version IN $kgs
 RETURN a.id AS node_id, a.in_time AS in_time, a.gate AS gate
 ORDER BY a.id
 """
 
 _CYPHER_ANOMALY_DAYS = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'HAS_ATTENDANCE', kg_version: $kg}]->
-      (r:Entity {entity_type: 'ATTENDANCE_RECORD', kg_version: $kg})
+MATCH (e:Entity {entity_type: 'EMPLOYEE', org_id: $org})
+      -[rel:RELATION {relation_type: 'HAS_ATTENDANCE'}]->
+      (r:Entity {entity_type: 'ATTENDANCE_RECORD'})
 WHERE e.id = $emp AND r.status IN $statuses
+  AND @@e_scope@@ AND @@r_scope@@ AND rel.kg_version IN $kgs
 RETURN r.date AS date, r.status AS status
 ORDER BY r.date
 """
 
 
-def _rows(session: Any, cypher: str, **params: Any) -> list[Mapping[str, Any]]:
-    return list(session.run(cypher, **params))
+#: 参与版本谓词的节点别名（与上面各条 Cypher 的 ``{x_scope}`` 占位符一一对应）
+_SCOPE_ALIASES: tuple[str, ...] = ("e", "t", "w", "l", "r", "a")
+
+
+@cache
+def _cypher(template: str) -> str:
+    """把 ``@@x_scope@@`` 占位符替换成真正的版本谓词（一次构建、永久复用）。
+
+    占位符**刻意不用** ``{...}``：Cypher 的内联属性图本身就带花括号
+    （``{entity_type: 'EMPLOYEE', org_id: $org}``）⇒ ``str.format`` 会把它当成
+    待替换字段，直接 ``KeyError: 'entity_type'``（2026-10-09 本批实测）。
+
+    **为什么不写成模块级展开好的常量**：``version_scope`` 取自
+    ``app.services.kg``，模块级牵它即成环（见 :func:`_version_scope`）。
+    """
+    scope = _version_scope()
+    rendered = template
+    for alias in _SCOPE_ALIASES:
+        rendered = rendered.replace(f"@@{alias}_scope@@", scope(alias))
+    return rendered
+
+
+def _rows(session: Any, template: str, **params: Any) -> list[Mapping[str, Any]]:
+    return list(session.run(_cypher(template), **params))
 
 
 def find_anomaly_days(
-    *, session: Any, kg_version: str, org_id: str, employee_id: str
+    *,
+    session: Any,
+    kg_version: str,
+    org_id: str,
+    employee_id: str,
+    version_view: Any = None,
 ) -> tuple[str, ...]:
     """列出该员工的全部异常日期（缺卡 / 缺勤），供「扫谁」用。"""
     rows = _rows(
         session,
         _CYPHER_ANOMALY_DAYS,
-        kg=kg_version,
         org=str(org_id),
         emp=f"EMPLOYEE:{employee_id}",
         statuses=list(ANOMALY_STATUSES),
+        **_view_cypher_params(version_view, kg_version),
     )
     return tuple(str(row["date"]) for row in rows)
 
@@ -236,14 +296,19 @@ class AnomalyCaseList:
 
 
 _CYPHER_EMPLOYEE_NAME = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-WHERE e.id = $emp
+MATCH (e:Entity {entity_type: 'EMPLOYEE', org_id: $org})
+WHERE e.id = $emp AND @@e_scope@@
 RETURN e.canonical_name AS name
 """
 
 
 def employee_name(
-    *, session: Any, kg_version: str, org_id: Any, employee_id: str
+    *,
+    session: Any,
+    kg_version: str,
+    org_id: Any,
+    employee_id: str,
+    version_view: Any = None,
 ) -> str:
     """取员工姓名。
 
@@ -255,9 +320,9 @@ def employee_name(
     rows = _rows(
         session,
         _CYPHER_EMPLOYEE_NAME,
-        kg=kg_version,
         org=str(org_id),
         emp=f"EMPLOYEE:{employee_id}",
+        **_view_cypher_params(version_view, kg_version),
     )
     if not rows:
         return ""
@@ -265,12 +330,13 @@ def employee_name(
 
 
 _CYPHER_ANOMALY_CASES = """
-MATCH (e:Entity {entity_type: 'EMPLOYEE', kg_version: $kg, org_id: $org})
-      -[:RELATION {relation_type: 'HAS_ATTENDANCE', kg_version: $kg}]->
-      (r:Entity {entity_type: 'ATTENDANCE_RECORD', kg_version: $kg})
+MATCH (e:Entity {entity_type: 'EMPLOYEE', org_id: $org})
+      -[rel:RELATION {relation_type: 'HAS_ATTENDANCE'}]->
+      (r:Entity {entity_type: 'ATTENDANCE_RECORD'})
 WHERE r.status IN $statuses
   AND e.id STARTS WITH 'EMPLOYEE:'
   AND ($emp IS NULL OR e.id = $emp)
+  AND @@e_scope@@ AND @@r_scope@@ AND rel.kg_version IN $kgs
 RETURN replace(e.id, 'EMPLOYEE:', '') AS employee_id,
        e.canonical_name AS employee_name,
        r.date AS date, r.status AS status
@@ -284,6 +350,7 @@ def list_anomaly_cases(
     kg_version: str,
     org_id: Any,
     employee_id: str | None = None,
+    version_view: Any = None,
 ) -> AnomalyCaseList:
     """列出待归因的异常（全部员工，或只看某人）。
 
@@ -294,10 +361,10 @@ def list_anomaly_cases(
     rows = _rows(
         session,
         _CYPHER_ANOMALY_CASES,
-        kg=kg_version,
         org=str(org_id),
         statuses=list(ANOMALY_STATUSES),
         emp=f"EMPLOYEE:{employee_id}" if employee_id else None,
+        **_view_cypher_params(version_view, kg_version),
     )
     return AnomalyCaseList(
         kg_version=kg_version,
@@ -335,6 +402,7 @@ def attribute_absence(
     policy_documents: Sequence[Any] = (),
     policy_clauses: Sequence[Any] = (),
     storage: Any = None,
+    version_view: Any = None,
 ) -> AttributionResult:
     """给「某员工某天缺卡」做归因。
 
@@ -354,20 +422,20 @@ def attribute_absence(
         status_rows = _rows(
             session,
             _CYPHER_DAY_STATUS,
-            kg=kg_version,
             org=str(org_id),
             emp=f"EMPLOYEE:{employee_id}",
             day=day_text,
+            **_view_cypher_params(version_view, kg_version),
         )
         anomaly_type = (
             str(status_rows[0]["status"]) if status_rows else ANOMALY_MISSING_CHECK_IN
         )
 
     params = {
-        "kg": kg_version,
         "org": str(org_id),
         "emp": f"EMPLOYEE:{employee_id}",
         "day": day_text,
+        **_view_cypher_params(version_view, kg_version),
     }
 
     trips = _rows(session, _CYPHER_TRIP, **params)
@@ -453,6 +521,7 @@ def attribute_absence(
         documents=policy_documents,
         clauses=policy_clauses,
         storage=storage,
+        version_view=version_view,
     )
     # **制度措辞必须可溯源**（守 F3；2026-09-28 由 D2 守卫逼出来的修）：
     # 「自动补卡」是**制度动作**，不是我们的处置意见——制度原句取不到时
@@ -490,13 +559,18 @@ def _policy_sentences(
     documents: Sequence[Any],
     clauses: Sequence[Any],
     storage: Any,
+    version_view: Any = None,
 ) -> tuple[PolicySentence, ...]:
     """取「自动补卡」的制度原句（缺制度文本 ⇒ 空元组，结论里就不声称出处）。"""
     if not documents and not clauses:
         try:
             documents = load_policy_documents(org_id=org_id, storage=storage)
             clauses = load_policy_clauses(
-                session=session, kg_version=kg_version, org_id=str(org_id)
+                session=session,
+                kg_version=kg_version,
+                org_id=str(org_id),
+                # P6-V：制度条款也按同一个视野读 ⇒ 归因与异常清单同源
+                version_view=version_view,
             )
         except Exception as exc:  # noqa: BLE001 - 制度文本缺失只影响出处，不阻断归因
             logger.bind(error=str(exc)).warning("policy_sentences_unavailable")

@@ -2651,6 +2651,10 @@ class GraphService:
     ) -> AnomalyCaseList:
         """列出待归因的考勤异常（``GET /attendance/anomalies`` 的服务层入口）。
 
+        **P6-V**：改按**版本继承读**（ADR-0008 §7 第 4 行）——校正之后，未被本次
+        增量重写触碰的员工（连同其考勤事实）只存在于祖先版本 ⇒ 单版本读会把
+        「没异常的人」报成「没有异常」，把缺数据伪装成全员正常。
+
         **空列表是正常结果**（这份图里没人缺卡），**不是**失败——与合规扫描不同，
         那边「扫不到事实」要显式报错，这边「没有异常」正是想听到的答案。
         """
@@ -2664,6 +2668,9 @@ class GraphService:
                     kg_version=version,
                     org_id=str(org_id) if org_id else None,
                     employee_id=employee_id,
+                    version_view=self._read_view(
+                        db=db, org_id=org_id, head=version, session=session
+                    ),
                 )
         except (NoActiveKgVersionError, GraphUnavailableError):
             raise
@@ -2700,12 +2707,18 @@ class GraphService:
         version = self.fetch_active_kg_version(org_id=org_id, db=db).version
         try:
             with self._session() as session:
+                # P6-V：异常日 / 归因 / 姓名三处共用**同一个**视野 —— 三者分头
+                # 取会各自按不同版本读 ⇒「有异常日却归不出因」这种自相矛盾。
+                view = self._read_view(
+                    db=db, org_id=org_id, head=version, session=session
+                )
                 if day is None:
                     days = find_anomaly_days(
                         session=session,
                         kg_version=version,
                         org_id=str(org_id) if org_id else None,
                         employee_id=employee_id,
+                        version_view=view,
                     )
                     if not days:
                         raise AnomalyNotFoundError(
@@ -2725,7 +2738,9 @@ class GraphService:
                         kg_version=version,
                         org_id=str(org_id) if org_id else None,
                         employee_id=employee_id,
+                        version_view=view,
                     ),
+                    version_view=view,
                 )
                 return version, result
         except (NoActiveKgVersionError, GraphUnavailableError, AnomalyNotFoundError):

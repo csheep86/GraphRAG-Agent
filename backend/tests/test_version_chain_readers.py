@@ -1050,6 +1050,117 @@ def test_anchor_fallback_finds_a_node_only_present_in_an_older_version(
         _wipe(real_driver, base)
 
 
+def _seed_attendance(driver, version: str, rows: list[dict[str, str]]) -> None:
+    """按 :mod:`app.services.rules.attribution` 的口径种「员工 + 考勤记录」。
+
+    两条 Cypher 形态上的硬要求（读侧就靠它们活着）：记录节点的
+    ``date`` / ``status`` 是**普通属性**；``HAS_ATTENDANCE`` 边的
+    ``relation_type`` / ``kg_version`` 在**关系**上（不在节点上）。
+    """
+    with driver.session() as session:
+        session.run(
+            "UNWIND $rows AS row "
+            "MERGE (e:Entity {id: row.employee, kg_version: $version}) "
+            "SET e.org_id = $org_id, e.entity_type = 'EMPLOYEE', "
+            "    e.canonical_name = row.name "
+            "MERGE (r:Entity {id: row.record, kg_version: $version}) "
+            "SET r.org_id = $org_id, r.entity_type = 'ATTENDANCE_RECORD', "
+            "    r.date = row.date, r.status = row.status "
+            "MERGE (e)-[rel:RELATION {relation_type: 'HAS_ATTENDANCE', "
+            "       kg_version: $version}]->(r) "
+            "SET rel.org_id = $org_id",
+            rows=rows,
+            version=version,
+            org_id=str(_ORG_ID),
+        )
+
+
+def test_anomaly_paths_still_see_employees_outside_the_corrected_subgraph(
+    graph_service: GraphService, real_driver, pg_base: str, real_pg_get_active: None
+) -> None:
+    """ADR-0008 §7 第 4 行：`list_attendance_anomalies` / `explain_attendance_anomaly`。
+
+    这两条是最容易被漏判的一类：清单端点**没有任何报错**——单版本读时它只是
+    「少列出几个人」，和「真的没人缺卡」在响应上**完全无法区分**。把缺数据伪装
+    成全员正常，正是方案 §4.4 要拦的形态。
+    """
+    base = pg_base
+    moved = "EMPLOYEE:E001"
+    kept = "EMPLOYEE:E002"
+    _seed_entities(
+        real_driver,
+        base,
+        [
+            {
+                "id": entity_id,
+                "kg_version": base,
+                "org_id": str(_ORG_ID),
+                "entity_type": "EMPLOYEE",
+                "name": name,
+                "aliases": [],
+                "wts": "标准工时制",
+            }
+            for entity_id, name in ((moved, "张伟"), (kept, "李娜"))
+        ],
+    )
+    _seed_attendance(
+        real_driver,
+        base,
+        [
+            {
+                "employee": moved,
+                "record": f"ATTENDANCE_RECORD:{base}-A1",
+                "name": "张伟",
+                "date": "2026-10-16",
+                "status": "absent",
+            },
+            {
+                "employee": kept,
+                "record": f"ATTENDANCE_RECORD:{base}-A2",
+                "name": "李娜",
+                "date": "2026-10-17",
+                "status": "missing_check_in",
+            },
+        ],
+    )
+
+    try:
+        with session_scope(org_id=_ORG_ID) as db:
+            rename_entity(
+                db=db,
+                org_id=_ORG_ID,
+                actor_id=_ACTOR_ID,
+                trace_id=uuid.uuid4(),
+                entity_id=moved,
+                new_canonical_name="张伟（已更改）",
+                graph_service=graph_service,
+            )
+            with_view = graph_service.list_attendance_anomalies(org_id=_ORG_ID, db=db)
+            without_view = graph_service.list_attendance_anomalies(org_id=_ORG_ID)
+            # 归因端点：`kept` 的异常只在旧版本里 ⇒ 改前会抛 AnomalyNotFoundError
+            explained_version, explained = graph_service.explain_attendance_anomaly(
+                org_id=_ORG_ID, db=db, employee_id="E002"
+            )
+
+        employees = {case.employee_id for case in with_view.cases}
+        assert employees == {"E001", "E002"}, (
+            f"异常清单丢了未被本次校正触碰的员工：实读={sorted(employees)}"
+        )
+        # 改名后的姓名以新版本为准（链上最新者胜）
+        moved_case = next(
+            case for case in with_view.cases if case.employee_id == "E001"
+        )
+        assert moved_case.employee_name == "张伟（已更改）"
+        # 改前形态：只看得见被校正的那一个
+        assert {case.employee_id for case in without_view.cases} == {"E001"}
+        # 归因端点确实读的是那条继承来的异常（2026-10-17 属 E002）
+        assert explained_version == with_view.kg_version
+        assert explained.date == "2026-10-17"
+        assert explained.employee_name == "李娜"
+    finally:
+        _wipe(real_driver, base)
+
+
 def test_document_subgraph_reads_chunks_from_the_old_version_and_the_corrected_entity(
     graph_service: GraphService, real_driver, pg_base: str, real_pg_get_active: None
 ) -> None:
