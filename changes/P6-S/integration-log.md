@@ -184,10 +184,21 @@ spec 在 `answer_with_dense` **之前**构造，那时还没发生过 embed ⇒ 
 
 ## 13. 下一批指针（按实际结果更新）
 
-1. **P6-T：两侧各 40 题人工判分**（A3，纯人工）——输入物已就位：
+1. **P6-T：两侧各 40 题人工判分**（A3，**纯人工**）——输入物已就位：
    `backend/data/eval/judging/c1-sheets-20261009T064241Z.json`（题干 + rubric 锚点 + 两侧原文 + 两侧 spec）。
    **两条纪律**：① 两侧判分表**必须是两个文件**（`distinct_judgement_tables` 会机检）；
    ② 值只能写 `true` / `false`（留 `null` 现在会**报错**，不会被静默判成错）。
+
+   **写开场提示词时又查实三条（¥0，机械比对 / 读码所得，直接决定 P6-T 的工量）**：
+
+   | # | 事实 | 对 P6-T 的影响 |
+   |---|---|---|
+   | ① | **旧判分表不得复用**：P6-J 那轮（rubric-v2，graph 40/40、baseline 34/40）与被判对象逐题比对 ⇒ 图侧仅 **9/40**、基线侧仅 **14/40** 答案逐位一致 | 是**重判 80 题**。MANIFEST 的 `monotonicity_note` 说「换 rubric 只需重判 false 的题（80→11）」——那条只对**答案没变**成立，本批是**答案变了**（P6-R 钉采样后重跑），**不许照它外推** |
+   | ② | **C1 与多跳共用同一个 `--judgements`**：受控题集 index 1..40、多跳 index 1..6 | 同一次跑会**题号串台**（判分别人头上）⇒ **必须分开跑、分别给判分文件** |
+   | ③ | **多跳侧没有答案导出通道**：`eval_multihop_accuracy` 缺判分时 detail 只有 `{"asked":6,"judged":0}`，**不吐答案原文** | 人无从判 ⇒ P6-T 要么补导出通道（照 `export_judging_sheets.py` 扩到多跳），要么只判 C1、多跳推下一批。**这条需裁决** |
+
+   另：**历史 4 轮判分表（p5b / p6f / p6h / p6j）都落在被 gitignore 的 `backend/reports/eval/`**
+   ⇒ 判分是 A3 的核心资产却未受版本控制。建议 P6-T 把判分表落 `backend/data/eval/judging/`（跟踪目录）。
 2. **P6-U：D4 / Sprint10.5 收口**（知识时效 L2 ②③），同批更正两处过期口径：
    `delivery-requirements-and-guardrails.md` DR-D7 仍写「⏳ 未做」、`delivery-plan.md` P5 出口判据③ 未标已达成。
 3. **P6-V：P5-J（M6 剩余读路径）** ⇒ 解开 C3-a / C3-b 的 `BLOCKED`；
