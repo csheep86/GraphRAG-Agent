@@ -107,17 +107,38 @@ P5F-3 与「只迁移两端都在受影响集内的边」**刻意不迁移**受�
 3. **「三条路径切了」≠「读侧已完整」**：剩余路径仍是单版本（清单见 §7 指针 1），
    且 M4 端到端问答**尚未**接上视野（`agents.py` 的检索没有 PG 会话来解析版本链）。
 
+   > **2026-10-09 P6-V 追加**（原结论保留）：剩余 7 条已全部切换、**M4 端到端也接上了**
+   > （清单逐条见 §7）。但这条误读的**形式变换而没有被消灭** —— 现在该读成：
+   > **「7 条都切了」≠「读侧无限制」**：跨版本边仍不连（P5H-6）、证据片段读取与
+   > `as_of` 排序口径仍未纳入（见 §7 的「仍然存在的边界」三款）。
+
 ## 7. 未切换的读路径（**逐条登记**，下一批指针）
 
-| 路径 | 位置 | 状态 |
-|---|---|---|
-| `fetch_all_subgraph` | `graphs.py:1359` | 单版本 |
-| `fetch_entity_detail` | `graphs.py:2149` | 单版本 |
-| `fetch_anchor_entity_ids` | `graphs.py` | 单版本 |
-| `list_attendance_anomalies` / `explain_attendance_anomaly` | `graphs.py:2400` | 单版本 |
-| `fetch_document_subgraph` | `graphs.py` | 单版本 |
-| `agents.py` 的检索链路 | `agents.py:257` | 单版本（**M4 端到端因此仍未修复**） |
-| `documents.py` 的图谱读 | `documents.py:264` | 单版本 |
+> **2026-10-09 P6-V：本表已清空（7/7 全部切换）。** 原状态行在下表中保留并标注切换
+> 批次与判据文件——**不抹原始数据**（纪律 R-5：回登不覆盖，只追加）。
+
+| 路径 | 位置（2026-10-08） | 原状态 | 现状（P6-V，2026-10-09） |
+|---|---|---|---|
+| `fetch_all_subgraph` | `graphs.py:1359` | 单版本 | ✅ **已切**（均由服务层按 `db` 自建视野；`db` 缺失即退单版本） |
+| `fetch_entity_detail` | `graphs.py:2149` | 单版本 | ✅ **已切** |
+| `fetch_anchor_entity_ids` | `graphs.py` | 单版本 | ✅ **已切**（`resolve_anchors` 早留的 `version_view` 形参接上了） |
+| `list_attendance_anomalies` / `explain_attendance_anomaly` | `graphs.py:2400` | 单版本 | ✅ **已切**（异常日 / 归因 / 姓名三处共用同一视野） |
+| `fetch_document_subgraph` | `graphs.py` | 单版本 | ✅ **已切** |
+| `agents.py` 的检索链路 | `agents.py:257` | 单版本（M4 端到端因此未修复） | ✅ **已切**：`_execute_query` 一路传 PG 会话 ⇒ M4 端到端问答吃到继承读 |
+| `documents.py` 的图谱读 | `documents.py:264` | 单版本 | ✅ **已切**（`db=session`） |
+
+**判据落点**：7 条真图用例（各带「改前 vs 改后」对比）
+— `tests/test_version_chain_readers.py`（全量子图 / 实体详情 / 锚点兜底 / 文档子图 /
+考勤异常清单 + 归因）；`agents.py` 检索接线由既有 `test_graph_and_agent_routes.py`
+的 smoke 路径守着（`db` 已穿透到 `fetch_all_subgraph` / `fetch_document_subgraph`）。
+
+**仍然存在的边界**（别把「7 条已切」读成「读侧无限制」）：
+
+1. **跨版本边仍不连**（P5H-6）：物理上不存在的边，视野再宽也串不起来 —— 属下面
+   的指针 5（id 级图遍历）作业面；
+2. `agents.py` 的**证据片段**读取（`fetch_evidence_chunks`）**仍未纳入**本批：
+   它不在本表 7 条之内，免得一把梭进来把评审面摊大 ⇒ 登记为下一批（P6-W）；
+3. `as_of` 排序口径 DB / Py 两侧不一致（P6-U 登记 X-1，或小批 P6-V1）——本批未动。
 
 其它登记项：
 
