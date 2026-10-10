@@ -255,7 +255,10 @@ $ uv run python scripts/install_acceptance.py
 ## 7. 下一批指针
 
 → [`new-session-prompt.md`](./new-session-prompt.md)（**P6-X = 纯人工批次，已改写为「人做主体」模式**）
-→ **开工前先读本文 §8**：交接文件的四处坐标已更正，且「第二台机器」已在本批收口后铺好。
+→ **开工前先读本文 §8**：交接文件的四处坐标已更正，且「第二台机器」已在本批收口后铺好
+  （**但 §8.2 的结论已被 §9.1 更正**：loopback 不独立，本机做不成完全独立的第二环境）。
+→ **§9 记录了 P6-X 首炼预演**：恢复链路全绿、§6.2 判据 PASS，但挖出
+  **F-P6X-1（按交付物原样安装 ⇒ License 必然失效、业务接口全 403）**，为下一批必修项。
 
 ---
 
@@ -273,6 +276,9 @@ $ uv run python scripts/install_acceptance.py
 | 端口账「5432 不映射（内部）」 | 说的是**交付** compose（确实不映射）；开发的 `graphrag-pg` 却把 `0.0.0.0:5432` 映射到了宿主 | 不影响交付栈；提醒别把两份 compose 混为一谈 |
 
 ### 8.2 「第二台机器」已建好 ⇒ P6-X 不必再停 `graphrag-neo`
+
+> ⚠️ **本节结论已被 §9.1 更正** —— 这台 VM 的内核 / IP / daemon 独立，但 **loopback 与宿主共享**，
+> 宿主占着的端口会"穿"进来。实测证据与最终采用的做法见 §9.1，以 §9.1 为准。
 
 §6.4② 的「独立度」改用**另一台 Linux VM**（宿主已注册的 WSL2 发行版 `Ubuntu-26.04`），
 而不是"同一 daemon 换个项目名"（那样必须与 `graphrag-neo` 抢 `7687`）：
@@ -315,3 +321,130 @@ tar 体积经**三次交叉验证**一致：`496,524,288` 字节（宿主文件�
    `mount -t drvfs D: /mnt/d`，**进程退出即失效**（实测如此）。
 2. **会话断太久 VM 会被回收** —— `wsl -l -v` 显示 `Stopped` 时 docker 仍可能 `active`；
    每批命令起手先 `wsl -d Ubuntu-26.04 -e true` 唤醒，并复核 `systemctl is-active docker`。
+
+---
+
+## 9. 附录二（2026-10-10 晚补记）：P6-X 首炼预演全过程 + 三条发现
+
+> **定性**：本节是**预演（dry-run）**，**不是** §6.4 要求的正式恢复演练留证 ——
+> 留证文件 `docs/drills/restore-drill-<日期>.md` **一个字都没写**，也没有见证者。
+> 目的只在于：把 §6.4 的机器步骤先跑一遍，把隐藏缺口挖出来。
+> **第 9 项至止仍为 SKIP**（§9.5 有验）。AI 未写任何 `docs/drills/` 内容、未代签任何署名。
+
+### 9.1 「第二台机器」的更正：只对了一半 ⇒ 本轮改回同 daemon 独立 compose 项目
+
+§8.2 曾判断 WSL2 `Ubuntu-26.04` 可直接充当第二台机器 —— **该判断只对一半，以此更正为准**：
+
+| 层 | 是否独立 | 证据 |
+|---|---|---|
+| 内核 / IP / Docker daemon | ✅ 独立 | 内核 `6.18.33.2`、独立 IP `172.20.250.191`、daemon `29.1.3` |
+| **loopback（`127.0.0.1` 端口空间）** | ❌ **不独立** | 见下四条证据 |
+
+四条证据：
+
+1. 在该 VM 内 `up -d` 交付栈 ⇒ `failed to bind host port 127.0.0.1:7687/tcp: address already in use`（宿主 `graphrag-neo` 占着）；
+2. VM 内 `ss -ltnp` 里的 `*:7687` / `*:5432` **没有任何 pid / user 字段** ⇒ 不是 VM 内进程创建的 socket；
+3. 直接 bind 实测：`7474 / 8000 / 3000 = BIND_OK`，只有 **`7687 = FAIL address already in use`**
+   ⇒ 规律：**宿主有人 LISTEN 的端口被 relay 镜像进 VM**；
+4. `/etc/wsl.conf` 的 `[network] localhostForwarding` 被这台 WSL 判为 **`Unknown key`**（已废弃），
+   改 `%USERPROFILE%\.wslconfig` 的 `localhostForwarding=false` + `terminate` 之后 relay **照旧存在**。
+
+⇒ 本机不具备「不停图库 + 不改交付 compose」的完全独立环境。**已改回 D1 决策认可的那条路**：
+同一 daemon 上用 `COMPOSE_PROJECT_NAME=graphrag-drill` 隔离项目名 / 数据卷 / `.env`，
+演练窗口内 `docker stop graphrag-neo`（`stop` 非 `rm`，数据不丢）。
+
+> 用户侧代价已如实结清：`.wslconfig` **逐字节还原**（34 字节、无 BOM、CRLF、`localhostForwarding=true`）；
+> 对 VM 内 `/etc/wsl.conf` 那次无效追加已回滚（`diff` 为空、备份已删）；第二台 VM 已 terminate。
+
+### 9.2 恢复链路读数（**全绿**）
+
+| 步 | 工具 | 读数 |
+|---|---|---|
+| 部署 | `docker compose -p graphrag-drill --env-file backend/reports/delivery/.env.drill -f deploy/docker-compose.delivery.yml up -d` | 五服务：postgres `Healthy` → `db-init` **Exited(0)** → neo4j `Healthy` → backend `Healthy` → frontend `healthy` |
+| 独立性 | 项目名 / 数据卷 / `.env` 三者隔离 | 卷 = `graphrag-drill_{neo4j_data,neo4j_logs,pg_data}`；映射 `127.0.0.1:7474/7687/8000/3000`，PG **不映射** |
+| 图库 | `neo4j-admin database load neo4j --from-path=/tmp --overwrite-destination=true`（neo4j 容器内） | `Done: 42 files, 264.7MiB` → **`nodes = 7308`** |
+| PG | `pg_restore -U graphrag -d graphrag --clean --if-exists --no-owner` | **EXIT=0**、无错误行（先以 `app_owner` 跑 ⇒ `permission denied for schema app`，12 句 ACL 被忽略、EXIT=1） |
+| 文件 / License 落盘 | `restore.py --apply`（backend 容器内） | `DONE storage`（2 个成员 → `/app/storage`）、`DONE license`（→ `/app/deploy/license/app.lic`） |
+| **§6.2 版本一致性** | `restore.py`（backend 容器内，**不带 `--apply`**） | **PASS `[pg_graph_consistent]`**：PG active 版本 = Neo4j 该版本节点存在 = `attendance-demo-v1`；`EXIT=0` |
+
+对照：恢复**前**同一命令返回 `[no_active_version]`（新空环境无版本可错位），脚本自己注明
+「本条**未做任何一致性验证**」⇒ 恢复后的那条 PASS 才是真判据。
+
+### 9.3 冒烟六条结果
+
+| # | 项 | 结果 |
+|---|---|---|
+| 1 | 服务起 | ✅ 五容器 healthy，端口按交付 compose 映射 |
+| 2 | 健康检查 | ✅ `GET /api/v1/health` → **200**；frontend → **200** |
+| 3 | License 正常 | ❌ **FAIL** —— `has_license=false` / `code=LICENSE_INVALID`（根因见 F-P6X-1） |
+| 4 | 抽 1 条文档可查 | ⛔ **未跑** —— `GET /api/v1/documents` → **403 LICENSE_INVALID**（被 G-23 拦） |
+| 5 | 抽 1 次问答有引用 | ⛔ 未跑（同上，需先修好 License） |
+| 6 | 跨租户隔离仍生效 | ⛔ 未跑（同上，需两个 org + License 放行） |
+
+第 4–6 条的补跑条件：先把 `LICENSE_PUBLIC_KEY` 注入容器并保证 License 在该环境有效（见 F-P6X-1）。
+
+### 9.4 三条发现（下一批必修 / 必知）
+
+**F-P6X-1（必修缺口）：按交付物原样安装 ⇒ License 必然失效，业务接口全 403**
+
+四条互证：
+
+1. 交付 compose 的 `environment:` 白名单里**没有** `LICENSE_PUBLIC_KEY`；
+2. `deploy/.env.example`（现场安装模板）**一行 LICENSE 都没有**；
+3. compose 语义：`--env-file` 只提供**插值变量**，不会自动注入容器
+   ⇒ 客户就算自己在 `.env` 填了公钥也进不去容器；
+4. 实证：容器内 `env | grep -i license` 为**空**；
+   backend 日志 `app.services.license.provider:_verify:192 - license_public_key_missing`。
+
+而 `app/core/config.py:56` 写死「`license_public_key` 留空 = 一律验签失败」。
+（演练中把公钥加进 `.env.drill` 后依旧无效：`restart` 不重读 `--env-file`，须 `up -d`；
+而即便重建，该键也不在容器的 `environment:` 白名单里 ⇒ 终究没进容器。）
+
+**正面的一点**：G-23「缺 License 就阻断请求」在目标环境确实咬住了（403 而非放行）⇒ 护栏本身有效。
+
+**F-P6X-2（流程限制）：`restore.py` 的 PG 恢复分支在目标容器内跑不通**
+
+三条要求逐级暴露：`--apply --target-db graphrag` ⇒ 还要 `--pg-dsn`（须 BYPASSRLS 角色）
+⇒ 还要 `--pg-container`（报「PATH 中无 pg_restore」）。而 backend 容器内既无 `pg_restore`、
+**也无 docker CLI** ⇒ `--pg-container` 那条只能在有 docker CLI 的宿主机跑；宿主机跑又会把
+storage / license 按 `settings` 路径写到**开发机**上。
+⇒ 本轮 PG 最终由官方 `pg_restore` 完成，**`restore.py` 的 PG 分支未被覆盖**。
+
+**F-P6X-3（操作陷阱）：图库 load 之后数据库停在 offline**
+
+`neo4j-admin database load` 成功后，`neo4j stop` / `neo4j start` 会误报 `already running (pid:7)`，
+且 Community 版**不支持** `START DATABASE`（属 enterprise/cluster 语法）；
+唯一有效动作是 `docker compose restart neo4j`（之后 `nodes=7308` 才可读）。
+⇒ 交付 README 的「图库恢复」步骤需要把这一步写进去。
+
+### 9.5 第 9 项仍为 SKIP（没有伪装成 PASS）
+
+演练后复跑同一条命令：
+
+```
+汇总: PASS 1 / SKIP 9 / FAIL 0
+Test-Path ../docs/drills  →  False
+```
+
+`install_acceptance.py` 的 `check_9` 判据只认 `docs/drills/restore-drill-*.md` 是否存在（673 行起），
+**它机械上校不了署名真伪**。正因为脚本拦不住，本次**没有**生成一个假留证去换 PASS ——
+那会让第 9 项变成 R-9「恒绿即失效」的同型病。
+
+### 9.6 环境已完全复原
+
+| 项 | 读数 |
+|---|---|
+| drill 容器 / 卷 / `.env.drill` | **0 / 0 / 已删** |
+| `graphrag-neo` | `Up`，`0.0.0.0:7687->7687`（卷未删，`stop` 非 `rm`） |
+| `graphrag-pg` | `Up 34 hours`（全程未动） |
+| `git status --short` | 无新增（`.specstory/` `.vscode/` `delivery-kit/` 等未跟踪项演练前就在） |
+
+### 9.7 留给下一批的四件事
+
+1. **定死 §6.4② 的落地路线**：本机做不成真独立环境 ⇒ 要么接受"演练窗口内停 `graphrag-neo`"，
+   要么等真物理机（见 §9.1 四证）；
+2. **修 F-P6X-1**（交付 compose 的 `environment:` + `deploy/.env.example` 补 LICENSE 说明）
+   —— 触 §3 Non-goals 第 3 条，须**单开批次**；
+3. **把 F-P6X-3 的 `restart neo4j` 步骤补进交付 README**；
+4. **见证者仍缺位** —— §6.4③ 要求执行人 ≠ 见证者且共同署名；本次已明确拒绝
+   「由 AI 生成模拟见证者」的做法，宁可留 SKIP 也不产假留证。
