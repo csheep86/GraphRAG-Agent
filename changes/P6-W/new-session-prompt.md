@@ -48,10 +48,11 @@
 |---|---|---|
 | **M1** | 现有 compose 的构建形态 | **3 个服务带 `build:`**：`db-init:97`、`backend:120`、`frontend:178`；三者**均已声明固定 `image:`**（`graphrag-agent/backend:1.6.0` ×2、`graphrag-agent/frontend:1.6.0`）；`neo4j:5.26-community` / `postgres:16-alpine` 无 build |
 | **M2** | CI 有没有镜像作业 | **没有**。`.github/workflows/` 只有 `ci.yml` + `.gitkeep`；jobs = `backend / frontend / contract / ci-summary`，全部只做 lint / test，**无 build / push / save** |
-| **M3** | 镜像体积（决定离线包能否进 artifact） | `graphrag-agent/backend:1.6.0` **782MB**；前端 `graphrag-agent-frontend:latest` **1.14GB** ⇒ 打包后 **`docker save` 约 1.9GB** |
+| **M3** | 镜像**真实**占多少（见下：结论已**更正过一次**，别用 `docker images` 的读数） | **实测 `docker save` 产物**：`graphrag-agent/backend:1.6.0` = **163,941,376 B ≈ 156 MB**；前端 `graphrag-agent-frontend:latest` = **314,055,168 B ≈ 300 MB** ⇒ **两个合计 ≈ 456 MB**。再 gzip 压几乎压不动（`backend 155.3 MB` / `frontend 298.9 MB`，因为层内已是压缩包） |
 | **M4** | **F-P6D1b-1（新发现）** | 本机**根本没有 `graphrag-agent/frontend:1.6.0`** —— 只有 `graphrag-agent-frontend:latest`（**连字符**，与 compose 要的**斜杠命名**不是同一个名字，且 tag 是 `latest`）；另有游离的 `graphrag-agent-backend:latest`（705MB）⇒ **前端镜像从未按 compose 声明的名 / tag 构建过一次**。清理与否由你裁决，**本批不许依赖它们** |
 | **M5** | 构建上下文约束 | 仓库根 `.dockerignore` **存在**；backend 的 `context: ..`（**仓库根**）+ `dockerfile: backend/Dockerfile`（`deploy/docker-compose.yml:38-39`，为 COPY 根目录 `plugins/`，见 ADR-0007 §3.1）；frontend `context: ../frontend` |
 | **M6** | `deploy/variants/` | 只有 `baseline.yaml` / `internal-demo.yaml`；grep `build:|image:|services:|extends|include` **零命中** ⇒ 是**参数片段**而非 compose，本批**不碰**（结论来自 grep，动手前请复核） |
+| **M7** | GHCR 配额能否查实 | ⚠️ **查不到，别猜**：① `gh api user --jq .plan.name` 返回**空**；② `gh api "user/packages?package_type=container"` ⇒ **403 `You need at least read:packages scope`**（本机 token 没这 scope）；③ `gh api user/settings/billing/packages` ⇒ **404**。⇒ 配额只能由**人**在 GitHub 后台确认，**AI 不得写"还剩多少"** |
 
 ---
 
@@ -120,13 +121,14 @@
 
 | # | 决策 | 建议 |
 |---|---|---|
-| **Y1** | **A / B 二选一**（§2） | **建议 A**：新增交付 compose，零护栏改动 |
-| **Y2** | 交付通道：**registry / 离线包 / 两者** | **建议两者都留命令，但只让 registry 上 CI**：GHCR 公开包免费（见 §1.2 第 3 条：`isPrivate=false`）；离线包 `docker save` 约 **1.9GB**（M3）**不适合进 Actions artifact**（免费额度 500MB 存储）⇒ 落到本地脚本 `--save`，CI 里**只 push registry** |
+| **Y1** ✅ **已裁决** | **A / B 二选一**（§2） | **走 A**：保留现有 compose 作开发用，**新增交付 compose**（无 `build:`），`inspect_d1b` 指向交付文件。**不许动 G-19 的识别口径** |
+| **Y2** ✅ **已裁决 + 一处更正** | 交付通道：**registry / 离线包 / 两者** | **主通道 = 离线包**（`docker save` → tar **≈ 456 MB**，M3），次通道 = **私有** registry。原因：① 私有才满足"防止被拉"；② 我的初版提示词曾用 `docker images` 的展开大小估成 **1.9GB** —— **那个数错了**（详见 §11），真实 save 产物只有 456 MB；③ 即便如此，456 MB 也不适合进 Actions artifact（免费 plan 存储额度 500 MB，且多版本必爆）⇒ **`--save` 留成本地脚本产出，CI 里不传 tar** |
 | **Y3** | CI 触发条件 | **建议 `push: tags: ['v*']`**（只对发版跑）＋ 保留 `workflow_dispatch` 供手工；**不许**挂到 PR 上（会烧 CI 分钟） |
-| **Y4** | 镜像命名 | 自研统一 `ghcr.io/<owner>/graphrag-agent/{backend,frontend}:<app_version>`；**tag 一律等于 `app_version`，不许出现 `latest`**（沿用 D-N） | 	
+| **Y4** ✅ **已裁决** | 镜像命名 + **可见性** | 自研统一 `<registry>/graphrag-agent/{backend,frontend}:<app_version>`；tag 一律 == `app_version`（不许 `latest`，沿用 D-N）；**包必须 PRIVATE —— 用户明令：不允许外人拉到镜像**。⇒ 推上去之后**必须建 `visibility: private`**（或先在 GHCR UI 建同名私有包），**推完立刻复查** `visibility` 字段，**不许只推不管** |
 | **Y5** | 前端镜像怎么处理 | 现有 `frontend/Dockerfile` + `build.args`（`NEXT_PUBLIC_USE_MOCK=false` 等）；构建时**必须带同样的 ARG**（漏了就是 R18 红线：容器化前端静默走 Mock） |
 | **Y6** | `db-init` 要不要单独推 | 它与 `backend` 共用**同一份镜像**（锚点 `&backend-build` + `image: graphrag-agent/backend:1.6.0`），只是 `command:` 不同 ⇒ **不需要第二个镜像**，交付 compose 里保留同一 image + 同样的 `command` |
 | **Y7** | 第 9 项何时翻绿 | **只有 P6-X 能翻**（要出现 `docs/drills/restore-drill-*.md`）。本批把它 SKIP 的**原因从"D-1b 缺失"改成"演练未做"**即为成功，**不许直接翻成 PASS** |
+| **Y8** ⚠️ **开工前必须钉死** | **私有 registry 用哪一家 + 配额够不够** | 三个选项，各自后果见 §10 第 4 条。**在动手写代码之前必须先有答案**，否则会出现" workflow 写好了、第一次 push 因为配额不足 403 失败"。**在用户确认前，不许自己挑一个开推** |
 
 ---
 
@@ -166,9 +168,9 @@ uv run ruff check . && uv run ruff format --check .
 
 ## 8. 验收判据（**每条都要能贴机器输出**）
 
-1. **交付 compose 存在且合规**（若选 A）：① 全服务**无 `build:`**；② 自研 `image:` tag == `app_version`（1.6.0）；③ 第三方 tag 固定且**非 `latest`**；④ 用 yaml 解析后逐服务断言，**不许用 grep 数 `build:` 字样**（注释里全是这个词）。
+1. **交付 compose 存在且合规**（**Y1 已裁决走 A**）：① 全服务**无 `build:`**；② 自研 `image:` tag == `app_version`（1.6.0）；③ 第三方 tag 固定且**非 `latest`**；④ 用 yaml 解析后逐服务断言，**不许用 grep 数 `build:` 字样**（注释里全是这个词）；⑤ 开发用的 `deploy/docker-compose.yml` **保持原样**（`build:` 留住，G-19 才有的吃）。
 2. **产出侧真的能跑**：⑤ `scripts/build_delivery_images.py --dry-run`（或等价）能打印出它将要执行的**完整命令**（含 `--build-arg NEXT_PUBLIC_USE_MOCK=false`）；⑥ `--push` / `--save` 两条分支各自可 `--dry-run`。
-3. **CI 侧**：⑦ 新工作流仅在 `push: tags: ['v*']` / `workflow_dispatch` 触发（**用 yaml 断言 `on:` 段**，不许口述）；⑧ 有真实的 build + push registry 步骤。
+3. **CI 侧**（**取决于 Y8 的答案**）：⑦ 新工作流仅在 `push: tags: ['v*']` / `workflow_dispatch` 触发（**用 yaml 断言 `on:` 段**，不许口述）；⑧ 有真实的 build + push registry 步骤，**且目标 registry 是 Y8 选定的那个**、**visibility 明写 private**；⑨ 若 Y8 选 "①私有 GHCR"，还须配套**保留策略**（删旧 untagged digest / 只留最近 N 个版本），并在 integration-log 里写清"配额爆了的表现是什么"。
 4. **第 9 项读数变了**（本项目-specific 的闭环）：⑨ 跑 `install_acceptance.py` 第 9 项，SKIP 的**原因不再是"D-1b 未落地"**；⑩ 但**仍必须是 SKIP**（留证还没出现） —— **翻成 PASS 说明有东西伪造了**。
 5. **护栏**：⑪ `pytest` **不降**（CI 口径 ≥ 1234 passed）；⑫ G-19 两条**仍然绿**；⑬ 新增的交付 compose 护栏要有**反向用例**（把 `build:` 加回去 / 把 tag 改 `latest` ⇒ 必须 FAIL）。
 6. **回登**：`changes/P6-D1b/integration-log.md` + `docs/deployment-spec.md` §12 的 D-1b 行（⏳ → 新状态，附真实产出物坐标）+ `docs/acceptance-traceability-matrix.md` 对应行。
@@ -188,8 +190,17 @@ uv run ruff check . && uv run ruff format --check .
 
 1. **文档 / spec 与现实不符**，且要停下来先裁决才能继续（例：§6.4① 的"独立环境"判据在本环境无法完全满足）；
 2. 要改的东西与 **X-5 / P6-V3 成果 / ADR-0004 §2.1 接缝登记集合** 相交；
-3. **要不要砍功能 / 放宽标准**（选 Y2 时要不要索性放弃离线包只留 registry；或为省事把 `build:` 留在交付 compose 里）—— **一律先升级，AI 不得自己放宽**；
-4. **发现了新伤口**：选 registry 通道前请确认 —— **本仓库是 PUBLIC**，推到 GHCR 的镜像默认**任何人可拉**（公开包）。若这件产品不该让人拉到完整镜像，**这条必须先问**，不要自作主张开 private 包（会撞存储额度）。
+3. **要不要砍功能 / 放宽标准**（要不要索性放弃离线包只留 registry；或为省事把 `build:` 留在交付 compose 里）—— **一律先升级，AI 不得自己放宽**；
+4. ✅ **已裁决（Y4）**：**不许用公开 GHCR**，包必须 **PRIVATE**（用户：防止仓库被人拉）。
+   ⚠️ **但由此派生一条未决的硬约束 —— Y8 必须先问**：
+
+   | 选项 | 说明 | 风险 |
+   |---|---|---|
+   | ① **私有 GHCR**（`ghcr.io/csheep86/*`，visibility=private） | 最省事，Actions 的 `GITHUB_TOKEN` 直接能推 | GitHub **Free 计划 GHCR 存储额度仅 500 MB**（公开包才免费无限）。而实测两份镜像 **≈ 456 MB**（M3）⇒ **只够放一个版本；每推一次新版、旧层仍在，必爆**。且本机 `gh` **查不到配额**（M7：403 / 404），只能由**人**在后台核准额度后再定 |
+   | ② **升级 plan / 换付费档**（Pro 2 GB / Team 50 GB） | 同上还能多版本共存 | 要花钱 ⇒ 属用户裁决 |
+   | ③ **自建 registry**（Harbor / Registry:2）或直接用**离线包**当唯一主通道 | 完全自主可控，天然满足"防被拉"，且不占 GitHub 额度 | 需要一台服务器 / NAS；离线包则要人工传 456 MB |
+
+   > **AI 的义务**：把这三条摆给用户，**不得自己挑一条开推**。若选 ①，必须在 workflow 里配套**保留策略**（如只保留最近 1 个 tag 的版本，删旧 untagged digest），并写清"配额爆了会怎样"。
 
 ---
 
@@ -198,7 +209,12 @@ uv run ruff check . && uv run ruff format --check .
 - 不许因为"加了一个 workflow 文件"就宣称 D-1b 完成 —— **没真的 push 成功一次镜像，就是没完成**；没 push 成就明写「未推送」。
 - 不许因为"本机 build 过镜像"就宣称可用 —— M4 已经证明**前端从未按 compose 声明的名 / tag 构建过**。
 - 不许把第 9 项改成 PASS —— 它归 **P6-X**（双人 + 留证），本批只能改 SKIP 的**理由**。
-- 不许把 1.9GB 的 tar 传 Actions artifact —— 免费额度 500MB 存储，会 OOM 或烧额度。
+- 不许把 tar 传 Actions artifact —— 实测 **≈ 456 MB**（M3），加上历史版本会撞免费存储额度。
+- **不许再用 `docker images` 的读数当镜像体积** —— 那是展开大小（backend 782MB / frontend 1.14GB），
+  registry 与实际传输的是 `docker save` 的层产物（**156MB / 300MB**）。本文件的初版就在这里栽过
+  一次（估成 1.9GB），**已更正**；以后凡谈体积一律 `docker save` 实测。
+- 不许因为"token 能推"就宣称合规 —— **推完必须复查包是 private**（Y4）。
+- **不许写"还剩多少配额"** —— M7 已证明本机查不到（403 / 404），那是**人**在后台看的东西。
 - 不许因为"加了发布凭证"就顺手把 Secrets 写进工作流文件（一律 `${{ secrets.* }}` 引用）。
 
 ---
