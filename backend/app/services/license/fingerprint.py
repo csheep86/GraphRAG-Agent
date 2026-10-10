@@ -14,6 +14,14 @@
 ⇒ 本实现只能做**全等比较**：断口多云 massacre 的实时容忍度**当前无法落地**，
 只能靠重新签发 + ``LICENSE_FP_OVERRIDE`` 兜底（ADR R-L1 的缓解路径之一）。
 该缺口不由此批声称解决。
+
+⚠️ **容器形态（F-P6Y-2 / F-P6Y-3，2026-10-10 实测）**：容器内 ``/etc/machine-id``
+与 ``product_uuid`` 通常**都取不到**，于是 MAC 一旦被无条件计入，组件集合就只剩
+容器网卡 MAC —— 而容器每次重建都会换新 MAC ⇒ 指纹变 ⇒ License 失效（客户表现为
+「每次 `docker compose up -d` 之后 License 都要重签」）。
+⇒ 因此 ``collect_components()`` **严格按上面第 1 条的口径**实现：
+**machine-id 取到就不再回落 MAC**；交付 compose 负责只读挂载宿主的 ``/etc/machine-id``。
+这样指纹锚定的是**宿主机**，而不是那个随时会被重建的容器 —— 与「绑机器」的原意一致。
 """
 
 from __future__ import annotations
@@ -43,10 +51,17 @@ def collect_components() -> tuple[str, ...]:
     machine_id = _read_machine_id()
     if machine_id:
         components.append(f"machine-id:{machine_id}")
-
-    mac = _primary_mac()
-    if mac:
-        components.append(f"mac:{mac}")
+    else:
+        # ADR §2.1 原文：MAC 是「machine-id 取不到」时的**回落**，不是并列项。
+        #
+        # ⚠️ 旧实现无条件把 MAC 计入，后果在**容器形态**下被放大（F-P6Y-2 / F-P6Y-3）：
+        # 容器内 `/etc/machine-id` 与 `product_uuid` 通常都取不到，于是组件集合
+        # 只剩容器网卡 MAC —— 而容器每次重建都会换新 MAC ⇒ 指纹变 ⇒ License 失效。
+        # 按 ADR 原文改成「取不到才回落」之后，只要容器能读到**宿主**的
+        # machine-id（交付 compose 只读挂载），MAC 自动不参与 ⇒ 指纹=宿主机标识。
+        mac = _primary_mac()
+        if mac:
+            components.append(f"mac:{mac}")
 
     board = _stable_board_or_cpu()
     if board:

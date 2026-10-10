@@ -126,6 +126,22 @@ services:
       CORS_ALLOW_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000"]'
       # §3 生产默认值：私域禁外发，生产不得为 false
       PRIVATE_DEPLOY_ENABLED: "true"
+      # 【F-P6X-1】Ed25519 验签公钥 —— **必须经本白名单送进容器**：
+      # compose 的 `--env-file` **只做插值、不会自动注入容器**，光在 `.env` 里
+      # 写还不够（这是 F-P6X-1 最隐蔽的一半）。
+      # 写成**必填插值**：缺失即解析阶段报错，绝不允许退化成"静默验签失败"
+      # —— 那正是 F-P6X-1 的症状：`health` 照常 200，业务接口却全 403。
+      LICENSE_PUBLIC_KEY: ${LICENSE_PUBLIC_KEY:?LICENSE_PUBLIC_KEY 必填，见 .env.example}
+    volumes:
+      # 【F-P6Y-2 / F-P6Y-3】把**宿主**的 machine-id **只读**挂进容器。
+      # 容器内 `/etc/machine-id` 与 `product_uuid` 都取不到 ⇒ 指纹会退化成
+      # **容器网卡 MAC**，而容器每次重建都换新 MAC ⇒ License 失效（表现：
+      # 客户每次 `up -d` 之后都要重新签发 License）。
+      # 挂上之后 machine-id 取得到 ⇒ 按 ADR §2.1 口径 MAC 不再参与 ⇒
+      # 指纹锚定**宿主机**而非容器，重建容器不再变。
+      # ⚠️ 只读（`:ro`）：绝不写回宿主。宿主若无此文件，Docker 会**建出目录**，
+      #    那种情况下 machine-id 取不到，指纹回落 MAC（等价不挂，见 README）。
+      - /etc/machine-id:/etc/machine-id:ro
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

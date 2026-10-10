@@ -186,14 +186,49 @@ docker compose -p graphrag-drill logs backend | grep -i "fingerprint\|public_key
 
 ---
 
-## 4. 任务拆分（初稿，**待 Y2 / Y3 拍板后细化**）
+## 4. 任务拆分与进度（2026-10-10 更新）
 
-1. **T1（Y-b 先手）**：在 drill 环境实跑 §2.2，把失败码区分开 → 回填本文 §0.1 与 §2.1 结论。
-2. **T2（Y-a）**：`deploy/docker-compose.delivery.yml` 的 `backend.environment` 增补 `LICENSE_PUBLIC_KEY`，
-   `deploy/.env.example` 增补对应占位 + 一句话用途说明。
-3. **T3（Y3 落地）**：按 §2.1 选定的候选，把结论写进 `docs/deployment-spec.md` §6.1 / §6.4 的对应条款。
-4. **T4（Y-c）**：交付 README 补图库恢复的 `restart neo4j` 步骤。
-5. **T5（回归）**：跑 J6 / J7，把输出贴进本批 `integration-log.md`。
+| # | 任务 | 状态 |
+|---|---|---|
+| **T1** | drill 环境实跑 §2.2，区分失败码 | ✅ **已完成** ⇒ `LICENSE_FINGERPRINT_MISMATCH`（F-P6Y-1 成立），并挖出 F-P6Y-2 / F-P6Y-3 |
+| **T2** | Y-a：交付 compose `backend.environment` 增补 `LICENSE_PUBLIC_KEY` + `deploy/.env.example` 补占位说明 | ✅ **已完成**（必填插值 `${LICENSE_PUBLIC_KEY:?…}`，缺键即解析阶段报错） |
+| **T3** | Y-d：实现对齐 ADR §2.1（machine-id 取到则 MAC 不参与）+ 交付 compose 只读挂 `/etc/machine-id` | ✅ **已完成**（`fingerprint.py` 改 + compose 挂载 + 新增 4 条护栏用例） |
+| **T4** | Y3 落地：把结论写进 `docs/deployment-spec.md` §6.1 / §6.4 | ⏳ 未做 |
+| **T5** | Y-c：交付 README 补「图库 load 后必须 `restart neo4j`」 | ⏳ 未做 |
+| **T6** | 回归：跑 J6 / J7，输出贴进本批 `integration-log.md` | ⏳ 未做（尚未建 `integration-log.md`） |
+| **T7** 🆕 | **重新出交付镜像**（`build_delivery_images.py`） | ⏳ **未做且阻塞交付** —— 见 §6.3 |
+
+---
+
+## 6. 实现记录（2026-10-10）
+
+### 6.1 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `backend/app/services/license/fingerprint.py` | `collect_components()`：machine-id **取到**⇒ 不再回落 MAC（对齐 ADR §2.1 原文）；docstring 补容器形态说明 |
+| `backend/tests/test_license_fingerprint.py`（新增） | 4 条护栏：MAC 被排除 / **换 MAC 不改指纹** / MAC 仅在回落时使用 / 主板标识照旧参与 |
+| `deploy/docker-compose.delivery.yml` | `backend` 增补 `LICENSE_PUBLIC_KEY: ${LICENSE_PUBLIC_KEY:?…}`（必填插值）+ `volumes: /etc/machine-id:/etc/machine-id:ro` |
+| `deploy/.env.example` | 必配由「四个」改「五个」，新增 `LICENSE_PUBLIC_KEY` 及整段说明（含 F-P6X-1 的三条坑） |
+
+### 6.2 实测判据
+
+| 判据 | 读数 |
+|---|---|
+| `compose config` 可见公钥与挂载 | `LICENSE_PUBLIC_KEY: …` / `source: /etc/machine-id` ✅ |
+| **缺键时是否报错** | `error while interpolating … required variable LICENSE_PUBLIC_KEY is missing a value` ✅（不再静默） |
+| 容器内（挂载 + 新代码） | `components = {'machine-id': '208c9ebe…'}`，`fp = 4d0e04e04f1d098c11a6fcbec1eabd1b` ✅ MAC 不再参与 |
+| 交叉印证 | 该 fp 与 §0.1「仅 machine-id 参与计算」的模拟值**逐字一致** ✅ |
+| 对照（旧镜像、不挂载） | `components = {'mac': '22:82:83:ff:0a:17'}` ⇒ 只剩 MAC（缺陷原状） |
+| pytest 回归 | `tests/test_license_fingerprint.py` **4 passed**；`-k "fingerprint or license"` **6 passed** ✅ |
+
+### 6.3 ⚠️ 阻塞项：镜像尚未重出
+
+交付 compose 用的是 `graphrag-agent/backend:1.6.0` **镜像**，而上面的代码改动只在**源码**里 ⇒
+**当前镜像不含修复**。本轮容器内验证是用 `docker cp` 把补丁打进运行中的容器做的（仅作验证手段）。
+
+⇒ **必须重出交付镜像 + 离线包**（`build_delivery_images.py`）才能让客户拿到修复。
+这触「不重做出包」那条纪律，需**单独立项或明确批准**后才动。
 
 ---
 
