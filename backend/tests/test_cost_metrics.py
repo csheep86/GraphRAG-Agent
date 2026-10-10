@@ -166,6 +166,16 @@ def test_dashboard_endpoint_returns_real_rows(
     today = datetime.now(UTC).date()
     try:
         with session_scope(org_id=org_id) as db:
+            # ⚠️ **本租户当日必须先清空**（P6-V3 起因起的脆弱性）：自本批起
+            # ``incremental_cost`` / ``full_rebuild_cost`` 有了真实写入方，而真图用例
+            # （``test_kg_incremental_rebuild.py``）也跑在 default_org 上 ⇒ 区间里可能
+            # 已经有别人建的行，"无增量 ⇒ 0.0"这条断言就不再取决于本用例，
+            # 而取决于**执行顺序**。⇒ 先清当日，再落自己的那一行。
+            db.execute(
+                delete(CostMetric).where(
+                    CostMetric.org_id == org_id, CostMetric.metric_date == today
+                )
+            )
             db.add(
                 CostMetric(
                     org_id=org_id,
