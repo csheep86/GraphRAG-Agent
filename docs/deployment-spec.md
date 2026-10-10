@@ -19,7 +19,7 @@
 
 | # | 缺口 | 实测证据 | 后果 |
 |---|---|---|---|
-| **D-1** | **无容器化产物**：全仓无 `Dockerfile`、无 `docker-compose.yml` | `search_file *ockerfile*` = 0 命中 | 客户现场只能手工装 Python / Node / Neo4j / PG，**不可交付**。🔀 **部分兑现（2026-09-30，Sprint 10.3）**：`backend/Dockerfile` + `frontend/Dockerfile` + `deploy/docker-compose.yml` 就位，**三服务 `up` 实测全 `healthy`**（`/api/v1/health`=200、前端 200）；**离线镜像包未做**（⏳ **P1**，DR-A6）；**PG 位留空 ⇒ ✅ P1-B 已就位**（彼时后端连 SQLite，**P1 切 PG** 时补——不起没人连的空容器冒充"全套"） |
+| **D-1** | **无容器化产物**：全仓无 `Dockerfile`、无 `docker-compose.yml` | `search_file *ockerfile*` = 0 命中 | 客户现场只能手工装 Python / Node / Neo4j / PG，**不可交付**。🔀 **部分兑现（2026-09-30，Sprint 10.3）**：`backend/Dockerfile` + `frontend/Dockerfile` + `deploy/docker-compose.yml` 就位，**三服务 `up` 实测全 `healthy`**（`/api/v1/health`=200、前端 200）；**离线镜像包 🟡 部分（2026-10-10 P6-D1b）**：交付 compose + 出包脚本 + **真实 tar 已产出**（496,524,288 字节）+ `delivery-manifest.json` 校验通过；**registry 分支按裁决 Y8 不做**；**尚无独立环境完整 `up` 演练**（归 P6-X）；**PG 位留空 ⇒ ✅ P1-B 已就位**（彼时后端连 SQLite，**P1 切 PG** 时补——不起没人连的空容器冒充"全套"） |
 | **D-2** | **无数据库迁移**：全仓无 Alembic，建表靠启动时 `create_all` | `backend/app/db/models.py:17`「**无 Alembic**：建表靠启动时的 `create_all`」；`main.py:33` 的"Sprint 3 接入 Alembic 后移除"注释**至今未兑现** | `create_all` **只建新表、不 ALTER 旧表** ⇒ 客户现场升级后旧库缺列，**运行时才炸**，且无法回滚 |
 
 > 这两条是 PRD §1.2「大型企业私域部署优先」与 H6「数据不出内网」的**兑现前提**。在 D-1 / D-2 补齐前，**对外不得承诺"可私有化交付"**。
@@ -127,6 +127,19 @@
 ```
 
 > **禁止**现场 `pip install` / `npm install`：依赖必须 baked 进镜像（D-1 补齐方式）。
+
+> **两条到货路径**（2026-10-10 P6-D1b；裁决 **Y8 = 离线包** / **Y9 = 只打自研**）：
+> ① **联网现场（默认）**：只拷**自研**包（实测 496,524,288 字节 ≈ 474 MB）
+>   → `docker load -i <包>.tar` → `compose up` 时第三方两个 tag（`neo4j:5.26-community` /
+>   `postgres:16-alpine`，**已固定非 latest**）由现场自行拉取；
+> ② **断网现场**：出包时加 `--include-third-party`（四个全打，≈919 MB），**U 盘拷**上服务器。
+>
+> 交付包的**产出方**是 `backend/scripts/build_delivery_images.py`（`--dry-run` 先打完整命令、
+> `--verify` 重算 SHA-256 + 核 image id + 与交付 compose **逐字节比对** tag），配套产出
+> `delivery-manifest.json` ⇒ 对应 §4.1 第 6 条「SHA-256 与清单一致」的机器判据。
+> 编排文件用 **`deploy/docker-compose.delivery.yml`**（全服务无 `build:`）——
+> 开发用的 `docker-compose.yml` 保留 `build:` 是**故意**的（本地要从源码构建，且 G-19
+> 第二条靠它识别自研镜像），**不许**拿它当交付物。
 
 ---
 
@@ -396,7 +409,7 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 |---|---|---|
 | 本文档定稿 | 2026-09-27 | ✅ |
 | **D-1a** 容器化：Dockerfile + compose **起全套** | **S10.3** | ✅ **已兑现**（2026-09-30：backend / frontend / Neo4j 三服务 `up` 全 `healthy`；**PG 位留空待 P1 切 PG（DR-B1）**，不凑数）⇒ ✅ **PG 已于 P1-B 就位**（四服务 `up`） |
-| **D-1b** 离线镜像包（`docker save`）/ 私有 registry | **P1**（DR-A6） | ⏳ |
+| **D-1b** 离线镜像包（`docker save`）/ 私有 registry | **P1**（DR-A6） | 🟡 **部分（2026-10-10 P6-D1b）**：**离线包分支已落地**——交付 compose（`deploy/docker-compose.delivery.yml`，全服务无 `build:`）+ 出包脚本（`backend/scripts/build_delivery_images.py`）+ **真实 tar 已产出**（`graphrag-agent-offline-1.6.0.tar`，496,524,288 字节，只打自研）+ `delivery-manifest.json`（SHA-256 / image id / 与交付 compose 逐字节比对）；**registry 分支按裁决 Y8 不做**（不建 GHCR / 不 push）。⚠️ **尚缺**：独立环境的完整 `up + 冒烟`演练 —— 那是 **P6-X**（双人 + 留证），缺它不得宣称"可交付" |
 | **D-2** 数据库迁移（Alembic 引入 + 首版迁移脚本） | **P6**（DR-E1） | 🔀 **基线已完成**（2026-09-28：alembic 主依赖 + 基线迁移 `00f44b912817` 十表 + 等价性测试钉死「加表必写迁移」）；**逐版本可幂等迁移纪律 / PG 实测 / 升级演练归 P6**（DR-E1 纪律 + DR-E3 演练） |
 | 备份 / 恢复脚本 | **P6**（DR-E2） | 🟡 **部分**（2026-10-10 P6-W）：`backup` / `restore` 两条命令 + `backup-manifest.json`（重算 SHA-256）＋ §6.2 一致性（错位 ⇒ 退出码 2）；**完整备份集需停图库（见 §6.1 实现约束）**。**恢复演练 0 次** ⇒ 不得据此宣称可恢复 |
 | 安装验收清单脚本化 | **P6**（DR-E4） | 🟡 **部分**（2026-10-10 P6-W）：`install_acceptance.py` 十项三态机读；本机实测 PASS 3 / SKIP 6 / FAIL 1，见 `changes/P6-W/integration-log.md` §8 |

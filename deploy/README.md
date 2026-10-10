@@ -1,7 +1,13 @@
 # 部署入口（D-1 容器化）
 
 > 规格真源：`docs/deployment-spec.md`。本目录只提供**单机交付的唯一安装入口**（§1.1）。
-> 范围：**Sprint 10.3 = compose 能起全套**。**离线镜像包（§4 `docker save`）属 S11 CP-D1，本批不做**。
+> 范围：**Sprint 10.3 = compose 能起全套**。
+> ✅ **离线镜像包（§4 `docker save`）已于 2026-10-10（P6-D1b）落地** —— 见本文「离线交付」一节。
+>
+> ⚠️ **本目录有两份 compose，别拿错**：
+> `docker-compose.yml` = **开发用**（带 `build:`，从源码起）；
+> `docker-compose.delivery.yml` = **交付用**（**无 `build:`**，只认固定 tag 的镜像）——
+> 客户现场、以及 §6.4 的**独立演练环境**都用这一份。
 
 ## 起停
 
@@ -86,6 +92,40 @@ compose 起的是**全新空 Neo4j + 空 PostgreSQL**，无演示数据；LLM �
 `NEXT_PUBLIC_USE_MOCK` 默认即 `true`（`frontend/src/api/client.ts:25`）⇒ 构建时已在 compose 里置 **`false`**。
 改这个值、或自建镜像时漏传该 build-arg，前端会**静默走 Mock**：看起来能跑、数据全是假的（R18 同类红线）。
 
+## 离线交付（**P6-D1b，2026-10-10**）
+
+**出包（我方）**：
+
+```bash
+cd backend
+uv run python scripts/build_delivery_images.py --dry-run --save   # 先看完整命令（含 --build-arg）
+uv run python scripts/build_delivery_images.py --save              # 构建 + docker save + 写清单
+uv run python scripts/build_delivery_images.py --verify            # 重算 SHA-256 + 核 image id + 比对 tag
+```
+
+产物落在 `backend/reports/delivery/`（已被 gitignore ⇒ **绝不入库**）：
+
+- `graphrag-agent-offline-<版本>.tar` —— **默认只打自研**（backend + frontend，实测 496,524,288 字节）；
+- `delivery-manifest.json` —— tar 的 SHA-256 / 大小 + 每个镜像的 image id。
+
+需要**全离线**（断网）的客户现场：出包时加 `--include-third-party`（把 neo4j / postgres 一并打入，
+≈919 MB），**U 盘拷**上服务器。
+
+**到货（客户现场）**：
+
+```bash
+docker load -i graphrag-agent-offline-<版本>.tar     # 导入自研镜像
+cp .env.example .env                                  # 四个口令都要填
+docker compose -f docker-compose.delivery.yml up -d   # 第三方两个 tag 已固定，联网现场自动拉取
+```
+
+> 交付 compose 的 `name:` 是 `${COMPOSE_PROJECT_NAME:-graphrag-agent}`：
+> 同一台宿主机上要跑**独立**的演练环境时，设 `COMPOSE_PROJECT_NAME=graphrag-drill`
+> 即可隔离项目名与数据卷（§6.4② 要求"独立 compose 项目 + 独立数据卷"）。
+>
+> ⚠️ **未演练**：以上只到"包已产出 + 可解析"。**独立环境的完整 `up` + 冒烟**属 **P6-X**
+> （一人执行、一人见证，`docs/drills/restore-drill-<日期>.md`），缺它不得宣称"可交付"。
+
 ## 与 `deployment-spec.md` 的对应
 
 | 本文 | 规格 |
@@ -93,4 +133,5 @@ compose 起的是**全新空 Neo4j + 空 PostgreSQL**，无演示数据；LLM �
 | `docker-compose.yml` + `.env.example` | §1.1 编排文件（唯一安装入口） |
 | 只绑回环的 7474 / 7687 | §2 注：PG / Neo4j 禁止暴露业务网络 |
 | 依赖 baked、非 root、无 `.env` 入镜像 | §1.2 禁现场编译；§3 密钥禁入镜像 |
-| 缺离线镜像包 / 备份脚本 / 验收脚本化 | §11：均属 S11 |
+| `docker-compose.delivery.yml` + 出包脚本 + tar 清单 | §4 离线安装；§6.4①「从交付物部署（无 `build:`）」；§11 D-1b 行 |
+| 备份 / 恢复脚本、验收脚本化 | §11（P6-W 已部分落地；**演练仍属 P6-X**） |
