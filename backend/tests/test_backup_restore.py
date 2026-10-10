@@ -569,22 +569,65 @@ def test_skipped_entry_is_not_present() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_real_neo4j_probe_distinguishes_existing_and_missing_version() -> None:
+@pytest.fixture
+def real_graph_service(monkeypatch):
+    """把 `GraphService` 指向**真** Neo4j（conftest 默认把所有用例都指向不可达端口）。
+
+    照抄 `tests/test_guardrails_graph.py::graph_service` 的做法 —— 不这么连，
+    pytest 里的 `GraphService` 永远拿不到真图（conftest.py:57-58 刻意把
+    `NEO4J_URI` / `NEO4J_PASSWORD` 中和掉了）。
+    """
+    from app.core.config import get_settings
+    from app.services.graphs import GraphService
+
+    uri, user, password = _real_graph_env()
+    settings = get_settings()
+    monkeypatch.setattr(settings, "neo4j_uri", uri)
+    monkeypatch.setattr(settings, "neo4j_user", user)
+    monkeypatch.setattr(settings, "neo4j_password", password)
+    GraphService.reset()  # 单例里可能缓存着上一个（不可达的）driver
+    try:
+        yield GraphService.instance()
+    finally:
+        GraphService.reset()
+
+
+def test_real_neo4j_probe_distinguishes_existing_and_missing_version(
+    real_graph_service,
+) -> None:
     """适配层**真的去问了图库**：存在的版本 True、不存在的 False。
 
-    若把探针换成恒 True / 恒 False 的桩，`evaluate_version_consistency` 的两个
-    分支会各自恒绿 ⇒ §6.2 从头到尾没验过。本条就是堵它的。
+    若把探针换成恒 True / 恒 False 的桩，`evaluate_version_consistency` 的两个分支
+    会各自恒绿 ⇒ §6.2 从头到尾没验过。本条就是堵它的：两个方向都必须**真打图库**。
+
+    "存在"那一半不从 PG 的 active 版本猜（两个库的种子不同，猜会让本条在 CI 上
+    变成掷骰子）——直接问图库它现在有哪些 `:KgVersion`。
     """
-    _uri, _user, _password = _real_graph_env()
     module = _load("restore", BACKEND_ROOT / "scripts" / "restore.py")
 
     missing_version = "v-p6w-definitely-not-there"
     try:
         assert module.default_neo4j_probe(missing_version) is False
-        existing = module.default_pg_active_probe()
-        if existing is not None:
-            assert module.default_neo4j_probe(str(existing.version)) is True
     except Exception as exc:  # noqa: BLE001 - 连通性即判据
         if os.environ.get("CI"):
             pytest.fail(f"CI 上读不到 Neo4j（缺 §6.2 的交叉校验）: {exc}")
         pytest.skip(f"本机 Neo4j 不可达: {exc}")
+
+    from app.services.graphs import NoActiveKgVersionError
+
+    try:
+        existing = real_graph_service.fetch_active_kg_version()
+    except NoActiveKgVersionError:
+        existing = None
+    if existing is None:
+        if os.environ.get("CI"):
+            pytest.fail(
+                "CI 的图库里连一个 active `:KgVersion` 都没有 ⇒ "
+                "§6.2 的交叉校验在这台机器上无从下手"
+            )
+        pytest.skip("本机图库里没有 active :KgVersion ⇒ 只能验「缺失」那一半")
+
+    version = str(
+        existing["version"] if isinstance(existing, dict) else existing.version
+    )
+    assert module.default_neo4j_probe(version) is True

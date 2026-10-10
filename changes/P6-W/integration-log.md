@@ -71,7 +71,19 @@ uv run python scripts/check_startup_readiness.py        => [OK] 生效 17 / [~~]
 | 时刻 | 结果 |
 |---|---|
 | **改前（本批基线，有图口径三变量已设）** | **1191 passed / 5 skipped** |
-| **改后** | **1235 passed / 6 skipped**（`+44 / +1`，无 FAILED） |
+| **改后（本机口径，未设 `CI=1`）** | **1235 passed / 6 skipped**（`+44 / +1`，无 FAILED） |
+| **改后（CI 口径：设 `CI=1` + 三变量）** | **1236 passed / 5 skipped**（`+45 / +0`，无 FAILED） |
+
+> **两个读数的差别只用一条**：`test_real_neo4j_probe_...` 在那台机器上有没有真图口令。
+>
+> **第一次推 CI 它红了**（run 38025313919，1 failed）——**原因是本批自己的问题，已修**：
+> `conftest.py:57-58` 刻意把 `NEO4J_URI` / `NEO4J_PASSWORD` 中和成不可达端口，
+> 所以 `GraphService` 在 pytest 里**默认连不到真图**；本批原写法直接调
+> `default_neo4j_probe()` ⇒ CI 上抛 `NEO4J_PASSWORD 未配置`。
+> 修法是照抄 `tests/test_guardrails_graph.py::graph_service` 的夹具
+> （monkeypatch settings + `GraphService.reset()`），并把"存在那一半"改成
+> **直接问图库它现在有哪些 `:KgVersion`**（不再从 PG 的 active 版本去猜 —— 两个库种子不同，
+> 猜会让这条在 CI 上变掷骰子）。
 
 > `+1 skipped` = `test_backup_restore.py::test_real_neo4j_probe_...`：本机 `.env` 未写
 > `NEO4J_PASSWORD`（CI 作业有 `NEO4J_PASSWORD: ci-graph-pw-2026`）⇒ 走与

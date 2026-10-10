@@ -119,7 +119,7 @@ uv run python scripts/install_acceptance.py --skip-pytest   # 十项三态，作
 
 | 项 | 数值 |
 |---|---|
-| pytest（有图口径三变量已设） | **1235 passed / 6 skipped**（P6-W 改前 **1191 / 5**；`+44 / +1`，无 FAILED） |
+| pytest（有图口径三变量已设） | **CI 口径（`CI=1`）：1236 passed / 5 skipped**；本机口径：**1235 / 6**。改前基线 **1191 / 5**（无 FAILED） |
 | 护栏 | `[OK] 17 / [~~] 0 / [--] 0` |
 | 接缝 | `ERROR 0 / WARN 0 / OK 12` |
 | OpenAPI | 零 diff |
