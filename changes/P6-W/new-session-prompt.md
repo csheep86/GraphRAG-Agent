@@ -20,7 +20,41 @@
 **起点 = `delivery-plan.md` §9.2 序 **7** 的 P6-X（演练留证）**，或由你裁决改走
 **P6-D1b（先落离线镜像包 / 私有 registry）**。
 
-**§10 第 9 项今天改成 SKIP 时说的理由是这句话**（`scripts/install_acceptance.py` 第 9 项现查现算）：
+### 1.1 执行模式：**人做主体**（**不是 AI 批**，见 `delivery-plan.md` §9.3 第 2 条）
+
+> §9.3 原文：「**演练**：独立环境（固定 tag 镜像）+ **执行者 ≠ 见证者**，留证要标注"内部演练"」
+> ——这一条和「判分」「两条裁决」并列明列 **AI 不得代做**。
+
+| 动作 | 谁做 | 备注 |
+|---|---|---|
+| 准备**独立环境**（独立 compose 项目 / 卷 / 端口 / `.env`）、起停容器、拉或载镜像 | **人** | 见 §6.4②：`docs/deployment-spec.md:196-197` |
+| 执行恢复 / 升级 / 回滚的**命令本身** | **人（执行者）** | AI 可以**在旁**把命令输出搬进 md |
+| 逐条判 §10 十项、**签字**、写下"通过 / 不通过"的结论段 | **人（见证者）** | 执行者 ≠ 见证者 ⇒ `deployment-spec.md:198-199` |
+| 搬运输出、跑现成的 `--check` 类命令、**机械**校验（哈希 / pytest 委托 / 脚本三态读数）、回登文档 | **AI**（本会话） | 只做这四类，**一条都不许多做** |
+
+**AI 硬禁止清单**（写死，不因"反正差不多"而放宽）：
+
+1. ❌ **不得代写演练结论**（"通过 / 不通过"、起因分析、RTO/RPO 读数结论都算）；
+2. ❌ **不得代签 §10 的任何一个 √**，也不得把 `install_acceptance.py` 的 SKIP 事后改写成 PASS；
+3. ❌ **不得自己给自己当见证人** —— 执行者（哪怕是 AI 跑的命令）与见证者必须是**两个不同的人**；
+4. ❌ **不得代填 `correct` 值**（A3 纪律）；
+5. ❌ **不得为了"推进下去"而放宽 §6.4 的三条独立环境判据** —— 放宽一次，整份留证作废；
+6. ✅ **允许**做的只有：搬运输出、跑**既有**命令与脚本、机械比对、回登 `integration-log.md` 与文档状态表。
+
+### 1.2 工量查实（**¥0，2026-10-10 已做，别照搬文档里的乐观口径**）
+
+写提示词之前先把活量摸了一轮，**六条机械结论**：
+
+| # | 查了什么 | 结论（**全是今天的机器读数**） |
+|---|---|---|
+| **M1** | 有没有**可复用**的演练模板 | ❌ **没有**。`docs/drills/` 目录**不存在**；`git log --all --diff-filter=A -- "*drill*"` **零命中**（历史上从未提交过任何 drill 文档）⇒ 第一份 `restore-drill-<日期>.md` 要**从零写**，不能"复制上一版改改"（这是「旧判分表能否复用」的同款结论：**不能**） |
+| **M2** | 现在十项读到什么 | 不带任何参数跑 `install_acceptance.py --skip-pytest`：**`PASS 0 / SKIP 10 / FAIL 0`** ⇒ 十项**一项都没在验**（不是"过了十项里的零项"，是**全没跑到**） |
+| **M3** | 版本号 / 迁移坐标齐不齐 | ✅ **源码坐标齐**：13 个 git tag（`v1.0.0`…`v1.6.0`）+ `backend/migrations/versions/` 下 **14 个迁移脚本**（基线 `00f44b912817` … `a1f7c2b93d04`）。⚠️ **但别外推**：这些都是**源码侧**坐标；§6.4①要的是 **`image: <固定 tag>` 镜像**，而 D-1b 未落地 ⇒ **可交付的镜像 tag 一个都没有** |
+| **M4** | DR-E3 升级演练现在能不能做"原地升级" | ❌ **不能**。`deployment-spec.md:230` 迁移纪律写明「**D-2 未补齐前，升级只允许"全新部署 + 数据导入"，严禁原地升级**」，而 D-2 的"逐版本可幂等迁移纪律 + PG 实测"仍在 P6 ⇒ **升级演练只剩窄口径**（或先补 D-2，那是**另一条审批链**） |
+| **M5** | P6-X 内部还有没有顺序 | ✅ 有。`deployment-spec.md:235` 第 1 步「**备份（§6）+ 校验可恢复 ← 不备份不升级**」⇒ **先 restore-drill，再 upgrade-drill（含回滚）**，不能并行开两份 |
+| **M6** | 恢复后要"跑通 §10 冒烟"，那也要跑全十项吗 | 按 §6.4 第 3 条**只要求六件事**：服务起 → health 200 → License 状态正常 → 抽样 1 条文档可查 → 抽样 1 次问答有引用 → **跨租户隔离仍生效**。其中「跨租户隔离」= §10 第 7 项 ⇒ **必须先在目标环境给 org B 主体授权**（`scripts/seed_dev_rbac.py` 刻意只播默认 org），否则这一步会读到 SKIP 而不是 PASS |
+
+**§10 第 9 项今天显示 SKIP 时说的理由**（`scripts/install_acceptance.py` 第 9 项**现查现算**，不是写死的文案）：
 
 > **顺延 P6-X；且当前因 D-1b 未落地不可执行**：compose 仍带 `build:`（backend, db-init,
 > frontend）⇒ tag 只能本机构建，独立环境拿不到；CI 工作流 / deploy / scripts 下未发现
@@ -30,13 +64,10 @@
 
 1. **P6-W 把能脚本化的都脚本化了，剩下来的卡在同一个前置上** —— `install_acceptance.py`
    十项里唯一不是"目标环境/真 LLM"缺口的就是第 9 项，而它的前置是 **D-1b**。
-2. **D-1b 是"⏳ 只登记不处置，等 P8-Release 对账"的既定项**，2026-10-10 又查实一遍仍未落地 ⇒
-   P6-X 现在开工会在同一堵墙上撞第二次。
-3. **P6-X 是双人环节**（执行者 ≠ 见证者）、且明确写了 **AI 不能单独收口** ⇒ 它不是"继续写代码"，
-   它需要**人**在环路里，所以是新的会话起点而不是本批的尾巴。
-
-> ⚠️ **AI 不得代填 `correct` 值（A3）、不得代做或代收口 P6-X 的演练结果**。
-> AI 在这批只做：搬运、机械校验、跑命令、回登。
+2. **D-1b 是"⏳ 只登记不处置，等 P8-Release 对账"的既定项**，2026-10-10 又机械查实一遍仍未落地
+   （见 M2 / M3）⇒ P6-X 现在开工会在同一堵墙上撞第二次。
+3. **P6-X 是双人环节**（执行者 ≠ 见证者）、且 §9.3 明列 **AI 不得代做** ⇒ 它不是"继续写代码"，
+   它需要**两个不同的人**在环路里，所以是新会话的起点而不是本批的尾巴。
 
 ---
 
@@ -85,8 +116,14 @@ uv run python scripts/install_acceptance.py --skip-pytest   # 十项三态，作
 | 三条命令 | `backend/scripts/backup.py` / `restore.py` / `install_acceptance.py`（各自 `main(argv) -> int`） |
 | 判据用例 | `backend/tests/test_backup_restore.py`（23 条）/ `backend/tests/test_install_acceptance.py`（22 条） |
 | 第 9 项的机械查证 | `scripts/install_acceptance.py::inspect_d1b()` + `check_9()` |
-| D-1b 的状态行 | `docs/deployment-spec.md` §12（缺口表）「**D-1b** 离线镜像包（`docker save`）/ 私有 registry ｜ **P1**（DR-A6） ｜ **⏳**」 —— 本批**没有**把它挪动，仍是 ⏳ |
-| "独立环境"的定义 | `docs/deployment-spec.md` §6.4 引言（三个判据：无 `build:` / 独立卷端口 `.env` / 与其它环境不共享） |
+| D-1b 的状态行 | `docs/deployment-spec.md` §12（缺口表）「**D-1b** 离线镜像包（`docker save`）/ 私有 registry ｜ **P1**（DR-A6） ｜ **⏳**」 —— P6-W **没有**把它挪动，仍是 ⏳ |
+| "独立环境"的定义 | `docs/deployment-spec.md:192-203`（§6.4 引言三条判据）+ **留证命名**（`restore-drill-<日期>.md` / `install-acceptance-<日期>.md`，须标「内部演练，非客户现场验收」） |
+| 恢复后要验的**六件事** | `docs/deployment-spec.md:207`（服务起 → health 200 → License 正常 → 抽样 1 条文档可查 → 抽样 1 次问答有引用 → 跨租户隔离仍生效） |
+| **升级演练的顺序锁** | `docs/deployment-spec.md:235`（第 1 步「备份 + 校验可恢复 ← 不备份不升级」） |
+| **原地升级禁令** | `docs/deployment-spec.md:230`（D-2 未补齐前**严禁原地升级**，只允许"全新部署 + 数据导入"） |
+| AI 不得代做的原文 | `docs/delivery-plan.md:288-292`（§9.3 第 2 条「演练」） |
+| 迁移脚本清单 | **`backend/migrations/versions/`**（注意不是 `alembic/versions`）：14 个脚本，基线 `00f44b912817` … `a1f7c2b93d04`（CostMetrics `stage` 列） |
+| 版本 tag | `git tag`：13 个（`v1.0.0`…`v1.6.0` + `sprint-1-done`）—— **源码 tag，不是镜像 tag**（见 §1.2 M3） |
 | §10 十项表 | `docs/deployment-spec.md` §10 |
 
 ---
@@ -108,7 +145,7 @@ uv run python scripts/install_acceptance.py --skip-pytest   # 十项三态，作
 | DR | 状态 | 说明 |
 |---|---|---|
 | **DR-E2** | 🟡 **部分** | `backup` / `restore` 两条命令 + `backup-manifest.json`（重算 SHA-256）+ §6.2 一致性（错位 ⇒ 退出码 2）。**恢复演练 0 次** |
-| **DR-E4** | 🟡 **部分** | `install_acceptance.py` 十项三态机读；本机实测 **PASS 3 / SKIP 6 / FAIL 1** |
+| **DR-E4** | 🟡 **部分** | `install_acceptance.py` 十项三态机读；带真实参数那趟 **PASS 3 / SKIP 6 / FAIL 1**，**不带参数那趟 PASS 0 / SKIP 10 / FAIL 0**（后者才是"什么都没给"的诚实读数） |
 | 第 8 项 | ✅ 建立在真实产物上 | 见 `integration-log.md` §4.3 / §4.6 |
 | 第 9 项 | **SKIP（顺延 P6-X）** | 由脚本机械查 D-1b 登记，不留白 |
 | X-5 / P6-V3 / P5H-6 | 未动 | 各自有批次 |
@@ -130,16 +167,29 @@ uv run python scripts/install_acceptance.py --skip-pytest   # 十项三态，作
 
 ## 8. 验收判据（**每条都要能贴机器输出**）
 
+> **⚠️ P6-X 的判据由「人」判，AI 只负责把输出搬进 md 并机械复核签名是否齐全。**
+
 1. **先立边界再动手**：新批次必须先写边界文件（`changes/<新批次>/proposal.md`，Non-goals ≥ 8 条）。
-2. **P6-D1b（若走这条）**：① `deploy/docker-compose.yml` 里 backend / frontend / db-init
-   **不再有 `build:`**，只有 `image: <固定 tag>`（非 latest）；② `.github/workflows/` 或
-   `scripts/` 里真的有产出离线包 / push registry 的步骤；③ 用
-   `uv run python scripts/install_acceptance.py` 第 9 项复核 D-1b 那句 SKIP 原因**确实变了**。
-3. **P6-X（若走这条）**：① `docs/drills/restore-drill-*.md` 真实存在并标注「内部演练，
-   非客户现场验收」；② 第 9 项自动翻 PASS；③ **执行者 ≠ 见证者**，两人都签字。
-4. 不论走哪条：`pytest` **不降**（≥ 1235 passed）、五项门禁读数不变。
-5. 回登：`changes/<新批次>/integration-log.md` + `delivery-requirements-and-guardrails.md`
-   （DR-E2 / DR-E4 是否往前挪一格）+ `docs/acceptance-traceability-matrix.md` H14 行。
+2. **P6-D1b（若走这条，AI 可主导）**：① `deploy/docker-compose.yml` 里 backend / frontend /
+   db-init **不再有 `build:`**，只有 `image: <固定 tag>`（非 `latest`）；② `.github/workflows/`
+   或 `scripts/` 里真的有产出离线包 / push registry 的步骤；③ 用
+   `uv run python scripts/install_acceptance.py` 第 9 项复核 D-1b 那句 SKIP 原因**确实变了**
+   （**脚本自己说的才算，不许 AI 口述"我觉得已经可以了"**）。
+3. **P6-X（若走这条，人主导）** —— 四件套：
+   ① **留证文件**：`docs/drills/restore-drill-<日期>.md`（＋ 若做升级演练再加 `upgrade-drill-<日期>.md`），
+   正文**明确标注「内部演练，非客户现场验收」**（§6.4 原话）；
+   ② **证据链**：贴**原始命令输出**（不是 AI 复述的摘要）——服务起 / `health 200` /
+   License 状态 / 抽样 1 条文档可查 / 抽样 1 次问答有引用 / **跨租户隔离仍生效**（§6.4 六件事）；
+   ③ **双人**：**执行者 ≠ 见证者**，两份具名签字都在文件里；缺任一即为**无效留证**；
+   ④ **闭环**：第 9 项在下次跑 `install_acceptance.py` 时**自动翻 PASS**
+   （脚本认 `docs/drills/restore-drill-*.md` 的出现）。
+4. **升级演练的窄口径**（若同一批做）：受 §7.1 迁移纪律限制（**D-2 未补齐前严禁原地升级**，
+   `deployment-spec.md:230`）⇒ 要么只做「全新部署 + 数据导入」，要么**先把 D-2 补到 Discipline
+   层**再谈；**不许把"全新部署"的演练写成"升级演练"来充数**。
+5. 不论走哪条：`pytest` **不降**（CI 口径 ≥ 1234 passed / 7 skipped）、五项门禁读数不变。
+6. 回登：`changes/<新批次>/integration-log.md` + `delivery-requirements-and-guardrails.md`
+   （DR-E2 / DR-E3 / DR-E4 是否往前挪一格）+ `docs/acceptance-traceability-matrix.md` H14 行。
+   **DR-E2 只有在留证文件 + 双人签名齐全后才能从「部分」挪到「完成」；有脚本但零演练，永远不能挪。**
 
 ---
 
@@ -154,15 +204,26 @@ uv run python scripts/install_acceptance.py --skip-pytest   # 十项三态，作
 
 ## 10. 升级用户的四类情况
 
-1. **文档 / spec 与现实不符**，且要停下来先裁决才能继续（例：§10 某项判据在本环境不可能成立）；
+1. **文档 / spec 与现实不符**，且要停下来先裁决才能继续（例：§10 某项判据在该环境不可能成立）；
 2. 要改的东西与 **X-5 / P6-V3 成果 / ADR-0004 §2.1 既有接缝登记集合** 相交；
-3. **要不要砍功能**（例如为过 CI 而放宽第 8 项或第 9 项的标准）；
-4. 发现的待修项价值 > 本批任务，或原先画好的边界被现实推翻（2026-10-10 前车：P6-V3 一次选型带出了整条 Γ-落地）。
+3. **要不要砍功能 / 放宽标准**（例如为省事把 §6.4 的"独立环境"改成"本机开发环境"，
+   或为让第 9 项翻绿而降低留证要求）—— **这类一律先升级，AI 不得自己放宽**；
+4. 发现的待修项价值 > 本批任务，或原先画好的边界被现实推翻
+   （2026-10-10 前车：P6-V3 一次「两侧量纲」的选型，带出了给 `cost_metrics` 加 `stage` 列
+   这条偏离 X-6 的追加裁决）；
+5. **（P6-X 专属）** 见证者临时缺席 / 独立环境起不来 / 镜像 tag 拿不到 —— 停下来**改期**，
+   **不许降格为"AI 先跑一遍垫着"**。
 
 ---
 
 ## 11. 不许外推
 
 - ❌ 不许因脚本在跑就宣称"第 9 项已接近完成"；
-- ❌ 不许因本机实测 PASS 3 就写「十项里过了三项」: SKIP 是没跑到、不是过了，换台机器读数还会变；
-- ❌ 不许因已有 `restore` 就宣称"具备可恢复能力"，那句话只能来自 P6-X。
+- ❌ 不许因本机实测 PASS 3 就写「十项里过了三项」: SKIP 是没跑到、不是过了，换台机器读数还会变
+  （**不带参数那趟是 PASS 0 / SKIP 10**，那才是"什么都没给"的诚实读数）；
+- ❌ 不许因已有 `restore` 就宣称"具备可恢复能力"，那句话只能来自 P6-X 的双人留证；
+- ❌ 不许看到 **13 个 git tag** 就以为"升级演练前置齐了" —— 那是**源码 tag**，§6.4①要的是
+  **镜像 tag**，而 D-1b 未落地 ⇒ 可交付的镜像 tag 数为 **0**；
+- ❌ 不许把「全新部署 + 数据导入」写成"升级演练"充数 —— §7.1 明列那是**过渡期替代品**，
+  且 D-2 补齐前**只允许**这么做，不是"升级"本身；
+- ❌ 不许把 AI 复述的输出当作留证正文 —— 留证要贴**原始命令输出**。
