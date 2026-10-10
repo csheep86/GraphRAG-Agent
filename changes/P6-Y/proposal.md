@@ -15,6 +15,7 @@
 |---|---|---|
 | **Y-a** | **F-P6X-1**：把 `LICENSE_PUBLIC_KEY` 真正送进 `backend` 容器 + 现场模板给出对应说明 | 交付 compose 的 `environment:` 白名单里没有它；compose 的 `--env-file` **只插值不注入** ⇒ 客户照模板装 ⇒ License 必然验签失败、业务接口全 **403** |
 | **Y-b** | **F-P6Y-1**：实跑定案「License 绑机器指纹 ⇒ 跨机恢复必然失效」 | `provider.py:211-219` 逐次比对 `compute_fingerprint()`；这让 §6.1 的 License 备份对象在 DR 语境下形同虚设 |
+| **Y-d** 🆕 | **F-P6Y-2**：容器化交付下指纹 = 容器网卡 MAC，**重建容器即失效** | 实测：容器内三源只剩 MAC；`--force-recreate` 后 MAC 与 fp 双双变化 |
 | **Y-c** | **F-P6X-3**：交付 README 补「图库 load 后必须 `restart neo4j`」 | `neo4j-admin database load` 后库停 offline；`neo4j start` 误报 `already running (pid:7)`；Community 版不支持 `START DATABASE` |
 
 ### 0.1 三条发现的证据链（全部为实测 / 源码坐标）
@@ -39,10 +40,39 @@ if expected_fingerprint != actual:
     return LicenseState(has_license=False, code=ErrorCode.LICENSE_FINGERPRINT_MISMATCH)
 ```
 
-⇒ **未实跑**：本批 Y-b 第一步必须先把两种失败码**区分开** ——
-拿到公钥后新环境的返回究竟是 `LICENSE_INVALID`（验签仍不过）还是
-`LICENSE_FINGERPRINT_MISMATCH`（验签过了但机器不对）。**这两个码对应完全不同的修法**，
-在没跑出来之前不许先写结论。
+**✅ T1 已实跑（2026-10-10）**：公钥经 `.env` 插值 + 临时 override 注入容器
+（`env | grep -c LICENSE_PUBLIC_KEY` = **1**）后，返回
+
+```
+{"has_license":false,"enforced":true,"code":"LICENSE_FINGERPRINT_MISMATCH", ...}
+```
+
+⇒ **验签过了**（不再是 `LICENSE_INVALID` / `license_public_key_missing`），
+失败点落在指纹比对 ⇒ **F-P6Y-1 成立**，且证明了 F-P6X-1 是独立存在的**第二层**缺口
+（先缺公钥 ⇒ 根本走不到指纹这一步）。
+
+**F-P6Y-2（T1 实跑中新挖出，比 F-P6Y-1 更严重）：容器化交付下指纹退化为「容器网卡 MAC」**
+
+`fingerprint.py` 采集三源：`/etc/machine-id`、主网卡 MAC、`/sys/class/dmi/id/product_uuid`。
+在 backend 容器内实测：
+
+```
+components = {'mac': '32:72:a2:00:f2:ff'}   ← 三源里只剩 MAC
+fp         = 044a7756a3c5402590585e3f852ff8db
+/etc/machine-id            → No such file or directory
+/sys/class/dmi/id/product_uuid → NOT readable
+```
+
+再 `up -d --force-recreate backend` 一次（**不换机器、不换镜像、只重建容器**）：
+
+```
+重建前  mac=32:72:a2:00:f2:ff  fp=044a7756a3c5402590585e3f852ff8db
+重建后  mac=16:62:cf:1e:75:22  fp=140addd3edfa1b536399653a232eb042
+```
+
+⇒ **客户每次 `docker compose up -d`（重启 / 升级 / 扩缩）都会换新 MAC ⇒ 指纹变 ⇒ License 失效。**
+这不是"换机恢复"才遇到的问题，是**交付形态本身不可持续**：§6.4 冒烟第 3 条
+「License 正常」在容器形态下无法稳定成立。
 
 **F-P6X-3（实测）**
 
@@ -99,6 +129,7 @@ if expected_fingerprint != actual:
 | **A. 承认「恢复后须重新签发」** | 在 §6.1 / §6.4 写死：License **随机器绑定**，换机恢复后必须由供应商**重新签发**，冒烟第 3 条在新机上的判据改成「重新签发后 valid」 | 最诚实、改动最小；代价：DR 的 RTO 里要多算一次人工签发 |
 | **B. 换个指纹锚点** | 指纹改为绑**客户 / 部署标识**而非机器（如 license 里的 `customer` + `max_seats`） | 换机可用；代价：**弱化反盗版强度**（一个 license 可到处拷），触 Non-goals 第 3 条之嫌 |
 | **C. License 支持「DR 备用机」** | license 里允许登记 N 台机器的指纹（主 + 备） | 兼顾；代价：签发协议要扩字段，**属新量程**，须先扩 ADR-0006 |
+| **D. 让指纹在容器形态下稳定** 🆕 | 让容器读到**宿主**的稳定标识（如只读挂载 `/etc/machine-id`），使三源不再只剩 MAC | 直击 F-P6Y-2：重建容器不再换指纹；代价：要动交付 compose（挂只读文件），且**不得**顺手削弱"机器绑定"语义，否则与 B 同型 |
 
 ### 2.2 Y-b 第一步：先把失败码区分开（**不许先写结论**）
 
@@ -113,6 +144,11 @@ docker compose -p graphrag-drill logs backend | grep -i "fingerprint\|public_key
 | `LICENSE_INVALID` | 验签仍不过 ⇒ 公钥 / 签名有问题 | 继续查 Y-a（密钥与 file 配对） |
 | **`LICENSE_FINGERPRINT_MISMATCH`** | 验签过了、机器不对 | **F-P6Y-1 成立** ⇒ 进 §2.1 三选一 |
 | `has_license=true` | 都没问题 | F-P6Y-1 不成立，回到 Y-a 收口即可 |
+
+> ✅ **T1 已跑（2026-10-10）**：实测 `code = LICENSE_FINGERPRINT_MISMATCH`
+> ⇒ 排除 `LICENSE_INVALID`，**F-P6Y-1 成立**；同轮挖出 **F-P6Y-2**（见 §0.1）。
+> ⇒ **Y3 的候选必须补一条 D，且 D 应最先讨论**：既然容器重建就换指纹，
+> 「A. 恢复后重新签发」的代价就从"一次人工"放大成"**每次重启都要重签**"。
 
 ---
 
