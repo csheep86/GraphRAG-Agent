@@ -155,6 +155,21 @@
 | 配置 | `.env` **脱敏副本**（去密钥） | 便于重建配置 |
 | **active `kg_version`** | **记录到备份清单** | 见 §6.2 |
 
+> **实现约束（2026-10-10 本机实测补记，不改上表的任何一种方式）**
+>
+> 1. **`pg_dump` 必须由 BYPASSRLS 角色执行**。因 §5 的 RLS 要求 `ENABLE` + `FORCE`，
+>    「复制表 t 的数据失败」会以 **退出码 1** 结束 —— 实测受限账号 `app_rls` 与
+>    owner `app_owner` 均失败（报 `query would be affected by row-level security policy`），
+>    超级用户 `EXIT=0`（190444 字节）。⇒ 备份连接串**不是**应用运行时的那一套账号。
+> 2. **Neo4j dump 必须在停服窗口内做**。在线库会被
+>    `The database is in use... Stop database 'neo4j' and try again` 拒绝；
+>    实操做法是停掉图容器后用同镜像的一次性容器挂同一份 volume 跑 `neo4j-admin`
+>    （`docker run --rm --volumes-from <图容器> --entrypoint neo4j-admin <镜像> database dump`）。
+>    这与 §6.2 第 3 条同源 —— 「备份窗口内停止写入」对图库意味着**停服**。
+>
+> 落地命令见 `backend/scripts/backup.py` / `restore.py`；**跳过任一类对象都会在清单里记为
+> `skipped` + 原因**，不会为了凑"六类齐全"而假装成功。
+
 ### 6.2 一致性（关键约束）
 
 PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
@@ -352,6 +367,13 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 ## 10. 安装验收清单（Install Acceptance）
 
 > **逐条勾选 + 具名验收人**；任一条未过 ⇒ **不得签署交付**。判据类型：机械（可脚本）/ 人工。
+>
+> **脚本化（2026-10-10 P6-W）**：`backend/scripts/install_acceptance.py` 十项逐条给出
+> **`PASS / SKIP / FAIL` + 原因**（含 `--out` JSON）。三条口径须连同输出一起读：
+> ① **SKIP ≠ 通过** —— 它是"本环境没跑到"，明细里写明补什么才能跑；
+> ② 第 2 / 3 / 7 项**委托既有护栏**（G-23 / G-9 / G-26）跑过的那一天为绿，脚本不断言"目标环境已验"；
+> ③ 第 9 项在 `docs/drills/restore-drill-*.md` 出现之前**恒为 SKIP**，原因由脚本**机械查**
+> D-1b 得出（不留白，避免被读成漏做）。
 
 | # | 项 | 判据 | 类型 | 验收人 |
 |---|---|---|---|---|
@@ -376,8 +398,8 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 | **D-1a** 容器化：Dockerfile + compose **起全套** | **S10.3** | ✅ **已兑现**（2026-09-30：backend / frontend / Neo4j 三服务 `up` 全 `healthy`；**PG 位留空待 P1 切 PG（DR-B1）**，不凑数）⇒ ✅ **PG 已于 P1-B 就位**（四服务 `up`） |
 | **D-1b** 离线镜像包（`docker save`）/ 私有 registry | **P1**（DR-A6） | ⏳ |
 | **D-2** 数据库迁移（Alembic 引入 + 首版迁移脚本） | **P6**（DR-E1） | 🔀 **基线已完成**（2026-09-28：alembic 主依赖 + 基线迁移 `00f44b912817` 十表 + 等价性测试钉死「加表必写迁移」）；**逐版本可幂等迁移纪律 / PG 实测 / 升级演练归 P6**（DR-E1 纪律 + DR-E3 演练） |
-| 备份 / 恢复脚本 | **P6**（DR-E2） | ⏳ |
-| 安装验收清单脚本化 | **P6**（DR-E4） | ⏳ |
+| 备份 / 恢复脚本 | **P6**（DR-E2） | 🟡 **部分**（2026-10-10 P6-W）：`backup` / `restore` 两条命令 + `backup-manifest.json`（重算 SHA-256）＋ §6.2 一致性（错位 ⇒ 退出码 2）；**完整备份集需停图库（见 §6.1 实现约束）**。**恢复演练 0 次** ⇒ 不得据此宣称可恢复 |
+| 安装验收清单脚本化 | **P6**（DR-E4） | 🟡 **部分**（2026-10-10 P6-W）：`install_acceptance.py` 十项三态机读；本机实测 PASS 3 / SKIP 6 / FAIL 1，见 `changes/P6-W/integration-log.md` §8 |
 
 **未决（TBD-D）**：
 

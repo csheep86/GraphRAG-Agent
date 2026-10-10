@@ -127,9 +127,9 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | # | 需求 | 状态 | 依据 | 完成判据 |
 |---|---|---|---|---|
 | **DR-E1** | **Alembic 迁移纪律**：每版本带**可幂等**迁移脚本；禁手工改客户库 | 🟡 基线已建（`00f44b912817`），逐版本纪律未落地 | `deployment-spec.md` §7.1 / D-2b | 版本 → 迁移脚本一一对应 |
-| **DR-E2** | **备份 / 恢复脚本 + 恢复演练**（独立环境恢复并跑通冒烟） | ⏳ 未做 | `deployment-spec.md` §6 / 闸门 CP-D1 | 未演练 ⇒ 不得承诺可私有化交付 |
+| **DR-E2** | **备份 / 恢复脚本 + 恢复演练**（独立环境恢复并跑通冒烟） | 🟡 **部分**（脚本已有，**演练仍是 0 次**）：`scripts/backup.py` / `scripts/restore.py` + `backup-manifest.json`（SHA-256 / 大小 / 时刻 / active `kg_version`）＋ §6.2 一致性校验（错位 ⇒ 退出码 2）；**恢复演练属 P6-X 且当前因 D-1b 未落地不可执行**（`install_acceptance.py` 第 9 项机械查证得出） | `deployment-spec.md` §6 / 闸门 CP-D1 | 未演练 ⇒ 不得承诺可私有化交付；**有脚本 ≠ 具备可恢复能力** |
 | **DR-E3** | **升级演练**（含回滚：改 tag 回上一版本） | ⏳ 未做 | `deployment-spec.md` §7.2 / §7.2.1 | 失败可回滚 |
-| **DR-E4** | **安装验收清单脚本化**（10 项） | ⏳ 未做 | `deployment-spec.md` §10 | 机器可跑 |
+| **DR-E4** | **安装验收清单脚本化**（10 项） | 🟡 **部分**：`scripts/install_acceptance.py` 十项逐条 PASS / SKIP / FAIL + 原因（可机读，含 `--out` JSON）；**PASS 只 3 项**（见 `changes/P6-W/integration-log.md` §8），余为 SKIP + 明确原因（目标环境 / 真 LLM / 双人见证），第 9 项顺延 P6-X | `deployment-spec.md` §10 | 机器可跑 |
 
 ---
 
