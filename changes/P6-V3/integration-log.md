@@ -133,6 +133,26 @@ check_session_drift         S1 读到 9 条边界；S2 6 文件 / 307 行；S3~S
 
 ---
 
-## 7. 下一批指针
+## 7. 收口后又追加的两条裁决（**2026-10-10，针对下一批 P6-W**）
 
-见 [`new-session-prompt.md`](./new-session-prompt.md)（已按本批**实际结果**改写，未照抄上一版）。
+本批收口、CI 绿之后，按轮班要求把 ¥0 查实表交给你做 W1 裁决，结果两条：
+
+| # | 裁决 | 内容 |
+|---|---|---|
+| **W1** | **方案 I** | **P6-W = DR-E2 最小范围 + DR-E4** = 补 `backup` / `restore` 两条命令 + `backup-manifest.json` 契约（含 SHA-256）⇒ 第 **1~7、10** 项脚本化、**第 8 项**随之落地、**第 9 项（恢复演练）顺延 P6-X**。**不动**调度 / 远端 / 加密 / 增量策略 / RPO-RTO 承诺 |
+| **D-1b** | **只登记不处置** | 离线镜像包 / 私有 registry 是 **P1 的欠账**，同时是 **P6-X 与 §10 第 9 项的硬前置**（`docs/deployment-spec.md` §6.4①要求「部署命令无 `build:`」，而 compose 的 backend / frontend / db-init **仍带 `build:`**，且全仓无 `docker save` / registry 推送）⇒ 等 **P8-Release**「零缺口」对账时一并算 |
+
+**D-1b 的查实证据**（写下来是因为它容易被当成"还没排到"）：`docker save` / `docker load` /
+私有 registry / 镜像推送工作流**全仓 0 命中**（排除 `changes/`）；`deploy/docker-compose.yml`
+的 backend（`:121`）/ frontend（`:189`）/ db-init（`:98`）都是 `build:` 与 `image:` 并存 ——
+那是 DR-A6 / G-19 当时的写法，tag = **本地构建**的 `graphrag-agent/backend:1.6.0`。
+⇒ 独立环境拿不到该 tag 的镜像；退回源码 `build` 再演练，§6.4 原文写着那样
+「**证明不了客户能装上**」。
+
+两条已同步落：`docs/delivery-plan.md` §9.2 **序 6**（P6-W 行，按裁决补登记）+
+[`new-session-prompt.md`](./new-session-prompt.md) §1 / §5.1 / §5.3 / §6 / §9 / §11 / §12 / §13。
+
+## 8. 下一批指针
+
+见 [`new-session-prompt.md`](./new-session-prompt.md)（已按本批**实际结果 + 上述两条裁决**改写，
+未照抄上一版）。
