@@ -90,7 +90,18 @@ uv run python scripts/check_startup_readiness.py        => [OK] 生效 17 / [~~]
 > `tests/test_guardrails_graph.py::\_real_graph_env` **同款口径**：本机 skip、**CI 缺失即 fail**。
 >
 > 全量跑时的 `PytestUnhandledThreadExceptionWarning (_readerthread)` **属既有告警**：
-> 把本批两个新文件 `--ignore` 掉之后照样出现 ⇒ 非本批引入（两条新文件单独跑：44 passed / 1 skipped，无该告警）。
+> 把本批两个新文件 `--ignore` 掉之后照样出现 ⇒ 非本批引入（两条新文件单独跑：无该告警）。
+
+### 4.2b **GitHub Actions 实测**（最终裁决）
+
+| run | 结论 | 后端 pytest 作业读数 |
+|---|---|---|
+| **38025313919**（首推） | ❌ failure | 1 failed / 1233 passed / 7 skipped —— **本批自己的问题，见 §4.2 那段说明** |
+| **38026387361**（修复后） | ✅ **success** | **1234 passed / 7 skipped** |
+
+> **CI 主作业那 7 条 skip 一条都不是本批的**：1 `test_import_to_neo4j.py:220` +
+> 2 `test_ontology_placeholder_endpoints.py:115/144` + 1 `test_page_index.py:231` +
+> 3 `test_temporal_track_s.py:216` ⇒ **本批新增的 45 条用例在 CI 上全 passed（0 skip、0 failed）**。
 
 ### 4.3 真机：一次**六类齐全**的备份（停图库窗口内）
 
