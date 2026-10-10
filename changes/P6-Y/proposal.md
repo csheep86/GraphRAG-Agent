@@ -195,7 +195,7 @@ docker compose -p graphrag-drill logs backend | grep -i "fingerprint\|public_key
 | **T3** | Y-d：实现对齐 ADR §2.1（machine-id 取到则 MAC 不参与）+ 交付 compose 只读挂 `/etc/machine-id` | ✅ **已完成**（`fingerprint.py` 改 + compose 挂载 + 新增 4 条护栏用例） |
 | **T4** | Y3 落地：把结论写进 `docs/deployment-spec.md` §6.1 / §6.4 | ✅ **已完成**（§6.1 约束 3 + §6.4 License 判据表） |
 | **T5** | Y-c：交付 README 补「图库 load 后必须 `restart neo4j`」 | ✅ **已完成**（`deploy/README.md` 新增「恢复（现场 / 演练）」一节，另含 pg_restore 用超级用户、License 换机重签） |
-| **T6** | 回归：跑 J6 / J7，输出贴进本批 `integration-log.md` | ⏳ 未做（尚未建 `integration-log.md`） |
+| **T6** | 回归：跑 J6 / J7 | ✅ **已完成**：J7 `[OK] contracts/openapi.yaml 与后端模型一致`；J6 `PASS 1 / SKIP 9 / FAIL 0`（与基线一致、**未倒退**；第 9 项仍 SKIP —— 未造留证） |
 | **T7** 🆕 | **重新出交付镜像 + 离线包**（`build_delivery_images.py --save` → `--verify`） | ✅ **已完成**（阻塞项解除，读数见 §6.3） |
 | **T8** 🆕 | 端到端复验（**不带 override** 的交付 compose） | ✅ **已完成**（公钥进容器、重建容器 fp 不变，读数见 §6.3） |
 
