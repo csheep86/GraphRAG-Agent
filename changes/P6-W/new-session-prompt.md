@@ -95,7 +95,7 @@
 
 1. **不做 P6-X 的恢复演练**（不写 `docs/drills/`、不代签任何 √）；
 2. **不做真正的发版**（不打 `v*` tag、不 bump `app_version`）；
-3. **不把镜像或其二进制产物提交进 git**（**456 MB / 919 MB**，按 Y9）；`dist/` / `*.tar` / `delivery-manifest.json` 一律 gitignore；
+3. **不把镜像或其二进制产物提交进 git**（**≈ 456 MB**，全包时 919 MB）；`dist/` / `*.tar` / `delivery-manifest.json` 一律 gitignore；
 4. **不在 PR 触发的 CI 里跑 docker build**（只在打 tag 时跑 ⇒ CI 分钟数为 0 增量）；
 5. **不改既有服务的运行时配置**（不碰 RLS 角色串、`DATABASE_URL`、健康检查……）；
 6. **不改 frontend / backend 的应用代码**（只加 CI / compose / 脚本 / 护栏测试）；
@@ -131,20 +131,25 @@
 | **Y6** | `db-init` 要不要单独推 | 它与 `backend` 共用**同一份镜像**（锚点 `&backend-build` + `image: graphrag-agent/backend:1.6.0`），只是 `command:` 不同 ⇒ **不需要第二个镜像**，交付 compose 里保留同一 image + 同样的 `command` |
 | **Y7** | 第 9 项何时翻绿 | **只有 P6-X 能翻**（要出现 `docs/drills/restore-drill-*.md`）。本批把它 SKIP 的**原因从"D-1b 缺失"改成"演练未做"**即为成功，**不许直接翻成 PASS** |
 | **Y8** ✅ **已裁决** | **私有 registry 用哪一家 + 配额够不够** | **选 ③ 的离线包分支 —— 用户原话：「离线包比较合适，我不希望升级，也不想为额度操心，本地电脑可以放文件」**。⇒ **本批完全不碰任何远端 registry**（不建 GHCR、不开付费档、不配 Secrets、不写 `docker login` / `docker push` 步骤）。**风险已在源头消除**：配额、可见性、被拉走三个问题，一个都不存在 |
-| **Y9** ⚠️ **新派生，开工前必须钉死** | **离线包打不打第三方镜像**（neo4j / postgres） | 见下方 §5.1 —— 这个答案直接决定包是从 **456 MB** 变 **919 MB**，且决定客户现场能不能离线起全套 |
+| **Y9** ✅ **已裁决** | **离线包打不打第三方镜像**（neo4j / postgres） | **只打自研（≈ 456 MB）**。用户理由：**客户现场内网是可联网的（不联网大模型没法用）**；真遇到拿不到的现场，前期部署**人工用 U 盘拷上服务器**即可，"方法很多，不一定要从网上下载"。第三方两个 tag 由客户场自行 `pull`（tags 已固定：`neo4j:5.26-community` / `postgres:16-alpine`） |
 
 ### 5.1 Y9 的依据（`docker save` 实测，不是估的）
 
-| 镜像 | save 产物（真实） | 备注 |
+| 镜像 | save 产物（真实） | 是否入包 |
 |---|---|---|
-| `graphrag-agent/backend:1.6.0` | **156 MB** | 自研 |
-| 前端 | **300 MB** | 自研（见 M4：本机尚无 `graphrag-agent/frontend:1.6.0`，得先按 compose 的名 / tag 构建一次） |
-| `neo4j:5.26-community` | **351.5 MB** | 第三方 |
-| `postgres:16-alpine` | **111.3 MB** | 第三方 |
-| **只打自研** | **≈ 456 MB** | 客户需能连外网拉 neo4j / postgres |
-| **四合一** | **≈ 919 MB** | **建议走这条** |
+| `graphrag-agent/backend:1.6.0` | **156 MB** | ✅ 自研（见 M4：本机没有 `graphrag-agent/frontend:1.6.0`，**前端必须先按 compose 的名 / tag 构建一次**） |
+| `graphrag-agent/frontend:<app_version>` | **300 MB** | ✅ 自研 |
+| `neo4j:5.26-community` | 351.5 MB | ❌ **不入包** —— 客户联网自拉 |
+| `postgres:16-alpine` | 111.3 MB | ❌ **不入包** —— 客户联网自拉 |
+| **选定：只打自研** | **≈ 456 MB** | 第三方两个 tag 在交付 compose 里**仍然固定**（非 `latest`） |
 
-**建议全打四个**，理由：`deployment-spec.md` §2 明写 PG / Neo4j **禁止暴露到业务网络**，而多数私有化现场是**内网 / 离线** ⇒ 交付包里缺了第三方镜像，客户现场 `docker compose up` 会在 `pull` 那一步直接卡死。**要么全打，要么在交付 README 里明写前置条件（客户须自备这两个 tag）；不许默认缺件又不写。**
+> **但脚本必须留后路**：`--save` **默认只打自研**，同时提供 **`--include-third-party`** 开关
+> （一次包进四个 ⇒ ≈ 919 MB），给将来**完全离线**的客户现场用。
+> **不许把这条后路砍掉** —— 今天能联网不代表每个现场都能；砍了下次要改代码、要重开批次。
+
+> **客户侧如何到货**（写进交付 README，两条路都要写）：
+> ① 联网现场：拷 tar → `docker load -i <包>.tar` → compose 自动拉第三方 → `up -d`；
+> ② 断网现场：**U 盘拷**更能接受（用户原话）⇒ 先用 `--include-third-party` 出一个全包再拷。
 
 ---
 
@@ -185,7 +190,7 @@ uv run ruff check . && uv run ruff format --check .
 ## 8. 验收判据（**每条都要能贴机器输出**）
 
 1. **交付 compose 存在且合规**（**Y1 已裁决走 A**）：① 全服务**无 `build:`**；② 自研 `image:` tag == `app_version`（1.6.0）；③ 第三方 tag 固定且**非 `latest`**；④ 用 yaml 解析后逐服务断言，**不许用 grep 数 `build:` 字样**（注释里全是这个词）；⑤ 开发用的 `deploy/docker-compose.yml` **保持原样**（`build:` 留住，G-19 才有的吃）。
-2. **离线包侧（Y8=离线包 ⇒ 这是主线，`scripts/` 下有痕迹就满足 `inspect_d1b` 的第 ② 条）**：⑥ `scripts/build_delivery_images.py --dry-run`（或等价）打印出它将要执行的**完整命令**（含 `--build-arg NEXT_PUBLIC_USE_MOCK=false`）；⑦ `--save`（产出 tar，镜像集合按 Y9）× `--verify`（对 tar / 镜像做 SHA-256 或 digest 校验）两条分支各自可 `--dry-run`；⑧ 产出一份 **`delivery-manifest.json`**（镜像名 / tag / size / SHA-256 / image id）—— **风格对齐 P6-W 的 `backup-manifest.json`**（`backend/app/services/backup.py`）；缺了它，"这包是不是当时那份"无从机械核；⑨ **真跑过一次并产出真实 tar**（允许因为耗时长而留在你本机，**但必须贴出** `ls -l` + `delivery-manifest.json` 的内容）；⑩ **CI 里不许出现** `docker login` / `docker push` / 任何 registry 步骤（Y8）。
+2. **离线包侧（Y8=离线包 ⇒ 这是主线，`scripts/` 下有痕迹就满足 `inspect_d1b` 的第 ② 条）**：⑥ `scripts/build_delivery_images.py --dry-run`（或等价）打印出它将要执行的**完整命令**（含 `--build-arg NEXT_PUBLIC_USE_MOCK=false`）；⑦ `--save`（**默认只打自研**，Y9）× `--include-third-party`（四个全打）× `--verify`（对 tar / 镜像做 SHA-256 或 digest 校验）三条分支各自可 `--dry-run`；⑦b **tar 里的 tag 必须与交付 compose 的 `image:` 逐字节相同**（`graphrag-agent/backend:<app_version>` 等），差一个字符客户现场就会在 `pull` 那步卡死 —— 这条要**机械比对**，不许目测；⑧ 产出一份 **`delivery-manifest.json`**（镜像名 / tag / size / SHA-256 / image id）—— **风格对齐 P6-W 的 `backup-manifest.json`**（`backend/app/services/backup.py`）；缺了它，"这包是不是当时那份"无从机械核；⑨ **真跑过一次并产出真实 tar**（允许因为耗时长而留在你本机，**但必须贴出** `ls -l` + `delivery-manifest.json` 的内容）；⑩ **CI 里不许出现** `docker login` / `docker push` / 任何 registry 步骤（Y8）。
 3. **CI 侧**：⑪ **本批不新增** CI 作业（Y3）—— 校验全部落在 pytest；⑫ 若将来要自动化出包，另开批次做 `workflow_dispatch`。
 4. **第 9 项读数变了**（本批的闭环）：⑬ 跑 `install_acceptance.py` —— SKIP 的**原因不再是"D-1b 未落地"**（应变成"演练留证尚未产生"之类）；⑭ 但**仍必须是 SKIP** —— **翻成 PASS 说明有东西伪造了**。
 5. **护栏**：⑮ `pytest` **不降**（CI 口径 ≥ 1234 passed）；⑯ G-19 两条**仍然绿**；⑰ 新增的交付 compose 护栏要有**反向用例**（把 `build:` 加回去 / 把 tag 改 `latest` ⇒ 必须 FAIL）。
@@ -208,7 +213,7 @@ uv run ruff check . && uv run ruff format --check .
 
 1. **文档 / spec 与现实不符**，且要停下来先裁决才能继续（例：§6.4① 的"独立环境"判据在本环境无法完全满足）；
 2. 要改的东西与 **X-5 / P6-V3 成果 / ADR-0004 §2.1 接缝登记集合** 相交；
-3. **要不要砍功能 / 放宽标准**（Y9 想偷懒只打自研镜像；或为省事把 `build:` 留在交付 compose 里）—— **一律先升级，AI 不得自己放宽**；
+3. **要不要砍功能 / 放宽标准**（想把 `--include-third-party` 这条后路砍掉；或为省事把 `build:` 留在交付 compose 里）—— **一律先升级，AI 不得自己放宽**；
 4. ✅ **已裁决（Y4 + Y8）**：**不用任何远端 registry**。
 
    演进记账（别删，下次要翻）：
@@ -221,7 +226,12 @@ uv run ruff check . && uv run ruff format --check .
 
    ⇒ **本批不许出现** `docker login` / `docker push` / `GITHUB_TOKEN` 写权限 / registry Secrets
    —— 见到任何一条就是越界，**回滚不要商量**。
-   ⚠️ **残留待答**：**Y9（离线包打不打第三方镜像）** —— 见 §5.1，它决定包是 456 MB 还是 919 MB。
+   ⚠️ ~~残留待答：Y9~~ → ✅ **已答（只打自研，第三方客户联网自拉 / 断网现场用 U 盘拷全包）**，
+   **决策表现在已无未决项**。
+
+> **连带提醒（本批不做，但要登记）**：用户确认客户现场**联网跑云端大模型** ⇒ `.env` 里会有真实
+> API key。这让 §10 **第 10 项「无密钥进日志」**从"理论要求"变成"真会出事"，
+> P6-X 那一批在目标环境务必用 `--log-file`（**目标环境的真实日志**）复核，别用本机 grep 冒充。
 
 ---
 
@@ -230,7 +240,7 @@ uv run ruff check . && uv run ruff format --check .
 - 不许因为"加了文件 / 脚本"就宣称 D-1b 完成 —— **离线包必须真的产出来过一次**（贴 `ls -l` + manifest）；产不出来就明写「未产出」，不许用 `--dry-run` 的打印冒充。
 - 不许因为"本机 build 过镜像"就宣称可用 —— M4 已经证明**前端从未按 compose 声明的名 / tag 构建过**。
 - 不许把第 9 项改成 PASS —— 它归 **P6-X**（双人 + 留证），本批只能改 SKIP 的**理由**。
-- 不许把 tar 传 Actions artifact、不许入库 —— **456 MB / 919 MB**（按 Y9）是本地交付物，人工搬到客户现场。
+- 不许把 tar 传 Actions artifact、不许入库 —— **≈ 456 MB**（Y9：只打自研）是本地交付物，靠 U 盘 / 内网搬到客户现场。
 - **不许再用 `docker images` 的读数当镜像体积** —— 那是展开大小（backend 782MB / frontend 1.14GB），
   registry 与实际传输的是 `docker save` 的层产物（**156MB / 300MB**）。本文件的初版就在这里栽过
   一次（估成 1.9GB），**已更正**；以后凡谈体积一律 `docker save` 实测。
