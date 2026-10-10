@@ -74,6 +74,26 @@ fp         = 044a7756a3c5402590585e3f852ff8db
 这不是"换机恢复"才遇到的问题，是**交付形态本身不可持续**：§6.4 冒烟第 3 条
 「License 正常」在容器形态下无法稳定成立。
 
+**F-P6Y-2 的补救实测（2026-10-10，临时容器两次 run 对比，未起栈、未停开发图库）**
+
+| 方案 | 两次 run 的 fp | 结论 |
+|---|---|---|
+| 不挂（现状） | `70547486665fa71441e07d3b21303229` / `d0cc60c11aaa6f6dff06a13456c671c4` | ❌ 每次都变 |
+| **只挂 `/etc/machine-id:ro`（候选 D）** | machine-id 稳定为 `208c9ebe76b44a14b97149e300502066`，但 mac `06:20:6c:55:87:5c` → `0a:e5:be:9c:f3:c5` ⇒ fp `fc3eccf3…` / `83c4ebc4…` | ❌ **D 单独不够** |
+| 挂 + 固定 `mac_address` | 两次均 `900624a1691ef74b879ea0e4ffb7a366` | ✅ 稳定 |
+| 仅 machine-id 参与计算（不含 mac） | 两次均 `4d0e04e04f1d098c11a6fcbec1eabd1b` | ✅ 稳定 |
+
+⇒ 根因在 `build_fingerprint`：**所有组件排序拼接**，只要 mac 在集合里且变化，fp 就变。
+
+**F-P6Y-3（附带发现）：实现与 ADR §2.1 原文不一致**
+
+- ADR §2.1（`fingerprint.py` docstring 第 6 行）：「`/etc/machine-id` 优先 …… **取不到再回落到 MAC**」；
+- 实现 `collect_components()`：只要 mac 非空就**无条件 append**，与 machine-id 是否存在无关。
+
+⇒ **按 ADR 原文实现**（machine-id 存在时不再附加 MAC）+ 交付 compose 只读挂 `/etc/machine-id`
+⇒ 容器形态下 fp = **宿主** machine-id，重建容器不再变；且它比"绑容器 MAC"**更贴合**
+「绑机器」的原意 —— 绑的是宿主机，不是那个随时会被重建的容器。
+
 **F-P6X-3（实测）**
 
 - `neo4j-admin database load` → `Done: 42 files, 264.7MiB` 成功；
