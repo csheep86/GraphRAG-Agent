@@ -115,7 +115,7 @@ uv run python scripts/build_delivery_images.py --verify            # 重算 SHA-
 
 ```bash
 docker load -i graphrag-agent-offline-<版本>.tar     # 导入自研镜像
-cp .env.example .env                                  # 四个口令都要填
+cp .env.example .env                                  # **五项**必配都要填（含 LICENSE_PUBLIC_KEY）
 docker compose -f docker-compose.delivery.yml up -d   # 第三方两个 tag 已固定，联网现场自动拉取
 ```
 
@@ -125,6 +125,47 @@ docker compose -f docker-compose.delivery.yml up -d   # 第三方两个 tag 已�
 >
 > ⚠️ **未演练**：以上只到"包已产出 + 可解析"。**独立环境的完整 `up` + 冒烟**属 **P6-X**
 > （一人执行、一人见证，`docs/drills/restore-drill-<日期>.md`），缺它不得宣称"可交付"。
+
+## 恢复（现场 / 演练）
+
+备份与恢复的**规格**在 `docs/deployment-spec.md` §6；本节只记**操作上会踩的坑** ——
+全部是 2026-10-10 演练**实测**的，不是推断。
+
+### 图库：`database load` 之后**必须 restart** 才会 online
+
+```bash
+docker cp neo4j.dump <图容器>:/tmp/
+docker compose exec neo4j neo4j-admin database load neo4j \
+  --from-path=/tmp --overwrite-destination=true
+docker compose restart neo4j        # ← 少了这一步，库会停在 offline
+```
+
+> ⚠️ `load` 打印 `Done: N files, …MiB` **不等于**数据库可用：
+>
+> - 随后 `cypher-shell` 报 `Unable to get a routing table ... database is unavailable`；
+> - `neo4j stop` / `neo4j start` 会误报 **`Neo4j is already running (pid:7)`**；
+> - Community 版**不支持** `START DATABASE`（属 enterprise / cluster 语法）；
+>
+> ⇒ 唯一有效的动作是 **`docker compose restart neo4j`**，之后
+> `MATCH (n) RETURN count(n)` 才读得到数据（实测 `7308`）。
+
+### PostgreSQL：用**超级用户**跑 `pg_restore`
+
+以 `app_owner` 跑会 `permission denied for schema app`（它不是 `app` schema 的属主，
+12 句 ACL 被忽略、`EXIT=1`）。用 `POSTGRES_USER`（超级用户，默认 `graphrag`）：
+
+```bash
+docker compose exec -e PGPASSWORD=<POSTGRES_PASSWORD> postgres \
+  pg_restore -U <POSTGRES_USER，默认 graphrag> -d graphrag \
+  --clean --if-exists --no-owner /tmp/postgres.dump
+```
+
+### License：换机恢复后**必须重新签发**
+
+License 绑**机器指纹** ⇒ 备份集里那份 `license.lic` 恢复到**另一台机器**必然
+`LICENSE_FINGERPRINT_MISMATCH`（规格见 §6.1 约束 3），需由供应商重新签发。
+**同一台机器上重建容器不受影响** —— 交付 compose 已只读挂载宿主 `/etc/machine-id`，
+指纹锚定的是宿主机而非容器。
 
 ## 与 `deployment-spec.md` 的对应
 

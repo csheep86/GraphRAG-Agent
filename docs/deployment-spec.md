@@ -164,7 +164,7 @@
 | PostgreSQL | `pg_dump`（custom format） | **Source of Truth**（ADR-0002） |
 | Neo4j | `neo4j-admin database dump` | 图数据 |
 | 文件存储 | `/data/storage` 目录（rsync / tar） | 原件与切片 |
-| License 文件 | 复制 | 恢复后必须能继续启动 |
+| License 文件 | 复制 | 恢复后必须能继续启动（**换机后须重新签发**，见下方约束 3） |
 | 配置 | `.env` **脱敏副本**（去密钥） | 便于重建配置 |
 | **active `kg_version`** | **记录到备份清单** | 见 §6.2 |
 
@@ -179,6 +179,14 @@
 >    实操做法是停掉图容器后用同镜像的一次性容器挂同一份 volume 跑 `neo4j-admin`
 >    （`docker run --rm --volumes-from <图容器> --entrypoint neo4j-admin <镜像> database dump`）。
 >    这与 §6.2 第 3 条同源 —— 「备份窗口内停止写入」对图库意味着**停服**。
+>
+> 3. **License 绑机器指纹 ⇒ 换机恢复后必须重新签发**（**F-P6Y-1**，2026-10-10 实测）。
+>    `provider.py` 会逐次比对 `compute_fingerprint()`，不一致即 `LICENSE_FINGERPRINT_MISMATCH`
+>    ⇒ 备份集里那份 `license.lic` 在**另一台机器**上必然失效。
+>    ⇒ 故 License 虽列在备份对象表内，它的"可复现"**不等于**"拷回去就能用"：
+>    **同一台机器**恢复 ⇒ 原 License 继续有效；**换机**恢复 ⇒ 必须由供应商重新签发。
+>    同一台机器上**重建容器**不受影响 —— 交付 compose 只读挂载宿主 `/etc/machine-id`，
+>    指纹锚定的是**宿主机**而不是容器（详见 §6.4 注记与 `fingerprint.py` 的 docstring）。
 >
 > 落地命令见 `backend/scripts/backup.py` / `restore.py`；**跳过任一类对象都会在清单里记为
 > `skipped` + 原因**，不会为了凑"六类齐全"而假装成功。
@@ -217,7 +225,16 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 
 - 判据：**每季度至少一次**恢复演练，在**独立环境**恢复并跑通 §10 冒烟，记录 `restore-drill-<日期>.md`；
 - 每次备份产出 `backup-manifest.json`：各文件 **SHA-256** + 大小 + 时刻 + active `kg_version`；
-- 恢复后校验清单：服务起 → health 200 → License 状态正常 → 抽样 1 条文档可查 → 抽样 1 次问答有引用 → 跨租户隔离仍生效。
+- 恢复后校验清单：服务起 → health 200 → **License 状态正常** → 抽样 1 条文档可查 → 抽样 1 次问答有引用 → 跨租户隔离仍生效。
+
+  > **「License 状态正常」在新机上要按场景分开判**（**F-P6Y-1**，2026-10-10 实测）：
+  >
+  > | 场景 | 判据 |
+  > |---|---|
+  > | **同一台机器**恢复 | 直接要求 `has_license=true`（重建容器也算这一种：指纹锚定宿主，见 §6.1 约束 3） |
+  > | **换机**恢复 | 判据是「**按流程重新签发之后** `has_license=true`」—— 不能直接拿备份集里的 `license.lic` 要求它在新机上 valid（那**必然** FAIL，且 FAIL 的是"漏了重签这一步"的流程缺失，**不是**恢复链路有问题） |
+  >
+  > 这条区分是必要的：否则换机演练会把"恢复成功但 License 待重签"误判为"恢复失败"。
 
 ---
 

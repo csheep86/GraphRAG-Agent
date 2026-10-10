@@ -137,7 +137,7 @@ fp         = 044a7756a3c5402590585e3f852ff8db
 | **Y1** ✅ | 是否开本批 | **已裁决 = 开**（2026-10-10 用户：「按你建议开吧」） |
 | **Y2** 🆕 | `LICENSE_PUBLIC_KEY` 由谁提供 | **建议 = 走 `.env` 插值进 `backend.environment`**（与 `NEO4J_PASSWORD` 同款写法），并在 `deploy/.env.example` 补占位 + 说明；**内置到镜像**虽更省事，但会让「换密钥 = 重新出镜像」，也与既有「密钥不进镜像」的配置风格不一致 |
 | **Y3** 🆕 | F-P6Y-1 怎么处置（**最关键**） | 三选一，见 §2.1；**先跑 §2.2 的判据再选** |
-| **Y4** 🆕 | Y-c 的 README 落点 | 建议写进 `docs/v1.1.0-deploy.md` 的「离线交付 / 恢复」一节，与主 README 保持一致 |
+| **Y4** 🆕 | Y-c 的 README 落点 | ✅ 已定 = **`deploy/README.md`**。⚠️ **更正**：初稿写的 `docs/v1.1.0-deploy.md` **并不存在**（我未核实就落笔）；实际新建在 `deploy/README.md` 的「恢复（现场 / 演练）」一节 |
 | **Y5** 🆕 | 本批要不要顺带补 §10 十项回归 | 建议**跑一次** `install_acceptance.py` 作回归（预期：第 9 项仍 SKIP，其余不倒退） |
 | **Y6** 🆕 | 验证环境 | 建议沿用 P6-X 预演的同款：同 daemon `COMPOSE_PROJECT_NAME=graphrag-drill` + 独立 `.env`，演练窗口内 `docker stop graphrag-neo` |
 | **Y7** 🆕 | 恢复演练的见证者 | **仍缺位**；本批不写留证，故不阻塞 —— 但正式 P6-X 开工前必须落实 |
@@ -193,10 +193,11 @@ docker compose -p graphrag-drill logs backend | grep -i "fingerprint\|public_key
 | **T1** | drill 环境实跑 §2.2，区分失败码 | ✅ **已完成** ⇒ `LICENSE_FINGERPRINT_MISMATCH`（F-P6Y-1 成立），并挖出 F-P6Y-2 / F-P6Y-3 |
 | **T2** | Y-a：交付 compose `backend.environment` 增补 `LICENSE_PUBLIC_KEY` + `deploy/.env.example` 补占位说明 | ✅ **已完成**（必填插值 `${LICENSE_PUBLIC_KEY:?…}`，缺键即解析阶段报错） |
 | **T3** | Y-d：实现对齐 ADR §2.1（machine-id 取到则 MAC 不参与）+ 交付 compose 只读挂 `/etc/machine-id` | ✅ **已完成**（`fingerprint.py` 改 + compose 挂载 + 新增 4 条护栏用例） |
-| **T4** | Y3 落地：把结论写进 `docs/deployment-spec.md` §6.1 / §6.4 | ⏳ 未做 |
-| **T5** | Y-c：交付 README 补「图库 load 后必须 `restart neo4j`」 | ⏳ 未做 |
+| **T4** | Y3 落地：把结论写进 `docs/deployment-spec.md` §6.1 / §6.4 | ✅ **已完成**（§6.1 约束 3 + §6.4 License 判据表） |
+| **T5** | Y-c：交付 README 补「图库 load 后必须 `restart neo4j`」 | ✅ **已完成**（`deploy/README.md` 新增「恢复（现场 / 演练）」一节，另含 pg_restore 用超级用户、License 换机重签） |
 | **T6** | 回归：跑 J6 / J7，输出贴进本批 `integration-log.md` | ⏳ 未做（尚未建 `integration-log.md`） |
-| **T7** 🆕 | **重新出交付镜像**（`build_delivery_images.py`） | ⏳ **未做且阻塞交付** —— 见 §6.3 |
+| **T7** 🆕 | **重新出交付镜像 + 离线包**（`build_delivery_images.py --save` → `--verify`） | ✅ **已完成**（阻塞项解除，读数见 §6.3） |
+| **T8** 🆕 | 端到端复验（**不带 override** 的交付 compose） | ✅ **已完成**（公钥进容器、重建容器 fp 不变，读数见 §6.3） |
 
 ---
 
@@ -222,13 +223,36 @@ docker compose -p graphrag-drill logs backend | grep -i "fingerprint\|public_key
 | 对照（旧镜像、不挂载） | `components = {'mac': '22:82:83:ff:0a:17'}` ⇒ 只剩 MAC（缺陷原状） |
 | pytest 回归 | `tests/test_license_fingerprint.py` **4 passed**；`-k "fingerprint or license"` **6 passed** ✅ |
 
-### 6.3 ⚠️ 阻塞项：镜像尚未重出
+### 6.3 重出包 + 端到端复验（阻塞项已解除）
 
-交付 compose 用的是 `graphrag-agent/backend:1.6.0` **镜像**，而上面的代码改动只在**源码**里 ⇒
-**当前镜像不含修复**。本轮容器内验证是用 `docker cp` 把补丁打进运行中的容器做的（仅作验证手段）。
+交付 compose 用的是 `graphrag-agent/backend:1.6.0` **镜像**，代码改动不重出镜像就进不了客户的包。
+经用户批准重出（2026-10-10）：
 
-⇒ **必须重出交付镜像 + 离线包**（`build_delivery_images.py`）才能让客户拿到修复。
-这触「不重做出包」那条纪律，需**单独立项或明确批准**后才动。
+| 步 | 读数 |
+|---|---|
+| `--save` | backend / frontend 两个镜像重建 + `docker save` 成功 |
+| **新代码确实进了镜像** | 挂载 `machine-id` 跑两次 ⇒ `components={'machine-id':…}`、`fp=4d0e04e04f1d098c11a6fcbec1eabd1b` **两次一致**；不挂载 ⇒ 回落 `{'mac':…}`（符合 ADR 回落语义） |
+| `--verify` | `tar SHA-256 校验通过（496,529,920 字节）` / `tag 与交付 compose 逐字节一致` / 两枚 image id 一致 / 第三方不入包 ⇒ **7 项全 PASS** |
+| 体积旁证 | tar 由 `496,524,288` → `496,529,920` 字节（**+5,632**）⇒ 镜像内容确实变了 |
+
+**端到端复验（不带 override，只用交付 compose 自身）**：
+
+| 判据 | 读数 |
+|---|---|
+| 公钥是否进容器 | `env \| grep -c LICENSE_PUBLIC_KEY` = **1** ⇒ **F-P6X-1 修复由交付 compose 自身完成**，不再依赖任何外部 override |
+| 重建容器 fp 是否变 | 重建前后均 `fp=4d0e04e04f1d098c11a6fcbec1eabd1b` ⇒ **F-P6Y-2 修复在镜像 + compose 上生效** |
+| License 状态 | `LICENSE_MISSING`（新栈未放 License 文件，属预期；非空断言） |
+
+### 6.4 ⚠️ 新发现（未解决）：换机重新签发**没有工具支撑**
+
+按 §6.1 约束 3，换机恢复后必须由供应商重新签发 License。但实测发现：
+
+- `backend/scripts/license_cli.py` **只有 `fingerprint` 一个子命令**，`build_parser()` 里没有签发 / 生成子命令；
+- 开发环境 `.env` 里只有 `LICENSE_PUBLIC_KEY`，**没有私钥**（无私钥也无从签发）。
+
+⇒ 因此本轮**做不了正向验证**（"签发一份匹配当前指纹的 License ⇒ `has_license=true`"），
+也意味着：**「换机须重新签发」这条流程目前缺少工具与密钥管理的落地方案。**
+⇒ 建议下一批立项：签发工具（含私钥保管方式）+ 用一条端到端的正向用例把它钉住。
 
 ---
 
