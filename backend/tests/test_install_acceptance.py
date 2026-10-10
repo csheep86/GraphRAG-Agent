@@ -110,15 +110,32 @@ def test_combine_of_empty_is_skip_not_pass(mod) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_d1b_inspection_finds_build_in_deliverable_compose(mod) -> None:
-    """机械查的结果今天必须是"未落地"——不是写死的常量。"""
+def test_d1b_inspection_finds_build_in_dev_compose(mod) -> None:
+    """**开发** compose 仍带 `build:` ⇒ 拿它当交付物查，结果必须是"不合规"。
+
+    这条不是"D-1b 未落地"的证据（交付 compose 已经落地，见下一条），而是钉死
+    「方案 A」的前提：开发那份的 `build:` **必须留住**（G-19 第二条靠它识别自研）。
+    """
     ok, problems = mod.inspect_d1b(
         compose_file=REPO_ROOT / "deploy" / "docker-compose.yml", repo_root=REPO_ROOT
     )
     assert ok is False
     joined = " ".join(problems)
     assert "build:" in joined
-    assert "docker save" in joined
+
+
+def test_d1b_inspection_passes_on_the_delivery_compose(mod) -> None:
+    """P6-D1b 的闭环：**交付** compose 无 `build:` + `backend/scripts/` 下有出包脚本。
+
+    ⚠️ 第二条能不能查到，取决于 `SCANNED_DELIVERY_PREFIXES` 里有没有
+    `("backend", "scripts")` —— 仓库根没有 `scripts/` 目录，漏了它这条会**恒红**。
+    """
+    ok, problems = mod.inspect_d1b(
+        compose_file=REPO_ROOT / "deploy" / "docker-compose.delivery.yml",
+        repo_root=REPO_ROOT,
+    )
+    assert ok, "；".join(problems)
+    assert ("backend", "scripts") in mod.SCANNED_DELIVERY_PREFIXES
 
 
 def test_d1b_inspection_ignores_prose_in_docs(mod, tmp_path: Path) -> None:
@@ -139,13 +156,18 @@ def test_d1b_inspection_ignores_prose_in_docs(mod, tmp_path: Path) -> None:
     assert "docs/ 里的描述不算" in " ".join(problems)
 
 
-def test_item9_is_skipped_with_p6x_and_d1b_today(mod) -> None:
+def test_item9_is_skipped_because_no_drill_is_filed_yet(mod) -> None:
+    """第 9 项**仍必须是 SKIP**，但理由从"D-1b 未落地"变成"**演练未做**"。
+
+    本批（P6-D1b）只解前置；翻 PASS 要等 P6-X 的**双人演练留证**。
+    ⇒ 断言同时盯两头：不许再拿 D-1b 当借口，也不许偷偷变 PASS。
+    """
     subs = mod.check_9(mod.Context(run_pytest=False))
-    # `docs/drills/restore-drill-*.md` 不存在 ⇒ 只能是 SKIP（AI 不得替人收口）
     status, detail = mod.combine(subs)
     assert status == "SKIP"
     assert "P6-X" in detail
-    assert "D-1b" in detail
+    assert "D-1b 前置已满足" in detail
+    assert "未落地" not in detail
 
 
 def test_item9_would_flip_once_a_drill_is_filed(

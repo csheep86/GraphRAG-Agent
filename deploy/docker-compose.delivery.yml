@@ -1,0 +1,184 @@
+# D-1b 离线镜像包（P6-D1b）— **交付用**编排文件（客户现场的唯一安装入口）
+#
+# 规格出处：`docs/deployment-spec.md` §1.1（编排文件 = 唯一入口）、§4（离线安装）、
+#           §6.4①（独立环境 = **从交付物部署**：部署命令里**无 `build:`**）。
+#
+# ✅ **为什么另起一份，而不是把 `docker-compose.yml` 的 `build:` 删掉**（决策 Y1 = 方案 A）：
+#    1. `backend/tests/test_guardrails_delivery.py::test_g19_own_image_tags_track_app_version`
+#       靠 **是否声明 `build:`** 来识别"哪些是**自研**镜像"（第三方 neo4j / postgres 不参与
+#       tag == app_version 校验），且末尾断言 `checked`（"没有任何带 build: 的服务 ⇒
+#       本判据失去对象"）。⇒ 一旦把开发 compose 的 `build:` 删光，**G-19 第二条当场 FAIL**。
+#       那不是护栏错了，是它的识别口径长在 `build:` 上 —— **本批不许动它**。
+#    2. 开发侧仍要能从**源码**构建（`docker compose up` 现场编）⇒ 那份 `build:` 必须留住。
+#    ⇒ 于是：**开发 = 本仓库的 `docker-compose.yml`（有 `build:`）**；
+#       **交付 = 本文件（无 `build:`，只认固定 tag 的镜像）**。两者服务集合 / 环境 / 端口 /
+#       健康检查 / 卷**逐项相同**，差别**只有** `build:` 与项目名那一行。
+#
+# ✅ **D-1b 的落地方式 = 离线包（`docker save`），不是 registry**（决策 Y8）：
+#    镜像由 `backend/scripts/build_delivery_images.py` 构建 + 打包成 tar + 产出
+#    `delivery-manifest.json`；客户现场 `docker load -i <包>.tar` 后 `compose up`。
+#    ⇒ 本文件里**没有**、也**不许出现**任何 registry 地址（`image:` 一律是本机的短名）。
+#
+# 使用（客户现场，两条到货路都写进 `deploy/README.md`）：
+#   docker load -i graphrag-agent-offline-<版本>.tar
+#   cp .env.example .env   # 填 NEO4J_PASSWORD / POSTGRES_PASSWORD / APP_OWNER_PASSWORD / APP_RLS_PASSWORD
+#   docker compose -f docker-compose.delivery.yml up -d
+
+# **项目名留一个环境变量口子**（决策 D1）：不设时与开发态同名（`graphrag-agent`）；
+# 需要在一台宿主机上同时跑两套（例：P6-X 的**独立**演练环境，§6.4② 要求"独立 compose 项目
+# + 独立数据卷"）时设 `COMPOSE_PROJECT_NAME=graphrag-drill` 即可 —— 卷名随之隔离。
+name: ${COMPOSE_PROJECT_NAME:-graphrag-agent}
+
+services:
+  neo4j:
+    # tag 固定（D-N）：`:latest` 是不可复现的同义词。
+    # **不入离线包**（Y9：客户现场联网自拉；断网现场改用 `--include-third-party` 全包）。
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD 必填，见 .env.example}
+    # §2「PG / Neo4j 禁止暴露到业务网络」⇒ 只绑回环
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - neo4j_data:/data
+      # 镜像还声明了 `/logs`；不显式挂 ⇒ Docker 自建**匿名卷**（排障时不知道是谁的、
+      # 备份也漏项）。规格 §6.1「备份对象缺一不可复现」⇒ 一律显式命名
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"${NEO4J_PASSWORD}\" 'RETURN 1'"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+
+  # DR-B1：关系型库。按 §2「PG / Neo4j 禁止暴露到业务网络」⇒ **不映射 ports**，
+  # 需直连时用 `docker compose exec postgres psql -U graphrag -d graphrag`。
+  postgres:
+    # tag 固定小版本（D-N）。**不入离线包**（Y9，同 neo4j）。
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: graphrag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填，见 .env.example}
+      POSTGRES_DB: graphrag
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graphrag -d graphrag"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  # **P3-A**：建 RLS 角色 / 受控函数 / 落策略的一次性服务。
+  #
+  # **为什么必须有它**：RLS 生效的前提是「应用账号**不是**表 owner、且 `NOBYPASSRLS`」
+  # （ADR-0003 §3.2 要求 2），而这个前提**只能由超级用户建立一次**——应用自己建不出来。
+  #
+  # ⚠️ **少了它会发生什么**：`backend` 仍会照常起来，但库里**没有任何策略**，
+  # 而此时它连库的身份若是超级用户 ⇒ **绕过一切 RLS**，症状为零。
+  #
+  # **无 `build:`**：本文件是交付形态，镜像只能来自离线包 / 客户内网 registry。
+  # 与 `backend` 共用**同一份** `graphrag-agent/backend` 镜像（Y6），只是 `command:` 不同。
+  db-init:
+    image: graphrag-agent/backend:1.6.0
+    command:
+      - python
+      - scripts/init_rls_roles.py
+      # 超级用户连串：只在**这一个一次性服务**里出现（backend 用的是受限角色）
+      - --admin-url
+      - postgresql+psycopg://graphrag:${POSTGRES_PASSWORD}@postgres:5432/graphrag
+      # 首次部署时建表（owner 身份）。已存在则 no-op；**升级**仍走
+      # `alembic upgrade head`（deployment-spec §7.2），本服务不改迁移历史。
+      - --create-tables
+    environment:
+      # 【密钥】这两个口令**不写进镜像**（§3），由现场 `.env` / Secrets 注入。
+      APP_OWNER_PASSWORD: ${APP_OWNER_PASSWORD:?APP_OWNER_PASSWORD 必填，见 .env.example}
+      APP_RLS_PASSWORD: ${APP_RLS_PASSWORD:?APP_RLS_PASSWORD 必填，见 .env.example}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # 一次性：`restart: "no"`。它退出 0 后 `backend` 才起（`service_completed_successfully`）
+    restart: "no"
+
+  backend:
+    # DR-A6（G-19）：tag **必须固定小版本**（`:latest` 是不可复现的同义词，D-N）且
+    # == `backend/app/core/config.py` 的 `app_version`（当前 1.6.0）⇒
+    # 由 `test_g19_delivery_compose_tags_track_app_version` 机械盯住漂移。
+    # ⚠️ 这个 tag 与离线包 tar 里的 tag **必须逐字节相同**，差一个字符客户现场 `docker load`
+    #    之后 compose 就会去找一个不存在的镜像（`build_delivery_images.py` 的保存清单
+    #    **由本文件反推**，就是为了让这件事不可能漂移）。
+    image: graphrag-agent/backend:1.6.0
+    environment:
+      # DR-B1：连本文件的 `postgres` 服务。**必须写服务名**，不能写 localhost。
+      # **P3-A**：连库账号必须是受限角色 `app_rls`（`NOBYPASSRLS`）。用超级用户连库
+      # ⇒ **绕过一切 RLS**，且**没有任何症状**。角色由上面的 `db-init` 建立。
+      DATABASE_URL: postgresql+psycopg://app_rls:${APP_RLS_PASSWORD}@postgres:5432/graphrag
+      # **P3-D**：owner 串——迁移 / DDL 专用（`alembic upgrade head` 跑 CREATE / ALTER）。
+      DATABASE_URL_OWNER: postgresql+psycopg://app_owner:${APP_OWNER_PASSWORD}@postgres:5432/graphrag
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      # 必须全大写：`case_sensitive=False` 让小写写法侥幸可用，
+      # 但一旦收紧大小写就**静默连不上**（症状是图谱功能全废、healthcheck 却仍绿）。
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      CORS_ALLOW_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000"]'
+      # §3 生产默认值：私域禁外发，生产不得为 false
+      PRIVATE_DEPLOY_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      # **P3-A**：必须等 `db-init` **成功退出**（而不是"起来了"）——
+      # 它在建角色 / 落策略，backend 若先跑起来就是"没装 RLS 也在对外服务"。
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # 契约路径是 `/api/v1/health`（不是 /health）：backend/app/api/v1/routes/health.py
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health').status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    # DR-A6（G-19）：tag 固定小版本 == `app_version`。
+    # ⚠️ **R18 红线**：镜像构建时必须带 `NEXT_PUBLIC_USE_MOCK=false`
+    # （`build_delivery_images.py` 已写死，且 `--dry-run` 会把它打出来供核对）——
+    # 漏了这个 build-arg，容器化前端会**静默走 Mock**（看起来能跑、数据全是假的）。
+    image: graphrag-agent/frontend:1.6.0
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  # DR-B1：关系型数据
+  pg_data:

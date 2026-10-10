@@ -68,6 +68,10 @@ deploy/license/*.lic
 *.db-journal
 # 彩排 / 切片脚本的临时产物与日志（本地证据，不入库）
 backend/reports/
+# P6-D1b 离线镜像包（自研 ≈456MB / 全包 ≈919MB，U 盘 / 内网搬运，**绝不入库**）
+# 规则显式写死，不靠"记得不加"（backend/reports/ 已覆盖默认落点，这两条是兜底）
+*.tar
+delivery-manifest.json
 # 运行日志：含带端口号的变体（`_uvicorn8000.out` 曾因只写 `_uvicorn.*` 而漏忽略）
 backend/_uvicorn*.out
 backend/_uvicorn.err

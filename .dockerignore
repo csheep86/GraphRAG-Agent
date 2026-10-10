@@ -30,7 +30,14 @@
 
 # ------------------------------------------- 开发期资产：镜像只承载运行时
 **/tests/
-**/scripts/
+# ⚠️ **不许**在这里写 `**/scripts/`（P6-D1b 实测，2026-10-10）：
+#    `backend/Dockerfile:39` 有 `COPY backend/scripts ./scripts` —— 镜像里必须能跑
+#    `scripts/init_rls_roles.py`（RLS 角色 / 策略只能由 db-init 建一次，没有它，
+#    backend 会照常起来而库里**一个策略都没有**，症状为零）。
+#    本文件曾含 `**/scripts/` ⇒ 构建实测 `failed to calculate checksum of ref ...
+#    "/backend/scripts": not found`，且只报 **warning**（CopyIgnoredFile）却让 `COPY` 失败。
+#    ⇒ 需要排除的是**别的**目录下的临时脚本，逐条点名，不要用一个通配把 backend 那份也打掉
+#    （`backend/scripts` 只有 ~1.2 MB，且是镜像运行所需）。
 **/*.log
 **/logs/
 **/node_modules/

@@ -69,9 +69,22 @@ ITEM_TITLES: dict[int, str] = {
     10: "生产配置",
 }
 
-DEFAULT_COMPOSE = REPO_ROOT / "deploy" / "docker-compose.yml"
+#: **交付**形态的编排文件（P6-D1b / 决策 **Y1 = 方案 A**）。
+#: §6.4① 把「独立环境」定义为**从交付物部署** ⇒ 要查的是**交付给客户的那一份**
+#: （`docker-compose.delivery.yml`，全服务无 `build:`），**不是**开发用的那一份
+#: （`docker-compose.yml` 保留 `build:` 是**故意**的——G-19 第二条靠它识别自研镜像）。
+DEFAULT_COMPOSE = REPO_ROOT / "deploy" / "docker-compose.delivery.yml"
 DEFAULT_DRILL_DIR = REPO_ROOT / "docs" / "drills"
 DEFAULT_TIMEOUT = 20.0
+
+#: `inspect_d1b` 第 ② 条只扫这些目录（**能真正产出交付物**的地方）。
+#: 元组写法是为了容纳 `backend/scripts` 这种**两级**前缀（见该函数内的说明）。
+SCANNED_DELIVERY_PREFIXES: tuple[tuple[str, ...], ...] = (
+    (".github",),
+    ("deploy",),
+    ("scripts",),
+    ("backend", "scripts"),
+)
 
 _SECRET_KEY_RE = re.compile(r"(?i)(key|secret|token|password|passwd|pwd|credential)")
 #: 参与"是否泄漏"比对的最短密钥值（太短会满屏误报，反而没人再看这份报告）
@@ -584,7 +597,16 @@ def check_8(ctx: Context) -> tuple[SubCheck, ...]:
     )
 
 
-_DOCKER_SAVE_RE = re.compile(r"docker\s+(save|load)|\bdocker\s+push\b")
+#: ② 的匹配式。**两条形态都认**：
+#:   a) shell 形态 `docker save` / `docker load` / `docker push`；
+#:   b) **argv 形态** `("docker", "save", ...)` —— P6-D1b 的出包脚本是 Python，
+#:      命令以 argv 元组出现，只认 (a) 的话**永远**看不见它（那才是真·假阴性）。
+#: ⚠️ 目录范围（见 `SCANNED_DELIVERY_PREFIXES`）才是防"文档里的计划冒充交付物"的那一道
+#:    （F-P6W-4）；本式只负责认出"真的有这一步"。
+_DOCKER_SAVE_RE = re.compile(
+    r"docker\s+(save|load)|\bdocker\s+push\b"
+    r"|['\"]docker['\"]\s*,\s*['\"](save|load|push)['\"]"
+)
 
 
 def inspect_d1b(*, compose_file: Path, repo_root: Path) -> tuple[bool, tuple[str, ...]]:
@@ -615,13 +637,19 @@ def inspect_d1b(*, compose_file: Path, repo_root: Path) -> tuple[bool, tuple[str
     #: **只看"能真正产出交付物"的地方**：CI 工作流与可执行脚本。
     #: `docs/` 里当然满地都是 `docker save` / `docker load` —— 那是在**描述计划**，
     #: 不是交付物；把它们算进去的话这条查证会永远命中、永远假阳性。
+    #: ⚠️ **`backend/scripts/` 必须算进来**（P6-D1b 决策 D3）：离线包脚本就住在那里，
+    #: 而仓库根**没有** `scripts/` 目录 ⇒ 只写 `"scripts"` 等于永远命中不到任何东西，
+    #: 本条查证会**恒红**（"未发现导出痕迹"）却查不出原因。
     hits: list[str] = []
-    for pattern in ("*.yml", "*.yaml", "*.sh", "*.ps1"):
+    for pattern in ("*.yml", "*.yaml", "*.sh", "*.ps1", "*.py"):
         for path in sorted(repo_root.rglob(pattern)):
             rel = path.relative_to(repo_root)
             if rel.parts[0] in {".git", "changes", "node_modules", ".venv", "docs"}:
                 continue
-            if rel.parts[0] != ".github" and rel.parts[0] not in {"deploy", "scripts"}:
+            if not any(
+                rel.parts[: len(prefix)] == prefix
+                for prefix in SCANNED_DELIVERY_PREFIXES
+            ):
                 continue
             try:
                 body = path.read_text(encoding="utf-8", errors="ignore")
