@@ -255,3 +255,63 @@ $ uv run python scripts/install_acceptance.py
 ## 7. 下一批指针
 
 → [`new-session-prompt.md`](./new-session-prompt.md)（**P6-X = 纯人工批次，已改写为「人做主体」模式**）
+→ **开工前先读本文 §8**：交接文件的四处坐标已更正，且「第二台机器」已在本批收口后铺好。
+
+---
+
+## 8. 附录（2026-10-10 晚补记）：坐标更正 + P6-X 目标环境已铺好
+
+> 本批收口后、P6-X 开工前补记。**只补实测读数与坐标更正，不改上文任何结论。**
+
+### 8.1 交接文件的四处坐标要更正
+
+| 提示词里写的 | 本机实测 | 处置 |
+|---|---|---|
+| `install_acceptance.py:658`（check_9 判据） | `def check_9` 实际在 **673 行**；658 落在前一项 `inspect_d1b` 体内 | 行号漂移；`new-session-prompt.md` §4 / §11 的引用应改成 673 |
+| （未登记） | 多出一份 `backend/reports/delivery/drill-check/docker-compose.delivery.yml` | 与 `deploy/` 原件 `Compare-Object` **逐行 diff 为空** ⇒ 可作演练工作副本 |
+| 「备份集待逐条核是否齐全」 | `reports/backup/full2`：五类文件对象**全部 `status=present`**（`neo4j` **不是** skipped）+ `active_kg_version` 已记录，七条 SHA-256 全通过 | **第 8 项实测 PASS**（带 `--backup-dir reports/backup/full2`；汇总仍 `PASS 1 / SKIP 9 / FAIL 0`，**第 9 项 SKIP 未变**） |
+| 端口账「5432 不映射（内部）」 | 说的是**交付** compose（确实不映射）；开发的 `graphrag-pg` 却把 `0.0.0.0:5432` 映射到了宿主 | 不影响交付栈；提醒别把两份 compose 混为一谈 |
+
+### 8.2 「第二台机器」已建好 ⇒ P6-X 不必再停 `graphrag-neo`
+
+§6.4② 的「独立度」改用**另一台 Linux VM**（宿主已注册的 WSL2 发行版 `Ubuntu-26.04`），
+而不是"同一 daemon 换个项目名"（那样必须与 `graphrag-neo` 抢 `7687`）：
+
+| 项 | 实测读数 |
+|---|---|
+| VM | Ubuntu 26.04 LTS，内核 `6.18.33.2-microsoft-standard-WSL2`，**独立 IP `172.20.250.191`** |
+| Docker / Compose | `29.1.3`（`overlayfs`，cgroup `systemd`）/ `v2.40.3`；`systemctl is-active docker` = `active` |
+| 宿主开发栈 | **`graphrag-neo` / `graphrag-pg` 全程未停**（`docker ps` 前后一致） |
+| 目标机 `docker ps -a` | 空（状态干净） |
+| 剩余资源 | 磁盘 945G、内存 12G 可用 |
+
+**四种 daemon 的出网实测**（这条决定了 Y9「客户现场联网自拉」在本机模拟不出来）：
+
+| daemon | 能不能拉 registry | 说明 |
+|---|---|---|
+| Docker Desktop（宿主） | ✅ `docker pull` 成功 | 但宿主 `curl https://registry-1.docker.io/v2/` = **000 超时** ⇒ 出网能力只在这条路径上，**原因未查明、不猜** |
+| 目标机内的 dockerd | ❌ `000` / `curl (7)` | apt 源（`archive.ubuntu.com`）**200 可达** ⇒ 能装包、不能拉镜像 |
+| DinD（`docker:28-dind`，已删） | ❌ `postgres:16-alpine` pull FAIL | DNS 能解析（`31.13.94.10`）但出口不通 |
+
+⇒ **任何非 Docker Desktop 的 daemon 都拉不到第三方镜像**，所以 `neo4j` / `postgres` 只能走
+`docker save` → 目标 `docker load` 搬运：**不碰 registry、不重做出包**（不触 Non-goals 第 4 条）。
+
+### 8.3 已铺好的物料（目标机 `/root/drill/`）
+
+| 路径 | 内容 |
+|---|---|
+| `deploy/` | 交付 compose 目录（`cp -a`；仓库内原文件**无 diff**） |
+| `backup-full2/` | 备份集 6 文件，与宿主逐项同字节：`neo4j.dump` 3,435,770 / `postgres.dump` 190,444 / `storage.tar` 10,240 / `license.lic` 580 / `env.redacted` 23,045 / `backup-manifest.json` 1,864 |
+| `delivery-manifest.json` | 1,097 字节 |
+| `.env` | 骨架已生成 **`chmod 600 root`**；四个密钥留占位 `__FILL_ME__*`（**值由人填，AI 未接触任何真实密钥**） |
+| 已 load 的镜像 | `graphrag-agent/backend:1.6.0` 845MB / `frontend:1.6.0` 1.17GB / `neo4j:5.26-community` 986MB / `postgres:16-alpine` 420MB |
+
+tar 体积经**三次交叉验证**一致：`496,524,288` 字节（宿主文件系统 / drvfs / VM 本地盘）。
+
+### 8.4 两条留给 P6-X 的操作纪律
+
+1. **`drvfs` 是会话级挂载** —— 这台 VM 的 `/etc/wsl.conf` 里 `[automount] enabled=false`
+   是**用户本机既有配置**（不是故障），本次**一个字都没改**；每次搬运前自行
+   `mount -t drvfs D: /mnt/d`，**进程退出即失效**（实测如此）。
+2. **会话断太久 VM 会被回收** —— `wsl -l -v` 显示 `Stopped` 时 docker 仍可能 `active`；
+   每批命令起手先 `wsl -d Ubuntu-26.04 -e true` 唤醒，并复核 `systemctl is-active docker`。
