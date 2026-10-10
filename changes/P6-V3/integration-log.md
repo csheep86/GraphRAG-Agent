@@ -29,6 +29,10 @@
 | `6054f21` | `docs(m6)` | 登记 X-7 口径再裁决 + 更正 `delivery-plan.md` 序 5d 的过期前提 |
 | `6d564f8` | `feat(cost)` | 两侧写入方 + `_graph_elements` / `_record_graph_cost` / `_refresh_cost_ratio` |
 | `c4f0dc0` | `test(cost)` | 判据 9 条（新文件）+ 修 1 条**顺序耦合**的既有用例 |
+| `ddce063` | `docs(changes)` | `proposal.md` / 本日志 / 下一批提示词 |
+
+**CI**：run [`38014108048`](https://github.com/csheep86/GraphRAG-Agent/actions/runs/38014108048)
+**success**（推送 `c57bc41..ddce063` 触发；`main` 直推）。
 
 ---
 
