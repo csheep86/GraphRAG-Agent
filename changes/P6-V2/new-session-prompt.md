@@ -158,9 +158,13 @@ cd backend && uv run python scripts/extract_seam_signatures.py --check  # 期望
 
 ## 13. 下一批指针（收口时按**实际结果**改，别照抄）
 
-1. **P6-T 判分 86 题**：**必须传承到每一批**，直到完成（P8-Release 零缺口对账前判完）。
-2. **`cost/dashboard` 按 stage 切片**：属契约变更（跨角色：`openapi.yaml` + 前端 `npm run gen:api`），
+1. **P6-T 判分 86 题**：**必须传承到每一批**，直到完成（P8-Release 零缺口对账前判完）
+   （当前进度：`backend/data/eval/judging/judge-progress.json` 已判 **2 题**，该产物属 P6-T 本地进度，**刻意不入库**）。
+2. **顺手续正 `docs/delivery-plan.md` §9.2 序 5d 的过期前提**：那行写着
+   「`registry.py:634-644` 全新构建分支**已有真实 LLM 调用可量**」——已被实读推翻（该分支零 LLM）。
+   建议在**同一条 X-7 裁决里一并更正**，别留着误导下一个人。
+3. **`cost/dashboard` 按 stage 切片**：属契约变更（跨角色：`openapi.yaml` + 前端 `npm run gen:api`），
    已登记在 spec §10.1.1 第 14 项；有了 stage 行之后这事才真正具备前提。
-3. **P6-W**（DR-E4 安装验收十项脚本化，需目标环境）→ **P6-X**（演练留证，**独立环境 + 双人**，
+4. **P6-W**（DR-E4 安装验收十项脚本化，需目标环境）→ **P6-X**（演练留证，**独立环境 + 双人**，
    AI 不得单独收口）→ **P6-Y**（L2 端到端）→ **P7-B** → **P8-Release**（tag `v2.0.0`）。
-4. **X-5** 契约描述文本更新（`cost/dashboard` 还写着"占位骨架 / 恒 501"）：跨角色任务。
+5. **X-5** 契约描述文本更新（`cost/dashboard` 还写着"占位骨架 / 恒 501"）：跨角色任务。

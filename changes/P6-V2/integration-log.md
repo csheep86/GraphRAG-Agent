@@ -116,6 +116,12 @@ pytest（有图口径，三个 env 都设）：
 | `ruff check` / `ruff format --check` | 通过 | **通过** |
 | `pytest`（有图口径） | 1173 passed / 5 skipped | **1182 passed / 5 skipped** |
 
+> **CI 口径与本地口径的差必须解释清楚**（否则下一批会误判"测试掉了"）：
+> CI 无真 Neo4j ⇒ 两条图用例 skip ⇒ **1180 passed / 7 skipped**（run `38009592663`，四 job 全绿）。
+> 本地设了 `GRAPH_REAL_NEO4J_*` ⇒ 那两条真跑 ⇒ **1182 / 5**。`1180 + 2 = 1182`，**不是回归**。
+> CI 容器日志里那行 `ck_kg_versions_status` 报错是负向用例
+> `test_kg_versioning.py::test_check_constraint_rejects_invalid_status` 故意制造的，非故障。
+
 ## 9. 下一批指针
 
 - **P6-V3**（序 5d）：C3-b 取证。**⚠️ 仍卡在未决前提**：增量重算零 LLM ⇒ token 口径下
