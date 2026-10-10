@@ -1,0 +1,151 @@
+# P6-Y：License 交付缺口修复（F-P6X-1）+ 跨机恢复 License 失效定案（F-P6Y-1）
+
+> **队列**：[`docs/delivery-plan.md`](../../docs/delivery-plan.md) §11 排期
+> **裁决来源**：2026-10-10 用户拍板 —— 「推吧，按你建议开吧」
+> **发现来源**：[`changes/P6-D1b/integration-log.md`](../P6-D1b/integration-log.md) **§9.4**（P6-X 首炼预演实测）
+> **判据源**：[`docs/deployment-spec.md`](../../docs/deployment-spec.md) §6.1 / §6.2 / §6.4 / §10
+> **上一批交接**：[`changes/P6-D1b/new-session-prompt.md`](../P6-D1b/new-session-prompt.md)
+> **边界**：本文 §1（Non-goals **9** 条）
+
+---
+
+## 0. 本批到底做什么（三个 Y 半批）
+
+| 半批 | 内容 | 起因 |
+|---|---|---|
+| **Y-a** | **F-P6X-1**：把 `LICENSE_PUBLIC_KEY` 真正送进 `backend` 容器 + 现场模板给出对应说明 | 交付 compose 的 `environment:` 白名单里没有它；compose 的 `--env-file` **只插值不注入** ⇒ 客户照模板装 ⇒ License 必然验签失败、业务接口全 **403** |
+| **Y-b** | **F-P6Y-1**：实跑定案「License 绑机器指纹 ⇒ 跨机恢复必然失效」 | `provider.py:211-219` 逐次比对 `compute_fingerprint()`；这让 §6.1 的 License 备份对象在 DR 语境下形同虚设 |
+| **Y-c** | **F-P6X-3**：交付 README 补「图库 load 后必须 `restart neo4j`」 | `neo4j-admin database load` 后库停 offline；`neo4j start` 误报 `already running (pid:7)`；Community 版不支持 `START DATABASE` |
+
+### 0.1 三条发现的证据链（全部为实测 / 源码坐标）
+
+**F-P6X-1（四条互证）**
+
+1. `deploy/docker-compose.delivery.yml:114-128`（`backend.environment`）**没有** `LICENSE_PUBLIC_KEY`；
+2. `deploy/.env.example` **一行 LICENSE 都没有**；
+3. compose 语义：`--env-file` 只提供插值变量，不自动注入容器；
+4. 实证：容器内 `env | grep -i license` 为**空**；日志 `app.services.license.provider:_verify:192 - license_public_key_missing`。
+
+配套的**产品常量**：`backend/app/core/config.py:54-56` —— `license_public_key: str = ""` 且注释写明
+「**留空 = 一律验签失败**」。
+
+**F-P6Y-1（源码坐标 + 待实跑区分）**
+
+```211:219:backend/app/services/license/provider.py
+expected_fingerprint = str(body.get("fingerprint") or "")
+actual = compute_fingerprint()
+if expected_fingerprint != actual:
+    ...
+    return LicenseState(has_license=False, code=ErrorCode.LICENSE_FINGERPRINT_MISMATCH)
+```
+
+⇒ **未实跑**：本批 Y-b 第一步必须先把两种失败码**区分开** ——
+拿到公钥后新环境的返回究竟是 `LICENSE_INVALID`（验签仍不过）还是
+`LICENSE_FINGERPRINT_MISMATCH`（验签过了但机器不对）。**这两个码对应完全不同的修法**，
+在没跑出来之前不许先写结论。
+
+**F-P6X-3（实测）**
+
+- `neo4j-admin database load` → `Done: 42 files, 264.7MiB` 成功；
+- 随后 `cypher-shell` → `Unable to get a routing table ... database is unavailable`；
+- `neo4j stop` / `neo4j start` → `Neo4j is already running (pid:7)`；
+- `START DATABASE neo4j` → `Unsupported administration command`（Community 不支持）；
+- 唯一有效动作：`docker compose restart neo4j` ⇒ `nodes=7308` 可读。
+
+---
+
+## 1. Non-goals（**9 条** —— 改任何一条之前先按本文 §5 升级）
+
+1. **不改 License 的密码学方案**：Ed25519 / 留空即拒绝 / 时钟漂移容忍一律不动
+   （ADR-0006 §2.3 / §2.7）。本批只补**配置通路**，不碰验签语义。
+2. **不做 License 服务端 / 在线激活 / 许可证签发系统**：重新签发仍走
+   `backend/scripts/license_cli.py`（供应商离线签发），本批不引入任何网络依赖。
+3. **不弱化 License 的强度**：不许为了让恢复演练变绿而把 `license_enforce` 改成 false，
+   不许给某个函数调用「跳过指纹比对」的后门。
+4. **不重做 P6-X 的演练留证**：本批产出 README / compose / 模板级别的修复，
+   `docs/drills/restore-drill-*.md` 仍要到 P6-X 正式批次由**人工双人**产出，**AI 不代写一个字**。
+5. **不动 `frontend/`**、**不改契约**：`export_openapi.py --check` 零 diff 为判据。
+6. **不碰 backup / restore 脚本的业务逻辑**：`restore.py` 的 `SKIP` 分级与 §6.2 判据保持不变
+   （F-P6X-2 记录的容器限制只登记，**不在本批改**）。
+7. **不因为本批就把第 9 项改判据**：`install_acceptance.py` 第 9 项仍只看
+   `docs/drills/restore-drill-*.md` 是否存在；不许加一行让它在没留证时也变绿。
+8. **不顺手清理本批范围之外的其他发现**：本批只处理 F-P6X-1 / F-P6Y-1 / F-P6X-3，
+   其余发现（如 §9.1 环境独立度、F-P6X-2 的 `restore.py` 容器限制）仍在
+   P6-D1b 登记处原地排队，**不许夹带**。
+9. **AI 不得代填 `correct` 值、不得代签任何署名**：失败码要实跑拿到，
+   留证要真人双人署；缺位就写缺位，不许编。
+
+> ⚠️ 实现中若发现必须触碰某条 Non-goal ⇒ **先缩范围再报告**
+> （哪份文档哪一行 / 改什么 / 为什么绕不过 / 试过的替代方案）。
+
+---
+
+## 2. 决策表（**待你逐条拍板**）
+
+| # | 决策 | 建议 |
+|---|---|---|
+| **Y1** ✅ | 是否开本批 | **已裁决 = 开**（2026-10-10 用户：「按你建议开吧」） |
+| **Y2** 🆕 | `LICENSE_PUBLIC_KEY` 由谁提供 | **建议 = 走 `.env` 插值进 `backend.environment`**（与 `NEO4J_PASSWORD` 同款写法），并在 `deploy/.env.example` 补占位 + 说明；**内置到镜像**虽更省事，但会让「换密钥 = 重新出镜像」，也与既有「密钥不进镜像」的配置风格不一致 |
+| **Y3** 🆕 | F-P6Y-1 怎么处置（**最关键**） | 三选一，见 §2.1；**先跑 §2.2 的判据再选** |
+| **Y4** 🆕 | Y-c 的 README 落点 | 建议写进 `docs/v1.1.0-deploy.md` 的「离线交付 / 恢复」一节，与主 README 保持一致 |
+| **Y5** 🆕 | 本批要不要顺带补 §10 十项回归 | 建议**跑一次** `install_acceptance.py` 作回归（预期：第 9 项仍 SKIP，其余不倒退） |
+| **Y6** 🆕 | 验证环境 | 建议沿用 P6-X 预演的同款：同 daemon `COMPOSE_PROJECT_NAME=graphrag-drill` + 独立 `.env`，演练窗口内 `docker stop graphrag-neo` |
+| **Y7** 🆕 | 恢复演练的见证者 | **仍缺位**；本批不写留证，故不阻塞 —— 但正式 P6-X 开工前必须落实 |
+
+### 2.1 Y3 的三个候选（**未决**）
+
+| 候选 | 做法 | 代价 / 收益 |
+|---|---|---|
+| **A. 承认「恢复后须重新签发」** | 在 §6.1 / §6.4 写死：License **随机器绑定**，换机恢复后必须由供应商**重新签发**，冒烟第 3 条在新机上的判据改成「重新签发后 valid」 | 最诚实、改动最小；代价：DR 的 RTO 里要多算一次人工签发 |
+| **B. 换个指纹锚点** | 指纹改为绑**客户 / 部署标识**而非机器（如 license 里的 `customer` + `max_seats`） | 换机可用；代价：**弱化反盗版强度**（一个 license 可到处拷），触 Non-goals 第 3 条之嫌 |
+| **C. License 支持「DR 备用机」** | license 里允许登记 N 台机器的指纹（主 + 备） | 兼顾；代价：签发协议要扩字段，**属新量程**，须先扩 ADR-0006 |
+
+### 2.2 Y-b 第一步：先把失败码区分开（**不许先写结论**）
+
+```bash
+# 在 drill 环境里，把公钥真正送进 backend 容器之后：
+curl -s http://127.0.0.1:8000/api/v1/license/status   # 看 code 字段
+docker compose -p graphrag-drill logs backend | grep -i "fingerprint\|public_key"
+```
+
+| 观测到的 `code` | 含义 | 后续走哪条路 |
+|---|---|---|
+| `LICENSE_INVALID` | 验签仍不过 ⇒ 公钥 / 签名有问题 | 继续查 Y-a（密钥与 file 配对） |
+| **`LICENSE_FINGERPRINT_MISMATCH`** | 验签过了、机器不对 | **F-P6Y-1 成立** ⇒ 进 §2.1 三选一 |
+| `has_license=true` | 都没问题 | F-P6Y-1 不成立，回到 Y-a 收口即可 |
+
+---
+
+## 3. 判据（机器可跑的才算完成）
+
+| # | 判据 | 期望 |
+|---|---|---|
+| J1 | 交付 compose `backend.environment` 含 `LICENSE_PUBLIC_KEY` | `docker compose config` 里可见该键 |
+| J2 | `deploy/.env.example` 含 LICENSE 说明与占位 | 文件里有对应行 |
+| J3 | 用 `.env.example` 起的干净环境里 `GET /api/v1/license/status` 的 `code` | 不是 `license_public_key_missing`（具体值按 §2.2 记录） |
+| J4 | 若 J3 走到 `FINGERPRINT_MISMATCH` | §2.1 三选一已写入 §6.1 / §6.4 相应条款 |
+| J5 | 交付 README 含「图库 load 后必须 restart」 | `grep -c restart` ≥ 1 且步骤能对得上实测 |
+| J6 | `install_acceptance.py` 回归 | 第 9 项仍 SKIP，其余**不倒退**（基线：`PASS 1 / SKIP 9 / FAIL 0`） |
+| J7 | `export_openapi.py --check` | 零 diff |
+
+---
+
+## 4. 任务拆分（初稿，**待 Y2 / Y3 拍板后细化**）
+
+1. **T1（Y-b 先手）**：在 drill 环境实跑 §2.2，把失败码区分开 → 回填本文 §0.1 与 §2.1 结论。
+2. **T2（Y-a）**：`deploy/docker-compose.delivery.yml` 的 `backend.environment` 增补 `LICENSE_PUBLIC_KEY`，
+   `deploy/.env.example` 增补对应占位 + 一句话用途说明。
+3. **T3（Y3 落地）**：按 §2.1 选定的候选，把结论写进 `docs/deployment-spec.md` §6.1 / §6.4 的对应条款。
+4. **T4（Y-c）**：交付 README 补图库恢复的 `restart neo4j` 步骤。
+5. **T5（回归）**：跑 J6 / J7，把输出贴进本批 `integration-log.md`。
+
+---
+
+## 5. 升级路径
+
+出现下列任一情形 ⇒ 停下找用户，**不自行放宽**：
+
+1. 要改 License 的验签语义 / 指纹算法（触 Non-goals 第 1、3 条）；
+2. 要引入服务端激活或签发协议扩字段（触 Non-goals 第 2 条，属新量程，须先扩 ADR-0006）；
+3. 为了让第 9 项变绿而写 `docs/drills/`（永久红线）；
+4. 实证出现第三个失败码，与本文列出的两种都不符 ⇒ 先补给用例，不许当作边角略过。
