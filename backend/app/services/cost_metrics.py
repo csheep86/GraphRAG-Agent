@@ -27,6 +27,16 @@ C3-a 要的是 ``token_usage_total / doc_count``，一个**区间级**的均值�
   「有数据」，后者把成本隐匿；做法是**跳过 + 打日志**（见下);
 - ``db`` 为 ``None``（脚本 / CLI 直连）时同样**跳过 + 打 warning**，不静默丢。
   LLM 已经花了钱，比「记不下来」更错的是「记不下来也不说一声」。
+
+**第四 / 五件事（P6-V3，偏离 X-7）**：``incremental_cost`` 与 ``full_rebuild_cost``
+的两侧写入。它们与 token **不是同一个量纲**：记的是「**图元素个数**」（实体 + 关系），
+取值来自 :meth:`~app.services.kg.versioning.KgVersioningService.mark_ready` 时的现成计数。
+
+为什么不用 token：``app/services/kg/`` 全目录实读**零 LLM**（开机自检里
+``build_chat_model`` / ``TokenUsage`` / ``invoke(`` 均 0 命中，见
+``changes/P6-V3/proposal.md`` §1 的坐标表）⇒ token 口径下分子恒 0，
+``cost_ratio`` 会**假性**「显著 < 1.00」而恰恰不构成达标证据；而两侧同为「个数」，
+比值才有意义。换算口**只有** :func:`_graph_elements` 一个 ⇒ 两侧不可能各自漂移。
 """
 
 from __future__ import annotations
@@ -43,6 +53,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models import COST_STAGE_ANSWER, COST_STAGE_EXTRACTION, CostMetric
+
+#: X-7 分子 / 分母对应的两列（P6-V3）。写成常量而不是散写字面量：这两个字符串
+#: 一旦拼错既不会异常也不会报错，只会让某一侧**永远停在 None**——而
+#: ``cost_ratio`` 恰好会把「没数」读成 0.0，看上去跟"比值真的小"一模一样。
+_FIELD_INCREMENTAL = "incremental_cost"
+_FIELD_FULL_REBUILD = "full_rebuild_cost"
 
 
 def utc_day(moment: datetime | None = None) -> date:
@@ -151,6 +167,69 @@ def record_extraction_usage(
     )
 
 
+def record_full_rebuild_cost(
+    *,
+    org_id: uuid.UUID,
+    entity_count: int,
+    relation_count: int,
+    occurred_at: datetime | None = None,
+    db: Session | None = None,
+    trace_id: str = "",
+) -> CostMetric | None:
+    """**X-7 分母**：一次文档**首次全量构建**写入的图元素个数。
+
+    写入方要求**仅此 1 处**（``registry.kg_build_executor`` 判定「全新构建」后才调），
+    重跑同一 ``kg_version`` **不得**再调——重复计入会把分母成倍垫大，
+    ``cost_ratio`` 被人为压低（这才是本列最容易失真的地方）。
+
+    :param entity_count / relation_count: 本次全量构建实际写入 Neo4j 的实体 / 关系数
+        （``ThreeStageKgBuilder.build`` 的 ``stats``，已由 ``mark_ready`` 落到
+        ``KgVersion`` 同名列上）——这里读的是**同一份计数**，不另算、不估。
+    :returns: 落好的那一行；跳过时返回 ``None``。
+    """
+    return _record_graph_cost(
+        field=_FIELD_FULL_REBUILD,
+        amount=_graph_elements(
+            entity_count=entity_count, relation_count=relation_count
+        ),
+        org_id=org_id,
+        occurred_at=occurred_at,
+        db=db,
+        trace_id=trace_id,
+    )
+
+
+def record_incremental_rebuild_cost(
+    *,
+    org_id: uuid.UUID,
+    entity_count: int,
+    relation_count: int,
+    occurred_at: datetime | None = None,
+    db: Session | None = None,
+    trace_id: str = "",
+) -> CostMetric | None:
+    """**X-7 分子**：一次**增量重算**写入的图元素个数。
+
+    写入方要求**仅此 1 处**（``kg.incremental.rebuild_incrementally`` 成功分支）。
+    失败路径走 ``_fail(...)`` ⇒ **不调本函数**：那次重算的产出不是一个可用版本，
+    记 0 会让仪表盘看起来"有数据"（沿用本模块"不写 0"的既有工艺纪律）。
+
+    :param entity_count / relation_count: ``IncrementalRebuildResult`` 的两个计数
+        （``incremental.py:139-140``，现成字段 ⇒ 本批零新埋点）。
+    :returns: 落好的那一行；跳过时返回 ``None``。
+    """
+    return _record_graph_cost(
+        field=_FIELD_INCREMENTAL,
+        amount=_graph_elements(
+            entity_count=entity_count, relation_count=relation_count
+        ),
+        org_id=org_id,
+        occurred_at=occurred_at,
+        db=db,
+        trace_id=trace_id,
+    )
+
+
 def _usage_triple(token_usage: Any) -> dict[str, int]:
     """``TokenUsage``（属性式）→ int 三元组；缺项按 0 计、``total`` 缺则用两项之和。"""
     prompt = int(getattr(token_usage, "prompt_tokens", 0) or 0)
@@ -161,6 +240,102 @@ def _usage_triple(token_usage: Any) -> dict[str, int]:
         "completion_tokens": completion,
         "total_tokens": total,
     }
+
+
+def _graph_elements(*, entity_count: int, relation_count: int) -> int:
+    """**两侧的唯一定价换算**：图规模 = 实体数 + 关系数（单位：图元素个数）。
+
+    X-7 的分子分母**必须同量纲**，否则 ``cost_ratio`` 是一个无量纲都不成立的数字。
+    把换算收在一个函数里，是为了让"两边单位一致"成为**结构上的事实**而不是
+    两份注释之间的君子协定——谁要改单位，两侧一起改、测试里两条同量纲断言一起红。
+    """
+    return int(entity_count) + int(relation_count)
+
+
+def _record_graph_cost(
+    *,
+    field: str,
+    amount: int,
+    org_id: uuid.UUID,
+    occurred_at: datetime | None,
+    db: Session | None,
+    trace_id: str,
+) -> CostMetric | None:
+    """把一次图写入的**规模**累加到当日行的 ``field`` 列上。
+
+    与 token 侧共用同一把行锁（:func:`_take_day_row`）⇒ 不会为本列车另开一个
+    并发写入口（两个口的锁策略一旦漂移，丢账是静默的）。
+
+    **为什么不写 0**：跟 token 侧同一个道理——写在表里的 0 与"压根没发生过"
+    读起来一模一样，而它偏偏会让 ``cost_ratio`` 的分母看起来存在。⇒ 跳过并打日志。
+    """
+    if db is None:
+        logger.bind(module="cost_metrics").warning(
+            "cost_metrics_record_skipped_no_db",
+            org_id=str(org_id),
+            field=field,
+            trace_id=trace_id,
+            reason="调用方没有 PG 会话 ⇒ 本次图规模不计入 cost_metrics",
+        )
+        return None
+    if amount <= 0:
+        logger.bind(module="cost_metrics").info(
+            "cost_metrics_graph_cost_skipped_empty",
+            org_id=str(org_id),
+            field=field,
+            amount=amount,
+            trace_id=trace_id,
+            reason="本次没有写入任何图元素 ⇒ 跳过（不写 0）",
+        )
+        return None
+
+    day = utc_day(occurred_at)
+    seed = {
+        "org_id": org_id,
+        "metric_date": day,
+        "stage": COST_STAGE_EXTRACTION,
+        # 新建行时 token / doc 侧保持 0：本函数不知道文档清单，也不许碰去重口径
+        "token_usage_input": 0,
+        "token_usage_output": 0,
+        "token_usage_total": 0,
+        "doc_count": 0,
+        "counted_doc_ids": [],
+        "single_doc_cost": 0.0,
+        field: float(amount),
+    }
+    row, is_new = _take_day_row(
+        db=db, org_id=org_id, day=day, stage=COST_STAGE_EXTRACTION, seed=seed
+    )
+    if not is_new:
+        setattr(row, field, float(getattr(row, field) or 0.0) + float(amount))
+        row.updated_at = datetime.now(UTC)
+    _refresh_cost_ratio(row)
+    db.commit()
+
+    logger.bind(
+        module="cost_metrics",
+        org_id=str(org_id),
+        stage=COST_STAGE_EXTRACTION,
+        field=field,
+        amount=amount,
+        **{field: float(getattr(row, field) or 0.0)},
+        cost_ratio=row.cost_ratio,
+        trace_id=trace_id,
+    ).info("cost_metrics_graph_cost_recorded")
+    return row
+
+
+def _refresh_cost_ratio(row: CostMetric) -> None:
+    """维护**行级** ``cost_ratio``（``incremental / full_rebuild``，无分母取 ``0.0``）。
+
+    **为什么要维护行级这一列**：模型注释（``models.py:1179``）与
+    :func:`build_dashboard` 的区间级口径都写着「无分母时为 ``0.0``」，只写一侧会让
+    同一张表的两种读法打架。⚠️ 无分母时是 **``0.0`` 而不是 NaN** ——``0.0`` 的语义是
+    「还没有比值」，``NaN`` 则会被 JSON 序列化成非法 float。
+    """
+    incremental = float(row.incremental_cost or 0.0)
+    full_rebuild = float(row.full_rebuild_cost or 0.0)
+    row.cost_ratio = (incremental / full_rebuild) if full_rebuild > 0 else 0.0
 
 
 def _record_usage(
@@ -222,19 +397,15 @@ def _record_usage(
     return row
 
 
-def _upsert_day_row(
+def _take_day_row(
     *,
     db: Session,
     org_id: uuid.UUID,
     day: date,
     stage: str,
-    prompt: int,
-    completion: int,
-    total: int,
-    new_docs: set[str],
     seed: dict[str, Any],
-) -> CostMetric:
-    """取当日**该 stage** 的行（不存在就建），把本次用量**合并**进去。
+) -> tuple[CostMetric, bool]:
+    """取当日**该 stage** 的行（不存在就建），返回 ``(行, 是否本次新建)``。
 
     **⚠️ 查找条件必须带 ``stage``**（X-6 的承接）：P6-V2 之后同一 ``(org, day)``
     有两行（抽取 / 问答）。漏了这个谓词 ⇒ 抽取的 token 被合并进问答那一行，
@@ -248,6 +419,11 @@ def _upsert_day_row(
     ⚠️ 这里**没有用** ``ON CONFLICT DO NOTHING`` + ``rowcount`` 判新旧的写法：
     本批实测它对"有没有真的插进去"的返回不可靠（第二次记帐被整段跳过 ⇒
     同一天的 token 只留下第一笔），而指标被悄悄少计比报错更难发现。
+
+    **为什么 P6-V3 要把它单独抽出来**：X-7 的图规模两列也落**同一张表的同一行**。
+    这段锁-day-row 的并发处理若写成两份，迟早一边改一边忘——而由此丢掉的计数是
+    **静默**的（``cost_ratio`` 只会"看起来变小了"）。⇒ **取行共用一处**，
+    只有"拿到行以后怎么合并"是各自的事（**是否本次新建**由 ``is_new`` 回给调用方）。
     """
     for _attempt in (1, 2):
         existing = db.execute(
@@ -260,21 +436,7 @@ def _upsert_day_row(
             .with_for_update()
         ).scalar_one_or_none()
         if existing is not None:
-            fresh = new_docs - set(existing.counted_doc_ids or [])
-            existing.token_usage_input += prompt
-            existing.token_usage_output += completion
-            existing.token_usage_total += total
-            existing.doc_count += len(fresh)
-            existing.counted_doc_ids = sorted(
-                set(existing.counted_doc_ids or []) | new_docs
-            )
-            existing.single_doc_cost = (
-                existing.token_usage_total / existing.doc_count
-                if existing.doc_count
-                else 0.0
-            )
-            existing.updated_at = datetime.now(UTC)
-            return existing
+            return existing, False
 
         try:
             with db.begin_nested():
@@ -282,11 +444,47 @@ def _upsert_day_row(
                 db.add(created)
         except IntegrityError:  # pragma: no cover —— 由下一次循环接管
             continue
-        return created
+        return created, True
     raise CostMetricsUnavailableError(  # pragma: no cover —— 两次都抢不到，属异常
         f"cost_metrics 当日行两轮竞抢都没建成"
         f"（org_id={org_id}, date={day}, stage={stage}）"
     )
+
+
+def _upsert_day_row(
+    *,
+    db: Session,
+    org_id: uuid.UUID,
+    day: date,
+    stage: str,
+    prompt: int,
+    completion: int,
+    total: int,
+    new_docs: set[str],
+    seed: dict[str, Any],
+) -> CostMetric:
+    """token / 文档侧的合并口径（取行与并发处理见 :func:`_take_day_row`）。
+
+    ``seed`` 决定**新建**行长什么样；行已存在时走下面的增量合并——两条路径必须都
+    把本次的 token 与文档计入，且文档按 ``counted_doc_ids`` 去重后再加。
+    """
+    existing, is_new = _take_day_row(
+        db=db, org_id=org_id, day=day, stage=stage, seed=seed
+    )
+    if is_new:
+        return existing
+
+    fresh = new_docs - set(existing.counted_doc_ids or [])
+    existing.token_usage_input += prompt
+    existing.token_usage_output += completion
+    existing.token_usage_total += total
+    existing.doc_count += len(fresh)
+    existing.counted_doc_ids = sorted(set(existing.counted_doc_ids or []) | new_docs)
+    existing.single_doc_cost = (
+        existing.token_usage_total / existing.doc_count if existing.doc_count else 0.0
+    )
+    existing.updated_at = datetime.now(UTC)
+    return existing
 
 
 class CostMetricsUnavailableError(Exception):

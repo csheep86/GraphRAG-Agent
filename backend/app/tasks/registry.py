@@ -51,7 +51,10 @@ from app.services.affiliation import (
     mark_task_processing,
     persist_detection_result,
 )
-from app.services.cost_metrics import record_extraction_usage
+from app.services.cost_metrics import (
+    record_extraction_usage,
+    record_full_rebuild_cost,
+)
 from app.services.extraction import LangextractClient, LangextractError
 from app.services.extraction.langextract import ExtractionResult
 from app.services.graphs import GraphUnavailableError
@@ -648,11 +651,16 @@ async def kg_build_executor(spec: TaskSpec) -> None:
         # 0. 创建 kg_version pending 行（首次执行）
         kg_version_id_str = spec.payload.get("kg_version_id")
         versioning = KgVersioningService(db)
+        #: **只有走 ``create_pending`` 的才是一次「全新构建」**（X-7 / P6-V3 的分母口径）：
+        #  另两个分支是**复用**既有 kg_version —— 那是一片已经构建过的图被再次导入，
+        #  把它算进分母，同一批语料的重跑就会把分母成倍垫大、``cost_ratio`` 被人为压低。
+        fresh_build = False
         if kg_version_id_str:
             kg_version_id = UUID(kg_version_id_str)
         elif document.kg_version_id is not None:
             kg_version_id = document.kg_version_id
         else:
+            fresh_build = True
             # 全新构建：version = "v-{trace_id前8}"，per_org 策略下同 org 唯一
             new_record = versioning.create_pending(
                 org_id=document.org_id,
@@ -702,6 +710,7 @@ async def kg_build_executor(spec: TaskSpec) -> None:
                         kg_version_id=kg_version_id,
                         payload=spec.payload,
                         org_id=spec.org_id,
+                        fresh_build=fresh_build,
                     )
         except RetryError as exc:
             if (
@@ -741,8 +750,14 @@ async def _do_kg_build(
     kg_version_id: UUID,
     payload: Mapping[str, object],
     org_id: UUID,
+    fresh_build: bool,
 ) -> None:
-    """真实加载：从 entities / relations JSON 读 → ThreeStageKgBuilder 写入 Neo4j。"""
+    """真实加载：从 entities / relations JSON 读 → ThreeStageKgBuilder 写入 Neo4j。
+
+    :param fresh_build: 本次是否**全新构建**（X-7 / P6-V3）。由调用方按"是否走了
+        ``create_pending``"判定：只有首次全量构建才计入 ``cost_ratio`` 的分母
+        ——重跑不该让分母变胖（否则同一批语料重跑几次，比值就"绿"几次）。
+    """
     storage = get_storage()
     db: Session = open_session(org_id=org_id)
     try:
@@ -813,6 +828,34 @@ async def _do_kg_build(
             entity_count=stats.entity_count,
             relation_count=stats.relation_count,
         )
+
+        # P6-V3（偏离 **X-7**）：``cost_ratio`` **分母**的**唯一**写库点。
+        # 为什么放在这里：分母口径是「这批语料首次构建写入图的元素个数」，而这两个计数
+        # 正是刚被 ``mark_ready`` 落进 ``KgVersion`` 的同一份值 ⇒ 在此读，两侧不可能不一致。
+        # 为什么必须 try 包住（与抽取侧同款理由）：记账是**旁路**，它崩了不能让一次
+        # 已经写完图的构建报 failed；记不下来只是缺一个读数，比任务失败轻得多。
+        if fresh_build:
+            try:
+                record_full_rebuild_cost(
+                    org_id=document.org_id,
+                    entity_count=stats.entity_count,
+                    relation_count=stats.relation_count,
+                    trace_id=str(payload.get("trace_id", "")),
+                    db=db,
+                )
+            except Exception as exc:  # noqa: BLE001 - 旁路记账：异常只落日志，不上抛
+                logger.bind(
+                    trace_id=str(payload.get("trace_id", "")),
+                    document_id=str(document_id),
+                    reason=type(exc).__name__,
+                ).warning("cost_metrics_full_rebuild_cost_failed")
+        else:
+            # 复用既有 kg_version 的重跑**不是**首次全量构建（计入会让分母翻倍）
+            logger.bind(
+                trace_id=str(payload.get("trace_id", "")),
+                document_id=str(document_id),
+                kg_version_id=str(kg_version_id),
+            ).info("cost_metrics_full_rebuild_cost_skipped_reused_version")
 
         logger.bind(
             trace_id=str(payload.get("trace_id", "")),

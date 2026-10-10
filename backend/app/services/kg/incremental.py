@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.errors import ErrorCode
 from app.db.models import KgVersion, OntologyAction
+from app.services.cost_metrics import record_incremental_rebuild_cost
 from app.services.kg.versioning import KgVersioningService
 
 __all__ = [
@@ -294,6 +295,29 @@ def rebuild_incrementally(
     versioning.mark_ready(
         record.id, entity_count=entity_count, relation_count=relation_count
     )
+
+    # P6-V3（偏离 **X-7**）：``cost_ratio`` **分子**的**唯一**写库点。
+    # 为什么只在成功分支写：失败路径走 :func:`_fail` ——那次重算没有产出可用版本，
+    # 若把 0 记进分子，读起来与"发生过一次极小增量"一模一样（本模块"不写 0"的
+    # 既有纪律：写在表里的 0 会让落点看起来是通的）。
+    # 为什么必须 try 包住：记账是**旁路**——它崩了不能把一次已经写完子图的重算判死。
+    try:
+        record_incremental_rebuild_cost(
+            org_id=org_id,
+            entity_count=entity_count,
+            relation_count=relation_count,
+            trace_id=str(trace),
+            db=db,
+        )
+    except Exception as exc:  # noqa: BLE001 - 旁路记账：异常只落日志，不上抛
+        logger.bind(
+            trace_id=str(trace),
+            org_id=str(org_id),
+            action_id=str(action_id),
+            new_version=new_version,
+            reason=type(exc).__name__,
+        ).warning("cost_metrics_incremental_rebuild_cost_failed")
+
     try:
         _mirror_version(
             run=run,
