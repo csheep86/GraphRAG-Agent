@@ -72,7 +72,8 @@ uv run python scripts/check_startup_readiness.py=> [OK] 生效 17 / [~~] 0 / [--
 
 | 口径 | 结果 |
 |---|---|
-| **改前（P6-W 基线，CI 口径）** | **1236 passed / 5 skipped** |
+| **GitHub Actions 实测（最终裁决，run 38036390121）** | ✅ **1260 passed / 7 skipped**（`+26 / +0`，**0 failed**） |
+| **改前（P6-W 基线，GitHub Actions）** | **1234 passed / 7 skipped** |
 | **改后（CI 口径：`CI=1` + 三变量）** | **1262 passed / 5 skipped**（+26 / +0，**0 failed**） |
 | 改后（**未**设 `GRAPH_REAL_NEO4J_*` 的那趟） | 1224 passed / 43 skipped —— 差的 37 条是**真图用例静默 skip**（基线同因，非本批引入） |
 

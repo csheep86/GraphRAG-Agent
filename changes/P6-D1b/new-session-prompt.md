@@ -137,8 +137,8 @@ AI 不得自行改交付 compose 的端口（改了它就不是交付物了）�
 
 | 项 | 数值 |
 |---|---|
-| pytest（**最终裁决 = GitHub Actions**） | ✅ **1262 passed / 5 skipped**（P6-D1b 新增 **26 条全 passed**，0 skip / 0 failed） |
-| pytest（本机 CI 口径：`CI=1` + 三变量） | **1262 / 5** |
+| pytest（**最终裁决 = GitHub Actions**，run 38036390121） | ✅ **1260 passed / 7 skipped**（P6-D1b 新增 **26 条全 passed**，0 skip / 0 failed） |
+| pytest（本机 CI 口径：`CI=1` + 三变量） | **1262 / 5**（与 CI 差的 2 条是**真图探针**用例：本机有图库跑、CI 上 skip，既定口径） |
 | 护栏 | `[OK] 17 / [~~] 0 / [--] 0`（**G-19 项数 2 → 9**） |
 | 接缝 | `ERROR 0 / WARN 0 / OK 12` |
 | OpenAPI | 零 diff |
