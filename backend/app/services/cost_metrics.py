@@ -491,6 +491,93 @@ class CostMetricsUnavailableError(Exception):
     """成本落点不可用（**不影响主链路**：调用方由 N 层兜住）。"""
 
 
+def aggregate_stage(
+    *,
+    db: Session,
+    org_id: uuid.UUID,
+    stage: str,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    """**C3-a / C3-b 的读侧唯一入口**：按 ``stage`` 聚合一个区间（P6-V4）。
+
+    为什么不复用 :func:`build_dashboard`：
+
+    - 仪表盘的口径**故意跨 stage 求和**（契约里只有 ``token_usage_total`` 一个数），
+      而 C3-a 的口径是「**抽取**的单文档成本」——把问答那一行混进来，分子（抽取
+      token）与分母（抽取过的文档）就来自两个不同的过程，比值哪个口径都不是；
+    - 仪表盘的返回值里**没有** ``doc_count`` 与两侧图规模列，判据要用就得自己算。
+
+    **区间级怎么算**（与 :func:`build_dashboard` **同口径**，别再发明第三套）：
+    ``single_doc_cost = 总和(total) / counted_doc_ids 去重后的文档数``；
+    图规模两列直接求和（两侧都是「图元素个数」，见 :func:`_graph_elements`）。
+
+    **``doc_count`` 取去重并集而不是求和**：与仪表盘同一个理由（Y6）——同一份文档
+    可能同时落在多天的抽取行里，求和会把分母垫大、单文档成本被腰斩，且**不报错**。
+
+    **应用层仍然显式带 ``org_id`` 过滤**（ADR-0003：RLS 不是唯一防线，应用层不因
+    RLS 生效而撤掉）。
+    """
+    conditions = [CostMetric.org_id == org_id, CostMetric.stage == stage]
+    if date_from is not None:
+        conditions.append(CostMetric.metric_date >= date_from)
+    if date_to is not None:
+        conditions.append(CostMetric.metric_date <= date_to)
+    rows = db.scalars(select(CostMetric).where(*conditions)).all()
+
+    counted: set[str] = set()
+    for row in rows:
+        counted |= set(row.counted_doc_ids or [])
+    total_tokens = sum(int(row.token_usage_total or 0) for row in rows)
+    return {
+        "stage": stage,
+        "rows": len(rows),
+        "token_usage_total": total_tokens,
+        "doc_count": len(counted),
+        "single_doc_cost": (total_tokens / len(counted)) if counted else 0.0,
+        "incremental_cost": sum(float(row.incremental_cost or 0.0) for row in rows),
+        "full_rebuild_cost": sum(float(row.full_rebuild_cost or 0.0) for row in rows),
+        "date_from": min((row.metric_date for row in rows), default=None),
+        "date_to": max((row.metric_date for row in rows), default=None),
+    }
+
+
+def to_cost_records(rows: Sequence[CostMetric]) -> list[dict[str, Any]]:
+    """把日聚合行摊成 ``scripts/eval_acceptance.py --calibrate`` 能吃的记录（P6-V4）。
+
+    ⚠️ **本函数是「有损摊平」，读它的人必须知道损失在哪**：``cost_metrics`` 的行粒度
+    是「一天 × 一个 stage」，表里**没有逐文档的 token 明细**（要明细就是新表 + 迁移，
+    属另批）。故每条记录的 ``token_usage_total`` = ``当日 total / 当日文档数``
+    ——**同一天的所有文档拿到同一个均值**。
+
+    后果（**不掩饰**）：喂给 ``--calibrate`` 之后 ``P50 == P90 == 均值``，
+    分位数**退化**，建议值只是**量级参考**，不是分布上界。这比"给不出任何数"强，
+    但**不能**被读成「已校准」——真正的分布要等逐文档明细落点。
+
+    **没有 ``counted_doc_ids`` 的行整行跳过**：那种行的 token 无文档可摊，
+    摊出来是一个无分母的假数（沿用本模块"不造数"的工艺纪律）。
+    """
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        doc_ids = [str(doc_id) for doc_id in (row.counted_doc_ids or []) if doc_id]
+        if not doc_ids:
+            continue
+        total = int(row.token_usage_total or 0)
+        per_doc = int(round(total / len(doc_ids)))
+        for doc_id in doc_ids:
+            records.append(
+                {
+                    "doc_id": doc_id,
+                    "token_usage_total": per_doc,
+                    "outcome": "completed",
+                    "sequence": 0,
+                    "metric_date": row.metric_date.isoformat(),
+                    "stage": row.stage,
+                }
+            )
+    return records
+
+
 def build_dashboard(
     *,
     db: Session,

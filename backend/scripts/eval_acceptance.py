@@ -9,6 +9,9 @@
     uv run python scripts/eval_acceptance.py --compare A.json B.json
     uv run python scripts/eval_acceptance.py --calibrate --cost-records path.json
 
+    # P6-V4：--cost-records 由取样器从 cost_metrics 导出（库里没跑过 ⇒ 取样器会明说）
+    uv run python scripts/export_cost_records.py --out data/eval/cost-records.json
+
     # **G-25 CI 门禁**（P3-E）：只判「不退化」，不判达标（C2-a / C2-b 只读 Neo4j）
     uv run python scripts/eval_acceptance.py --live \
       --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate --gate
@@ -165,9 +168,15 @@ def _calibrate(cost_records: Path | None) -> int:
     else:
         print("  ✅ env 显式覆盖（人工裁决过）⇒ 判定可给 PASS / FAIL。")
     if cost_records is None:
+        # **2026-10-11 P6-V4 订正**：上一句「token 只进日志、未落库」已过期两年批次
+        # ——cost_metrics 早在 P6-V 就落了，抽取侧 P6-V2、图规模两侧 P6-V3。
+        # 真正的缺口是「**没有取样文件**」，而取样器（V4-b）本批已补 ⇒ 下面指到命令，
+        # 不再给人一条无法执行的死路。
         print(
-            "无 --cost-records ⇒ **无法校准**。\n"
-            "原因：真实成本数据要等 P5-M6 落 cost_metrics 表（token 目前只进日志、未落库）。\n"
+            "无 --cost-records ⇒ **无法校准**（校准只认文件，不自己去读库）。\n"
+            "取样：uv run python scripts/export_cost_records.py \\\n"
+            "        --out data/eval/cost-records.json\n"
+            "（从 cost_metrics 导出 --calibrate 能吃的 JSON；库里没跑过 ⇒ 它会明说）\n"
             f"⇒ TBD-7 维持 {source}（当前 eval_single_doc_token_ceiling = {ceiling}，"
             "见 config.py 注释）。"
         )

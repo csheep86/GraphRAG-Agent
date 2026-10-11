@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
 
+from app.db.models import COST_STAGE_EXTRACTION
 from app.evaluation.affiliation import DEFAULT_NON_MEMBER_PREFIXES
 from app.evaluation.corpus_layer import (
     LAYER_ALGORITHM,
@@ -54,6 +55,7 @@ from app.evaluation.dataset import (
 )
 from app.evaluation.metrics import (
     COST_RATIO_SIGNIFICANT,
+    UNIT_COST_RATIO,
     UNIT_TOKEN_PER_DOC,
     AnswerRecord,
     CitationRef,
@@ -831,73 +833,265 @@ def resolve_cost_ceiling() -> tuple[int, str]:
         ) from exc
 
 
-def eval_single_doc_cost(ctx: dict[str, Any]) -> CriterionResult:
-    """**C3-a 单文档成本**（TBD-7）：**阈值已定、值还取不到**。
+def _cost_blocked(
+    criterion: str,
+    runner_ctx: RunnerContext,
+    *,
+    blocked_by: str,
+    threshold: float,
+    threshold_source: str,
+    unit: str | None = None,
+    detail: dict[str, Any] | None = None,
+) -> CriterionResult:
+    """C3-a / C3-b 的「没测出来」——**value 恒为 None**，阈值照实带出（与 C1 同口径）。
 
-    **P6-V（2026-10-09）订正**：``cost_metrics`` 表**已建**（含 RLS 迁移），M3 问答的
-    token **已在落**（探针实测：一次问答 29 104 token / 5 份文档）。但本批**仍不让它出数**，
-    理由是剩下的两个缺口都会让这个数失去意义：
-
-    1. **缺 M2 抽取侧落点**：本项的口径是「（全量）单文档抽取成本」，而落点目前只有
-       M3 问答 ⇒ 能算的是「问答的单文档成本」，与 C3-a 的口径**不是同一个东西**；
-    2. **TBD-7 未校准**：阈值 32 000 是 provisional（2026-10-03 推算），未校准前
-       出数也只能给 ``PASS(provisional)``，**不构成达标证据**。
-
-    ⇒ 状态维持 ``BLOCKED``（``value=null``，**不是** 0），**blocked_by 换成真实缺口**
-    （照抄旧理由"表未建"会让后来人以为还差一整张表）。
+    为什么阈值要照实带出：这两条判据的状态是「**判据存在、阈值已定、取不到数**」，
+    与「还没做」必须长得不一样，否则 TBD-7 会停在"不可判"的死状态（D2）。
     """
-    runner_ctx: RunnerContext = ctx["ctx"]
-    ceiling, source = resolve_cost_ceiling()
     return CriterionResult(
-        criterion=C_COST,
+        criterion=criterion,
         status=CriterionStatus.BLOCKED,
         value=None,
         provenance=_provenance(
             runner_ctx,
-            dataset_version="n/a（缺 M2 抽取侧 token 落点，无可比分母）",
+            dataset_version="n/a（cost_metrics 无可用样本行）",
             kg_version="n/a",
-            corpus="n/a（cost_metrics 只有 M3 问答口径）",
+            corpus="n/a（无样本行 ⇒ 无语料口径）",
+        ),
+        unit=unit,
+        blocked_by=blocked_by,
+        threshold=threshold,
+        threshold_source=threshold_source,
+        verdict=Verdict.INDETERMINATE,
+        detail=detail,
+    )
+
+
+def _cost_reading(
+    runner_ctx: RunnerContext, *, stage: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """读 ``cost_metrics`` 的 ``stage`` 聚合；读不到 ⇒ ``(None, 真实原因)``。
+
+    **为什么失败也要带原因而不是吞掉**：``blocked_by`` 若只写「读不到」，后来人
+    无从区分「落点坏了」与「压根没跑过」——而这两者的处置完全不同（前者要修代码，
+    后者只需跑一轮真机）。P6-V4 正是被这条含混坑住的：旧文案写「缺落点」，
+    落点其实早就有了，缺的只是**一次真实运行**。
+
+    **为什么不开会话就返回而不是抛**：判据脚本**必须**跑完并给出结论
+    （2026-10-03 真跑学到的教训：抛栈 ⇒ 一份报告都拿不到）。
+    """
+    from app.db.session import session_scope  # noqa: PLC0415 - 延迟导入，offline 不碰库
+    from app.services.cost_metrics import aggregate_stage  # noqa: PLC0415
+
+    try:
+        parsed = UUID(str(runner_ctx.org_id))
+    except (TypeError, ValueError):
+        return None, f"RunnerContext.org_id 不是合法 UUID：{runner_ctx.org_id!r}"
+    try:
+        with session_scope(org_id=parsed) as db:
+            return aggregate_stage(db=db, org_id=parsed, stage=stage), None
+    except Exception as exc:  # noqa: BLE001 - 库不可用 ⇒ 转成 BLOCKED，不是崩
+        return None, f"cost_metrics 不可读（stage={stage}）：{exc!r}"
+
+
+def _cost_window(aggregate: dict[str, Any]) -> str:
+    """样本区间（报告用）；无行 ⇒ ``n/a``。"""
+    start, end = aggregate.get("date_from"), aggregate.get("date_to")
+    if start is None or end is None:
+        return "n/a"
+    return f"{start.isoformat()}..{end.isoformat()}"
+
+
+def eval_single_doc_cost(ctx: dict[str, Any]) -> CriterionResult:
+    """**C3-a 单文档成本**（TBD-7）：**真读 ``cost_metrics`` 的抽取口径**。
+
+    **P6-V4（2026-10-11）出数化**：M2 抽取侧的 token 落点**已在 P6-V2 落地**
+    （``cost_metrics.record_extraction_usage``，写 ``stage='extraction'`` 行），
+    故「缺 M2 抽取侧 token 落点」这条旧理由**已失效**——本函数不再写死 ``BLOCKED``，
+    改成三态：
+
+    - **offline**：不读库（offline **不产出判据数字**）⇒ ``BLOCKED`` + 真实缺口；
+    - **live 且有样本行**：**出数**（``单文档成本 = 总和(token) / 去重文档数``，
+      ``unit=token/doc``），按阈值判 ``PASS / FAIL``；
+    - **live 但无样本行**：仍是 ``BLOCKED``，理由换成「**没跑过**，不是**没落点**」。
+
+    **为什么只取 ``stage='extraction'``**：本项口径是「（全量）单文档**抽取**成本」。
+    问答那一行是检索级开销，混进来会让分子（抽取 token）与分母（抽取过的文档）
+    不是同一个过程——混口径的数比没有数更糟（它会看起来像一个正常的成本）。
+
+    ⚠️ **TBD-7 仍未校准**：出数也只给 ``PASS(provisional)``（§5.2 第 3 条防假绿），
+    **不构成达标证据**，除非 ``EVAL_SINGLE_DOC_TOKEN_CEILING`` 由人显式裁决。
+    """
+    runner_ctx: RunnerContext = ctx["ctx"]
+    ceiling, source = resolve_cost_ceiling()
+    note = (
+        "阈值来自 config 推算（provisional），**不是**达标线；"
+        "校准命令 scripts/eval_acceptance.py --calibrate"
+        if source == THRESHOLD_PROVISIONAL
+        else "阈值来自 EVAL_SINGLE_DOC_TOKEN_CEILING（人工裁决过）"
+    )
+    if runner_ctx.mode != "live":
+        return _cost_blocked(
+            C_COST,
+            runner_ctx,
+            blocked_by="offline 不读 cost_metrics（判据数字只在 live 下出）；"
+            "真值还需 ① 跑过一次 M2 抽取（才会落 stage='extraction' 样本行）"
+            " ② TBD-7 阈值校准（当前为 provisional）",
+            threshold=float(ceiling),
+            threshold_source=source,
+            unit=UNIT_TOKEN_PER_DOC,
+            detail={"ceiling": ceiling, "ceiling_source": source, "note": note},
+        )
+
+    aggregate, failure = _cost_reading(runner_ctx, stage=COST_STAGE_EXTRACTION)
+    doc_count = int(aggregate["doc_count"]) if aggregate else 0
+    tokens = int(aggregate["token_usage_total"]) if aggregate else 0
+    if aggregate is None or doc_count <= 0 or tokens <= 0:
+        #: **措辞纪律**：这里写「**没跑过**」而不是「**缺落点**」——落点 P6-V2 就有
+        #: 了。照抄旧文案会让后来人以为还差一整段实现（P6-V4 立项正是因此）。
+        reason = failure or (
+            "cost_metrics 有 stage='extraction' 落点，但**还没跑过** M2 抽取"
+            " ⇒ 无样本行、无可比分母"
+        )
+        return _cost_blocked(
+            C_COST,
+            runner_ctx,
+            blocked_by=f"{reason}；且 TBD-7 未校准（阈值 {ceiling} 为 {source}）",
+            threshold=float(ceiling),
+            threshold_source=source,
+            unit=UNIT_TOKEN_PER_DOC,
+            detail={
+                "ceiling": ceiling,
+                "ceiling_source": source,
+                "stage": COST_STAGE_EXTRACTION,
+                "rows": int(aggregate["rows"]) if aggregate else 0,
+                "note": note,
+            },
+        )
+
+    value = tokens / doc_count
+    status, _reason = resolve_status(
+        link_ready=True, dataset_ready=True, rubric_defined=True
+    )
+    return CriterionResult(
+        criterion=C_COST,
+        status=status,
+        value=value,
+        provenance=_provenance(
+            runner_ctx,
+            dataset_version=f"cost_metrics:stage={COST_STAGE_EXTRACTION}"
+            f"（{aggregate['rows']} 行 / {doc_count} 份文档）",
+            corpus="实际入库语料（非固定演示集）",
+            notes=f"样本区间 {_cost_window(aggregate)}（UTC 自然日）",
         ),
         unit=UNIT_TOKEN_PER_DOC,
-        blocked_by="P6-V 后仍缺：① M2 抽取侧 token 落点（当前只有 M3 问答在记）；"
-        "② TBD-7 阈值校准（EVAL_SINGLE_DOC_TOKEN_CEILING=32000 为 provisional）",
         threshold=float(ceiling),
         threshold_source=source,
-        verdict=Verdict.INDETERMINATE,
+        verdict=judge(
+            value,
+            threshold=float(ceiling),
+            threshold_source=source,
+            higher_is_better=False,
+        ),
         detail={
             "ceiling": ceiling,
             "ceiling_source": source,
-            "note": "阈值来自 config 推算（provisional），**不是**达标线；"
-            "校准命令 scripts/eval_acceptance.py --calibrate",
+            "stage": COST_STAGE_EXTRACTION,
+            "rows": int(aggregate["rows"]),
+            "token_usage_total": tokens,
+            "doc_count": doc_count,
+            "window": _cost_window(aggregate),
+            "note": note,
         },
     )
 
 
 def eval_incremental_cost_ratio(ctx: dict[str, Any]) -> CriterionResult:
-    """**C3-b 增量 / 全量成本比**：阈值按矩阵「显著 < 1.00」（**D3：不落 config**）。"""
+    """**C3-b 增量 / 全量成本比**：阈值按矩阵「显著 < 1.00」（**D3：不落 config**）。
+
+    **P6-V4（2026-10-11）出数化**：两侧写入方**已在 P6-V3 落地**
+    （``record_full_rebuild_cost`` / ``record_incremental_rebuild_cost``，
+    单位同为**图元素个数**），故「无写入方」这条旧理由**已失效**。与 C3-a 同三态。
+
+    **量纲**（2026-10-10 裁决 A 组，本批**不推翻**）：分子 = 增量重算重写的图元素个数，
+    分母 = 首次全量构建的图元素个数 ⇒ 比值**无量纲**（``unit=ratio``）。
+
+    ⚠️ **无分母 ⇒ ``BLOCKED`` + ``value=null``**，**不是** 0：0 会被读成「比值真的小」，
+    那正是本判据最危险的假绿方向。表内 ``cost_ratio`` 列的 ``0/0 → 0.0`` 语义
+    （``_refresh_cost_ratio``）本批**未改**，改的是**判据读到 0 分母时不采纳它**。
+    """
     runner_ctx: RunnerContext = ctx["ctx"]
+    detail_base = {
+        "threshold_origin": "矩阵 §5.1「显著 < 1.00」，人工裁决定值（非实测推算）",
+        "note": "D3：本阈值**不落 config**；注意它与 spec §6 的告警线 "
+        "COST_RATIO_ALERT_THRESHOLD（P6-V 落地，运行期告警）不是同一个东西",
+    }
+    if runner_ctx.mode != "live":
+        return _cost_blocked(
+            C_COST_RATIO,
+            runner_ctx,
+            blocked_by="offline 不读 cost_metrics（判据数字只在 live 下出）；"
+            "真值还需 ① 跑过一次首次全量构建（分母）② 跑过一次增量重算（分子）",
+            threshold=COST_RATIO_SIGNIFICANT,
+            threshold_source=THRESHOLD_CALIBRATED,
+            unit=UNIT_COST_RATIO,
+            detail=dict(detail_base),
+        )
+
+    aggregate, failure = _cost_reading(runner_ctx, stage=COST_STAGE_EXTRACTION)
+    full = float(aggregate["full_rebuild_cost"]) if aggregate else 0.0
+    incremental = float(aggregate["incremental_cost"]) if aggregate else 0.0
+    if aggregate is None or full <= 0:
+        #: 同上措辞纪律：写「没跑过」，不写「无写入方」（写入方 P6-V3 已落地）。
+        reason = failure or (
+            "cost_metrics 的两侧列有写入方，但**还没跑过**首次全量构建"
+            "（无分母）与增量重算（无分子）"
+        )
+        return _cost_blocked(
+            C_COST_RATIO,
+            runner_ctx,
+            blocked_by=f"{reason}；两侧同为「图元素个数」，"
+            "未跑出分母前比值无定义（**不**按 0.0 计）",
+            threshold=COST_RATIO_SIGNIFICANT,
+            threshold_source=THRESHOLD_CALIBRATED,
+            unit=UNIT_COST_RATIO,
+            detail={
+                **detail_base,
+                "rows": int(aggregate["rows"]) if aggregate else 0,
+                "incremental_cost": incremental,
+                "full_rebuild_cost": full,
+            },
+        )
+
+    value = incremental / full
+    status, _reason = resolve_status(
+        link_ready=True, dataset_ready=True, rubric_defined=True
+    )
     return CriterionResult(
         criterion=C_COST_RATIO,
-        status=CriterionStatus.BLOCKED,
-        value=None,
+        status=status,
+        value=value,
         provenance=_provenance(
             runner_ctx,
-            dataset_version="n/a（无增量重算，无分母）",
-            kg_version="n/a",
-            corpus="n/a（无增量重算 ⇒ 分子不存在）",
+            dataset_version=f"cost_metrics:图规模（{aggregate['rows']} 行）",
+            corpus="实际入库语料（非固定演示集）",
+            notes=f"样本区间 {_cost_window(aggregate)}（UTC 自然日）",
         ),
-        # P6-V（2026-10-09）订正：原写「P5-M6（增量重算未实现）」把批次名留成了
-        # 永久占位。真实缺口是**增量重算本身**（`cost_metrics.incremental_cost`
-        # / `full_rebuild_cost` 至今没有任何写入方）⇒ 分子不存在，比值无从谈起。
-        blocked_by="缺增量重算（cost_metrics 的 incremental_cost / "
-        "full_rebuild_cost 无写入方 ⇒ 无分子）",
+        unit=UNIT_COST_RATIO,
         threshold=COST_RATIO_SIGNIFICANT,
         threshold_source=THRESHOLD_CALIBRATED,
-        verdict=Verdict.INDETERMINATE,
+        verdict=judge(
+            value,
+            threshold=COST_RATIO_SIGNIFICANT,
+            threshold_source=THRESHOLD_CALIBRATED,
+            higher_is_better=False,
+        ),
         detail={
-            "threshold_origin": "矩阵 §5.1「显著 < 1.00」，人工裁决定值（非实测推算）",
-            "note": "D3：本阈值**不落 config**；注意它与 spec §6 的告警线 "
-            "COST_RATIO_ALERT_THRESHOLD（P6-V 落地，运行期告警）不是同一个东西",
+            **detail_base,
+            "rows": int(aggregate["rows"]),
+            "incremental_cost": incremental,
+            "full_rebuild_cost": full,
+            "window": _cost_window(aggregate),
         },
     )
 
@@ -1381,11 +1575,13 @@ def upgrade_todo() -> list[str]:
         #: （`app/evaluation/baseline.py`）⇒ 原句「定义与实现（A1 待裁决）」已过期。
         #: 真实缺口换成了 A3：**两侧各 40 题的人工判分**（缺判分 ⇒ 无分母，属 P6-T）。
         f"{C_GAIN}: 需要两侧各 40 题的**人工判分**（A3：脚本不代判 ⇒ P6-T）",
-        # **2026-10-09 P6-V 订正**：cost_metrics **已落**（上一句已过期）⇒ 剩下的是
-        # ① M2 抽取侧 token 落点（当前只有 M3 问答在记）② 增量重算（C3-b 的分子）
-        # ③ TBD-7 阈值校准（32 000 仍是 provisional）。
-        f"{C_COST} / {C_COST_RATIO}: cost_metrics **已建**（P6-V），但 C3-a 还缺 M2 "
-        f"抽取侧 token 落点与 TBD-7 校准；C3-b 还缺增量重算（无分子）",
+        # **2026-10-11 P6-V4 订正**：落点**全齐**（M2 抽取侧 = P6-V2、增量重算
+        # 两侧 = P6-V3），runner 也**已出数化** ⇒ 剩下的**不是代码缺口**，而是
+        # 「**还没跑过一次真机**」（无样本行）+ TBD-7 未校准。旧写法把「缺落点」
+        # 当成永久文案留了下来，而落点早就有了——这正是 P6-V4 立项的原因。
+        f"{C_COST} / {C_COST_RATIO}: 落点与读口**已齐**（P6-V2/V3/V4），但还没跑过"
+        f"一次真机 ⇒ 无 M2 抽取样本行、无增量重算分子/分母；"
+        f"且 TBD-7 未校准（阈值仍 {THRESHOLD_PROVISIONAL}）",
     ]
     blocked_by, verified = _affiliation_blocked_by()
     if not verified:

@@ -25,6 +25,11 @@ from typing import Literal
 #: 这里显式钉死为 token/文档，报告必带此单位）。
 UNIT_TOKEN_PER_DOC = "token/doc"
 
+#: C3-b 的单位：分子（增量重写）与分母（首次全量构建）**同为「图元素个数」**
+#: ⇒ 比值**无量纲**，写成 ``ratio`` 而不是 ``token/doc``——后者会让人以为
+#: 分子分母里有一个是钱或 token（P6-V4：C3-b 的量纲裁决是「同量纲个数比」）。
+UNIT_COST_RATIO = "ratio"
+
 #: C3-b（增量 / 全量成本比）的判定阈值（**D3：不落 `config.py`**）。
 #: 为什么不落：① 与 spec §6 的 ``COST_RATIO_ALERT_THRESHOLD`` 撞名；
 #: ② **无真实消费者**（无增量重算）⇒ 落了即**幽灵配置**（上批刚犯过）。
