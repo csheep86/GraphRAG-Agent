@@ -171,15 +171,30 @@ drill 栈已拆 ÷ 卷已删、`graphrag-neo` 已启回、`git status` 无残留
 | J5 | Z2 的选定方案已落到代码 / 配置 / 文档 | 选 A/B/C 其一并有对应实现 |
 | J6 | 护栏不倒退 | 全量 pytest 0 failed；J7 契约零 diff；`install_acceptance` 十项不倒退（第 9 项仍 SKIP） |
 
+### 3.1 实测读数（2026-10-11）
+
+| # | 读数 |
+|---|---|
+| J1 ✅ | **正例**：新签发工具产出 `.lic` ⇒ 现有验签路径接受：`has_license=True` / `code=None` / `max_orgs=100` / `max_seats=100` / 7 模块 / 有效期至 2036。**全程未经任何 `.env` 公钥配置**（公钥由内置常量提供） |
+| J2 ✅ | `backend/Dockerfile` 的 COPY 列表不含 `tools`；`test_signing_capability_is_not_packaged` 断言 `backend/scripts/` 无签发实现 |
+| J3 ✅ | 工具签名只接受 `--private-key-file` 路径；三个子命令均不打印私钥；`test_no_private_key_material_in_repo` 断言仓库内无 `.pem` / `private*` 文件 |
+| J4 ✅ | 「取指纹 → 签发 → 放回」三步跑通：本机指纹 `0d531a1f913adc481d84db4e19b703da` ⇒ 签发 ⇒ `current_state()` 立即变为 `has_license=True` |
+| J5 ✅ | **Z2 已裁决为 B**：`LICENSE_PUBLIC_KEY` 配置项删除；交付 compose / 两份 `.env.example` 均已清理；ADR-0006 §3.2 加了修订记录 |
+| J6 ✅ | 全量 pytest **1236 passed / 43 skipped / 0 failed**（新增 8 条护栏全绿） |
+
 ---
 
-## 4. 任务拆分（待 Z2 / Z3 拍板后细化）
+## 4. 任务拆分与进度（2026-10-11 收口）
 
-1. **T1（Z-b 先手）**：按 Z2 裁决调整公钥获取方式，并把选择的**安全后果**写进交付文档。
-2. **T2（Z-c）**：在 Z3 选定的位置实现签发 CLI（`issue` / `pubkey` 子命令）。
-3. **T3（护栏）**：加机械断言 —— 交付镜像与离线 tar 内**不含签发工具**，且 `deploy/` 模板不出现私钥配置项。
-4. **T4（端到端）**：用 T2 的工具签一份匹配当前环境指纹的 License ⇒ 容器验证 `has_license=true`（Z6 的正例）。
-5. **T5（回归）**：跑 J6，输出贴进本批记录。
+| # | 任务 | 状态 |
+|---|---|---|
+| **T1** | Z-b：按 **Z2 = B** 把公钥改回**内置**，并把安全后果写进交付文档与 ADR | ✅ 已完成（详见 §6.1） |
+| **T2** | Z-c：`tools/license/issue_license.py`（`genkey` / `issue` / `pubkey`） | ✅ 已完成 |
+| **T3** | 护栏：`backend/tests/test_license_guardrails.py`（8 条静态断言） | ✅ 已完成 |
+| **T4** | 端到端正例：新工具签发 ⇒ 验签路径接受 ⇒ `has_license=true` | ✅ 已完成（§3.1 J1） |
+| **T5** | 回归 J6：全量 pytest + 契约 + 十项验收 | ✅ 已完成（1236 passed / 0 failed） |
+| **T6** 🆕 | **私钥离线保管**（移交人） | ⏳ **待你处置** —— 见 §6.3 |
+| **T7** 🆕 | 重出交付镜像 + 离线包（让本批代码改动进入客户的包） | ⏳ 未做 —— 见 §6.4 |
 
 ---
 
@@ -192,3 +207,54 @@ drill 栈已拆 ÷ 卷已删、`graphrag-neo` 已启回、`git status` 无残留
 3. 要给客户侧 CLI 加签发子命令（触第 5 条，直接违反 ADR R-L5）；
 4. Z2 涉及**削弱或加强反盗版强度**的最终取舍 —— **一律由人裁决**，AI 只给代价；
 5. 出现"为了让某项变绿而放水"的诱惑（写留证、代署、改判据）⇒ 一律先升级。
+
+---
+
+## 6. 实现记录（2026-10-11）
+
+### 6.1 Z-b：公钥回到内置（方案 B）
+
+| 文件 | 改动 |
+|---|---|
+| `backend/app/services/license/public_key.py`（新增） | 内置公钥常量 `BUILTIN_LICENSE_PUBLIC_KEY_B64`；docstring 记录四步攻击与该文件不可覆盖的理由 |
+| `backend/app/services/license/provider.py` | `_verify()` 改为读内置常量、**不再接收 `settings`**；**函数内 import** 是刻意的 —— 这让"换公钥"只对进程内替换模块常量生效，对环境变量 / 交付配置完全无效 |
+| `backend/app/core/config.py` | 删除 `license_public_key` 字段（连 settings 层面都不再留这个面） |
+| `backend/tests/conftest.py` | 测试用临时公钥改为**替换模块常量**（进程内接缝），不再经 `settings` / `env` |
+| `deploy/docker-compose.delivery.yml` | 删除 `LICENSE_PUBLIC_KEY` 注入行，注释写明"刻意不注入"及其代价史 |
+| `deploy/.env.example` / `backend/.env.example` | 删除该配置项；`deploy/.env.example` 改回**四项**必配，并说明 License 文件要靠供应商签发、换机须重签 |
+| `deploy/README.md` | 「五项必配」→ 「四项必配（验签公钥已内置）」 |
+| `docs/deployment-spec.md` | §3 必配密钥表移除该项 |
+| `docs/adr/ADR-0006-license-control.md` | §3.2 表格该行标注删除，并**追加修订记录**（说明"可覆盖"为何被推翻、代价为何由 R-L5 预先接受过） |
+
+**正向收益**：内置之后不再需要现场配置 ⇒ **F-P6X-1（模板漏配 ⇒ 必然验签失败）一并消失**。
+换言之，P6-Y 为修那个坑而引入的配置项，正是这次被证伪的安全代价。
+
+### 6.2 Z-c：签发工具
+
+`tools/license/issue_license.py` + `tools/license/README.md`（仓库根，**不参与镜像构建**）：
+
+- `genkey` —— 生成密钥对，私钥以 PEM 落到 `~/.graphrag-license/`（仓库之外，POSIX 下 600）；
+- `issue` —— 按 `fingerprint` / `customer` / 有效期 / 额度签发；**`--fingerprint` 不允许为空**（空指纹会签出万能 License）；
+- `pubkey` —— 只导出公钥 base64（任何子命令都不输出私钥）；
+- canonical 规则与 `provider._verify` / `tests/conftest.py` **逐字一致**（改这里 = 所有已签发 License 失效）。
+
+### 6.3 ⚠️ T6：私钥待你离线保管
+
+本批生成的新密钥对：
+
+- **公钥** `R5Q6Ab4q6cylp3RXRPBd/vbeIoCXvaOGEGdQFkiLyG4=` —— 已内置进代码，可公开；
+- **私钥** `~/.graphrag-license/private.pem`（即本机 `%USERPROFILE%\.graphrag-license\private.pem`）
+  —— **在仓库之外**（`test_no_private_key_material_in_repo` 保证仓库内 0 命中）；
+  本机绝对路径不写在这里，免得随本文件进公开仓库。
+
+⇒ **请你把它转移到真正的签发环境 / 密码管理器 / KMS**，并从本机删掉。
+泄露 ⇒ 攻击者可签发任意 License，届时只能轮换公钥（= 发新版，重新出镜像）。
+
+### 6.4 T7：要不要重出交付镜像
+
+本批改了 `provider.py` / `config.py` / 新增 `public_key.py` ⇒ **这些都在交付镜像里**。
+不重出包 ⇒ 客户拿到的镜像**仍是旧公钥来源**（读 `settings.license_public_key`，而它可以不被注入 ⇒
+等价于"没有公钥" ⇒ 全部 License 验签失败、业务 403）。
+
+⇒ 建议重出（`build_delivery_images.py --save` + `--verify`），但这触"不重做出包"那条纪律，
+**须你明确批准**后才动。

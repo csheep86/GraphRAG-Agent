@@ -115,7 +115,7 @@ uv run python scripts/build_delivery_images.py --verify            # 重算 SHA-
 
 ```bash
 docker load -i graphrag-agent-offline-<版本>.tar     # 导入自研镜像
-cp .env.example .env                                  # **五项**必配都要填（含 LICENSE_PUBLIC_KEY）
+cp .env.example .env                                  # **四项**必配都要填（验签公钥已内置，不需配）
 docker compose -f docker-compose.delivery.yml up -d   # 第三方两个 tag 已固定，联网现场自动拉取
 ```
 

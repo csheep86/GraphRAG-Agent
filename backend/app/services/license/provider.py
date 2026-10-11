@@ -169,7 +169,7 @@ class DevLicenseProvider(LicenseProvider):
             body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
 
-        verified = self._verify(canonical.encode("utf-8"), signature, settings)
+        verified = self._verify(canonical.encode("utf-8"), signature)
         if verified is not None:
             return LicenseState(has_license=False, code=verified)
 
@@ -178,16 +178,27 @@ class DevLicenseProvider(LicenseProvider):
         return state
 
     @staticmethod
-    def _verify(body: bytes, signature: str, settings: Settings) -> ErrorCode | None:
+    def _verify(body: bytes, signature: str) -> ErrorCode | None:
         """Ed25519 验签；返回 ``None`` = 通过，否则返回**错误码**。
 
         **没有公钥 ⇒ 验签失败**（:data:`LICENSE_INVALID`），绝不退化为「跳过校验」——
         那正是 ADR §2.3 要拦的「宽松通过」。
+
+        **公钥来源：内置常量，不经 settings / env**（ADR-0006 **R-L5**「公钥内置」）。
+        理由是 2026-10-11 实测：`LICENSE_PUBLIC_KEY` 可配时，客户用「换公钥 + 自签」
+        四步即可签发一张永久全量的 License（见 `public_key.py` 的 docstring 与
+        `changes/P6-Z/proposal.md` §0.2.1）。
+
+        ⚠️ **函数内 import 是刻意的**：这样「换公钥」只对**替换模块常量**生效
+        （测试用它验证验签本身真的在验），而对环境变量 / 交付配置完全无效 ——
+        写成模块级 ``from ... import CONST`` 会把值绑定死，测试就换不了了。
         """
         from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives.asymmetric import ed25519
 
-        raw_key = settings.license_public_key.strip()
+        from app.services.license.public_key import BUILTIN_LICENSE_PUBLIC_KEY_B64
+
+        raw_key = BUILTIN_LICENSE_PUBLIC_KEY_B64.strip()
         if not raw_key:
             logger.warning("license_public_key_missing")
             return ErrorCode.LICENSE_INVALID

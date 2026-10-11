@@ -75,7 +75,10 @@ os.environ["EXTRACTION_ENGINE"] = "mock"
 # Settings 就**带着默认值被缓存**了，之后再设 env 一律无效
 # （表现为：测试环境永远 LICENSE_MISSING，而 pdb/命令行里却正常）。
 os.environ["LICENSE_FILE_PATH"] = str(_TMP_DIR / "license" / "pytest.lic")
-os.environ["LICENSE_PUBLIC_KEY"] = ""  # 下面签出密钥后立刻覆盖为真实公钥
+# ℹ️ **刻意不设** `LICENSE_PUBLIC_KEY`：验签公钥已内置（ADR-0006 **R-L5** / P6-Z），
+#    环境变量里不再有这个开关 —— 否则客户可用「换公钥 + 自签」绕过机器绑定
+#    （2026-10-11 实测属实，见 changes/P6-Z/proposal.md §0.2.1）。
+#    测试用的**临时**公钥改在 `license_environment` 里替换模块常量，属进程内接缝。
 
 # License（接缝 9 / DR-C1）：测试**带着一份真 license 跑**，而不是把 enforce 关掉。
 #
@@ -101,7 +104,6 @@ _TEST_LICENSE_PUBLIC_KEY_B64 = base64.b64encode(
 # （部署 ≤ 早于 P4 岔口踩过：表现为资源测试环境一律 LICENSE_MISSING）。
 # ⇒ env 必须在**第一次**触发 get_settings() 之前落地。
 os.environ["LICENSE_FILE_PATH"] = str(_TMP_DIR / "license" / "pytest.lic")
-os.environ["LICENSE_PUBLIC_KEY"] = _TEST_LICENSE_PUBLIC_KEY_B64
 
 _TEST_LICENSE_BODY = {
     "license_id": "00000000-0000-4000-8000-00000000beef",
@@ -166,7 +168,12 @@ def license_environment():
     """
     settings = get_settings()
     object.__setattr__(settings, "license_file_path", str(_TEST_LICENSE_FILE))
-    object.__setattr__(settings, "license_public_key", _TEST_LICENSE_PUBLIC_KEY_B64)
+    # R-L5「公钥内置」：不再经 settings / env，而是**进程内**替换那个模块常量。
+    # 这是全代码库唯一被允许的公钥替换点，且**不暴露为任何配置项** ——
+    # 也就是说，客户侧不存在可用于替换验签公钥的开关（P6-Z 实证之后刻意如此）。
+    from app.services.license import public_key as _public_key_module
+
+    _public_key_module.BUILTIN_LICENSE_PUBLIC_KEY_B64 = _TEST_LICENSE_PUBLIC_KEY_B64
     object.__setattr__(settings, "license_enforce", True)
     return settings
 

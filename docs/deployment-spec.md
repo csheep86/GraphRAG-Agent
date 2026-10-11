@@ -94,7 +94,7 @@
 |---|---|
 | 配置来源 | `.env.example` → 现场复制为 `.env`；**`.env` 禁止入库**（已在 `.gitignore`） |
 | 密钥注入 | 部署时**生成并注入**，禁止写进镜像、禁止进 git、禁止出现在日志 |
-| 必配密钥 | PG 密码、Neo4j 密码、`SECRET_KEY`、**`LICENSE_PUBLIC_KEY`**（ADR-0006 §3.2）、LLM Key（内网可空） |
+| 必配密钥 | PG 密码、Neo4j 密码、`SECRET_KEY`、LLM Key（内网可空）；**验签公钥不在此列** —— 按 ADR-0006 §3.2 已改为**内置且不可由 `.env` 覆盖** |
 | **生产默认值** | **`PRIVATE_DEPLOY_ENABLED=true`**（PRD H6 私域禁外发）——**生产环境不得为 false** |
 | 敏感日志 | 脱敏后写（PRD H5）；License 正文 / 签名**禁止**进日志（ADR-0006 §2.5） |
 

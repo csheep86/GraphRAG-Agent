@@ -126,12 +126,13 @@ services:
       CORS_ALLOW_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000"]'
       # §3 生产默认值：私域禁外发，生产不得为 false
       PRIVATE_DEPLOY_ENABLED: "true"
-      # 【F-P6X-1】Ed25519 验签公钥 —— **必须经本白名单送进容器**：
-      # compose 的 `--env-file` **只做插值、不会自动注入容器**，光在 `.env` 里
-      # 写还不够（这是 F-P6X-1 最隐蔽的一半）。
-      # 写成**必填插值**：缺失即解析阶段报错，绝不允许退化成"静默验签失败"
-      # —— 那正是 F-P6X-1 的症状：`health` 照常 200，业务接口却全 403。
-      LICENSE_PUBLIC_KEY: ${LICENSE_PUBLIC_KEY:?LICENSE_PUBLIC_KEY 必填，见 .env.example}
+      # ℹ️ **这里刻意不注入验签公钥** —— 公钥按 ADR-0006 **R-L5**「公钥内置」
+      # 已写进代码常量（`backend/app/services/license/public_key.py`）。
+      # ⚠️ 这里曾经要求配 `LICENSE_PUBLIC_KEY`（当时是为了修「模板漏配 ⇒ 必然验签失败」），
+      #    但「可配」同时意味着**客户可以换成自己那把公钥**，配合自签的 License 即可
+      #    绕过整套机器绑定 —— 2026-10-11 实测四步走通并可拿到永久全量额度
+      #    （见 `changes/P6-Z/proposal.md` §0.2.1）。
+      #    ⇒ 现在内置、且**不开放任何覆盖开关**；轮换公钥 = 发新版（R-L5 原约定）。
     volumes:
       # 【F-P6Y-2 / F-P6Y-3】把**宿主**的 machine-id **只读**挂进容器。
       # 容器内 `/etc/machine-id` 与 `product_uuid` 都取不到 ⇒ 指纹会退化成

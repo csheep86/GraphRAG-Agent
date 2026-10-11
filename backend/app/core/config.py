@@ -44,16 +44,18 @@ class Settings(BaseSettings):
     )
 
     # -- License（接缝 9 / DR-C1 / ADR-0006）--
-    # ⚠️ 六项**逐项**都有真实消费点，**无一占位**（ADR-0004 §3 第 5 条；写了不读 ⇒ CI 红，
+    # ⚠️ 下列**逐项**都有真实消费点，**无一占位**（ADR-0004 §3 第 5 条；写了不读 ⇒ CI 红，
     # 由 scripts/check_seams.py 的「settings 必须有消费者」判据盯住）：
-    #   - license_file_path / _public_key / _state_ttl_seconds → LicenseProvider 加载与重载；
+    #   - license_file_path / license_state_ttl_seconds → LicenseProvider 加载与重载；
     #   - license_fp_salt → 机器指纹计算；
     #   - license_clock_skew_tolerance_days → 时钟漂移（只告警不拒绝）；
     #   - license_enforce → LicenseMiddleware（false 时放行，但**必须**落 license.bypass 审计）。
     license_file_path: str = "deploy/license/app.lic"
-    #: Ed25519 公钥（base64）。**留空 = 一律验签失败** —— 没有密钥就应当拒绝，
-    #: 而不是退化为「不校验」（后者会让 License 形同虚设，ADR-0006 §2.3）。
-    license_public_key: str = ""
+    # ℹ️ **验签公钥不在这里** —— 按 ADR-0006 R-L5「公钥内置」，公钥是
+    # `app/services/license/public_key.py` 的常量，**不可由 `.env` 覆盖**：
+    # 一旦可覆盖，客户用「换公钥 + 自签」四步就能给自己发一张永久全量的 License
+    # （2026-10-11 实测属实，见 `changes/P6-Z/proposal.md` §0.2.1）。
+    # ⇒ 轮换公钥 = 发新版，这正是 R-L5 原文写明的处置方式。
     license_enforce: bool = True
     #: 指纹 salt（ADR-0006 §2.1：应用级，同一客户 / 同一版本一致，**不是密钥**）
     license_fp_salt: str = "graphrag-fp-salt-v1"

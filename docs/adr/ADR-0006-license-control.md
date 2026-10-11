@@ -206,13 +206,36 @@
 | 配置 | 说明 | 消费点（S11 落位） |
 |---|---|---|
 | `LICENSE_FILE_PATH` | license 文件路径 | `LicenseProvider` 加载器 |
-| `LICENSE_PUBLIC_KEY` | Ed25519 公钥（**`.env` 可覆盖，默认内置**） | 验签 |
+| ~~`LICENSE_PUBLIC_KEY`~~ | ⛔ **2026-10-11 移除**（见 §3.2 修订记录）：公钥改为**内置且不可覆盖** | 验签 ⇒ 读 `app/services/license/public_key.py` 常量 |
 | `LICENSE_ENFORCE` | 强制开关；`false` 时放行但**必须**落 `license.bypass` 审计 | `LicenseMiddleware` |
 | `LICENSE_FP_SALT` | 指纹 salt | 指纹计算 |
 | `LICENSE_STATE_TTL_SECONDS` | 内存态 TTL，默认 60 | 重载判定 |
 | `LICENSE_CLOCK_SKEW_TOLERANCE_DAYS` | 时钟回拨容忍，默认 7 | §2.7 |
 
 > **纪律**：ADR-0004 §3 第 5 条——无消费者的配置不得提交；例外登记仅 `PRIVATE_DEPLOY_ENABLED` 与 `settings.log_export` 两项，**License 配置不得走占位**。
+
+> ### 修订记录（2026-10-11，P6-Z）：移除 `LICENSE_PUBLIC_KEY`
+>
+> 原条款写的是「`.env` 可覆盖，默认内置」。**P6-Z 实测推翻了"可覆盖"这部分**：
+> 只要保留这条可配置的通路，机器绑定就可以被绕过 —— 而且**不需要拿到我们的私钥**，
+> 客户四步即可自给自足：
+>
+> 1. 在目标机运行 `license-cli fingerprint` ⇒ 取本机指纹（CLI 的既定用途，不是漏洞）；
+> 2. 自己生成一对 Ed25519 密钥；
+> 3. 用自己私钥签一份「fingerprint == ①」的 License
+>    （canonical 规则在本仓库 `tests/conftest.py` 中是公开的写法）；
+> 4. 把③的公钥填进 `.env` ⇒ **验签通过、指纹一致** ⇒ `has_license=true`。
+>
+> 实测返回值：`status=active`、`not_after=2099-12-31`、`max_orgs=100 / max_seats=100`、
+> **全部 7 个模块**（完整读数见 `changes/P6-Z/proposal.md` §0.2.1）。
+>
+> ⇒ **处置**：删除该配置项。公钥只存在于 `app/services/license/public_key.py` 的常量；
+> 环境变量、交付 compose、`.env` 模板**均不提供**任何覆盖开关
+> （测试通过替换模块常量注入临时公钥，属**进程内**接缝，不构成客户可见的配置面）。
+>
+> ⇒ **代价**：轮换公钥 = 发新版。**这由本 ADR 的 R-L5 预先接受过**
+> （原文：「泄露需轮换公钥（= 发新版）」）⇒ 本修订没有引入新的约束，
+> 只是把一度放宽的部分收回原约定。
 
 ### 3.3 模块清单（`modules[]` 取值，与 PRD §2 对齐）
 
