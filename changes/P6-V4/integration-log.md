@@ -110,6 +110,30 @@ uv run python scripts/eval_acceptance.py --calibrate --cost-records ...
 | `check_startup_readiness.py --self-test` | 7 条全过，退出码 0 |
 | `check_session_drift.py` | S1 读到 **6 条边界**；S2 4 文件 / 339 行；S3~S5 未触发 |
 
+### 4.4 CI（**R-10 终裁**）
+
+```
+run 38145467348 @ c89c4eb —— 全绿
+  前端（lint + gen:api）        success
+  后端（ruff + pytest）         success
+  契约校验（前后端漂移门禁）     success
+  流水线汇总                    success
+```
+
+⚠️ **本批开工时 CI 已经是红的**，且红在**本批之前**：
+
+- `38143457592`（`e77b2ed` 立批提交，**只有 docs**）与
+  `38145365111`（`b392423`）两次都红在同一处 ——
+  `tests/test_license_guardrails.py:76` 未格式化 ⇒ **Ruff 格式检查** exit 1，
+  后端 job 在 **pytest 之前**就挂了 ⇒ 本批改动**一步都没被验到**。
+- 根因提交：`47632be`（P6-Z Z-b/Z-c，**人工提交**）漏跑 `ruff format`。
+- 处置（`c89c4eb`，**单独一个 `style` 提交，不与本批混在一起**）：跑项目自带的
+  `ruff format` 修那一行，**语义零改动**；该文件 8 条用例本地全过；
+  修完 `ruff format --check .` ⇒ 292 files already formatted。
+
+**这是本批唯一一件「顺便做的」事**，它不属于 P6-V4 的任何一条需求，
+只是为了让 R-10 的终裁门禁真正跑到本批改动上——单独提交、单独说明理由。
+
 ---
 
 ## 5. 本批踩到 / 避开的坑（**留给下一批**）
@@ -125,6 +149,11 @@ uv run python scripts/eval_acceptance.py --calibrate --cost-records ...
 3. **`check_startup_readiness.py` 在本机 PowerShell 下会因 GBK 崩**（打印 `⇒`）：
    跑它要带 `$env:PYTHONIOENCODING="utf-8"`。**这是环境问题，不是护栏问题**；
    `--self-test` 在 CI 里是门禁且全过。
+4. **CI 红不等于你改错了**（本批开工时就是红的）：`ruff format` 挂在**别人的文件**上时，
+   后端 job **在 pytest 之前**就挂 ⇒ 日志里看不到任何测试失败，很容易被误读成
+   "我的改动把测试搞红了"。⇒ **先看挂在哪一步**，再看挂的是谁的文件。
+   另：本地只跑改动文件的 `ruff format --check` **查不出这类红**——门禁跑的是
+   `ruff format --check .`（全量），收口前要跑一次全量。
 
 ---
 
