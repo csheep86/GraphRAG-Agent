@@ -250,11 +250,21 @@ jobs:
             --criteria c2_a_hidden_relation_recall,c2_b_false_positive_rate \
             --gate
 
+      # ⚠️ **这一条是门禁**，与下面那条快照的「仅报告」不同：
+      # 快照给出的结论对不对，取决于**判读逻辑本身有没有坏**。
+      # 而判读逻辑被改坏时**症状为零** —— 例如重新漏掉 skipif / fixture-skip，
+      # 报告会照旧报「已生效」（P7-A §5.2 那个盲区正是这么来的）。
+      # ⇒ 先把脚本自己的正向（别漏报）+ 反向（别误报）用例跑一遍，失败即红。
+      # 经用户批准后加（P7-B 原本把「不动 ci.yml」列为 Non-goal，此处显式打破）。
+      - name: 护栏脚本自测（判读逻辑是否可信 ⇒ **门禁**）
+        run: uv run python scripts/check_startup_readiness.py --self-test
+
       # 护栏状态快照：**只打日志，不做门禁**（它恒退 0，门禁由 pytest 承担）。
       #
       # 为什么要多这一步：护栏一大半是 xfail 骨架，**CI 全绿 ≠ 它们在拦**。
       # 若只在本地看，很容易出现「文档标 ✅ / 实际没在拦」的认知漂移。
-      # 把三档状态写进每次提交的日志，谁想确认都不必回忆。
+      # 把**四档**状态（🟢 已生效 / 🔵 条件跳过 / 🟠 部分生效 / 🟡 挂起）写进
+      # 每次提交的日志，谁想确认都不必回忆。
       - name: 护栏状态快照（仅报告，非门禁）
         run: uv run python scripts/check_startup_readiness.py
 
