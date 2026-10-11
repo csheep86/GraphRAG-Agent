@@ -194,7 +194,7 @@ drill 栈已拆 ÷ 卷已删、`graphrag-neo` 已启回、`git status` 无残留
 | **T4** | 端到端正例：新工具签发 ⇒ 验签路径接受 ⇒ `has_license=true` | ✅ 已完成（§3.1 J1） |
 | **T5** | 回归 J6：全量 pytest + 契约 + 十项验收 | ✅ 已完成（1236 passed / 0 failed） |
 | **T6** 🆕 | **私钥离线保管**（移交人） | ⏳ **待你处置** —— 见 §6.3 |
-| **T7** 🆕 | 重出交付镜像 + 离线包（让本批代码改动进入客户的包） | ⏳ 未做 —— 见 §6.4 |
+| **T7** 🆕 | 重出交付镜像 + 离线包（让本批代码改动进入客户的包） | ✅ **已完成**（经你批准，读数见 §6.4） |
 
 ---
 
@@ -250,11 +250,22 @@ drill 栈已拆 ÷ 卷已删、`graphrag-neo` 已启回、`git status` 无残留
 ⇒ **请你把它转移到真正的签发环境 / 密码管理器 / KMS**，并从本机删掉。
 泄露 ⇒ 攻击者可签发任意 License，届时只能轮换公钥（= 发新版，重新出镜像）。
 
-### 6.4 T7：要不要重出交付镜像
+### 6.4 T7：重出交付镜像 + 离线包（2026-10-11，**经你批准**后执行）
 
-本批改了 `provider.py` / `config.py` / 新增 `public_key.py` ⇒ **这些都在交付镜像里**。
-不重出包 ⇒ 客户拿到的镜像**仍是旧公钥来源**（读 `settings.license_public_key`，而它可以不被注入 ⇒
-等价于"没有公钥" ⇒ 全部 License 验签失败、业务 403）。
+本批改了 `provider.py` / `config.py` / 新增 `public_key.py` ⇒ 这些**都在交付镜像里**。
+不重出包 ⇒ 客户拿到的镜像仍会读那个已被删除的 `settings.license_public_key`
+⇒ 等价于"没有公钥" ⇒ 全部 License 验签失败、业务 403。
 
-⇒ 建议重出（`build_delivery_images.py --save` + `--verify`），但这触"不重做出包"那条纪律，
-**须你明确批准**后才动。
+**`--save` ⇒ `--verify`，并对新镜像做了随机抽样**：
+
+| 判据 | 读数 |
+|---|---|
+| 公钥来源**已是内置常量** | 镜像内 `public_key.BUILTIN_LICENSE_PUBLIC_KEY_B64` = `R5Q6Ab4q6cyl…` ✅ |
+| **不再读 settings** | `hasattr(Settings, "license_public_key")` = **False**；`_verify` 形参 = `['body', 'signature']`（已无 `settings`）✅ |
+| **签发能力未混入交付镜像** | `/app/tools` **不存在**；全 `/app` 检索 `Ed25519PrivateKey.generate` **0 命中** ✅ |
+| `--verify` | **7 项全 PASS**（manifest 可解析 / app_version / tar SHA-256 / tag 与 compose 逐字节一致 / 第三方不入包 / 两枚 image id 一致） |
+| 体积旁证 | tar `496,529,920` → **`496,532,480`** 字节（**+2,560**）⇒ 镜像内容确实变了 |
+
+> ⚠️ 说明：本次**未**再起 drill 栈做端到端演练（你选的是"重出并验证"而非含演练的那一档）。
+> 镜像内的公钥来源已完成抽样确认；若需"按交付物原样安装 ⇒ License 不再失效"的端到端留证，
+> 属下一批范围（届时需要再停一次 `graphrag-neo`）。
