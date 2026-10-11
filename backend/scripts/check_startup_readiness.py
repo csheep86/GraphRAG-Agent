@@ -12,22 +12,31 @@
 哪些是真的在拦、哪些又因为"校验来源压根不存在"而恒绿，**太容易漏**——
 所以把它做成脚本，让**每个阶段的开工第一步**都有同一个机器判据。
 
-本脚本**不跑测试**（只解析源码，秒级完成），把护栏分成三类：
+本脚本**不跑测试**（只解析源码，秒级完成），把护栏分成四档：
 
-* 🟢 **已生效** —— 无 `xfail`，测试红就是它拦的
+* 🟢 **已生效** —— 无 `xfail`、**也不会被跳过** ⇒ 测试红就是它拦的
+* 🔵 **条件跳过** —— 带 `skipif`、或依赖的 fixture 内会 `pytest.skip` ⇒
+  **这一条在当前环境里可能压根没跑**，"CI 绿"证明不了它拦住了什么
 * 🟡 **挂起** —— 有 `xfail`，CI 绿但它没在拦任何东西
 * ⚠️ **恒绿失效** —— 挂起，且**校验来源尚不存在**；即便去掉 `xfail` 也只是一场空跑
   （纪律 **R-9「恒绿即失效」**）
+
+🔵 这一档为什么必须有（**P7-B**，实证见 `changes/P7-A/integration-log.md` §5.2）：
+本地不起 Neo4j 时全量 `pytest` 由 **930 passed 掉到 923 passed**，少的 7 条**全绿通过、
+无人察觉**，而本脚本两次输出**一模一样** —— 若「以机器输出为准」这句要成立，
+机器就必须把"根本没跑"也读出来，而不是把它当成"在拦"。
 
 另外顺带检查几条**开工地雷**（是否切 PG、`plugins/` 是否存在等）。
 
 用法
 ----
     uv run python scripts/check_startup_readiness.py
+    uv run python scripts/check_startup_readiness.py --self-test   # 脚本自带自测
 
 退出码
 ------
-恒为 **0**。它是**报告**而不是门禁——门禁由 pytest / CI 承担。
+正常报告恒为 **0**（它是**报告**而不是门禁——门禁由 pytest / CI 承担）；
+仅 `--self-test` 有失败用例时返回 **1**。
 """
 
 from __future__ import annotations
@@ -195,7 +204,107 @@ def _first_line(text: str) -> str:
     return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
 
 
-def collect_guardrails() -> dict[str, list[dict[str, object]]]:
+# ---------------------------------------------------------------------------
+# 「可能被跳过」的识别（P7-B）——第三种弱化形态，此前完全不参与判定
+# ---------------------------------------------------------------------------
+
+
+def _is_fixture(node: ast.FunctionDef) -> bool:
+    """``@pytest.fixture`` / ``@pytest.fixture(...)`` 都算。"""
+    for deco in node.decorator_list:
+        target = deco.func if isinstance(deco, ast.Call) else deco
+        if _dotted_name(target) == "pytest.fixture":
+            return True
+    return False
+
+
+def _calls_skip(node: ast.AST) -> str | None:
+    """返回函数体内第一处 ``pytest.skip(...)`` 的 reason 表达式；没有则 ``None``。"""
+    for sub in ast.walk(node):
+        if not isinstance(sub, ast.Call) or not sub.args:
+            continue
+        if _dotted_name(sub.func) in ("pytest.skip", "pytest.mark.skip"):
+            try:
+                return ast.unparse(sub.args[0])
+            except Exception:  # noqa: BLE001 —— 个别版本 unparse 会抛，退回常值
+                if isinstance(sub.args[0], ast.Constant):
+                    return str(sub.args[0].value)
+                return "(动态 reason)"
+    return None
+
+
+def _fixture_index(trees: dict[Path, ast.Module]) -> dict[str, ast.FunctionDef]:
+    """``{fixture 名: 定义节点}``；同名以最后一个为准（pytest 本身的遮蔽规则亦然）。"""
+    index: dict[str, ast.FunctionDef] = {}
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and _is_fixture(node):
+                index[node.name] = node
+    return index
+
+
+def _skip_via_fixture(
+    fn: ast.FunctionDef,
+    fixtures: dict[str, ast.FunctionDef],
+    _seen: set[str] | None = None,
+) -> str | None:
+    """测试所依赖的 fixture（**含递归依赖**）里有没有会 skip 的。
+
+    为什么要递归：fixture 常常再依赖 fixture，只看直接一层会**隔一级就漏**，
+    而漏掉的后果正是把它们判成"在拦"——即本脚本要防的头号错误。
+    """
+    seen = _seen if _seen is not None else set()
+    args = [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+    for arg in args:
+        name = arg.arg
+        if name in seen or name not in fixtures:
+            continue
+        seen.add(name)
+        fix = fixtures[name]
+        reason = _calls_skip(fix)
+        if reason:
+            return f"依赖的 fixture `{name}` 会 skip：{reason[:48]}"
+        deeper = _skip_via_fixture(fix, fixtures, seen)
+        if deeper:
+            return deeper
+    return None
+
+
+def _skip_state(
+    node: ast.FunctionDef,
+    env: dict[str, object],
+    fixtures: dict[str, ast.FunctionDef],
+) -> tuple[bool, str]:
+    """返回 ``(是否可能被跳过, 原因)``。
+
+    **保守原则：判不出来就当"会跳过"。** 宁可多报一行待确认，也不许把"根本没跑"
+    误报成"在拦" —— 后者正是 P7-A §5.2 那个盲区。
+    """
+    for deco in node.decorator_list:
+        call = deco if isinstance(deco, ast.Call) else None
+        target = call.func if call else deco
+        if not _dotted_name(target).endswith(".skipif"):
+            continue
+        reason = ""
+        if call:
+            for kw in call.keywords:
+                if kw.arg == "reason" and isinstance(kw.value, ast.Constant):
+                    reason = str(kw.value.value)
+        if not call or not call.args:
+            return True, reason or "skipif（无条件）"
+        evaluated = _eval(call.args[0], env)
+        # 非 bool（静态判不出来）或求得为 True ⇒ 都按"会跳"记
+        if not isinstance(evaluated, bool) or evaluated:
+            return True, reason or "skipif 条件为真 / 无法静态求值"
+    via = _skip_via_fixture(node, fixtures)
+    if via:
+        return True, via
+    return False, ""
+
+
+def collect_guardrails(
+    tests_dir: Path | None = None,
+) -> dict[str, list[dict[str, object]]]:
     """返回 ``{G 编号: [该编号下的测试, ...]}``。
 
     一个 G 编号**可能对应多条测试**（例如 G-21 既有挂起的主断言、又有必须始终通过的
@@ -206,15 +315,26 @@ def collect_guardrails() -> dict[str, list[dict[str, object]]]:
       1. 函数名 ``test_g11_xxx`` —— guardrails 系列用这个
       2. 模块 docstring **首行**的 ``G-<N>`` —— 专项文件（如 G-11 的
          ``test_seam_signature_snapshot.py``）整文件归属同一编号
+
+    ⚠️ **连 `conftest.py` 一起扫**（P7-B）：fixture 常常住在 conftest 里，
+    不扫它就认不出「这条用例依赖的 fixture 会 skip」——那正是本批要补的盲区。
     """
+    root = tests_dir or TESTS_DIR
+    trees: dict[Path, ast.Module] = {}
+    for pattern in (TEST_PATTERN, "conftest.py"):
+        for path in sorted(root.rglob(pattern)):
+            trees[path] = ast.parse(path.read_text(encoding="utf-8"))
+    fixtures = _fixture_index(trees)
+
     found: dict[str, list[dict[str, object]]] = {}
-    for path in sorted(TESTS_DIR.glob(TEST_PATTERN)):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, tree in trees.items():
         env = _module_env(tree, path)
         file_gid = _file_level_gid(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef):
                 continue
+            if _is_fixture(node):
+                continue  # fixture 是装置，不是测试用例
             matched = _G_RE.match(node.name)
             if matched:
                 gid = "G-" + matched.group(1)[1:]
@@ -224,14 +344,17 @@ def collect_guardrails() -> dict[str, list[dict[str, object]]]:
             else:
                 continue
             suspended, reason = _xfail_state(node, env)
+            skipped, skip_reason = _skip_state(node, env, fixtures)
             doc = ast.get_docstring(node) or ""
-            blob = f"{doc} {reason}"
+            blob = f"{doc} {reason} {skip_reason}"
             found.setdefault(gid, []).append(
                 {
                     "file": path.stem,
                     "name": node.name,
                     "suspended": suspended,
                     "reason": _first_line(reason),
+                    "skipped": skipped,
+                    "skip_reason": _first_line(skip_reason),
                     "summary": _first_line(doc),
                     "drs": sorted(set(_DR_RE.findall(blob))),
                 }
@@ -305,6 +428,7 @@ def _sym(name: str) -> str:
     """
     emoji = {
         "active": "\U0001f7e2",
+        "conditional": "\U0001f535",
         "partial": "\U0001f7e0",
         "suspended": "\U0001f7e1",
         "warn": "⚠️",
@@ -317,6 +441,7 @@ def _sym(name: str) -> str:
     }
     ascii_only = {
         "active": "[OK]",
+        "conditional": "[SK]",
         "partial": "[~~]",
         "suspended": "[--]",
         "warn": "[!!]",
@@ -355,6 +480,7 @@ def main() -> int:
         return any(bool(i["suspended"]) for i in items)
 
     ok_ = _sym("active")
+    skip_ = _sym("conditional")
     part_ = _sym("partial")
     susp_ = _sym("suspended")
     warn_ = _sym("warn")
@@ -365,9 +491,17 @@ def main() -> int:
     arrow_ = _sym("arrow")
     imply_ = _sym("imply")
 
-    active = {g: i for g, i in guardrails.items() if not _any_susp(i)}
-    partial = {g: i for g, i in guardrails.items() if _any_susp(i) and not _all_susp(i)}
+    def _any(items: list[dict[str, object]], key: str) -> bool:
+        return any(bool(i[key]) for i in items)
+
+    # 归属优先级：**xfail 挂起 > 可跳过 > 在拦**。
+    # 理由：一条同时带 xfail 与 skip 的用例，要按「一定没拦」记 ——
+    # 不许让较轻的状态把较重的状态盖住。
     suspended = {g: i for g, i in guardrails.items() if _all_susp(i)}
+    partial = {g: i for g, i in guardrails.items() if _any_susp(i) and not _all_susp(i)}
+    rest = {g: i for g, i in guardrails.items() if not _any_susp(i)}
+    conditional = {g: i for g, i in rest.items() if _any(i, "skipped")}
+    active = {g: i for g, i in rest.items() if not _any(i, "skipped")}
 
     def _show(sym: str, title: str, group: dict[str, list], note: str = "") -> None:
         print(f"\n{sym} {title}：{len(group)} 条")
@@ -386,16 +520,29 @@ def main() -> int:
                 print(f"          {_safe(caveat)}")
             for item in items:
                 # 逐条标状态——「部分生效」那组必须看得出到底哪条在拦、哪条躺平
-                mark = susp_ if item["suspended"] else ok_
+                if item["suspended"]:
+                    mark = susp_
+                elif item["skipped"]:
+                    mark = skip_
+                else:
+                    mark = ok_
                 print(f"          {mark} {item['name']}")
                 if item["suspended"] and item["reason"]:
                     print(f"             {arrow_} {_safe(item['reason'])[:64]}")
+                elif item["skipped"] and item["skip_reason"]:
+                    print(f"             {arrow_} {_safe(item['skip_reason'])[:64]}")
 
     print("=" * 78)
     print("开工自检 —— 护栏真实状态（解析测试源码得出，不跑测试）")
     print("=" * 78)
 
     _show(ok_, "已生效（真在拦，测试红就是它拦的）", active)
+    _show(
+        skip_,
+        "条件跳过（**这次可能压根没跑** ⇒ 「CI 绿」证明不了它拦住任何东西）",
+        conditional,
+        f"{imply_} 想把它管的需求算完成，先让这些用例**真的跑起来**（补环境 / 拆必跑子集）",
+    )
     _show(
         part_,
         "部分生效（一半在拦、一半挂起）",
@@ -429,7 +576,8 @@ def main() -> int:
     print("-" * 78)
     print(
         f"1. 要动某条 DR 前：先看它的 G 编号在哪个区；"
-        f"{ok_} 才叫真的拦住，{part_} / {susp_} 都不算。"
+        f"{ok_} 才叫真的拦住，{skip_} / {part_} / {susp_} 都不算"
+        f"（P8「零缺口」要的是全 {ok_}）。"
     )
     print(
         f"2. 想让 {susp_} 转正：让对应测试**真的通过**，再删掉它的 @pytest.mark.xfail。"
@@ -443,5 +591,155 @@ def main() -> int:
     return 0
 
 
+#: `--self-test` 的固定用例。每条 = ``(标题, 方向, 源码, 期望)``。
+#:
+#: ⚠️ **两个方向都不可少**：只测"弱化形态被认出来"会奖励一个**把所有东西都判成
+#: 没在拦**的实现（那样当然全绿）；反向用例专门盯着这种溃败。
+_SELFTEST_CASES: list[tuple[str, str, str, dict[str, bool]]] = [
+    (
+        "skipif 条件为真 ⇒ 不得算「在拦」（模拟本地无图：`skipif(not _REAL)`）",
+        "正向",
+        """
+import pytest
+
+_REAL = False
+
+@pytest.mark.skipif(not _REAL, reason="need real graph")
+def test_g97_decorator_skip():
+    assert False
+""",
+        {"suspended": False, "skipped": True},
+    ),
+    (
+        "条件无法静态求值 ⇒ **保守**判「会跳过」",
+        "正向",
+        """
+import os
+
+import pytest
+
+@pytest.mark.skipif(os.environ.get("GRAPH_REAL"), reason="only when set")
+def test_g96_unknown_condition():
+    assert True
+""",
+        {"suspended": False, "skipped": True},
+    ),
+    (
+        "fixture 内 pytest.skip ⇒ 不得算「在拦」",
+        "正向",
+        """
+import pytest
+
+@pytest.fixture
+def real_driver():
+    pytest.skip("local no neo4j")
+
+def test_g95_fixture_skip(real_driver):
+    assert False
+""",
+        {"suspended": False, "skipped": True},
+    ),
+    (
+        "fixture 依赖 fixture（**隔一级**）⇒ 仍须认出来",
+        "正向",
+        """
+import pytest
+
+@pytest.fixture
+def driver():
+    pytest.skip("local no neo4j")
+
+@pytest.fixture
+def real_graph(driver):
+    return driver
+
+def test_g94_nested_fixture_skip(real_graph):
+    assert False
+""",
+        {"suspended": False, "skipped": True},
+    ),
+    (
+        "skipif 条件为假 ⇒ **仍须**算「在拦」（不许把好护栏降级）",
+        "反向",
+        """
+import pytest
+
+_REAL = False
+
+@pytest.mark.skipif(_REAL, reason="need real graph")
+def test_g93_condition_false():
+    assert True
+""",
+        {"suspended": False, "skipped": False},
+    ),
+    (
+        "无任何弱化标记 ⇒ **仍须**算「在拦」",
+        "反向",
+        """
+def test_g92_plain_guard():
+    assert True
+""",
+        {"suspended": False, "skipped": False},
+    ),
+    (
+        "xfail 仍须判为**挂起**（不许被新逻辑吃成 skip）",
+        "反向",
+        """
+import pytest
+
+@pytest.mark.xfail(strict=True, reason="需求未完成")
+def test_g91_xfail_still_suspended():
+    assert False
+""",
+        {"suspended": True, "skipped": False},
+    ),
+]
+
+
+def _self_test() -> int:
+    """脚本自带自测：写最小源码 → 走**同一套** ``collect_guardrails()`` → 断言档位。
+
+    为什么必须有它（P7-A 把本事项单独立批就是因为这个原因）：
+    本脚本存在的意义是「别信文档、信机器」。那么判定逻辑本身一旦改动，
+    **它自己就得有证据** —— 否则「机器说它在拦」这句话又是无根的。
+    """
+    import tempfile
+
+    failures: list[str] = []
+    for idx, (title, _direction, src, expect) in enumerate(_SELFTEST_CASES):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / f"test_selftest_{idx}.py").write_text(src, encoding="utf-8")
+            found = collect_guardrails(root)
+            items = [i for group in found.values() for i in group]
+            if len(items) != 1:
+                failures.append(f"{title}：期望收集到 1 条用例，实测 {len(items)} 条")
+                continue
+            item = items[0]
+            for key, want in expect.items():
+                got = bool(item.get(key))
+                if got != want:
+                    failures.append(f"{title}：`{key}` 期望 {want}，实测 {got}")
+
+    forward = sum(1 for c in _SELFTEST_CASES if c[1] == "正向")
+    backward = sum(1 for c in _SELFTEST_CASES if c[1] == "反向")
+    print("=" * 78)
+    print("check_startup_readiness 自检（--self-test）")
+    print("=" * 78)
+    print(
+        f"用例 {len(_SELFTEST_CASES)} 条：正向 {forward}（别漏报）/ 反向 {backward}（别误报）"
+    )
+    if failures:
+        for line in failures:
+            print(f"   {_sym('no')} {_safe(line)}")
+        print(f"\n{_sym('no')} {len(failures)} 条未通过 ⇒ 退出码 1")
+        return 1
+    print(f"   {_sym('ok')} 全部通过：弱化形态被认出，且好护栏没有被降级")
+    print("=" * 78)
+    return 0
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        sys.exit(_self_test())
     sys.exit(main())
