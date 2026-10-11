@@ -1,4 +1,4 @@
-# P6-Y：License 交付缺口修复（F-P6X-1）+ 跨机恢复 License 失效定案（F-P6Y-1）
+# P6-Y2：License 交付缺口修复（F-P6X-1）+ 跨机恢复 License 失效定案（F-P6Y-1）
 
 > **队列**：[`docs/delivery-plan.md`](../../docs/delivery-plan.md) §11 排期
 > **裁决来源**：2026-10-10 用户拍板 —— 「推吧，按你建议开吧」
