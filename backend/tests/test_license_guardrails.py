@@ -73,7 +73,9 @@ def test_builtin_public_key_is_a_valid_ed25519_key() -> None:
     key = ed25519.Ed25519PublicKey.from_public_bytes(
         base64.b64decode(raw, validate=True)
     )
-    assert len(key.public_bytes_raw()) == 32, "不是合法的 Ed25519 裸公钥（应为 32 字节）"
+    assert len(key.public_bytes_raw()) == 32, (
+        "不是合法的 Ed25519 裸公钥（应为 32 字节）"
+    )
 
 
 def test_signing_capability_is_not_packaged() -> None:
