@@ -265,6 +265,8 @@ P1 两条线**可并行**；A 组内部有严格先后：
 | **11** | **P6-Y2**（**补登记**，原名 `P6-Y`） | **License 交付缺口修复**：F-P6X-1（公钥进不了容器）+ **F-P6Y-2 / F-P6Y-3**（指纹退化成**容器网卡 MAC**，重建即失效）+ F-P6Y-1（换机 License 失效 ⇒ 写进规格：「须重新签发」） | 无 | ✅ **已完成（2026-10-10）**：交付 compose 加必填插值 + 只读挂宿主 `/etc/machine-id`；`fingerprint.py` 对齐 ADR §2.1（machine-id 取到则 MAC 不参与）；`tests/test_license_fingerprint.py` **4 条护栏**；`deployment-spec` §6.1 约束 3 / §6.4 分场景判据；`deploy/README.md` 增「恢复（现场 / 演练）」；**镜像已重出**（`--verify` 7 项 PASS，tar 496,529,920 字节） | AI |
 | **12** | **P6-Z**（**补登记**） | **F-P6Z-1 定案 + 供应商侧签发工具**：实证「换公钥 + 自签」**四步**可绕过机器绑定 ⇒ 公钥回复**内置**；`tools/license/issue_license.py`（`genkey` / `issue` / `pubkey`，**不进镜像**） | P6-Y2 | ✅ **已完成（2026-10-11）**：内置公钥 + 移除 `LICENSE_PUBLIC_KEY` 配置项（**顺带把 F-P6X-1 一并消除**）+ ADR-0006 §3.2 修订记录 + `tests/test_license_guardrails.py` **8 条静态护栏**；全量 **1236 passed / 43 skipped / 0 failed**；**镜像已重出**（tar 496,532,480 字节） | AI + **用户裁决**（要不要弱化反盗版，属商业 / 安全取舍） |
 
+| **13** | **P6-V4**（**2026-10-11 立批**） | **让 C3-a / C3-b 真正出数**：把 `runner.py` 两个**写死 `BLOCKED`** 的评价函数换成**真读 `cost_metrics`** —— 解开 MVP 准入线的最后一条。切片：**V4-a** 出数化 ／ **V4-b** cost-records 取样器（对接 `--calibrate`）／ **V4-c** 真机实测（**须你批准，会产生 LLM 费用**） | P6-V3（已收口） | ⏳ **未开工**。起因（2026-10-11 实读）：P6-V2 已落 `record_extraction_usage`、P6-V3 已落 `record_full_rebuild_cost` / `record_incremental_rebuild_cost`，而 `runner.py:862-863 / :892-893` 的 `blocked_by` **仍在写这些已失效的理由** ⇒ 「已能让两侧出数」从未真正发生。**Non-goals**：不改阈值（RK-E7，脚本绝不写 config）／ 不动「图元素个数」同量纲裁决 ／ 不做仪表盘 `stage` 切片 ／ 不做交付动作。**出口** = 实测值 + TBD-7 建议值，**采纳哪个阈值仍由你裁决**。详见 [`changes/P6-V4/proposal.md`](../changes/P6-V4/proposal.md) | AI（V4-c 需你批准） |
+
 > 📌 **序 11 / 12 是 2026-10-11 补登记**：这两批**实际已完成**，但此前不在队列里（队列为 10-09 / 10-10 口径）
 > ⇒ 补上，以免 **P8-Release 逐行对账时漏掉 License 这条线（DR-C1）**。
 >
