@@ -51,4 +51,7 @@
 - [x] 同步删掉 / 更正 P6-V4 提示词里那条「已知 flaky」（修掉之后它不再成立）
       ⇒ `changes/P6-V4/new-session-prompt.md` §11 第 4 条已改写为"已修掉，再红就是真失败"
 - [x] 提交推送（**后端 / 架构师 / changes 分段**，跨侧不混提交）
-      ⇒ `1d87a0f`（backend）+ 本条（changes）
+      ⇒ `1d87a0f`（backend）+ `49d8c63`（changes）
+- [x] 落成下一批提示词 `changes/P6-V6/new-session-prompt.md`
+      （P6-V5：C3 真值 + TBD-7 裁决包；坐标表已逐条实读复核，
+      并补上本批实测发现的 `cost_metrics` 脏数据坑）

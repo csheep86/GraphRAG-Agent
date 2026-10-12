@@ -118,3 +118,20 @@ E  DETAIL:  Only roles with the SUPERUSER attribute may terminate processes of
   **已 `ALTER SYSTEM RESET` 并 `pg_reload_conf()`**，临时库 `probe_v6a` / `probe_drop` 已删。
 - 已同步更正 `changes/P6-V4/new-session-prompt.md` §11 第 4 条那条「已知 flaky」
   —— 它不再成立（见该文件）。
+- 已落成下一批提示词 `changes/P6-V6/new-session-prompt.md`（P6-V5：C3 真值 + TBD-7 裁决包）。
+
+## 7. 本批**顺带实测**、但属于下一批（P6-V5）的事实
+
+跑全量 `pytest tests -q` 做 K4 时，发现本机 `cost_metrics` **不再为空**（P6-V4 的口径是
+「本机 / CI 均空」⇒ **已过期**）：
+
+```
+stage='extraction'  org_id=00000000-0000-4000-8000-000000000001
+metric_date=2026-10-12   token_usage_total=0   doc_count=0   counted_doc_ids=[]
+single_doc_cost=0   incremental_cost=NULL   full_rebuild_cost=4   cost_ratio=0
+created_at=2026-10-12 03:47:29+00   ← 全量 pytest 的运行窗口
+```
+
+⇒ 这行是**测试写的**，不是真实抽取；`--live` 直接读 C3 会把它读成"真值"。
+本批**不处置**（属 P6-V5 边界），已写进下一批提示词 §6 坑 4 + V0 判据：
+**开工第一步先定位并隔离它**。

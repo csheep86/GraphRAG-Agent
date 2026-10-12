@@ -1,180 +1,268 @@
-# 新会话开场提示词 · P6-V6（**拆掉 CI 上的 flaky 定时炸弹**）
+# 新会话开场提示词 · P6-V5（**C3 真值 + TBD-7 裁决包**）
 
-> 👤 **用户先做一个勾选（开工前必读本段）**
+> 👤 **用户先做两个勾选（开工前必读本段）**
 >
-> **D1｜若查证后根因落在「CI 的 PG 配置」（`ci.yml` 的 services / 角色），
-> 是否批准改 CI？**
->   □ 批准 —— 可以改 `.github/workflows/ci.yml`（⚠️ `ci.yml:56-59` 明写
->     「三方必须一致」，改一处要改另外两处）
->   □ 不批 —— 根因落在 CI 配置时**停下报告**，本批只交付「查证结论」就收口
->   **没勾时按「不批」处理**。
+> **D1｜要不要批真机实测**（会产生 LLM 费用）：
+>   □ 批准 —— 跑一轮真实抽取 + 一次增量重算，拿到 C3-a / C3-b **真值**
+>   □ 仍不批 —— C3 真值维持 `BLOCKED`，本批改为「**P6-W**」（DR-E2 备份 / 恢复，W1 已裁决）
+>   **两个都没勾时按「仍不批」处理**：不许自行起 LLM 账单。
 >
-> 其余（查证、修 `pg_scratch.py`、验证、回登）全是 **AI 段**，可无人值守。
+> **D2｜TBD-7 阈值由你拍板**（AI **不得代填**）：本批只负责把
+> 「实测值 / 建议值 / 各选项后果」摊到你面前，**采纳哪一个是你一个人的决定**。
 
 ---
 
-> 🔒 **执行模式：混合（不是纯无人值守）**
-> - **AI 段**：跑命令、查 `pg_stat_activity`、修 `drop_database()`、连跑验证、回登；
-> - **人段**：只有 D1（要不要批改 CI）。
->   另外三种情况**自动停下报告**，见 §11。
+> 🔒 **执行模式：混合（不是纯无人值守，也不是纯人工）**
 >
-> 📌 **计划真源**：[`changes/P6-V6/proposal.md`](./proposal.md)（Why / 根因假设 /
-> Non-goals / 切片）+ [`tasks.md`](./tasks.md)（勾选表）。**已立批，不用再立**。
+> | 段 | 谁做 | 内容 |
+> |---|---|---|
+> | **AI 段**（可无人值守） | AI | 跑命令、搬数字、定位脏数据、校验门禁、跑 `--calibrate`、**只给建议**、回登日志 |
+> | **人段**（**AI 不得代做**） | 用户 | ① D1 批不批真 LLM；② **TBD-7 采纳哪个阈值** |
 >
-> 📦 **本文件自包含**：定位、坐标、假设、边界、验收都在本文里。
-> ⏳ **写于 2026-10-12**（P6-V4 收尾当天）。开工先复核 §4 坐标表行号是否仍成立。
+> ⚠️ 两条写死：
+> - **真 LLM 调用不经批准不许起**；
+> - **不许"先把阈值写进 `config.py` 再请用户复核"** —— 那等于把裁决做成既成事实。
+>   `eval_single_doc_token_ceiling` 的**唯一写入者是人**（且必须同步 `.env.example:328`）。
+>
+> 📌 **计划真源**：本批**尚无 proposal**（P6-V4 的 V4-c 切片留在这里）
+> ⇒ 开工第一步是照 `specs/_template/` 立 `changes/P6-V5/proposal.md` + `tasks.md`，
+> **先写边界（Non-goals）再动手**（`check_session_drift.py` S1 报「没有 Non-goals」就要停）。
+> 上游真源：[`../P6-V4/proposal.md`](../P6-V4/proposal.md) §3 切片表 + §6 停机条件。
+>
+> 📦 **本文件自包含**：批次定位、上游状态、坐标、判据、坑都在本文里。
+> ⏳ **写于 2026-10-12**（P6-V6 收口当天，HEAD `49d8c63`）。
+> 本文件**取代** [`../P6-V4/new-session-prompt.md`](../P6-V4/new-session-prompt.md)
+> （那份写于 2026-10-11，其中 §2 理由 #2 与 §8 基线**已被本文件复核订正**）。
 
 ---
 
-## 1. 本批一句话
+## 1. 起点确认（**先对这三个再动手**）
 
-修掉 `tests/pg_scratch.py::drop_database()` 里那条**会随机让 CI 变红**的
-`pg_terminate_backend` 权限竞态 —— 它每次发作都伪装成"你这次改动把测试搞红了"。
+```
+HEAD（本地 == origin/main）: 49d8c63  docs(changes): P6-V6 回登实测证据 + 勾选收尾
+上一条                    : 1d87a0f  fix(tests): P6-V6 拆掉 pg_terminate_backend 权限竞态（CI flaky）
+工作区                    : 干净（只有 .specstory/ .vscode/ delivery-kit/ 等既有的未跟踪目录）
+```
+
+**P6-V6 已收口**（CI flaky 定时炸弹已拆），本批是它的下一批。
+⚠️ 若 HEAD 不是 `49d8c63`，**先停**：本文件里的坐标与基线是照这个提交实读的。
 
 ---
 
-## 2. 为什么是它（**三条机械理由**）
+## 2. 本批一句话
+
+P6-V4 已经把 C3-a / C3-b 的**出数能力**补齐（三态 + 取样器），但**真值仍是 `BLOCKED`**。
+本批要么**真跑一轮**把真值拿出来（D1 批准），要么**如实维持 `BLOCKED`** 转去做 P6-W。
+⚠️ **且开工第一件事不是跑，是清场**：本机 `cost_metrics` 已经被测试写脏了（见 §6 坑 4）。
+
+---
+
+## 3. 为什么是它（**三条机械理由**，2026-10-12 复核，**不是排期感觉**）
 
 | # | 机器读数 | 说明 |
 |---|---|---|
-| 1 | run `38196713884`（head `60a5bbb`，**docs-only**）后端 job **failure**：`InsufficientPrivilege: permission denied to terminate process`，`1 failed / 1282 passed` | 代码树里**没有任何改动**却红 ⇒ 只能是竞态 |
-| 2 | 下一个 run `38198414806`（head `382be27`，**含代码改动**）**四项全绿**，同一用例这次过了 | 坐实 **flaky**（偶发，非必现） |
-| 3 | 它会让**任意**后续批次的 CI 随机红 | 红时最容易被读成"我改错了"，而最顺手的解法是**改测试让它绿** —— 正是 **R-10** 要防的那条路 |
+| 1 | 判据**读口已通**：P6-V4 注入探针实测 C3-a = `20000.0` token/doc、C3-b = `0.25`；`pytest` 本机 **1251 passed / 43 skipped**；`check_seams` **OK 12 / ERROR 0** | 挡住真值的**不是代码** |
+| 2 | **真值缺口的性质已变**（2026-10-12 实读 `cost_metrics`）：不再是「表里没数据」，而是「表里有 **1 行测试写进去的假数据**」（`doc_count=0`、`full_rebuild_cost=4`） | ⇒ 先隔离，再决定要不要真跑。旧口径「cost_metrics 均空」**已过期，勿再引用** |
+| 3 | C1~C3 / 多跳 / 拒答五条准入线里**只有 C3 没有真值**；且 `EVAL_SINGLE_DOC_TOKEN_CEILING` 仍是 **provisional**（`config.py:302` = 32 000） | 即便出数也只能 `PASS(provisional)`，**不构成达标证据** ⇒ TBD-7 必由人裁决 |
 
 ---
 
-## 3. 它不是一个"测试失败"，是一个"谎报"
+## 4. 开工自检（**动手写代码前先跑，结论只能来自脚本输出**）
 
-失败用例：`backend/tests/test_rbac.py:459`
-`test_migration_seeds_preset_roles_and_is_replayable`
+```bash
+cd backend && uv run python scripts/check_startup_readiness.py
+```
 
-它与 P6-V4 刚登记的第 4 个坑（「CI 红先看挂在哪一步」）**同一类病**：
-**机器的结论在说谎**，形式是"看起来像失败、其实与改动无关"。
+它按护栏**真实状态**分三档（`[OK]` 已生效 / `[~~]` 部分生效 / `[--]` 挂起）；
+**`[--]` / `[~~]` 所对应的 DR，本批一律不得宣称完成**。
+每个子任务收尾再跑：
+
+```bash
+cd backend && uv run python scripts/check_session_drift.py
+```
+
+**S1 报「没有 Non-goals」⇒ 先停下来补边界**，不许边写边定边界。
 
 ---
 
-## 4. 已查证坐标表（**2026-10-12 实读，开工先复核行号**）
+## 5. 已查证坐标表（**2026-10-12 逐条实读，开工先复核行号**）
 
-| 坐标 | 位置 | 用途 |
+| 坐标 | 位置 | 复核 |
 |---|---|---|
-| **元凶** | `backend/tests/pg_scratch.py:124-141` `drop_database()` | `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :name` —— **杀目标库所有连接** |
-| 临时库命名 | `backend/tests/pg_scratch.py:172` | `name = f"{prefix}_{uuid4().hex[:12]}"` ⇒ **一次性随机名**（`graphrag_rbac_<uuid12>`）⇒ **排除**"外部 superuser 连上来" |
-| 用例 | `backend/tests/test_rbac.py:459` / `:475` | `with scratch_database("graphrag_rbac") as name:` |
-| 执行者 | `.github/workflows/ci.yml:115` | `DATABASE_URL_OWNER=postgresql+psycopg://app_owner:app_owner@.../graphrag_test` ⇒ **`app_owner` 非 superuser** |
-| superuser 是谁 | `ci.yml:66` `POSTGRES_USER: graphrag`；`:156` `--admin-url ...graphrag:graphrag...` | 超级用户只在「建 RLS 角色」那一步用一次 |
-| 为什么不能给它提权 | `ci.yml:107-113` | 业务测试走受限角色是为让 RLS 真被验证；`app_owner` 提权 ⇒ T1/T2/G-26 判据 4 失去意义 |
-| 为什么不能吞异常 | `pg_scratch.py:169-170` | 原话：*残留的库最容易在下一次跑测时以「名字冲突 / 状态不干净」回来报复* |
-| 三方一致性 | `ci.yml:56-59` | 改 `POSTGRES_DB` / `DATABASE_URL` / conftest 回落库名 ⇒ 三处都要改 |
+| 抽取侧记账（**调用点**） | `backend/app/tasks/registry.py:566` `record_extraction_usage(` | ✅ |
+| 抽取侧记账（**定义点**） | `backend/app/services/cost_metrics.py:113` `def record_extraction_usage` | ✅ |
+| 全量分母（**调用点**） | `backend/app/tasks/registry.py:837` `if fresh_build:` → `record_full_rebuild_cost(...)` | ✅（`:837` 正是 `if fresh_build:`） |
+| 全量分母（**定义点**） | `backend/app/services/cost_metrics.py:170` `def record_full_rebuild_cost` | ✅ |
+| 增量分子（**调用点**） | `backend/app/services/kg/incremental.py:305` `record_incremental_rebuild_cost(` | ✅ |
+| 增量分子（**定义点**） | `backend/app/services/cost_metrics.py:202` `def record_incremental_rebuild_cost` | ✅ |
+| 读侧聚合 | `backend/app/services/cost_metrics.py:494` `def aggregate_stage` | ✅（旧提示词未给行号，本批补齐） |
+| 取样器 | `backend/scripts/export_cost_records.py` | ✅ |
+| 校准 | `backend/scripts/eval_acceptance.py:153` `def _calibrate`（**只输出建议、绝不写 config**） | ✅ |
+| TBD-7 阈值 | `backend/app/core/config.py:302` `eval_single_doc_token_ceiling = 32_000`；`.env.example:328`；消费者 `backend/app/evaluation/runner.py:805` / `:825` | ✅ |
+| 真实入库入口 | `scripts/ingest_affiliation_sources.py --purge --corpus-dir ../demo/affiliation/generated --kg-version affiliation-demo-v2`（CI 同款 `.github/workflows/ci.yml:226`；⚠️ 路径**必须带 `../`**） | ✅ |
+| 锚点断言 | `backend/tests/test_eval_acceptance_cli.py:76/77/78`（`"M2"` / `"TBD-7"` / `"增量重算"`）、`:125/126`（`"M2"` / `"增量重算"`）、`:52` `test_offline_yields_no_criterion_numbers` | ✅ |
+| 夹具 | `backend/tests/conftest.py:250` `pg_active_kg_version`（autouse，恒返回 `v-test`）、`:468` `real_pg_get_active`（撤桩用） | ✅ |
+| 矩阵行 | `docs/acceptance-traceability-matrix.md:205`（C3-a）/ `:206`（C3-b） | ✅ |
 
 ---
 
-## 5. 根因假设（⚠️ **是假设，不是结论 —— 开工第一件事是证实 / 证伪**）
+## 6. 四个坑（**别再踩**；坑 4 是 P6-V6 期间实测新发现的）
 
-排除"外部 superuser 连接"（临时库名一次性随机）之后，剩下最可能的一条：
+1. **offline 绝不能读库**：本机测试库是**持久库**（P6-V2 起记过两次）。offline 一旦读
+   `cost_metrics`，真图写入的成本行会让 offline 报告**产出判据数字**
+   ⇒ `test_offline_yields_no_criterion_numbers`（`:52`）当场红，报告也不再幂等。
+   ⇒ 判据读库**只在 live 分支**。
+2. **conftest 的 `autouse` 桩会顶掉 `get_active`**（`tests/conftest.py:250` 恒返回 `v-test`）：
+   要真读 PG 的 active 版本，必须显式请求 `real_pg_get_active`（`:468`）撤桩
+   ——否则会以「基线版本不一致」的形态红掉，**看起来像增量失败，实为夹具问题**。
+3. **`tests/test_cost_metrics.py::test_dashboard_endpoint_returns_real_rows` 有顺序耦合**：
+   真图用例会**真的写**成本列 ⇒ 它读到脏值。历史修法是**改它的隔离**（先清本 org 当日行），
+   **不是**改判据让它绿。
+4. 🆕 **`cost_metrics` 已经不干净了（2026-10-12 实测，本批头号陷阱）**：
+   本机跑完一次全量 `pytest tests -q` 后，表里多出 **1 行**——
 
-**PG 后台进程。** 迁移刚跑完（建表 + 播数据）⇒ 触发 **autovacuum / autoanalyze**
-在该库挂载 worker；它们在 `pg_stat_activity` 里的 `backend_type` 是
-`autovacuum worker` / `background worker`（**不是** `client backend`），
-通常以 **superuser** 身份出现 ⇒ 非 superuser 的 `app_owner` 杀不掉 ⇒ 报错。
-autovacuum 的触发**取决于时机** ⇒ 完美解释偶发性。
+   ```
+   stage='extraction'  org_id=00000000-0000-4000-8000-000000000001（= DEFAULT_ORG_ID，.env.example:217）
+   metric_date=2026-10-12   token_usage_total=0   doc_count=0   counted_doc_ids=[]
+   single_doc_cost=0   incremental_cost=NULL   full_rebuild_cost=4   cost_ratio=0
+   created_at=2026-10-12 03:47:29+00   ← 正是那次全量 pytest 的运行窗口
+   ```
 
-**不许照着假设直接改。先把它打出来看。**（§8 V6-a）
+   ⇒ **危险**：直接 `--live` 读 C3 会吃到这行 —— C3-a 的分母 `doc_count=0`
+   （0 或除零）、C3-b 的分子 `incremental_cost=NULL` ⇒ 会吐出一个
+   **看起来像真值、其实是测试残留**的数，正撞 §12「不许外推」。
+   ⇒ **开工第一步 = 定位写入用例并隔离/清空**，确认 `--live` 读到的不是它，再谈真值。
+   真写库的候选（供排查，别照抄结论）：`tests/test_cost_metrics_graph.py:566` / `:573`
+   （`record_full_rebuild_cost` / `record_incremental_rebuild_cost`；但 `test_dashboard_ratio_matches_row_level`
+   用的是 `uuid4()` org 且有 `finally` 清理 ⇒ **需复核是不是它**）、
+   `tests/test_cost_metrics_extraction.py:357`（对 `app.tasks.registry.record_extraction_usage` 打桩 `_boom`）、
+   `tests/test_extraction_llm_engine.py`。
 
 ---
 
-## 6. 边界纪律（**Non-goals，不许越过**）
+## 7. 边界纪律（**Non-goals，立 proposal 时不得少于 6 条**）
 
-1. **不许 `try/except` 吞掉异常** —— 删库失败但测试继续 ⇒ 临时库残留 ⇒
-   下次跑测回来报复（**R-9「恒绿即失效」**）。**宁可红，也不静默。**
-2. **不许给 `app_owner` 加 `SUPERUSER`** —— 违反 ADR-0003 最小权限，
-   且会让 RLS 判据失去意义。
-3. **不许改这个测试的断言 / 判据让它绿**（**R-10**）—— 修的是**基础设施**，
-   不是把失败藏起来。
-4. **不顺带重构 `pg_scratch.py`** —— 只改 `drop_database()`；
-   `ensure_database` / `scratch_database` / `_check_identifier` 一律不动。
-5. **不动 CI 的 PG 镜像 / 端口 / 三方一致性** —— 除非 D1 批准。
-6. **不做交付动作**，不碰任何判据阈值 / 量纲 / 契约。
+1. **不自动改阈值** —— `--calibrate` 只输出建议，**绝不写 `config.py` / `.env`**。
+   写入 `EVAL_SINGLE_DOC_TOKEN_CEILING` 只能由**人**做（且必须同步 `.env.example`）。
+2. **不动 C3-b 的量纲裁决** —— 2026-10-10 拍板 A 组「图规模同量纲」（实体数 + 关系数）。
+3. **不做 `stage` 切片契约变更 / 仪表盘改造**（P6-V3 §6.3 遗留，属契约变更）。
+4. **不做交付动作** —— P6-X 演练 / release notes / 打 tag 一律不碰。
+5. **不许伪造 `value`** —— 无数据 ⇒ `BLOCKED` + `value=null`，**不是 0**。
+6. **不许以降低判据换绿**（R-10）—— 真值难看就如实登记，再交用户裁决。
 
 ---
 
-## 7. 决策表
+## 8. 决策表（**碰到就照这里办，别临场发挥**）
 
 | 情况 | 怎么办 |
 |---|---|
-| V6-a 证实是后台进程 | 按 V6-b 只杀 `client backend` + 跳过自身；杀不掉的 ⇒ **明确报错**（不静默） |
-| V6-a **证伪**，根因在 CI 配置 | **停下报告**；D1 批了才动 `ci.yml` |
-| 只有"吞异常"才绿 | **停下报告** —— 那还不如不修 |
-| 本机复现不出来 | 用 §9 的**可控复现法**，不要靠等 flaky |
+| D1 批准 | 起后端 → 真实入库一次 → 触发一次**增量重算** → `--live` 读 C3 → 导出 → `--calibrate` → 出裁决包 |
+| D1 不批 | C3-a / C3-b 如实维持 `BLOCKED`，**不要**为让它绿而注入样本当真值（P6-V4 那次注入探针是**证明读口会出数**，不是真值） |
+| 开工发现 `cost_metrics` 有残留行 | **先定位 + 清理 + 隔离**（坑 4），**不许**带着脏数据出数 |
+| 实测值出来后 | **只给数据 + 各选项后果**，TBD-7 采纳由用户定 |
+| 发现要改量纲才能出数 | 属 ② 裁决，**先缩范围再报告** |
 
 ---
 
-## 8. 做法切片
+## 9. 已完成项（**不要再重做**）
 
-| 切片 | 内容 |
+| 切片 | 状态 |
 |---|---|
-| **V6-a** | **查证**：把 `pg_stat_activity` 的**实际行**打出来（至少 `pid` / `backend_type` / `usename` / `application_name` / `state` / `query`），指名"谁以 superuser 挂在那个库上"。**假设被证伪 ⇒ 停下，按真实根因重报** |
-| **V6-b** | **按根因修 `drop_database()`**：候选 ① 只杀 `backend_type = 'client backend'` 且 `pid <> pg_backend_pid()`；② 杀不掉的改用等待 / 重试，仍存在则**明确报错** |
-| **V6-c** | 稳定性验证：本机**连跑 ≥ 5 次** + 与迁移测试相邻跑；CI 再观察一次全量 run；回登 |
+| V4-a 两个 evaluator 出数化（三态） | ✅ `d66bec0` |
+| V4-b 取样器 `scripts/export_cost_records.py` + `--calibrate` 提示订正 | ✅ `d66bec0` |
+| V4-c 真机实测 | ❌ **未做**（D1 未批准）⇒ **本批的核心** |
+| `tests/test_eval_cost_criteria.py`（J1~J5，11 条） | ✅ |
+| **P6-V6**（CI flaky：`pg_terminate_backend` 权限竞态） | ✅ `1d87a0f` + `49d8c63`，CI run `38201283243` 四项全绿 |
 
 ---
 
-## 9. 可控复现法（**不要靠等 flaky**）
+## 10. 基线（**CI / 本地两套口径都要记，别混用**）
 
-flaky 偶发，等它自己出现既慢又不可靠。**手工造出来**：
+```
+pytest（本机，双容器 Up）: 1251 passed, 43 skipped, 0 failed
+                          （= 1249 + 2；那 2 条是 P6-V6 新增的
+                           tests/test_pg_scratch_drop.py 守卫）
+pytest（CI，run 38201283243 / head 1d87a0f）: 1287 passed, 7 skipped
+                          （= 基线 run 38198414806 的 1285/7 + 2）
+ruff check / format --check: All checks passed（全量 ⇒ 294 files）
+check_seams.py            : ERROR 0 / WARN 0 / OK 12
+check_startup_readiness   : --self-test 7 条全过
+check_session_drift       : S1 6 条 / S2 1 文件 +100 行 / S3~S5 未触发
+```
 
-1. 起一个临时库（照 `pg_scratch` 的方式建 `graphrag_rbac_<随机>`）；
-2. **用 superuser `graphrag` 连到这个库并保持连接**（`psql` / 一个 sleep 连接）；
-3. 调 `drop_database(那个库名)` ⇒ **必现** `InsufficientPrivilege`。
-
-有这个可复现场景，才能证明"修完真的好了"，也才能做 §10 的 **K3 反向守卫**。
+⚠️ **本机 43 skipped / CI 7 skipped 是两套口径**，比较时必须同侧比。
+⚠️ **别拿 1247 当基线** —— 那是 `tests/test_script_stdio_utf8.py`（GBK 门禁）补进来**之前**的数。
+⚠️ 本机 PowerShell 打印中文**不再需要**手工设 `$env:PYTHONIOENCODING="utf-8"`（2026-10-12 已根治）。
 
 ---
 
-## 10. 验收判据（**跑完才能收口**）
+## 11. 验收判据（**跑完才能收口**）
 
-| # | 判据 | 期望 |
+| # | 命令 / 判据 | 期望 |
 |---|---|---|
-| **K1** | V6-a 输出里有**真实行证据**（不是推理） | 能指名"是谁" |
-| **K2** | 修完该用例**连跑 ≥ 5 次全过** | 不再偶发 |
-| **K3** | **反向守卫**：造"杀不掉的连接" ⇒ 必须**报错**，**不许**静默通过 | 这是本批最关键的守卫 |
-| **K4** | `pytest tests -q` **不降**（1249 / 43） | 不倒退 |
-| **K5** | `ruff check .` + `ruff format --check .`（**全量**）绿；`check_seams.py` OK 12 / ERROR 0 | 门禁不破 |
-| **K6** | CI 全量 run **四项 success** | 远程验到 |
+| **V0** | **先隔离 / 清空本机 `cost_metrics` 的测试写入**（定位坑 4 那行的写入用例 + 清理），并确认 `--live` 读到的不是它 | 开工第一件事；**做完才能谈真值** |
+| **V1** | `ruff check` + `ruff format --check`（**全量**） | 绿 |
+| **V2** | `check_startup_readiness.py --self-test` | 7 条全过，退出码 0 |
+| **V3** | `pytest tests -q`（全量） | **不降**（本机 **1251 / 43**） |
+| **V4** | `check_seams.py` | OK 12 / ERROR 0 / WARN 0 |
+| **V5** | `pytest tests/test_eval_acceptance_cli.py tests/test_eval_cost_criteria.py -q` | 既有断言**不得崩**（锚点 `:76-78` / `:125-126` 仍成立，已复核） |
+| **V6** | **（仅 D1 批准时）** 真跑一轮后 C3-a / C3-b 出数 | `value` 非 null；若仍 `BLOCKED`，`blocked_by` 必须点名**当前**真实缺口 |
+| **V7** | **真值出来后立刻回改 `docs/acceptance-traceability-matrix.md:205` / `:206`**（架构师侧**单独提交**） | 那两行刚在 2026-10-11 被 P6-V4 订正过（措辞已准、真值仍写 `BLOCKED`）⇒ **拿到真值就回写**，否则会第四次过期。C3 线已因「机器变、文案没复核」过期过三次 |
 
 ---
 
-## 11. 升级用户的 4 类情况
+## 12. 提交推送纪律
 
-1. 根因落在 **CI 的 PG 配置**（属 Non-goal 5）⇒ 见开头 **D1**；
-2. 要动 `app_owner` 权限才解得掉（属 Non-goal 2）⇒ **停下报告**；
-3. 修法只剩"吞异常"才绿 ⇒ **停下报告**；
-4. V6-a **证伪**假设、且新根因超出本批边界 ⇒ **停下报告**。
+- **角色隔离**：AI 段默认只**后端开发 B**（只改 `backend/`）；
+  改 `specs/` / `contracts/` / `docs/` / plan ⇒ 归**架构师**段（**单独提交**）。
+- **分支**：沿用 P4~P6-V6 —— **`main` 直推**，不另开分支。
+- **提交**：按**后端 / 架构师 / changes** 分段 Conventional Commits，跨侧**不得**混在一起。
+- **推送**：⚠️ GitHub 推送通道不稳 —— **2026-10-12 晚实测连推两次均
+  `Recv failure: Connection was reset`**，最后由用户手推成功。
+  ⇒ 失败重试**一次**，仍失败就**把完整命令交给用户**，**不许**改 remote / 绕道：
 
----
+  ```bash
+  git -C <repo> push origin main
+  ```
 
-## 12. 不许外推
-
-- **不许**把"这次 CI 红了"归因给自己或任何批次 —— 先按 §4 坐标对名字；
-- **不许**用 `try/except` 让删库失败变静默（**R-9**）；
-- **不许**给 `app_owner` 提权换绿；
-- **不许**因为本机跑 1 次绿了就宣称修好 —— flaky 要**连跑 ≥ 5 次**；
-- **不许**顺手重构 `pg_scratch.py` 的其它函数。
-
----
-
-## 13. 环境提醒（本机）
-
-- 开工先 `docker ps` —— 本机 `graphrag-pg` / `graphrag-neo` 可能被系统停掉
-  （2026-10-12 早上就遇到过：两者 `Exited (255)`，pytest 直接连不上库）。
-  起法：`docker start graphrag-pg graphrag-neo`，等 ~12s。
-- 本机 PowerShell 打印中文/符号**不再需要**手工设 `$env:PYTHONIOENCODING="utf-8"`
-  （2026-10-12 已根治：scripts/ 内置兜底 + `tests/test_script_stdio_utf8.py` 门禁）。
+- **回登纪律**（P5-B §5.3）：**不要为"多记一个 run id"而提交** —— 回登 ⇒ 新 commit ⇒ 新 run。
 
 ---
 
-## 14. 下一批指针
+## 13. 升级用户的 4 类情况
 
-- P6-V6 收口 ⇒ 回 **P6-V5**（C3 真值 + TBD-7 裁决包，提示词在
-  `changes/P6-V4/new-session-prompt.md`）；
-- 修掉之后，记得**同步更正 P6-V4 提示词 §11 第 4 条**那条「已知 flaky」
-  （它不再成立）—— 已写进 `tasks.md` §5 收尾项。
+1. **要不要起真 LLM**（会产生费用）⇒ 见开头 **D1**；
+2. 要动**已裁决**的 rubric / 判据口径（量纲、阈值、C3 出数口径）⇒ **先缩范围再报告**；
+3. 边界冲突（要碰 Non-goal，例如必须改契约才能出数）；
+4. CI 红了且复核两遍仍红（**不许先改测试让它绿**）。
+   ✅ **原先那条「已知 flaky」已于 P6-V6（2026-10-12）修掉，不再需要特判**：
+   `test_migration_seeds_preset_roles_and_is_replayable` 的
+   `InsufficientPrivilege: permission denied to terminate process` 根因是
+   `tests/pg_scratch.py::drop_database()` 把 **autovacuum worker**
+   （以 bootstrap superuser 挂在临时库上）也塞进了 `pg_terminate_backend`。
+   现在只踢「`client backend` + 同角色 + 排除自己」，后台进程等它自己走，
+   仍删不掉则**抛错**并列出残留连接（守卫 `tests/test_pg_scratch_drop.py`）。
+   ⇒ **再看到这个名字的失败，它是真失败了**，按本条第 4 条处理。
+
+---
+
+## 14. 不许外推
+
+- **不许**把 P6-V4 的注入探针值（`20000.0` / `0.25`）当真值登记 —— 那是**注入样本的算术**；
+- 🆕 **不许**把本机 `cost_metrics` 那行 `doc_count=0` 的**测试残留**当真值（坑 4，
+  本批头号陷阱）；
+- **不许**把 `--calibrate` 的建议值写进 config 后说"已校准"；
+- **不许**因为分位数退化（P50 == P90，日聚合摊平所致）就宣称"已拿到分布上界"；
+- **不许**为了让 P8「零缺口」通过而把判据改松；
+- **不许**替用户拍 TBD-7（哪怕"先写上再复核"也不行）。
+
+---
+
+## 15. 下一批指针
+
+- D1 **批准** ⇒ 本批（P6-V5）跑完真值 + 裁决包 ⇒ 下一批回 **P6-W**
+  （DR-E2 备份 / 恢复，W1 裁决 = 方案 I：`backup` / `restore` 两条命令 +
+  `backup-manifest.json` 契约含 SHA-256）。
+- D1 **不批** ⇒ 本批直接改名做 **P6-W**，C3 真值作为**遗留**带进 P8 对账。
+- 届时提示词落在 **`changes/P6-V5/new-session-prompt.md`**（当前批次目录下、写给下一批），
+  不要在聊天里贴全文。
