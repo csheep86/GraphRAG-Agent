@@ -204,6 +204,20 @@ cd backend && uv run python scripts/check_startup_readiness.py
 3. **推送后以 CI 为最终裁决**（4 项 job success）；`pre-commit` 未启用（**R-10**）。
 4. **不许提交**：备份产物（`backend/reports/**`）、独立环境 / scratch 产物、`backend/storage/**`、`reports/eval/**`、`.drill/**`。
 5. 网络：本机到 `github.com:443` 会间歇性 `Recv failure` ⇒ push 失败**先等 60~150 秒重试**，不改 remote、不 force。
+   ⚠️ **2026-10-12 实测补充：光重试不够** —— 那次等了 **120s + 150s 共两次**都失败（第二次直接
+   `Failed to connect to github.com:443 after 21133 ms`），而**同期** `gh api` 通、
+   `Test-NetConnection github.com -Port 443` = `True` ⇒ 不是断网，是 **git-over-https 的 HTTP/2 通道**卡住。
+
+   ```bash
+   # 判因（两步，先别急着重试）：
+   gh api /repos/csheep86/GraphRAG-Agent/commits/main --jq '.sha'   # 通 ⇒ 网络没断，只是 git 通道问题
+   git log -1 --format="%h"                                          # 两者不同 ⇒ 提交确实没推上去
+
+   # 解法（一次就通；-c 是单次调用覆盖，不改任何 git 配置）：
+   git -c http.version=HTTP/1.1 push origin main
+   ```
+
+   ⇒ 顺序：**等一次 → 仍失败就用 `gh api` 判因 → 直接上 `HTTP/1.1`**，别在重试上耗掉 5 分钟。
 
 ---
 
