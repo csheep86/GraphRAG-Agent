@@ -118,7 +118,10 @@ E  DETAIL:  Only roles with the SUPERUSER attribute may terminate processes of
   **已 `ALTER SYSTEM RESET` 并 `pg_reload_conf()`**，临时库 `probe_v6a` / `probe_drop` 已删。
 - 已同步更正 `changes/P6-V4/new-session-prompt.md` §11 第 4 条那条「已知 flaky」
   —— 它不再成立（见该文件）。
-- 已落成下一批提示词 `changes/P6-V6/new-session-prompt.md`（P6-V5：C3 真值 + TBD-7 裁决包）。
+- 已落成下一批提示词 `changes/P6-V6/new-session-prompt.md`（**v2 · 2026-10-12**，
+  P6-V5：C3 真值 + TBD-7 裁决包）。
+  ⚠️ 旧版 `changes/P6-V4/new-session-prompt.md`（v1 · 2026-10-11）已**覆盖为重定向存根**
+  ——两份都有正文会分不清哪个新，故只保留一处正文；v1 原文仍在 git 历史里。
 
 ## 7. 本批**顺带实测**、但属于下一批（P6-V5）的事实
 
