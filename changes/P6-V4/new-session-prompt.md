@@ -133,7 +133,7 @@ check_session_drift       : S1 6 条 / S2 4 文件 339 行 / S3~S5 未触发
 |---|---|---|
 | V1 | `ruff check` + `ruff format --check` | 绿 |
 | V2 | `check_startup_readiness.py --self-test` | 7 条全过，退出码 0 |
-| V3 | `pytest tests -q`（全量） | **不降**（1247 / 43） |
+| V3 | `pytest tests -q`（全量） | **不降**（1249 / 43 —— 与 §8 基线同口径；1247 是 GBK 门禁补进来**之前**的数，别拿它当基线） |
 | V4 | `check_seams.py` | OK 12 / ERROR 0 / WARN 0 |
 | V5 | `pytest tests/test_eval_acceptance_cli.py tests/test_eval_cost_criteria.py -q` | 既有断言**不得崩**（第 76-78 / 125-126 行锚 `"M2"` / `"TBD-7"` / `"增量重算"`） |
 | V6 | **（仅 D1 批准时）** 真跑一轮后 C3-a / C3-b 出数 | `value` 非 null；若仍 `BLOCKED`，`blocked_by` 必须点名**当前**真实缺口 |
