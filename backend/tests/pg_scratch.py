@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from uuid import uuid4
@@ -43,6 +44,13 @@ MAINTENANCE_DATABASE = "postgres"
 #: Postgres 标识符宽松，这里只放行「字母开头 + 字母数字下划线」，
 #: 因为库名要**拼进 DDL 文本**（绑定参数对标识符无效），必须自己挡住注入面。
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+
+#: 后台进程（autovacuum worker 等）**阻塞 DROP DATABASE 却杀不掉**
+#: （实测见 :func:`drop_database` 的文档串）⇒ 删库前改为有限次轮询等它走。
+#: 取 10 × 0.5s = 5s：正常 autovacuum 是毫秒级，5s 足够它跑完；又不会让
+#: "真删不掉"的情况把 CI 拖上几分钟才报错。
+_DROP_MAX_ATTEMPTS = 10
+_DROP_RETRY_INTERVAL = 0.5
 
 #: 连不上时给的可复制命令（与 ``backend/.env.example`` 的示例保持一致）
 _START_HINT = (
@@ -122,21 +130,110 @@ def create_database(name: str) -> None:
 
 
 def drop_database(name: str) -> None:
-    """删库；不存在则不动（幂等）。先踢连接再删，否则 PG 会拒绝。"""
+    """删库；不存在则不动（幂等）。先踢连接再删，否则 PG 会拒绝。
+
+    **P6-V6（2026-10-12）：为什么「踢连接」不再是一条裸的
+    ``WHERE datname = :name``**
+
+    原写法把该库上的**所有** ``pg_stat_activity`` 行都塞进
+    ``pg_terminate_backend``。可库上不只有客户端连接——实测抓到过这一行::
+
+        pid=1347  backend_type='autovacuum worker'  usename=NULL
+        query='autovacuum: VACUUM ANALYZE public.churn'
+
+    autovacuum worker 以 **bootstrap superuser** 身份运行，而建库 / 删库走的是
+    非 superuser 的 owner（ADR-0003 最小权限，给它提权会让 RLS 判据失去意义）
+    ⇒  terminate 它必定撞::
+
+        InsufficientPrivilege: permission denied to terminate process
+        DETAIL: Only roles with the SUPERUSER attribute may terminate ...
+
+    ⇒ CI run ``38196713884`` 在 **docs-only 提交**上随机红（flaky）。
+    autovacuum 什么时候来由时机决定，所以它偶发而非必现。
+
+    三层处理（**不吞异常**，R-9「恒绿即失效」）：
+
+    1. **只踢踢得动的**：``client backend`` + 同角色 + 排除自己。
+       非 superuser 本来就只杀得掉自己角色（或自己是其成员的角色）的连接，
+       后台进程既不归这个过滤条件管，硬杀也只会报错。
+    2. **剩下的不硬杀，等它自己走**——但注意**别拿失败的 DROP 当重试手段**：
+       实测一次失败的 ``DROP DATABASE`` 会让 PG **先干等 5 秒**
+       （5.06s / 5.08s / 5.09s，三次一致）才抛 ``ObjectInUse``。
+       用 ``DROP`` 轮询 ⇒ 「真删不掉」时要白等几十秒才报错，而且等的过程中
+       拿不到"是谁占着"。故改为**廉价地轮询 ``pg_stat_activity``**。
+    3. **等不到就让删库失败响出来**：抛 ``RuntimeError`` 并**列出残留连接**，
+       绝不静默——残留的库最容易在下一次跑测时以「名字冲突 / 状态不干净」
+       回来报复。
+    """
     _check_identifier(name)
     engine = create_engine(_maintenance_url())
     try:
         with engine.connect().execution_options(
             isolation_level="AUTOCOMMIT"
         ) as connection:
+
+            def _remaining() -> list[tuple]:
+                """该库上还挂着的连接（排除自己）——**任何一行都会阻塞 DROP**。
+
+                ``usename`` 对后台进程为 NULL，故用 ``'<后台进程>'`` 兜底，
+                保证报错里能看出"不是客户端连接"。
+                """
+                return list(
+                    connection.execute(
+                        text(
+                            "SELECT pid, backend_type, "
+                            "coalesce(usename, '<后台进程>'), "
+                            "coalesce(state, '-'), coalesce(left(query, 60), '-') "
+                            "FROM pg_stat_activity "
+                            "WHERE datname = :name AND pid <> pg_backend_pid() "
+                            "ORDER BY pid"
+                        ),
+                        {"name": name},
+                    )
+                )
+
             connection.execute(
                 text(
                     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = :name"
+                    "WHERE datname = :name "
+                    "  AND backend_type = 'client backend' "
+                    "  AND usename = current_user "
+                    "  AND pid <> pg_backend_pid()"
                 ),
                 {"name": name},
             )
-            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+
+            remaining: list[tuple] = []
+            for _attempt in range(_DROP_MAX_ATTEMPTS):
+                remaining = _remaining()
+                if not remaining:
+                    break
+                time.sleep(_DROP_RETRY_INTERVAL)
+
+            def _blocked(detail: str) -> RuntimeError:
+                return RuntimeError(
+                    f"临时库 {name!r} 删不掉：等了 "
+                    f"{_DROP_MAX_ATTEMPTS * _DROP_RETRY_INTERVAL:g}s 后仍有 "
+                    f"{len(remaining)} 个连接占着 —— **故意不静默跳过**：残留的库"
+                    "会在下一次跑测时以「名字冲突 / 状态不干净」回来报复。"
+                    "残留连接："
+                    + "；".join(
+                        f"pid={row[0]} type={row[1]} user={row[2]} "
+                        f"state={row[3]} query={row[4]}"
+                        for row in remaining
+                    )
+                    + f"\n{detail}"
+                )
+
+            if remaining:
+                raise _blocked("（已放弃等待，未执行 DROP DATABASE）")
+
+            try:
+                connection.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+            except OperationalError as exc:
+                # 轮询说干净了却还是删不掉 ⇒ 同样**必须响**（不能让它悄悄过去）
+                remaining = _remaining()
+                raise _blocked(f"原始错误：{exc}") from exc
     finally:
         engine.dispose()
 
