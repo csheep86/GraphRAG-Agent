@@ -159,14 +159,16 @@ check_session_drift       : S1 6 条 / S2 4 文件 339 行 / S3~S5 未触发
 2. 要动**已裁决**的 rubric / 判据口径（量纲、阈值、C3 出数口径）⇒ **先缩范围再报告**；
 3. 边界冲突（要碰 Non-goal，例如必须改契约才能出数）；
 4. CI 红了且复核两遍仍红（**不许先改测试让它绿**）。
-   ⚠️ **已知 flaky（2026-10-12 实测，先对名字再判断）**：
-   `tests/test_migration_seeds_preset_roles_and_is_replayable` 会执行
-   `SELECT pg_terminate_backend(pid) ...`，而 CI 的 PG 角色**非 superuser**
-   ⇒ 若当时恰好有 superuser 连接，就报
-   `InsufficientPrivilege: permission denied to terminate process`
-   （run `38196713884` 因此红：1 failed / 1282 passed）。
-   **它与改动无关** —— 那次 run 是 **docs-only**（代码树里没有任何本批改动）。
-   ⇒ CI 红时**先看挂的是不是它**；是就重跑，**不要为了绿去改这个测试**。
+   ✅ **原「已知 flaky」已于 P6-V6（2026-10-12）修掉，本条不再需要特判**：
+   那条 `test_migration_seeds_preset_roles_and_is_replayable` 的
+   `InsufficientPrivilege: permission denied to terminate process`（run `38196713884`），
+   根因是 `tests/pg_scratch.py::drop_database()` 把 **autovacuum worker**
+   （以 bootstrap superuser 身份挂在临时库上，`usename` 为 NULL）也塞进了
+   `pg_terminate_backend`。现在：只踢「`client backend` + 同角色 + 排除自己」，
+   后台进程**等它自己走**（轮询 `pg_stat_activity`），仍删不掉则**抛错**并列出
+   残留连接 —— 不静默（守卫 `tests/test_pg_scratch_drop.py`）。
+   ⇒ **再看到这个名字的失败，它是真失败了**：按本条第 4 条处理，
+   **不许**再当成 flaky 重跑、也不许改这个测试让它绿。
 
 ---
 
