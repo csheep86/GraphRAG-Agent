@@ -39,7 +39,7 @@ from sqlalchemy import delete, select
 
 from app.core.config import get_settings
 from app.core.errors import ErrorCode
-from app.db.models import Document, KgVersion, OntologyAction
+from app.db.models import CostMetric, Document, KgVersion, OntologyAction
 from app.db.session import session_scope
 from app.services.graphs import GraphService
 from app.services.kg.incremental import (
@@ -245,6 +245,17 @@ def _relation_ids(real_driver, version: str) -> set[str]:
         }
 
 
+def _cost_row_ids(org_id: uuid.UUID) -> set[Any]:
+    """本租户当前 ``cost_metrics`` 行的 id 集合（快照差分的基线 / 终值）。"""
+    with session_scope(org_id=org_id) as session:
+        return {
+            row[0]
+            for row in session.execute(
+                select(CostMetric.id).where(CostMetric.org_id == org_id)
+            )
+        }
+
+
 @pytest.fixture
 def pg_fixture():
     """真 PG：3 份文档（1 份受影响）+ 一条 ready 基线版本 + 一条 `ontology_actions`。
@@ -252,6 +263,12 @@ def pg_fixture():
     基线版本**必须真落库**：增量重算的 `base_version` 取自 PG 真源的 active
     （= `ready`）版本，桩掉它就等于把判据换成"函数自说自话"。
     用例结束按 id / 前缀精确清理，不污染其它用例。
+
+    **P6-V5（V0）**：增量重算成功分支会真写 ``cost_metrics``
+    （``incremental.rebuild_incrementally`` → ``record_incremental_rebuild_cost``），
+    而本模块的 org 是 ``settings.default_org_id`` ⇒ 落的是 C3 ``--live`` 读取口那一行
+    （本机复跑本文件实测残留 ``incremental_cost=15.0``，CI 上是 ``60.0``）
+    ⇒ 收尾**必须**连带清理，按**新增 id** 精确删（不许按 org 全删，会误伤同会话别的用例）。
     """
     doc_ids = [uuid.uuid4() for _ in range(3)]
     base = f"p5f-pg-{uuid.uuid4().hex[:8]}"
@@ -299,6 +316,8 @@ def pg_fixture():
         )
         session.commit()
 
+    cost_row_ids_before = _cost_row_ids(_ORG_ID)
+
     try:
         yield {
             "doc_ids": doc_ids,
@@ -324,6 +343,11 @@ def pg_fixture():
             session.execute(
                 delete(OntologyAction).where(OntologyAction.id == action_id)
             )
+            stale_cost_ids = _cost_row_ids(_ORG_ID) - cost_row_ids_before
+            if stale_cost_ids:
+                session.execute(
+                    delete(CostMetric).where(CostMetric.id.in_(stale_cost_ids))
+                )
             session.commit()
 
 

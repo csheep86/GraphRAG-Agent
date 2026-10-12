@@ -33,10 +33,10 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.core.config import get_settings
-from app.db.models import KgVersion, OntologyAction
+from app.db.models import CostMetric, KgVersion, OntologyAction
 from app.db.session import session_scope
 from app.schemas.document import GraphNode
 from app.services.graphs import (
@@ -115,9 +115,26 @@ def graph_service(monkeypatch: pytest.MonkeyPatch) -> GraphService:
         GraphService.reset()
 
 
+def _cost_row_ids() -> set[Any]:
+    """本租户当前 ``cost_metrics`` 行的 id 集合（快照差分的基线 / 终值）。"""
+    with session_scope(org_id=_ORG_ID) as session:
+        return {
+            row[0]
+            for row in session.execute(
+                select(CostMetric.id).where(CostMetric.org_id == _ORG_ID)
+            )
+        }
+
+
 @pytest.fixture
 def pg_base(real_pg_get_active: None) -> Any:
-    """真 PG：一条 ready 基线版本（``ready_at`` 刻意给未来值，见下）。"""
+    """真 PG：一条 ready 基线版本（``ready_at`` 刻意给未来值，见下）。
+
+    **P6-V5（V0）**：本文件的校正动作（`rename` / `merge`）成功 ⇒ 走增量重算
+    ⇒ 调 `record_incremental_rebuild_cost`，而这里用的是 `settings.default_org_id`
+    ⇒ 落的是 C3 `--live` 读取口那一行（本机复跑本文件实测残留 `incremental_cost=27.0`）
+    ⇒ 收尾**必须**连带清理，按**新增 id** 精确删（不许按 org 全删，会误伤同会话别的用例）。
+    """
     base = f"p5h-read-{uuid.uuid4().hex[:8]}"
     with session_scope(org_id=_ORG_ID) as session:
         session.add(
@@ -136,6 +153,8 @@ def pg_base(real_pg_get_active: None) -> Any:
         )
         session.commit()
 
+    cost_row_ids_before = _cost_row_ids()
+
     yield base
 
     with session_scope(org_id=_ORG_ID) as session:
@@ -150,6 +169,9 @@ def pg_base(real_pg_get_active: None) -> Any:
                 OntologyAction.kg_version.like(f"{base}%"),
             )
         )
+        stale_cost_ids = _cost_row_ids() - cost_row_ids_before
+        if stale_cost_ids:
+            session.execute(delete(CostMetric).where(CostMetric.id.in_(stale_cost_ids)))
         session.commit()
 
 

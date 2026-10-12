@@ -38,7 +38,13 @@ from sqlalchemy import delete, select
 
 from app.core.config import get_settings
 from app.core.errors import ErrorCode
-from app.db.models import AuditLog, EntityMergeCandidate, KgVersion, OntologyAction
+from app.db.models import (
+    AuditLog,
+    CostMetric,
+    EntityMergeCandidate,
+    KgVersion,
+    OntologyAction,
+)
 from app.db.session import session_scope
 from app.services.graphs import GraphService
 from app.services.kg.correction import (
@@ -210,12 +216,29 @@ def _relation_rows(real_driver, version: str) -> set[tuple[str, str, str]]:
         }
 
 
+def _cost_row_ids() -> set[Any]:
+    """本租户当前 ``cost_metrics`` 行的 id 集合（快照差分的基线 / 终值）。"""
+    with session_scope(org_id=_ORG_ID) as session:
+        return {
+            row[0]
+            for row in session.execute(
+                select(CostMetric.id).where(CostMetric.org_id == _ORG_ID)
+            )
+        }
+
+
 @pytest.fixture
 def pg_fixture():
     """真 PG：一条 ready 基线版本 + 一条 `human_review` 的合并候选行。
 
     与 `test_kg_incremental_rebuild.py::pg_fixture` 同口径（基线**必须真落库**，
     `ready_at` 必须显式给值 —— NULL 在 PG 的 DESC 下排最前，会取到别人残留的行）。
+
+    **P6-V5（V0）**：纠正动作会走增量重算（`merge` / `split` / `rename` 的成功分支）
+    ⇒ 成功即调 `record_incremental_rebuild_cost`，而本文件的 org 是
+    `settings.default_org_id` ⇒ 落的是 C3 `--live` 读取口那一行
+    （本机复跑本文件实测残留 `incremental_cost=18.0`）
+    ⇒ 收尾**必须**连带清理，按**新增 id** 精确删（不许按 org 全删，会误伤同会话别的用例）。
     """
     base = f"p5g-pg-{uuid.uuid4().hex[:8]}"
     trace_id = uuid.uuid4()
@@ -235,6 +258,8 @@ def pg_fixture():
             )
         )
         session.commit()
+
+    cost_row_ids_before = _cost_row_ids()
 
     try:
         yield {
@@ -261,6 +286,11 @@ def pg_fixture():
                     EntityMergeCandidate.id == candidate_id,
                 )
             )
+            stale_cost_ids = _cost_row_ids() - cost_row_ids_before
+            if stale_cost_ids:
+                session.execute(
+                    delete(CostMetric).where(CostMetric.id.in_(stale_cost_ids))
+                )
             session.commit()
 
 
