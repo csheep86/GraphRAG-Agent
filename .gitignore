@@ -77,3 +77,6 @@ backend/_uvicorn*.out
 backend/_uvicorn.err
 frontend/_next.out
 frontend/_next.err
+# IDE / 编辑器配置与 AI 会话记录（本地产物，绝不入库；此前未忽略 ⇒ 长期挂在 git status 里）
+.vscode/
+.specstory/
