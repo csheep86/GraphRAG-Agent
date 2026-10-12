@@ -51,6 +51,12 @@
       **删它 = 销毁人工判分进度**
 - [x] **补会话级守卫**：`tests/conftest.py::cost_metrics_residue_guard`
       （session 级 autouse；**反向验证**：播种脏行 ⇒ 实测会红；清掉 ⇒ 全量 1251/43 不变）
+- [x] **守卫首战立功**：CI run `38209335460` 后端 job **failure**，正是它拦下了
+      `incremental_cost=60.0` 的残留 ⇒ 顺藤在本地开真图开关复跑，定位到**另三处**同源 writers
+      （`test_kg_incremental_rebuild.py` 15.0 / `test_ontology_correction_actions.py` 18.0 /
+      `test_version_chain_readers.py` 27.0），按同一套「夹具快照差分」修法收干净。
+- [x] **教训登记**：本机默认口径（43 skipped）看不见真图用例 ⇒
+      **本机全量绿 ≠ CI 绿**；动到真图 / 真 PG 写入的改动，收尾必须再按 CI 口径跑一次
 
 ## 6. V5-d 收口（**依赖 T4**）
 

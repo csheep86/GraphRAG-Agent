@@ -147,7 +147,52 @@ $ uv run pytest tests -q
 
 ---
 
-## 5. 边界对照（7 条 Non-goals 逐条）
+## 5. 追加：CI 抓到的**另外三处**同型污染（本机默认口径看不见）
+
+首推之后 CI run `38209335460`（head `a44bb6a`）**后端 job failure**，失败的就是 §4
+那条守卫 —— **它做的正是它被造出来的原因**：
+
+```
+ERROR at teardown of test_view_without_org_id_refuses_to_inherit
+  AssertionError: cost_metrics（默认租户）有测试残留 ……
+  残留行：[{"stage":"extraction","token_usage_total":0,"doc_count":0,
+            "incremental_cost":60.0,"full_rebuild_cost":null}]
+  1287 passed, 7 skipped, 1 error
+```
+
+**为什么本机全绿、CI 却红**：本机默认口径 `43 skipped`、CI `7 skipped` ——
+本机**没设** `GRAPH_REAL_NEO4J_*` ⇒ 所有真图用例 skip ⇒ 那些文件里的写入分支**根本没跑**。
+⇒ 判据"本机全量绿"**不足以代表 CI**（教训已并到 §6）。
+
+**处置路径（不许削弱守卫的精神不能动摇）**：用本机 `.env` 的 Neo4j 凭据把真图开关打开
+（`GRAPH_REAL_NEO4J_URI=bolt://localhost:7687` / `_USER=neo4j` / `_PASSWORD`），
+逐个文件复跑 + 二分定位，得到**三个**同源 writers：
+
+| 文件 | 写入来源 | 本机复跑实测残留 |
+|---|---|---|
+| `tests/test_kg_incremental_rebuild.py` | `rebuild_incrementally` 成功分支 → `record_incremental_rebuild_cost` | `incremental_cost=15.0` |
+| `tests/test_ontology_correction_actions.py` | `merge` / `split` / `rename` 成功分支（内含增量重算） | `incremental_cost=18.0` |
+| `tests/test_version_chain_readers.py` | `rename` / `merge` 成功分支（内含增量重算） | `incremental_cost=27.0` |
+
+**三处根因完全同型**：各自的 PG 夹具（`pg_fixture` / `pg_base`）只清理了
+`KgVersion` / `OntologyAction` / `EntityMergeCandidate` / `Document`，**没有清理 `CostMetric`**，
+而它们用的 org 都是 `settings.default_org_id`。
+⇒ 修法照抄 §2：**进出各拍一次行 id 快照，按新增 id 精确删**（不许按 org 全删）。
+
+**验证（三处修完后）**：
+
+```
+# CI 等效口径（开真图）全量：1289 passed, 5 skipped, 0 error ；残留行数 = 0
+# 默认口径全量          ：1251 passed, 43 skipped, 0 error（与基线逐字相同）
+ruff check . / format --check . ：All checks passed / 294 files already formatted
+check_seams.py                  ：ERROR 0 / WARN 0 / OK 12
+```
+
+（修前的对照：同一套真图全量是 `1289 passed, 5 skipped, **1 error**`。）
+
+---
+
+## 6. 边界对照（7 条 Non-goals 逐条）
 
 | # | 边界 | 结论 |
 |---|---|---|
@@ -161,7 +206,7 @@ $ uv run pytest tests -q
 
 ---
 
-## 6. 遗留与本次裁决结论
+## 7. 遗留与本次裁决结论
 
 1. **C3 真值仍 `BLOCKED`** —— 本会话只把「读取源」洗干净 + 加了守卫，没取真值，等 **D1**。
 2. **P6-V5 目录命名**（2026-10-12 裁决）：保留 `changes/P6-V5/` 作为**批次目录**。
@@ -177,6 +222,13 @@ $ uv run pytest tests -q
    **删它 = 销毁人工判分进度**（且脚本会在 86 题判满前拒绝落判分表）。
    代价权衡：它只有 39 字节，留在工作区只会是 `git status` 的一行；被误 `git add -A` 也不丢。
    ⇒ **不加 `.gitignore`**（加了反而容易被当成"可随意重建的产物"）。
-4. **无回归守卫** —— 已按裁决补上（见 §4），并用 §4.1 / §4.2 双向验证。
-5. **G-9 T1 在本机仍 skip**（`real_driver` 连不上 Neo4j）⇒ 跨租户判据在本地跑不出证据，
+4. **无回归守卫** —— 已按裁决补上（见 §4），§4.1 / §4.2 双向验证；
+   **并且它上线不到一轮就抓到了 CI 上另外三处污染**（见 §5）⇒ 值回票价。
+5. **⚠️ 本机全量绿 ≠ CI 绿**（本条血泪，下一批开工先看这条）：
+   本机没设 `GRAPH_REAL_NEO4J_*` ⇒ 真图用例**默认 skip**（本机 43 skipped / CI 7 skipped）
+   ⇒ 那些文件里的写库分支**本机根本没跑**。
+   ⇒ 之后凡是动到「真图 / 真 PG 写入」的改动，**收尾前必须**
+     `GRAPH_REAL_NEO4J_URI=bolt://localhost:7687 GRAPH_REAL_NEO4J_USER=neo4j GRAPH_REAL_NEO4J_PASSWORD=<本机 .env>`
+     再跑一次全量（≈2 分钟），不能只信默认口径的 1251/43。
+6. **G-9 T1 在本机仍 skip**（`real_driver` 连不上 Neo4j）⇒ 跨租户判据在本地跑不出证据，
    CI 才是裁决者 —— 与 ADR-0003 §4.1「T1 / T2 必须在 PG 上跑、纳入 CI 必过项」属同一类处理。
