@@ -232,3 +232,73 @@ check_seams.py                  ：ERROR 0 / WARN 0 / OK 12
      再跑一次全量（≈2 分钟），不能只信默认口径的 1251/43。
 6. **G-9 T1 在本机仍 skip**（`real_driver` 连不上 Neo4j）⇒ 跨租户判据在本地跑不出证据，
    CI 才是裁决者 —— 与 ADR-0003 §4.1「T1 / T2 必须在 PG 上跑、纳入 CI 必过项」属同一类处理。
+
+---
+
+## 8. V5-c 真机实测（**T4，D1 已于 2026-10-12 批准**）
+
+### 8.1 时序不是巧合：先修 V0，才谈得上真值
+
+C3-a 的读取源就是 **默认租户当日 `stage='extraction'` 那一行**。若在 §1~§2 的 V0 之前就批
+D1 ⇒ `--live` 读到的是**测试残留**（`doc_count=0` / `full_rebuild_cost=4.0` 那一行），
+**看起来能出数，其实是假的**。⇒ 「先洗干净读取源、再取真值」是硬顺序，不是偏好。
+
+### 8.2 费用上限（¥0 估出来后才开跑，先给数字再花钱）
+
+| 项 | 来源 | 值 |
+|---|---|---|
+| 单价锚点 | `app/services/extraction/langextract.py:22`「一份 124-chunk 的文档烧 ¥6.55」 | **¥0.053 / chunk** |
+| 候选文档正文 | `demo/attendance/corpus/attendance-policy-2026.docx`（解压 `word/document.xml` 去标签） | **1019 字** |
+| 预估 chunk | 1019 / 800 chars | **2** |
+| **预估上限** | 2 × 0.053 | **≈ ¥0.11** |
+
+（实际花费：一次 MinerU 解析 + 一次单文档抽取，量级与预估相符。）
+
+### 8.3 真机链路（每一步都有机器输出）
+
+1. 起后端：`uv run uvicorn app.main:app --host 127.0.0.1 --port 8002`（= 评测默认 `EVAL_BASE_URL`）；
+   `GET /api/v1/health` ⇒ `{"status":"ok","checks":{"database":"up"}}`
+2. `POST /api/v1/documents/upload`（DOCX MIME）⇒ `document.parse` 完成（`mineru_parse_done`，
+   `markdown_bytes=2631`）
+3. ⚠️ **本仓库没有跨阶段投递**（`registry.py:17-19` 写死：`pipeline_stages` 只决定**首个**阶段，
+   后续由脚本 / 人工驱动）⇒ `document.extract` / `kg.build` **必须自己续投**，否则 C3 永远没数
+4. `document.extract`（LangExtract 真 LLM）⇒ `record_extraction_usage` ⇒ **token 7574**
+5. `kg.build`（**不带 `kg_version_id`** ⇒ `create_pending` ⇒ `fresh_build=True`）⇒
+   `record_full_rebuild_cost` ⇒ **33.0**（图元素个数）
+6. `POST /api/v1/ontology/rename` ⇒ `rebuild_incrementally` ⇒
+   `record_incremental_rebuild_cost` ⇒ **9.0**
+
+### 8.4 官方命令读数（**真值**）
+
+```
+$ uv run python scripts/eval_acceptance.py --live \
+    --criteria c3_a_single_doc_cost,c3_b_incremental_cost_ratio
+
+mode=live  git=dc60bf9
+  [measured_provisional] c3_a_single_doc_cost         value=7574.0000  unit=token/doc  verdict=PASS(provisional)
+  [measured_provisional] c3_b_incremental_cost_ratio  value=0.2727     unit=ratio      verdict=PASS
+报告已落盘: backend/reports/eval/eval-live-20261012T065005Z.json
+```
+
+对应表值：`token_usage_total=7574 / doc_count=1`；
+`incremental_cost=9.0 / full_rebuild_cost=33.0`（`cost_ratio=0.2727`）。
+
+### 8.5 `--calibrate`（只给建议，**绝不写 config**）
+
+```
+当前 ceiling: 32000 token/doc  [threshold_source=provisional]
+文档数（去重）: 1 ；P50 / P90（token/文档）= 7574 / 7574 ；建议 ceiling（P90×1.2）= 9100
+```
+
+⚠️ **不建议采纳 9100**：样本 **n=1**，且这份文档正文仅 1019 字（制度文档），
+比"真实业务文档"小一个量级 ⇒ 拿它把阈值从 32000 压到 9100 = **门禁收紧约 3.5 倍**，
+后续真实文档必然红。⇒ **TBD-7 维持 `BLOCKED` / provisional**，等 **D2**（阈值由人裁决，
+AI 不得代填）。
+
+### 8.6 本轮遗留 / 下一批候选
+
+- 脚本 `eval_acceptance.py` 的「升为 MEASURED 还缺什么」文案**已过期**（仍写"还没跑过一次真机"）
+  ⇒ 记为下一批候选；**不许顺手改产品代码**（属另一批次，且要连带 ruff / CI）
+- 本机开发库 `graphrag` 被写入真机产物：新版本 `v-649085c6`、
+  增量版本 `20261012T064951Z-inc-569555ad`、一份上传文档 ⇒ 演示态如需复原，
+  用 `--purge` / 重新 seeding（**不在本批范围内**）

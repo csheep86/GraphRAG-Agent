@@ -35,12 +35,21 @@
 - [x] 锚点五文件（含 `test_eval_acceptance_cli` / `test_eval_cost_criteria`）—— **44 passed**
 - [x] `check_session_drift` —— S1 读到 7 条边界；S2 = 1 文件 / +28 行；S3~S5 未触发
 
-## 4. V5-c 真机实测（**T4 ⏸ 待 D1 批准，本会话不做**）
+## 4. V5-c 真机实测（**T4，D1 已于 2026-10-12 批准 ⇒ 已做完**）
 
-- [ ] 起后端 → `scripts/ingest_affiliation_sources.py --purge --corpus-dir ../demo/affiliation/generated --kg-version affiliation-demo-v2`
-- [ ] 触发一次**增量重算** → `--live` 读 C3-a / C3-b
-- [ ] `export_cost_records.py` 导出 → `eval_acceptance.py --calibrate`（**只给建议，绝不写 config**）
-- [ ] 出「实测值 / 建议值 / 各选项后果」裁决包 ⇒ **交用户**（D2，AI 不得代填）
+- [x] **¥0 估上限**（送批前先给数字）：锚点 `langextract.py:22` ¥6.55 / 124 chunk
+      ⇒ ¥0.053/chunk；候选文档 1019 字 ⇒ 2 chunk ⇒ **上限 ≈ ¥0.11**
+- [x] 起后端 `127.0.0.1:8002`（= 评测默认 `EVAL_BASE_URL`）；`/health` = ok
+- [x] `POST /documents/upload`（DOCX）⇒ `document.parse` 完成；**因本仓库无跨阶段投递**
+      （`registry.py:17-19`）⇒ 自行续投 `document.extract` / `kg.build`
+- [x] `kg.build` **不带 `kg_version_id`** ⇒ `create_pending` ⇒ `fresh_build=True`
+      ⇒ 分母 `full_rebuild_cost = 33.0`
+- [x] `POST /ontology/rename` ⇒ `rebuild_incrementally` ⇒ 分子 `incremental_cost = 9.0`
+- [x] `--live` 官方读数：**C3-a = 7574.0000 token/doc（PASS provisional）／
+      C3-b = 0.2727（PASS）**；报告 `eval-live-20261012T065005Z.json`
+- [x] `export_cost_records.py` 导出 → `--calibrate`：建议 ceiling **9100**（P90×1.2）
+      —— ⚠️ **不采纳**：n=1 且文档极小 ⇒ **TBD-7 维持 provisional，交 D2（人裁决）**
+- [ ] ❌ **D2 未由 AI 代填**：32000 阈值**一字未动**（`config.py` / `.env.example` 未改）
 
 ## 5. 裁决结论（**2026-10-12，用户授权 AI 提建议后定案**）
 
