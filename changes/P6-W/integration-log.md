@@ -240,3 +240,99 @@ EXIT=2
 | **P6-X（双人）** | 第 9 项恢复演练；**硬前置 D-1b**（`install_acceptance.py` 第 9 项继续机械查） |
 | **P6-D1b** | 先落离线镜像包 / 私有 registry —— 不落它，P6-X 与 §10 第 9 项年年只能 SKIP |
 | **继续 P6-V3 之后的 C3 线** | `TBD-7 cost_ratio` 阈值仍 BLOCKED |
+
+---
+
+## 8. 2026-10-12 复跑（**AI 段**）：第 8 项从 SKIP 推到 PASS
+
+> **本批提示词**：[`../P6-V5/new-session-prompt.md`](../P6-V5/new-session-prompt.md)
+> （按「落在写它的那批目录下」的约定，它写在 `P6-V5/`；本批证据回登到本文件 §8）。
+> **决策表勾选**：**W1 = 批准**（授权跑一次真实备份）／**W2 = 是**（P6-X 已排日程）。
+> **起点**：HEAD `7478864`；CI `run 38216329081` —— 4 项 job 全 success。
+
+### 8.1 开工自检（`check_startup_readiness.py` 原文读数）
+
+```
+已生效 🟢 15 ｜ 条件跳过 🔵 2 ｜ 部分生效 🟠 0 ｜ 挂起 🟡 0
+💣 开工地雷 0 项
+```
+🔵 那 2 条 = **G-25 真图 2 项** + **G-9 真图 5 项**（`real_driver` 连不上 Neo4j）——
+本机跑不到 ⇒ 这两条所管的需求**不得**因 CI 绿宣称完成（同 §5 老口径）。
+
+### 8.2 三次备份，**全是真跑**（不是读代码得出的结论）
+
+| 次 | 参数 | 结果 |
+|---|---|---|
+| 1 | 不停图库、**未给** `--env-file` | `FAIL neo4j`（`The database is in use`）+ `FAIL config`（未找到可读 .env）⇒ `[FAIL] backup 完成` |
+| 2 | 不停图库 + `--env-file .env` | `config` 转 PASS（3632 字节，6 项密钥 `&lt;redacted&gt;`）；**`neo4j` 仍 FAIL** ⇒ 仍是 `[FAIL]` |
+| 3 | **停图库窗口** + `--env-file .env` | **六类全 PASS** ⇒ `[OK] backup 完成` |
+
+第 3 次的命令与**原文输出**（凭据由 shell 注入，不落命令行历史）：
+
+```bash
+docker stop graphrag-neo
+uv run python scripts/backup.py --out-dir reports/backup/20261012-p6w \
+  --pg-container graphrag-pg --neo4j-container graphrag-neo --env-file .env
+#   BACKUP_PG_DSN=postgresql://graphrag:***@localhost:5432/graphrag
+#   （超级用户取自 graphrag-pg 容器 env 的 POSTGRES_USER/POSTGRES_PASSWORD ⇒ BYPASSRLS，F-P6W-1）
+
+PASS backup-manifest.json 可解析且 schema_version 匹配
+PASS §6.1 五类文件对象均在清单中有条目
+PASS postgres: SHA-256 校验通过（192157 字节, pg_dump -Fc）
+PASS neo4j: SHA-256 校验通过（5023346 字节, neo4j-admin database dump）
+PASS storage: SHA-256 校验通过（114688000 字节, tarfile）
+PASS license: SHA-256 校验通过（580 字节, copy）
+PASS config: SHA-256 校验通过（3632 字节, copy+redact（6 项密钥已置 <redacted>））
+PASS active kg_version 已记录: 20261012T064951Z-inc-569555ad（pg:kg_versions）
+[OK] backup 完成
+docker start graphrag-neo  ⇒  graphrag-neo Up 3 seconds（**已恢复**）
+```
+
+### 8.3 判据侧（W-K1 / W-K2）
+
+```
+uv run python scripts/backup.py --verify reports/backup/20261012-p6w
+  ⇒ 8 条 PASS + [OK] 备份集校验通过；EXIT=0
+
+uv run python scripts/install_acceptance.py --backup-dir reports/backup/20261012-p6w
+  ⇒  8 PASS 备份成功 | manifest 校验（8 条子项全 PASS）
+      9 SKIP 恢复演练 | 演练留证（D-1b 前置已满足 ⇒ 可做，但本项**仍为人工双人**，AI 不得单独收口 ⇒ 顺延 P6-X）
+     汇总: PASS 2 / SKIP 8 / FAIL 0          （本批基线：PASS 1 / SKIP 9 / FAIL 0）
+```
+
+⇒ **第 8 项 SKIP → PASS 已达成；第 9 项仍为 SKIP，没有被"顺便"抹成 PASS。**
+
+### 8.4 五项门禁（本批**零代码改动**，只跑脚本 + 回登 changes）
+
+```
+uv run ruff check .                     => All checks passed!
+uv run ruff format --check .            => 294 files already formatted
+uv run python scripts/check_seams.py    => ERROR 0 / WARN 0 / OK 12
+uv run pytest tests -q                  => 1251 passed, 43 skipped   （默认口径，= 基线）
+uv run pytest tests -q（真图口径）        => 1289 passed, 5 skipped    （= 基线；GRAPH_REAL_NEO4J_* 显式开启）
+```
+
+### 8.5 本批踩到的坑（**留给下一批，别再踩**）
+
+1. **本机 PATH 没有 `pg_dump`** ⇒ 必须 `--pg-container graphrag-pg`。容器模式下脚本把 host
+   改写为 `localhost`、**端口沿用 DSN 里的** ⇒ 那个端口必须是**容器内**端口（本机映射恰好同为 5432 才对得上）。
+2. **备份用的超级用户凭据不在 `backend/.env`**（那里只有 `DATABASE_URL` = `app_rls` 受限账号，
+   用它 dump 会被 RLS 拒，见 F-P6W-1）⇒ 取自 `graphrag-pg` 容器 env 的 `POSTGRES_USER` / `POSTGRES_PASSWORD`。
+3. **`--env-file` 不给 ⇒ `config` 必然 skipped** ⇒ 第 8 项**不可能** PASS（脚本**不会**自己去猜 `.env`）。
+4. **F-P6W-2 复现**（与 2026-10-10 同一条）：图容器在线 ⇒ `neo4j-admin dump` 必被
+   `The database is in use` 拒；停掉后脚本自动改走 `docker run --rm --volumes-from` ⇒ EXIT=0。
+   **这不是脚本 bug**，不停图库跑出来的备份集就是不完整的。
+5. **`verify_manifest` 把任何 `skipped` 条目判 FAIL**（§6.1「缺一不可复现」）⇒
+   不存在"五类到手算过"这种中间态；六类齐了才是 `[OK]`。
+6. 产物落在 `backend/reports/backup/20261012-p6w`（`.gitignore:70` 已覆盖）⇒ **未入库**（§9 纪律 4）。
+
+### 8.6 不许外推（**本批最容易读错的三句**）
+
+- 第 8 项 PASS **只代表这一项**；第 9 项仍 SKIP ⇒ **DR-E2 不得宣称达标**。
+- 本机一次成功备份 **≠** 目标 / 离线环境可恢复 —— 那是 P6-X 人工段的事。
+- D-1b 前置满足 **≠** 交付已私有化可行；它只是第 9 项的**前置**。
+
+### 8.7 残留（下一批的硬边界）
+
+- **全仓 `restore-drill-*.md` = 0 份**（`docs/drills/` 下无匹配）⇒ 第 9 项**机械上**不可能 PASS
+  （`check_9` 只认 `DEFAULT_DRILL_DIR = docs/drills` 下真实存在的文件，**不认口头声明**）。
