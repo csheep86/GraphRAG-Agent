@@ -202,6 +202,84 @@ scratch 库与独立存储目录预建 · `restore.py` 干跑并拿到 §6.2 两
 | **F-P6X-2** | **`check_9` 只读留证「存在与否」，读不到演练结论** ⇒ 一场 §6.2 **FAIL** 的演练照样让第 9 项自动 PASS；「不许把 SKIP 说成 PASS」在本项**无机械兜底** | ⏳ 登记 |
 | **F-P6X-3** | **§6.2 探针对准源环境，不认 `--target-db`**：`default_pg_active_probe` 用 `settings.default_org_id` + `KgVersioningService.get_active`；`default_neo4j_probe` 用 `GraphService.instance()` ⇒ 恢复到 scratch 库后，验的仍是**在线源环境**，「验恢复出来的那套」在当前实现下**不成立** | ⏳ 登记 |
 | **F-P6X-4** | **本批演练方案与 §9.2 序 7 口径不一致**：队列要求「**独立环境**（由**固定 tag 镜像**起，不许源码起）+ 恢复演练 **+ 升级演练（含回滚）**」；本批实际是「本机容器 + scratch 库」，且**只覆盖恢复演练**。固定 tag 镜像本机是有的（`backend:1.6.0` / `frontend:1.6.0`，见 `delivery-plan.md` §9.4.1）⇒ 下一批**应当**按队列口径重做 | ⏳ 登记 |
+| **F-P6X-5** | **图库 `:KgVersion` 镜像无 org 维度 + supersede 不分 org**：`_CYPHER_SUPERSEDE_OTHER_VERSIONS`（`graphs.py:402-408`）`MATCH (v:KgVersion) WHERE v.version <> $version` 不带 `scope` / `org_id` ⇒ 同步镜像会把**其它租户**的版本节点一并置 `superseded`；实测图库 3 个节点 `org_id` **全 NULL**、3 个**全 `active`**（非 `activate_kg_version` 写入）；`_QUERY_ACTIVE_KG_VERSION`（:371-377）按**字典序**取 active，与 PG 真源「最新 ready」**不同口径**。⇒ 原样复用 `activate_kg_version` 补 F-P6X-1 会顺手引入跨租户副作用（ADR-0003 地盘） | ⏳ 登记（§13.2） |
+| **F-P6X-6** | **`get_active` 文档措辞与实现不符**：`versioning.py:6` / `:204` 写「取同 org **唯一** ready 版本」，实现（:203-212）是 `ready_at DESC LIMIT 1` = **最新 ready**，允许多个 ready 共存（实测 5 行全 ready）。措辞会被读成"唯一性约束"，从而误判现状为异常 | ⏳ 登记（§13.1） |
+
+## 13. 补查：下一批开工前三件事（**AI 查证，¥0，2026-10-12 实跑；零代码改动**）
+
+> 触发：提示词 §4.1 列的三件「未查证、下批开工先补」的事。**Y1 未裁决 ⇒ 段落 ① 未开工**，
+> 本节只查证、不改一行代码。结论全部来自**代码坐标 + 本机只读实测**（PG / 图库各查一次）。
+
+### 13.1 ① `get_active` 的 active 口径 / PG 5 行全 `ready` 下唯一性是否成立
+
+- 实现（`versioning.py:203-212`）：`status='ready'` → `ready_at DESC` → `limit 1`
+  ⇒ **active = 「同 org 最新 ready 的那一行」**，**不是**「唯一 ready」。
+- 文档字符串（`versioning.py:6`、`:204`）写「取同 org **唯一** ready 版本」⇒ **措辞与实现不符**
+  （实现允许多个 ready 并存）。**只登记**（F-P6X-6），本批不改文档。
+- `activate_by_version`（`versioning.py:175-199`）**不写任何状态**，只校验 `status == 'ready'`
+  ⇒ PG 侧的「激活」是 **no-op 回读**（幂等）。
+- 实测（只读，`kg_versions` 5 行）：
+
+  | version | status | ready_at (UTC) | org_id | ent / rel |
+  |---|---|---|---|---|
+  | `20261012T064951Z-inc-569555ad` | ready | 2026-10-12 06:49:52 | `00000000-0000-4000-8000-000000000001` | 5 / 4 |
+  | `v-649085c6` | ready | 2026-10-12 06:48:24 | 同上 | 17 / 16 |
+  | `p6v5-truth-20261012` | ready | 2026-10-12 06:46:50 | 同上 | 2625 / 3496 |
+  | `attendance-demo-v1` | ready | 2026-10-12 06:45:24 | 同上 | 2855 / 3645 |
+  | `affiliation-demo-v2` | ready | 2026-10-09 05:38:56 | `5dea8f62-0c67-579a-9509-8b4ce98eadea` | 1268 / 1428 |
+
+  ⇒ **「active 唯一性」本就不成立、也不需要成立**：多 ready 共存是设计内行为，取最新那条。
+  默认 org 的 active = `20261012T064951Z-inc-569555ad`，图库**无此节点**
+  ⇒ §6.2 `ghost_version` 与 §6.1 两侧读数一致（根因链再确认一次）。
+
+### 13.2 ② 镜像同步的幂等 / 失败回滚 / 会不会造出**新的**幽灵版本
+
+| 问 | 机械结论 |
+|---|---|
+| 幂等 | ✅ `_CYPHER_ACTIVATE_KG_VERSION`（`graphs.py:392-400`）是 `MERGE + SET` ⇒ 重放只覆盖属性 |
+| 能否凭空造节点 | ⚠️ **能** —— `MERGE` 在图库**没有该版本任何数据**时也会建出一个 `status='active'` 的空壳节点 ⇒ 比 ghost 更隐蔽（**有节点、无数据**） |
+| 失败回滚 | ❌ **没有**。`activate_kg_version`（`:1474-1513`）失败抛 `GraphUnavailableError`；A / B 两种修法都把它放在 `mark_ready` **之后**，此时 PG 的 `ready` **已 commit** ⇒ 同步失败即留下「PG ready + 图库无镜像」= **正是 ghost**，且不会再重试 |
+| ⇒ 修法必须显式回答 | **图库不可用时怎么办**：(a) 上抛 ⇒ 图已写完却判建图 failed；(b) 旁路吞掉 ⇒ 静默留 ghost、§6.2 照旧 FAIL；(c) 回滚 PG 状态 ⇒ 动状态机，**越界** |
+
+**连带副作用（提示词 §4.1 未列，新发现）**：
+
+- `_CYPHER_SUPERSEDE_OTHER_VERSIONS`（`graphs.py:402-408`）= `MATCH (v:KgVersion) WHERE v.version <> $version`
+  —— **不带 `scope` / `org_id` 过滤** ⇒ 会把**其它租户**的版本节点一并置 `superseded`。
+- 实测图库 3 个 `:KgVersion`：**`org_id` 全为 `NULL`**、**`status` 全为 `active`**
+  （⇒ 它们不是经 `activate_kg_version` 写入的，是导入脚本直接写的）。
+- `_QUERY_ACTIVE_KG_VERSION`（`:371-377`）兜底路径取 `status='active'` 后 `ORDER BY v.version DESC LIMIT 1`
+  ⇒ 多 active 时选**字典序最大**的版本（当前 = `p6v5-truth-20261012`），与 PG 真源的「最新 ready」**不是同一口径**。
+
+⇒ **不能原样复用 `activate_kg_version` 去补 F-P6X-1**：顺手会引入「跨租户 supersede」+「兜底口径错位」。
+要让镜像带 org 维度 / 收窄 supersede 范围 ⇒ **属新一批的工作，AI 不自选**（已并入提示词 §5 的 Y1）。
+
+### 13.3 ③ 修复会不会推翻 `test_consistency_fails_on_ghost_version`
+
+- **不会**。`tests/test_backup_restore.py:437-443` 测的是**纯函数** `evaluate_version_consistency`
+  （`backup.py:370-418`），注入假探针 `neo4j_version_exists=lambda _: False`
+  ⇒ 与「谁去同步镜像」**完全正交**。A / B / C 三种修法都**推不翻它**。
+- **唯一能推翻它的情形** = 改判据语义（把 ghost 判成通过）⇒ 那正是 **Non-goal 1**，禁止
+  ⇒ 它可以当**越界探针**用：它一红，就说明修法越界，立刻停下（提示词 X2-K1 原文）。
+
+**但另有一批既有用例会被 A / B 两种修法直接打红**（提示词 §4.1 未列，补上）：
+
+| 修法 | 会红的既有测试 | 原因 |
+|---|---|---|
+| **A**（`mark_ready` 内部同步） | `tests/test_kg_versioning.py` 的 `mark_ready` 用例（`:89` / `:122` / `:154` / `:166` / `:167`，**5 处调用**） | 该文件直连真实 PG（`graphrag_test`）、**无 Neo4j mock**；而 conftest 把 `NEO4J_URI` 固定指向 `bolt://127.0.0.1:1`（CI 与本地默认口径同） |
+| **B**（建图侧显式调） | `tests/test_kg_build_executor.py` happy path 等（文件头即声明「Neo4j 零依赖」，`ThreeStageKgBuilder` 为假类、无 `GraphService` mock） | `GraphService.instance()` 在图不可用时抛 `GraphUnavailableError` |
+| **B**（增量侧显式调） | `tests/test_kg_incremental_rebuild.py` | 该文件有 `graph_service` fixture 指向**真** Neo4j（`:109-120`）⇒ 真图口径下**可能不红**；默认口径这些用例是 skip ⇒ **两套口径要分别看** |
+
+> 补充事实：**CI 有真 Neo4j 服务**（`.github/workflows/ci.yml:83-97`，`neo4j:5.26-community`，
+> `GRAPH_REAL_NEO4J_URI=bolt://localhost:7687`），但 job 级 `NEO4J_URI` 仍被 conftest 钉在不可达端口
+> ⇒ 「CI 有图库」**不等于**「默认口径下 `GraphService` 连得上」。
+
+⇒ **三种修法都不是「加一行调用」**：都连带要处置「图库不可用时怎么办」+「测试面」。这是 Y1 拍板的**实质内容**。
+
+### 13.4 本节的边界
+
+只查证，**零代码改动**；未改任何判据、未激活任何版本、未 `--apply`；**源环境一个字节未改**
+（PG / 图库各一次只读查询）。新增登记：**F-P6X-5**（镜像节点无 org 维度 + supersede 全局副作用
++ 兜底口径与 PG 真源不一致）、**F-P6X-6**（`get_active` 文档措辞「唯一 ready」与实现「最新 ready」不符）。
 
 ## 14. 回切点自检三问（`check_session_drift.py` 报 **S2 超阈值**，脚本拦不住、必须自己答）
 

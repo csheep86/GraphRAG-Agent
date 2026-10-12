@@ -123,11 +123,21 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | 4 | `changes/P6-W/integration-log.md` §6 / §7 | **残留风险 7 条**决定演练会撞到什么 |
 | 5 | `backend/scripts/install_acceptance.py:673-696` | 它怎么判断"演练有没有做" ⇒ 留证得落它认得的形式，否则第 9 项继续 SKIP |
 
-> **未查证、下批开工先补的三件事**（别照本批的口径外推）：
-> ① `KgVersioningService.get_active`（`versioning.py`）按什么取"active"——PG 里 **5 行都是 `ready`**，
-> "active 唯一性"是否本就成立，要实读再定；
-> ② 镜像同步要不要**幂等 + 失败回滚**（同步失败时PG已是 `ready` ⇒ 会不会造出新的幽灵版本）；
-> ③ 修完以后，`tests/test_backup_restore.py` 里 `test_consistency_fails_on_ghost_version` 是否会被自己的修复推翻（**若会 ⇒ 说明修法越界，停下**）。
+> **✅ 三件事已于 2026-10-12 由 AI 查证完毕（¥0、零代码改动）**
+> ⇒ 完整读数见 [`integration-log.md` §13](./integration-log.md)。**摘要（别照旧口径外推）**：
+>
+> ① **active = 同 org 最新 `ready` 的那一行**（`versioning.py:203-212`，`ready_at DESC LIMIT 1`），**不是**「唯一 ready」
+> ⇒ PG 5 行全 `ready` 属**设计内行为**，唯一性**不需要修**；实测 active = `20261012T064951Z-inc-569555ad`（图库**无**此节点）。
+> ⚠️ 文档措辞「唯一 ready」与实现不符 ⇒ 已登记 **F-P6X-6**。
+>
+> ② 镜像 `MERGE` **幂等 ✅**；但**失败无回滚**（PG 已 commit ⇒ 同步失败就留下 ghost），且 `MERGE` 在**无数据时也会凭空造空壳节点**
+> ⇒ 修法必须显式回答「**图库不可用时怎么办**」：上抛（图写完却判 failed）/ 旁路吞掉（静默留 ghost）/ 回滚 PG（**越界**）。
+> ⚠️ 另有新发现：`_CYPHER_SUPERSEDE_OTHER_VERSIONS`（`graphs.py:402-408`）**不分 org**，会把其它租户节点一并 supersede；
+> 图库 3 个 `:KgVersion` `org_id` 全 `NULL`、全 `active`；兜底查询按**字典序**取 active，与 PG「最新 ready」**不同口径** ⇒ 已登记 **F-P6X-5**。
+>
+> ③ `test_consistency_fails_on_ghost_version` **不会被推翻**（测的是纯函数 + 假探针，与「谁同步镜像」正交）
+> ⇒ 它一红就等于修法越界，立刻停下。**但** A 会打红 `test_kg_versioning.py` 的 **5 处** `mark_ready`、
+> B 会打红 `test_kg_build_executor.py`（两者默认口径都连不上 Neo4j）⇒ **任何修法都连带「测试面」工作，不是加一行调用**。
 
 ---
 
@@ -140,6 +150,11 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | **Y3** | 是否含**升级演练 + 回滚** | 含 / 只做恢复 | **含**（队列口径；只做恢复 ⇒ 不满足序 7，第 9 项**不得**据此回登） |
 | **Y4** | 执行者 / 见证者（**须两人不同**） | 填人名（P6-X 为 **wIlliam / tianen**，须重新确认**当场在场**） | 空 ⇒ **段落 ② 不开工** |
 | **Y5** | 是否顺手修 F-P6X-2 / F-P6X-3 | 修 / 不修 | **不修**（Non-goal 1 / 2） |
+| **Y6**（新增） | 是否把**镜像 org 维度 / supersede 范围**纳入本批（F-P6X-5） | 纳入 / 只登记 | **只登记**（默认）⇒ 若选"纳入"，Y1 的 A / B **都不够**，须先扩选项（如 D：只 `MERGE` 不 supersede 的窄同步） |
+
+> **Y1 补充（2026-10-12 查证，见 `integration-log.md` §13）**：A / B **都会**触发 `_CYPHER_SUPERSEDE_OTHER_VERSIONS`
+> 的**不分 org** 的 supersede（F-P6X-5），且**都**要连带处置「图库不可用时怎么办」+「既有测试面」。
+> ⇒ 若人认为「跨租户 supersede / 镜像 org 维度」属本批范围，**先扩 Y1 选项再拍板**；**AI 不自选**。
 
 ### 5.1 ⚠️ **期望值表必须先定，不许演练当天临时定**（旧交接件 §3 的硬要求）
 
