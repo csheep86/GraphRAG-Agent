@@ -24,7 +24,7 @@ from sqlalchemy import delete, select
 
 from app.core.config import get_settings
 from app.core.errors import ErrorCode
-from app.db.models import Document, KgVersion
+from app.db.models import CostMetric, Document, KgVersion
 from app.db.session import SessionLocal, init_db
 from app.services.graphs import GraphUnavailableError
 from app.storage import build_extract_artifact_key, get_storage
@@ -156,9 +156,31 @@ def _kg_version_snapshot(kg_version_id: UUID) -> dict[str, Any]:
         }
 
 
+def _cost_row_ids(org_id: UUID) -> set[Any]:
+    """本租户当前 ``cost_metrics`` 行的 id 集合（快照差分的基线 / 终值）。"""
+    with SessionLocal() as session:
+        return {
+            row[0]
+            for row in session.execute(
+                select(CostMetric.id).where(CostMetric.org_id == org_id)
+            )
+        }
+
+
 @pytest.fixture
 def seed_document() -> Iterator[Callable[..., UUID]]:
     doc_ids: list[UUID] = []
+    org_id = get_settings().default_org_id
+    #: P6-V5（V0）：kg.build 的**成功分支会真写 cost_metrics** ——
+    #: ``registry.kg_build_executor`` 判定全新构建后调 ``record_full_rebuild_cost``
+    #: （``registry.py:837``），而本模块的文档 / TaskSpec 用的是
+    #: ``settings.default_org_id`` ⇒ 落的是**默认租户当日那一行**；
+    #: 那一行正是 C3-a / C3-b ``--live`` 读取口的数据源 ⇒ 不清理就等于把
+    #: 「看起来像真值、其实是测试残留」的数端给判据（实测：单跑本文件注入 4.0）。
+    #:
+    #: **必须按新增 id 删，不许按 org 全删**：同一会话里
+    #: ``test_cost_metrics_extraction.py`` 的用例也写默认租户，全删会误伤它。
+    cost_row_ids_before = _cost_row_ids(org_id)
 
     def _seed(status: str) -> UUID:
         document_id = _insert_document(status)
@@ -167,6 +189,7 @@ def seed_document() -> Iterator[Callable[..., UUID]]:
 
     yield _seed
 
+    stale_cost_ids = _cost_row_ids(org_id) - cost_row_ids_before
     if doc_ids:
         with SessionLocal() as session:
             # 本模块是测试库中 kg_versions 的唯一写入方（default_org_id），
@@ -177,6 +200,10 @@ def seed_document() -> Iterator[Callable[..., UUID]]:
                 )
             )
             session.execute(delete(Document).where(Document.id.in_(doc_ids)))
+            if stale_cost_ids:
+                session.execute(
+                    delete(CostMetric).where(CostMetric.id.in_(stale_cost_ids))
+                )
             session.commit()
 
 
