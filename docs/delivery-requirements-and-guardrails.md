@@ -127,7 +127,13 @@ cd backend && uv run python scripts/check_startup_readiness.py
 | # | 需求 | 状态 | 依据 | 完成判据 |
 |---|---|---|---|---|
 | **DR-E1** | **Alembic 迁移纪律**：每版本带**可幂等**迁移脚本；禁手工改客户库 | 🟡 基线已建（`00f44b912817`），逐版本纪律未落地 | `deployment-spec.md` §7.1 / D-2b | 版本 → 迁移脚本一一对应 |
-| **DR-E2** | **备份 / 恢复脚本 + 恢复演练**（独立环境恢复并跑通冒烟） | 🟡 **部分**（脚本已有，**演练仍是 0 次**）：`scripts/backup.py` / `scripts/restore.py` + `backup-manifest.json`（SHA-256 / 大小 / 时刻 / active `kg_version`）＋ §6.2 一致性校验（错位 ⇒ 退出码 2）；**恢复演练属 P6-X 且当前因 D-1b 未落地不可执行**（`install_acceptance.py` 第 9 项机械查证得出） | `deployment-spec.md` §6 / 闸门 CP-D1 | 未演练 ⇒ 不得承诺可私有化交付；**有脚本 ≠ 具备可恢复能力** |
+| **DR-E2** | **备份 / 恢复脚本 + 恢复演练**（独立环境恢复并跑通冒烟） | 🟡 **部分**（脚本已有，**演练仍是 0 次**）：`scripts/backup.py` / `scripts/restore.py` + `backup-manifest.json`（SHA-256 / 大小 / 时刻 / active `kg_version`）＋ §6.2 一致性校验（错位 ⇒ 退出码 2）；**恢复演练属 P6-X**（`install_acceptance.py` 第 9 项机械查证得出）。
+**📌 2026-10-12 P6-V5 事实订正（上一句的后半已过期，勿再引用）**：**"因 D-1b 未落地不可执行"不再成立**
+—— 同脚本第 9 项本机实测输出为「**D-1b 前置已满足 ⇒ 可做，但本项仍为人工双人**（执行者 ≠ 见证者），
+AI 不得单独收口 ⇒ 顺延 P6-X」。同次查证还得出第 8 项「备份成功」= **SKIP，原因是我们还没跑过一次备份**
+（`缺 --backup-dir ⇒ 无真实备份产物可验`）⇒ **AI 可推进的一半是它**：
+`uv run python scripts/backup.py --out-dir <目录>` → `install_acceptance.py --backup-dir <同上>`；
+演练本体仍是 P6-X 人工双人 ⇒ 首尾两半**不许混写在同一批次里**。证据 `changes/P6-V5/integration-log.md` §7 | `deployment-spec.md` §6 / 闸门 CP-D1 | 未演练 ⇒ 不得承诺可私有化交付；**有脚本 ≠ 具备可恢复能力** |
 | **DR-E3** | **升级演练**（含回滚：改 tag 回上一版本） | ⏳ 未做 | `deployment-spec.md` §7.2 / §7.2.1 | 失败可回滚 |
 | **DR-E4** | **安装验收清单脚本化**（10 项） | 🟡 **部分**：`scripts/install_acceptance.py` 十项逐条 PASS / SKIP / FAIL + 原因（可机读，含 `--out` JSON）；**PASS 只 3 项**（见 `changes/P6-W/integration-log.md` §8），余为 SKIP + 明确原因（目标环境 / 真 LLM / 双人见证），第 9 项顺延 P6-X | `deployment-spec.md` §10 | 机器可跑 |
 
