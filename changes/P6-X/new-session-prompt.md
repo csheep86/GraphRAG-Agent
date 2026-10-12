@@ -234,6 +234,14 @@ cd backend && uv run python scripts/check_startup_readiness.py
 
    ⇒ 顺序：**等一次 → 仍失败就用 `gh api` 判因 → 直接上 `HTTP/1.1`**，别在重试上耗掉 5 分钟。
 
+   > ⚠️ **反例（2026-10-12 当晚实测，别外推成「HTTP/1.1 一定灵」）**：同一天晚些时候推 `2beb394` 时，
+   > **HTTP/1.1 连试 3 次（等 0s / 90s / 150s）全部** `Failed to connect to github.com:443 after 21xxx ms`；
+   > 而**同期** `gh api` 通、`Test-NetConnection github.com -Port 443` = `True`；
+   > **改回默认通道（不加 `-c http.version`）一次就通**（`cb186b0..2beb394`）。
+   > ⇒ 两条通道**都可能**卡，且**卡哪一条不固定**。`gh api` 判因只用于确认「网络没断」，
+   > 解法是**两条都试**（先默认、再 `HTTP/1.1`），别在一条上耗掉 5 分钟。
+   > （另测：SSH 通道 `git@github.com` 本机 = `Permission denied (publickey)` ⇒ **无 key**，HTTPS 是唯一通道。）
+
 ---
 
 ## 10. 升级用户的 4 类情况（**AI 不许自行处置**）
