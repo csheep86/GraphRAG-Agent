@@ -132,6 +132,7 @@ check_session_drift       : S1 6 条 / S2 4 文件 339 行 / S3~S5 未触发
 | V4 | `check_seams.py` | OK 12 / ERROR 0 / WARN 0 |
 | V5 | `pytest tests/test_eval_acceptance_cli.py tests/test_eval_cost_criteria.py -q` | 既有断言**不得崩**（第 76-78 / 125-126 行锚 `"M2"` / `"TBD-7"` / `"增量重算"`） |
 | V6 | **（仅 D1 批准时）** 真跑一轮后 C3-a / C3-b 出数 | `value` 非 null；若仍 `BLOCKED`，`blocked_by` 必须点名**当前**真实缺口 |
+| V7 | **真值出来后立刻回改 `docs/acceptance-traceability-matrix.md` 的 C3-a / C3-b 两行**（架构师侧**单独提交**） | 那两行刚在 2026-10-11 被 P6-V4 订正过（措辞已准、真值仍写 `BLOCKED`）⇒ **拿到真值就回写**，否则会第四次过期。C3 线已经因为「机器变、文案没复核」过期过三次 |
 
 ---
 
