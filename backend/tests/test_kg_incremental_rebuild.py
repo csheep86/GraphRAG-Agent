@@ -370,6 +370,49 @@ def _action_row(action_id: uuid.UUID) -> OntologyAction | None:
 # --------------------------------------------------------------------------- #
 
 
+def test_incremental_rebuild_syncs_graph_mirror(
+    graph_service: GraphService,
+    seeded_graph: str,
+    pg_fixture: dict[str, Any],
+    real_pg_get_active: None,
+    real_driver,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**P6-X2（F-P6X-1）**：增量重算完成（``mark_ready``）后**同步图库镜像**。
+
+    缺口原形：PG 的 active 版本**常常就是增量版本**（本机实测 active =
+    ``20261012T064951Z-inc-569555ad``），而这条路径只写 PG、从不写图库的 ``:KgVersion``
+    ⇒ §6.2 第 2 条恒判 ``ghost_version``。本用例钉「两处完成路径」里的**增量侧**
+    （建图侧由 ``tests/test_kg_build_executor.py`` 那条钉）。
+    """
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "app.services.kg.incremental.sync_kg_version_mirror",
+        lambda *, version, org_id, trace_id: (
+            calls.append({"version": version, "org_id": org_id}) or True
+        ),
+    )
+
+    base = seeded_graph
+    affected = [f"{base}-e1", f"{base}-e2"]
+
+    with session_scope(org_id=_ORG_ID) as session:
+        result = rebuild_incrementally(
+            db=session,
+            org_id=_ORG_ID,
+            action_id=pg_fixture["action_id"],
+            affected_entity_ids=affected,
+            source_doc_ids=[pg_fixture["affected_doc_id"]],
+            graph_service=graph_service,
+        )
+
+    assert result.status == "ready"
+    # 同步**发生**，且带的是刚产出的新版本 + 本 org
+    assert len(calls) == 1
+    assert calls[0]["version"] == result.new_version
+    assert str(calls[0]["org_id"]) == str(_ORG_ID)
+
+
 def test_incremental_rebuild_rewrites_only_affected_subgraph(
     graph_service: GraphService,
     seeded_graph: str,

@@ -368,9 +368,17 @@ def _temporal_view(alias: str = "r") -> str:
 #: Cypher 查询：当前 active kg_version（ADR-0002 §3.2 —— **仅** active 可被消费）。
 #: 阶段九由 ``scripts/import_to_neo4j.py`` 在 Neo4j 侧维护 :KgVersion 状态机；
 #: Sprint 4 接入 PG ``kg_versions`` 后，PG 为真源、此查询退化为兜底。
+#:
+#: **P6-X2（F-P6X-5）**：兜底查询**必须带 ``org_id``**。此前只看 ``status='active'``
+#: 再按 ``version`` 字典序取最大 —— 与 PG 真源的「同 org 最新 ``ready``」**不是同一口径**，
+#: 且历史导入脚本写的节点 ``org_id`` 为 ``NULL``、全部 ``active`` ⇒ 兜底会命中别的
+#: 租户 / 别的版本（本机实读：3 个节点全 ``active``、``org_id`` 全 ``NULL``）。
+#: 缺 ``org_id`` 的节点**不参与兜底**（fail-closed：宁可报「无 active 版本」，
+#: 也不静默拿一个来源不明的版本）。
 _QUERY_ACTIVE_KG_VERSION = """
 MATCH (v:KgVersion {status: 'active'})
-WHERE $scope IS NULL OR v.scope = $scope
+WHERE v.org_id = $org_id
+  AND ($scope IS NULL OR v.scope = $scope)
 RETURN v.version AS version, v.scope AS scope
 ORDER BY v.version DESC
 LIMIT 1
@@ -399,9 +407,16 @@ SET v.status = 'active',
 RETURN v.version AS version
 """
 
+#: **P6-X2（F-P6X-5）**：只 supersede **同 org** 的镜像。
+#: 旧实现是 ``MATCH (v:KgVersion) WHERE v.version <> $version`` —— **不分租户**，
+#: A 租户激活一次就会把 B 租户的版本节点一并置 ``superseded``（ADR-0003 的跨租户面）。
+#: ``org_id`` 为 ``NULL`` 的历史节点（导入脚本直写，没带 org）**一律不动**：
+#: 无法证明它属于谁，写死成当前 org 就是污染，supersede 掉又是越权处置
+#: ⇒ 交由 ``scripts/migrate_kg_version_org.py`` 按 PG 反查补齐（**本批不执行**）。
 _CYPHER_SUPERSEDE_OTHER_VERSIONS = """
 MATCH (v:KgVersion)
 WHERE v.version <> $version
+  AND v.org_id = $org_id
 SET v.status = 'superseded',
     v.updated_at = $now
 RETURN v.version AS version
@@ -1398,7 +1413,13 @@ class GraphService:
 
         try:
             with self._session() as session:
-                result = session.run(_QUERY_ACTIVE_KG_VERSION, scope=scope).single()
+                result = session.run(
+                    _QUERY_ACTIVE_KG_VERSION,
+                    scope=scope,
+                    # P6-X2（F-P6X-5）：兜底也按 org 过滤；org_id 为 None ⇒ 匹配不到
+                    # ⇒ 走下面的 NoActiveKgVersionError（fail-closed，不回落）。
+                    org_id=str(org_id) if org_id is not None else None,
+                ).single()
         except GraphUnavailableError:
             raise
         except Exception as exc:  # noqa: BLE001 - 统一包装
@@ -1409,8 +1430,10 @@ class GraphService:
             # 连接是通的，只是没有 active 版本 → 版本状态问题（路由层转 409），
             # **不是**基础设施故障（501）。见 NoActiveKgVersionError 文档。
             raise NoActiveKgVersionError(
-                "Neo4j 中尚无 status='active' 的 KgVersion"
-                f"（scope={scope!r}；请先执行 scripts/import_to_neo4j.py）"
+                "Neo4j 中无匹配 org 的 active KgVersion"
+                f"（org_id={org_id!r} scope={scope!r}）；"
+                "注意：org_id 为空的历史镜像节点不参与兜底（F-P6X-5），"
+                "可先跑 scripts/migrate_kg_version_org.py 补齐"
             )
         return KgVersion(version=version, scope=result["scope"] or "global")
 
@@ -1474,11 +1497,15 @@ class GraphService:
     def activate_kg_version(
         self, *, version: str, org_id: UUID, trace_id: str
     ) -> list[str]:
-        """同步 **Neo4j 镜像**：目标版本置 ``active``，其余置 ``superseded``。
+        """同步 **Neo4j 镜像**：目标版本置 ``active``，**同 org 的其余版本**置 ``superseded``。
 
         真源判定在 PG（:meth:`KgVersioningService.activate_by_version`）；本方法只做
         镜像写入，供「无 db 会话」的读路径（:meth:`fetch_active_kg_version` 的 Neo4j
         兜底分支、脚本）保持一致。
+
+        **P6-X2（F-P6X-5）**：``superseded`` 只在**同 org** 内生效 —— 旧实现不分租户，
+        A 租户激活一次会把 B 租户的版本一并取代。``org_id`` 为 ``NULL`` 的历史节点
+        **不动**（不 supersede、不写 org）：无法证明归属，两种处置都是越权。
 
         :returns: 本次被置 ``superseded`` 的版本号列表（可为空）
         :raises GraphUnavailableError: Neo4j 不可用 / 写入失败
@@ -1489,7 +1516,11 @@ class GraphService:
                 superseded = [
                     str(record["version"])
                     for record in session.run(
-                        _CYPHER_SUPERSEDE_OTHER_VERSIONS, version=version, now=now
+                        _CYPHER_SUPERSEDE_OTHER_VERSIONS,
+                        version=version,
+                        now=now,
+                        # P6-X2（F-P6X-5）：只 supersede 同 org 的镜像
+                        org_id=str(org_id),
                     )
                 ]
                 session.run(

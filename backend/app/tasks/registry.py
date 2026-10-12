@@ -60,6 +60,7 @@ from app.services.extraction.langextract import ExtractionResult
 from app.services.graphs import GraphUnavailableError
 from app.services.kg import ThreeStageKgBuilder
 from app.services.kg.builder import KgDocumentRef
+from app.services.kg.mirror import sync_kg_version_mirror
 from app.services.kg.policies import load_expiry_policies
 from app.services.kg.versioning import KgVersioningService
 from app.services.ontology import extraction_type_vocabulary
@@ -827,6 +828,19 @@ async def _do_kg_build(
             kg_version_id,
             entity_count=stats.entity_count,
             relation_count=stats.relation_count,
+        )
+
+        # P6-X2（**F-P6X-1**）：PG 置 ``ready`` 后**同步图库镜像**。
+        # 缺口原形：建图完成路径只写 PG，从不写图库的 ``:KgVersion`` ⇒ PG 的 active
+        # 版本在图库里没有对应节点，§6.2 第 2 条恒判 ``ghost_version``（结构性不可达）。
+        # 为什么是旁路、不上抛（与下面的 cost_metrics 同款理由）：**图已经写完了**，
+        # 镜像同步失败**不让**这次构建报 failed —— 图数据是真的，判 failed 是造假。
+        # 但它也**不静默**：§6.2 的一致性判据会把「PG 有、图库没有」照出来并判 FAIL，
+        # 该报的错一个都不会少（真正的 fail-closed 关卡在 §6.2，不在这里）。
+        sync_kg_version_mirror(
+            version=kg_version.version,
+            org_id=document.org_id,
+            trace_id=str(payload.get("trace_id") or kg_version.trace_id),
         )
 
         # P6-V3（偏离 **X-7**）：``cost_ratio`` **分母**的**唯一**写库点。

@@ -274,6 +274,38 @@ def test_kg_build_happy_path(
     assert str(request.document.doc_id) == str(document_id)
 
 
+def test_kg_build_syncs_graph_mirror_after_ready(
+    seed_document: Callable[..., UUID],
+    fake_builder: type[_FakeBuilder],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**P6-X2（F-P6X-1）**：建图完成（PG 置 ``ready``）后**真的同步了图库镜像**。
+
+    缺口原形：这条路径只写 PG，从不写图库的 ``:KgVersion`` ⇒ PG 的 active 版本在图库里
+    没有对应节点，§6.2 第 2 条恒判 ``ghost_version``。本用例把"两处之一"钉在建图侧。
+    """
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "app.tasks.registry.sync_kg_version_mirror",
+        lambda *, version, org_id, trace_id: (
+            calls.append({"version": version, "org_id": org_id, "trace_id": trace_id})
+            or True
+        ),
+    )
+
+    document_id = seed_document("processing")
+    _place_extract_artifacts(document_id)
+    asyncio.run(kg_build_executor(_make_spec(document_id)))
+
+    snapshot = _snapshot(document_id)
+    assert snapshot["status"] == "completed"
+    # 同步**发生**，且带的是刚置 ready 的那个版本 + 文档的 org
+    assert len(calls) == 1
+    builder = fake_builder.instances[-1]
+    assert calls[0]["version"] == builder.requests[0].version
+    assert str(calls[0]["org_id"]) == str(get_settings().default_org_id)
+
+
 def test_kg_build_reuses_existing_kg_version_row(
     seed_document: Callable[..., UUID],
     fake_builder: type[_FakeBuilder],

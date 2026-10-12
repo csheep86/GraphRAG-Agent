@@ -3,7 +3,9 @@
 公开面：
 - :class:`KgVersioningService`：封装表的状态机迁移（pending → building → ready /
   → failed），调用方只需走流程，无需关心实现细节；
-- :meth:`KgVersioningService.get_active`：取同 org 唯一 ready 版本（fail-closed 兜底）。
+- :meth:`KgVersioningService.get_active`：取同 org **最新** ready 版本（fail-closed 兜底）。
+  （P6-X2 更正：是「最新」不是「唯一」——同 org 允许多个 ready 共存，见该方法
+  docstring 与 **F-P6X-6**。）
 
 **真源约定**：本表是 ``kg_version`` 状态机的**唯一**真源；Neo4j
 ``:KgVersionMirror`` 仅为冗余镜像（stage-1 写入），路由层 ``fetch_active_kg_version``
@@ -201,11 +203,30 @@ class KgVersioningService:
     # -------------------------------------------------------------- 查询
 
     def get_active(self, *, org_id: uuid.UUID) -> KgVersionRecord | None:
-        """取同 org 唯一 ready 版本（PG 真源，ADR-0002 §3.2）。"""
+        """取同 org **最新** ready 版本（PG 真源，ADR-0002 §3.2）。
+
+        **P6-X2（F-P6X-6）**：排序键是 ``ready_at DESC, created_at DESC, id DESC``
+        ——``ready_at`` 单独用**不够**：两次 ``mark_ready`` 落在**同一微秒**时它会并列，
+        「active 是哪个版本」就成了掷骰子（真图口径全量实测复现：
+        ``test_get_active_returns_latest_ready_for_same_org`` 断言 ``'v-old' == 'v-new'``）。
+        §6.2 的一致性判定要靠 active 唯一定位，不能靠运气 ⇒ 补次级键。
+
+        - ``created_at``：行创建（``pending`` 落库）时刻，晚建的版本更新；
+          且 ``ix_kg_versions_org_id_created_at`` 已存在 ⇒ **不新增索引**；
+        - ``id``：最后是确定性兜底（并列时结果至少**稳定**，不会每次跑不一样）。
+
+        ⚠️ 语义是「**最新** ready」，**不是**「唯一 ready」—— 同 org 允许多个 ready
+        共存（本机实测 5 行全 ready）。旧 docstring 写「唯一」会被读成"唯一性约束"，
+        从而把现状误判成异常。
+        """
         stmt = (
             select(KgVersion)
             .where(KgVersion.org_id == org_id, KgVersion.status == "ready")
-            .order_by(KgVersion.ready_at.desc())
+            .order_by(
+                KgVersion.ready_at.desc(),
+                KgVersion.created_at.desc(),
+                KgVersion.id.desc(),
+            )
             .limit(1)
         )
         row = self._db.execute(stmt).scalar_one_or_none()

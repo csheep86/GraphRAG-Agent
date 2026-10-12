@@ -19,6 +19,7 @@ import importlib.util
 import os
 import sys
 import tarfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -600,34 +601,54 @@ def test_real_neo4j_probe_distinguishes_existing_and_missing_version(
     若把探针换成恒 True / 恒 False 的桩，`evaluate_version_consistency` 的两个分支
     会各自恒绿 ⇒ §6.2 从头到尾没验过。本条就是堵它的：两个方向都必须**真打图库**。
 
-    "存在"那一半不从 PG 的 active 版本猜（两个库的种子不同，猜会让本条在 CI 上
-    变成掷骰子）——直接问图库它现在有哪些 `:KgVersion`。
+    **P6-X2 改写说明（守史实，原文留痕）**：原本「存在」那一半依赖图库里**既有**的
+    active 节点（``fetch_active_kg_version()`` 无参 ⇒ 兜底按字典序取最大）。自 P6-X2 起
+    兜底**必须带 ``org_id``**（F-P6X-5），而历史导入脚本写的节点 ``org_id`` 为 ``NULL``
+    ⇒ 无参调用取不到 ⇒ 本条会退化成 **skip** —— 那是**护栏变弱，不是通过**。
+    故改为**本用例自己造一个带 ``org_id`` 的 active 节点**：两个方向都真验，
+    且顺带把「兜底按 org 生效」钉在真图上。
+
+    ⚠️ 另一个坑（同步修掉）：旧写法把**断言**也包在 ``except Exception`` 里 ⇒
+    断言失败会被当成「连不上」而转成 skip（恒绿失效，纪律 R-9）。现在连通性
+    **单独探测**，断言在外面 ⇒ 断言失败就真红。
     """
+    from app.core.config import get_settings
+
     module = _load("restore", BACKEND_ROOT / "scripts" / "restore.py")
 
-    missing_version = "v-p6w-definitely-not-there"
+    # ① 连通性单独探测（断言不得被这层 try 吞掉）
     try:
-        assert module.default_neo4j_probe(missing_version) is False
+        with real_graph_service._session() as session:  # noqa: SLF001
+            session.run("RETURN 1").consume()
     except Exception as exc:  # noqa: BLE001 - 连通性即判据
         if os.environ.get("CI"):
             pytest.fail(f"CI 上读不到 Neo4j（缺 §6.2 的交叉校验）: {exc}")
         pytest.skip(f"本机 Neo4j 不可达: {exc}")
 
-    from app.services.graphs import NoActiveKgVersionError
+    settings = get_settings()
+    seeded_version = f"v-p6x2-probe-{uuid.uuid4().hex[:8]}"
+    missing_version = "v-p6w-definitely-not-there"
 
-    try:
-        existing = real_graph_service.fetch_active_kg_version()
-    except NoActiveKgVersionError:
-        existing = None
-    if existing is None:
-        if os.environ.get("CI"):
-            pytest.fail(
-                "CI 的图库里连一个 active `:KgVersion` 都没有 ⇒ "
-                "§6.2 的交叉校验在这台机器上无从下手"
+    # ② 断言（不包 try）
+    with real_graph_service._session() as session:  # noqa: SLF001
+        session.run(
+            "CREATE (v:KgVersion {version: $version}) "
+            "SET v.status = 'active', v.scope = 'global', v.org_id = $org_id",
+            version=seeded_version,
+            org_id=str(settings.default_org_id),
+        )
+        try:
+            # 「缺失」那一半
+            assert module.default_neo4j_probe(missing_version) is False
+            # 「存在」那一半：造的节点（**带 org**）必须被探针认出来
+            assert module.default_neo4j_probe(seeded_version) is True
+            # 兜底**必须**按 org 生效（F-P6X-5）：NULL 节点不参与兜底
+            active = real_graph_service.fetch_active_kg_version(
+                org_id=settings.default_org_id
             )
-        pytest.skip("本机图库里没有 active :KgVersion ⇒ 只能验「缺失」那一半")
-
-    version = str(
-        existing["version"] if isinstance(existing, dict) else existing.version
-    )
-    assert module.default_neo4j_probe(version) is True
+            assert str(active.version)
+        finally:
+            session.run(
+                "MATCH (v:KgVersion {version: $version}) DETACH DELETE v",
+                version=seeded_version,
+            )

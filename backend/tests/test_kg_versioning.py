@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import KG_VERSION_STATUS_VALUES, KgVersion
@@ -172,6 +173,55 @@ def test_get_active_returns_latest_ready_for_same_org(
 
         assert service.get_by_version(org_id=ORG_A, version="v-old") is not None
         assert service.get_by_version(org_id=ORG_B, version="v-old") is None
+
+
+def test_get_active_is_stable_when_ready_at_ties(
+    created_ids: list, real_pg_get_active: None
+) -> None:
+    """**F-P6X-6**：``ready_at`` **并列**时也必须取到**后创建**的那个。
+
+    真图全量实测复现过：两次 ``mark_ready`` 落在同一微秒 ⇒ ``ORDER BY ready_at DESC``
+    两条并列 ⇒ 返回哪个全看运气（那条用例当时断言 ``'v-old' == 'v-new'`` 失败）。
+    §6.2 的一致性判定要靠 active **唯一定位**，不能靠运气 ⇒ 排序必须有次级键。
+
+    本条把两行的 ``ready_at`` **强行拉平**，模拟那个"同一微秒"，再断言结果稳定。
+    """
+    tied_at = datetime.now(UTC)
+    with session_scope(org_id=ORG_A) as session:
+        service = KgVersioningService(session)
+        older = service.create_pending(
+            org_id=ORG_A, version="v-tie-old", source_doc_ids=[], trace_id=uuid4()
+        )
+        newer = service.create_pending(
+            org_id=ORG_A, version="v-tie-new", source_doc_ids=[], trace_id=uuid4()
+        )
+        created_ids.extend([older.id, newer.id])
+
+        service.mark_ready(older.id, entity_count=1, relation_count=1)
+        service.mark_ready(newer.id, entity_count=2, relation_count=2)
+
+        # 拉平 ready_at（两条一模一样 ⇒ 只剩次级键能决定顺序）。
+        # ⚠️ created_at **也必须显式拉开**：本机实测两次 create_pending 同样可能落在
+        # 同一微秒（真图全量下本条就是这么红的）⇒ 不控制这个变量，本条会变成掷骰子。
+        session.execute(
+            update(KgVersion)
+            .where(KgVersion.id == older.id)
+            .values(ready_at=tied_at, created_at=tied_at - timedelta(seconds=1))
+        )
+        session.execute(
+            update(KgVersion)
+            .where(KgVersion.id == newer.id)
+            .values(ready_at=tied_at, created_at=tied_at)
+        )
+        session.commit()
+
+        active = service.get_active(org_id=ORG_A)
+
+    assert active is not None
+    assert active.version == "v-tie-new", (
+        "ready_at 并列时必须按 created_at 取**后创建**的；"
+        "若这条红了，说明次级排序键被删了（§6.2 的 active 定位会变成掷骰子）"
+    )
 
 
 def test_get_active_none_when_only_pending_or_failed(

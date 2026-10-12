@@ -21,6 +21,14 @@
 本批只同步本版本自己的 ``:KgVersionMirror`` 状态——新版本目前只承载受影响子图，
 把它置为全局 active 会让读侧**只看到被校正的那一小撮节点**；「新版本如何包含
 未受影响节点」须与三端点语义同批裁决（登记 **P5F-4**）。
+
+> **P6-X2 追加（守史实：上文原文保留，作为"当时的判断"）**：P5F-4 那条顾虑已被
+> **版本继承读**（P5-H）消解 —— ``tests/test_version_chain_readers.py::
+> test_overview_reads_the_whole_graph_after_a_rename``（真图 + 真 PG）钉死：
+> 5 个节点改名 1 个（走本模块 ⇒ 新版本**物理上**只承载受影响子图）之后，
+> 读侧**仍然拿得到全部 5 个**（该用例 docstring 明写它是 P5-G 那条"物理上不承载
+> 全图"断言的**反面**）。故自 P6-X2 起，本模块在 ``mark_ready`` 之后同步图库镜像
+> （本版本置 ``active`` + **同 org** 的其余版本置 ``superseded``，F-P6X-5）。
 """
 
 from __future__ import annotations
@@ -39,6 +47,7 @@ from app.core.config import get_settings
 from app.core.errors import ErrorCode
 from app.db.models import KgVersion, OntologyAction
 from app.services.cost_metrics import record_incremental_rebuild_cost
+from app.services.kg.mirror import sync_kg_version_mirror
 from app.services.kg.versioning import KgVersioningService
 
 __all__ = [
@@ -295,6 +304,14 @@ def rebuild_incrementally(
     versioning.mark_ready(
         record.id, entity_count=entity_count, relation_count=relation_count
     )
+
+    # P6-X2（**F-P6X-1**）：同步图库镜像（与 ``registry.py`` 建图路径同款旁路范式）。
+    # 为什么**增量**路径也必须同步：PG 的 active 版本常常就是增量版本
+    # （本机实测 active = ``20261012T064951Z-inc-569555ad``）⇒ 不同步 ⇒ §6.2 恒 ghost。
+    # 为什么可以置 ``active``（P5F-4 的顾虑已消解）：见本模块头注释的 P6-X2 追加段。
+    # 为什么是旁路、不上抛：图已重写完成，镜像同步失败不判死这次重算；
+    # 该报的错由 §6.2 的一致性判据照出来（见 ``kg.mirror`` 模块 docstring）。
+    sync_kg_version_mirror(version=new_version, org_id=org_id, trace_id=str(trace))
 
     # P6-V3（偏离 **X-7**）：``cost_ratio`` **分子**的**唯一**写库点。
     # 为什么只在成功分支写：失败路径走 :func:`_fail` ——那次重算没有产出可用版本，
