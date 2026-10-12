@@ -115,8 +115,11 @@ P6-V4 已经把 C3-a / C3-b **出数能力**补齐（三态 + 取样器），但
 pytest（本机，双容器 Up）: 1247 passed, 43 skipped, 0 failed
 ruff check / format --check: All checks passed（6 个改动文件）
 check_seams.py            : ERROR 0 / WARN 0 / OK 12
-check_startup_readiness   : --self-test 7 条全过（⚠️ 本机 PowerShell 需
-                            $env:PYTHONIOENCODING="utf-8"，否则打印 `⇒` 时 GBK 崩）
+check_startup_readiness   : --self-test 7 条全过（本机 PowerShell **不再需要**手工设
+                            $env:PYTHONIOENCODING="utf-8" —— 2026-10-12 已根治：
+                            scripts/ 可直接运行的脚本全部内置 stdio UTF-8 兜底，
+                            漏加由 tests/test_script_stdio_utf8.py 拦，
+                            backend/.env.example 另有 PYTHONUTF8=1 双保险）
 check_session_drift       : S1 6 条 / S2 4 文件 339 行 / S3~S5 未触发
 ```
 
