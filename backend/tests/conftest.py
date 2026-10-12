@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from uuid import UUID
 
@@ -512,3 +513,74 @@ def cross_tenant_headers() -> dict[str, str]:
     # 沿用默认主体会构成跨租户引用（R30 第 ① 条）。跨租户用例验的是
     # 「org A 的资源在 org B 视野下不可见」，与 actor 是否相同无关。
     return {"X-Org-Id": OTHER_ORG_ID, "X-Actor-Id": str(OTHER_ORG_ACTOR_ID)}
+
+
+# --------------------------------------------------------------------------- #
+# P6-V5（V0）：会话级「cost_metrics 残留」守卫
+# --------------------------------------------------------------------------- #
+
+
+def _assert_no_cost_metric_residue() -> None:
+    """默认租户的 ``cost_metrics`` 必须 0 残留 —— 不接受任何一行。
+
+    ⚠️ **不许用 ``SessionLocal`` 读**：走到这里时 :func:`default_org_for_bare_sessions`
+    的 monkeypatch 已还原 ⇒ 没有 org 绑定 ⇒ RLS 恒返回 0 行 ⇒ 守卫退化成
+    "恒绿失效"（纪律 **R-9**）⇒ 这里**自建 engine + 显式 ``set_config``**。
+    """
+    from sqlalchemy import create_engine, text
+
+    owner_url = os.environ.get("DATABASE_URL_OWNER") or os.environ.get("DATABASE_URL")
+    if not owner_url:
+        return
+
+    org_id = str(get_settings().default_org_id)
+    engine = create_engine(owner_url)
+    try:
+        with engine.connect() as connection:
+            if (
+                connection.execute(text("select to_regclass('cost_metrics')")).scalar()
+                is None
+            ):
+                # 本次会话压根没建这张表 ⇒ 没有「可供残留的对象」，不是免责放行
+                return
+            connection.execute(
+                text("select set_config('app.current_org', :org, true)"),
+                {"org": org_id},
+            )
+            rows = [
+                dict(row)
+                for row in connection.execute(
+                    text(
+                        "select id, stage, metric_date, token_usage_total, doc_count, "
+                        "incremental_cost, full_rebuild_cost, created_at "
+                        "from cost_metrics where org_id = cast(:org as uuid)"
+                    ),
+                    {"org": org_id},
+                ).mappings()
+            ]
+    finally:
+        engine.dispose()
+
+    assert not rows, (
+        "cost_metrics（默认租户）有测试残留 ⇒ C3-a / C3-b 的 --live 读取口会把它"
+        "当成真值（宛如看起来能出数的 `doc_count=0` / `incremental_cost=NULL` 行）。"
+        f"残留行：{json.dumps(rows, ensure_ascii=False, default=str)}"
+        "治理：定位写入用例，在**它的夹具内按新增 id 精确清理**（不许按 org 全删，"
+        "会误伤同一会话里别的用例；判例见 changes/P6-V5/integration-log.md §1~§2）。"
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cost_metrics_residue_guard() -> Iterator[None]:
+    """整套用例跑完后，默认租户的 ``cost_metrics`` 必须干净。
+
+    为什么放在这里、**单用例断言为什么抓不到**：
+
+    - C3-a / C3-b 的 ``--live`` 读取口就是这张表默认租户当日那一行；
+      测试写进去的行会吐出一个**看起来像真值**的数 ——
+      P6-V5 实测 ``test_kg_build_executor.py`` 单跑一次就注入 ``full_rebuild_cost=4.0``；
+    - 残留**只在全部用例跑完之后**才可见 ⇒ 只有会话末尾这一刻抓得到；
+    - 会话级夹具的收尾 **最后**执行（晚于所有 module / function 夹具）⇒ 位置正确。
+    """
+    yield
+    _assert_no_cost_metric_residue()
