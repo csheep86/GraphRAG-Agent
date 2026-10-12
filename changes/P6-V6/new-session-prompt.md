@@ -9,6 +9,13 @@
 >
 > 📌 **正文只在当前批次目录**（`changes/<当前批次>/new-session-prompt.md`）——
 > 这是本仓库的既定约定，故 v2 落在 `P6-V6/` 而不是 `P6-V4/`。
+>
+> ✅ **已执行（2026-10-12 第二次会话）**：本提示词的**零费用部分**已跑完 ——
+> V0 隔离清场（写入方 = `tests/test_kg_build_executor.py`，已修 + 加会话级守卫），
+> 批次目录 = [`changes/P6-V5/`](../../changes/P6-V5/integration-log.md)
+> （`proposal.md` / `tasks.md` / `integration-log.md` 三件套）。
+> **剩余 V5-c 真机实测仍等用户在 D1 上点头**（≡ 本文件 §开头 D1 勾选框 + §8 决策表）。
+> 下一份提示词写在 `changes/P6-V5/new-session-prompt.md`。
 
 > 👤 **用户先做两个勾选（开工前必读本段）**
 >
