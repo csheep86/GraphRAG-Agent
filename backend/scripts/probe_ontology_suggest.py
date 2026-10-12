@@ -21,6 +21,14 @@ import sys
 
 from app.services.ontology import suggest_ontology_types
 
+# Windows 控制台默认 GBK：打印非 ASCII 会抛 UnicodeEncodeError ⇒ 强制 stdio 为 UTF-8。
+# 内联而非抽公共模块：脚本被测试按文件路径 import 时 scripts/ 不在 sys.path 上
+# ⇒ 公共模块本身会 ImportError（兜底反成新崩溃源）；漏加由门禁测试拦。
+if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - 仅 Windows 生效
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 #: 与 M6 的演示业务域保持一致（``demo/attendance/``），便于和既有本体对照
 DOMAIN_DESCRIPTION = "企业考勤与工时合规管理：员工、考勤记录、请假与加班、制度条款"
 

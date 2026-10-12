@@ -68,6 +68,14 @@ import uvicorn  # noqa: E402
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
 
+# Windows 控制台默认 GBK：打印非 ASCII 会抛 UnicodeEncodeError ⇒ 强制 stdio 为 UTF-8。
+# 内联而非抽公共模块：脚本被测试按文件路径 import 时 scripts/ 不在 sys.path 上
+# ⇒ 公共模块本身会 ImportError（兜底反成新崩溃源）；漏加由门禁测试拦。
+if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - 仅 Windows 生效
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 #: **模型钉死处**：改动即换基线 ⇒ 历史 C1 数字不再可比，须同步登记。
 DEFAULT_MODEL = "BAAI/bge-small-zh-v1.5"
 

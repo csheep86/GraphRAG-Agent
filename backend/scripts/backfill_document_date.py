@@ -56,6 +56,13 @@ from app.db.session import init_db, open_session  # noqa: E402
 from app.services.parsing.document_date import resolve_document_date  # noqa: E402
 from app.storage import build_parse_artifact_key, get_storage  # noqa: E402
 
+# Windows 控制台默认 GBK：打印非 ASCII 会抛 UnicodeEncodeError ⇒ 强制 stdio 为 UTF-8。
+# 内联而非抽公共模块：脚本被测试按文件路径 import 时 scripts/ 不在 sys.path 上
+# ⇒ 公共模块本身会 ImportError（兜底反成新崩溃源）；漏加由门禁测试拦。
+if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - 仅 Windows 生效
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def _read_full_md(*, org_id: object, doc_id: object) -> str | None:
     """读该文档的 ``full.md``；**没有就算了**（没解析过的文档无从谈日期）。"""

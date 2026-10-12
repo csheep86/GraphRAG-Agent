@@ -64,6 +64,13 @@ from app.services.auth.password import hash_password  # noqa: E402
 from app.services.rbac.roles import PRESET_ROLES, RoleName  # noqa: E402
 from app.services.rbac.service import ensure_preset_roles  # noqa: E402
 
+# Windows 控制台默认 GBK：打印非 ASCII 会抛 UnicodeEncodeError ⇒ 强制 stdio 为 UTF-8。
+# 内联而非抽公共模块：脚本被测试按文件路径 import 时 scripts/ 不在 sys.path 上
+# ⇒ 公共模块本身会 ImportError（兜底反成新崩溃源）；漏加由门禁测试拦。
+if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - 仅 Windows 生效
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def _user_exists(session, actor_id) -> bool:
     """dev 主体在 `users` 里有没有锚点行（RLS 下自然只查得到本租户的）。"""
