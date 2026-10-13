@@ -83,6 +83,18 @@ uv run python scripts/export_openapi.py --check → [OK] contracts/openapi.yaml 
 uv run python scripts/check_startup_readiness.py → 🟢 已生效 16 条（G-27 5 项）｜🟠 部分 0｜🟡 挂起 0
 ```
 
+**CI 读数**（commit `ef62188`，2026-10-13）：
+
+| job | 结论 |
+|---|---|
+| 后端（ruff + pytest） | ❌ **3 failed / 1298 passed / 7 skipped** —— 三条即 F-P7C-5（CI 带图环境 ⇒ passed 比本地多 39 条）。首条断言实测 `assert 0.8333333333333334 is None`，正是"多跳已判分 ⇒ 正常出数" |
+| 前端（lint + gen:api） | ✅ success |
+| 契约校验（漂移门禁） | ✅ success |
+| 流水线汇总 | ❌（随后端 job 失败） |
+
+⇒ **本批改动没有让任何一个 job 变红**：前端与契约两个 job 全绿；后端 job 的红是 P6-T 判分落库留下的，
+且在 HEAD `40a23c8` 上（`git stash -u` 后）复跑同样 3 failed。**修它需用户裁决**（§5）。
+
 **G 编号 15 → 16**：`check_startup_readiness.py` 现在把 G-27 列在 🟢 区（真在拦），反向守卫单独列出。
 
 **回切点**（`check_session_drift.py`）：S2 3 文件 / 47 行（阈值内）、S3 无新增 `Settings` 字段（只加 property，无 env 变量）、
