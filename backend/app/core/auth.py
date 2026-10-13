@@ -1,11 +1,17 @@
-"""认证态解析（Sprint 1 临时实现）。
+"""认证态解析。
 
 依据 `ADR-0003` §3.3：
 - `org_id` **只能**来自认证态，**严禁**从请求 body / query 读取；
-- Sprint 1 尚无 M5 `POST /auth/login`，因此提供两条**限期**兜底路径：
+- 历史上有两条**开发态**兜底路径（因 Sprint 1 尚无 M5 `POST /auth/login`）：
   1. `Bearer dev.<org_id>.<actor_id>` —— 无签名的开发态 token；
-  2. `X-Org-Id` / `X-Actor-Id` 请求头 —— 仅 `ALLOW_DEV_ORG_HEADER=true` 且非生产时生效。
-- **Sprint 3 必须替换为 M5 签发的 JWT 解析，并删除以上兜底。**
+  2. `X-Org-Id` / `X-Actor-Id` 请求头。
+
+**2026-10-13（P7-C / B1）：两条兜底已由同一个开关装配，不再是"生产才关"。**
+此前 dev token 只看 `settings.is_production`，而交付 compose **从不注入 `APP_ENV`**
+⇒ 客户现场取默认值 `development` ⇒ 无签名 token **全程可用**（可伪造任意租户身份）。
+现在两条都走 :attr:`Settings.dev_identity_enabled`（`ALLOW_DEV_ORG_HEADER=true`
+**且**非生产），缺一个即 401。⚠️ **兜底本身仍未删除**——上千条既有用例的身份
+来源就是它，删除属另一批的事；本批只把"非开发形态不可达"钉成护栏（**G-27**）。
 
 **2026-10-07（P2-C）：JWT 分支已落地，dev 兜底**尚未**删除。**
 `POST /auth/login` 自本批起签发 JWT（HS256，见 `app/core/token.py`），
@@ -43,13 +49,18 @@ class Identity:
 def parse_bearer_token(raw_token: str, settings: Settings) -> Identity:
     """解析认证 token（**两条**来源，顺序固定）。
 
-    1. 开发态格式 `dev.<org_id>.<actor_id>`（生产环境一律拒绝）；
+    1. 开发态格式 `dev.<org_id>.<actor_id>`——仅 :attr:`Settings.dev_identity_enabled`
+       时装配，否则 401（生产 / 未开 dev 开关的部署形态一律拒绝）；
     2. `POST /auth/login` 签发的 JWT（HS256，验签见 :mod:`app.core.token`）。
 
     两者都不是 ⇒ 401，不提供任何绕过路径。
 
     **为什么 dev 格式排在前**：它有一个 `dev.` 前缀可**零成本**判别；JWT 分支要跑
     HMAC。把它放前面，既有的上千条 dev 用例一微秒都不多花。
+
+    **为什么先判 `is_production` 再判开关**（顺序由 `test_auth.py` 的 B5 锁定）：
+    两个分支的错误 message **故意不同**——生产口径只说"不接受"，不透露 dev
+    兜底的存在与启用条件，避免给探测者递刀。
     """
     token = raw_token.strip()
     if token.startswith(f"{DEV_TOKEN_PREFIX}."):
@@ -58,6 +69,17 @@ def parse_bearer_token(raw_token: str, settings: Settings) -> Identity:
                 ErrorCode.UNAUTHORIZED,
                 "Development token is not accepted in production",
                 detail={"reason": "dev_token_disabled"},
+            )
+        if not settings.dev_identity_enabled:
+            # P7-C（B1）：交付形态从不设 APP_ENV=production ⇒ 上面那条拦不住；
+            # 这里才是真正的收口——dev 兜底必须**显式开**才存在。
+            raise AppError(
+                ErrorCode.UNAUTHORIZED,
+                "Development token requires ALLOW_DEV_ORG_HEADER=true",
+                detail={
+                    "reason": "dev_token_disabled",
+                    "expected": "POST /auth/login 签发的 JWT",
+                },
             )
         parts = token.split(".")
         if len(parts) != 3:

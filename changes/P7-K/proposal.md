@@ -1,0 +1,75 @@
+# P7-K · 评测可复现性（P6-T-D4 / D5 · 锁版本 + 堵"空心 PASS"）
+
+> **日期**：2026-10-13 ｜ **来源**：[`changes/P6-T/integration-log.md`](../P6-T/integration-log.md) §3 D4 / D5 + 当日实测
+> **一句话**：让 C1 与多跳这两个准入数字**能被重新跑出来**；跑出来的答案必须与我们判过的答案一致，才允许复用判分表。
+> ⚠️ **本批阻塞 P8-Release 终审**——没有可复现的 C1，终审无从复核，86 道判分也就只是一次性快照。
+
+## 1. 起点与坐标（全部为当日实测，不是推断）
+
+| 编号 | 坐标 | 事实 |
+|---|---|---|
+| **P6-T-D4** | `changes/P6-T/integration-log.md` §3；当日 14:57 本地后端 `127.0.0.1:8001` 单题探查 | 请求体**显式**带 `kg_version=attendance-demo-v1`，响应里 `kg_version` 却是 `20261012T064951Z-inc-569555ad`（10-12 建的增量版本）⇒ `refusal_reason=no_grounded_evidence`、`kg_nodes=[]` ⇒ **6/6 题全部拒答** |
+| **P6-T-D5** | `backend/app/evaluation/runner.py:500` | `correct = judgements.get(item.index, item.correct)` ⇒ 多跳判据**直接读 gold 里已存的 `correct` 出数**，与本次新答案无关 ⇒ 环境漂移时它照旧报 PASS（当日 canary：6/6 拒答仍报 `0.8333 PASS`） |
+| **判分答案的坐标** | `reports/eval/p6s-c1-02.json` | `git=101773e7`、池指纹 `e36322bb2d86865f`、`top_k=32`、`generation_model=deepseek-chat`、`prompt_id=kg_qa_v5` ⇒ 86 道判分**绑定在这套坐标上**，脱离坐标引用即为失真 |
+| **演练栈不可用** | `http://127.0.0.1:8000`（`graphrag-drill-*`） | dev 身份头在该环境关闭 ⇒ 评测请求 401；且其图库为主栈历史快照（Entity 8860 vs 主栈 8989），**不是**判分所用数据 |
+
+**已生效的冻结读数**（用仓库自身 `accuracy()` / `graph_gain()` 对冻结报告重打分，校验 sheets 与报告答案 0 处不一致）：
+`C1 = 0.142857`（graph 1.0000 / baseline 0.8750）、`多跳 = 0.833333`（5/6）。
+
+## 2. 做什么
+
+1. **定位并修"指定版本却被解析成最新版"**：查清解析优先级（请求参数 / PG active / 图库 active），给出确定口径——**评测必须能锁定 `kg_version`**，且锁了就生效。
+2. **给评测加环境自检**：开跑前断言"池指纹 == 期望指纹 + git + 模型 + top_k"；不一致 ⇒ `BLOCKED` 且 `value=null`，报告写清实际值 vs 期望值。
+3. **堵 D5（空心 PASS）**：当本次答案为拒答、或与判分材料的答案不匹配时，**不许**拿 gold 已存的 `correct` 出数 ⇒ 判据转 `BLOCKED` 并列出差异题号。
+4. **修好后重跑 C1 + 多跳**，与 10-09 答案做**逐字 diff**：一致 ⇒ 判分表继续有效；不一致 ⇒ 只重判差异题（rubric-v2 的单调性决定了无需全量重判）。
+5. **把环境坐标写进报告 provenance**（git / 池指纹 / 模型 / top_k），使数字**脱离上下文无法被引用**。
+
+## 3. Non-goals（**改一条都要先回来登记理由**）
+
+1. **不重判已判过的 86 题**——除非 diff 证明答案变了；那时也**只重判差异题**。
+2. **不动 C1 / 多跳阈值**（阈值仍 provisional；TBD-7 归 P7-F）。
+3. **不修 B1 dev 身份头**（归 P7-C）；本批只要求评测有**一个可用入口**，并把"哪个环境能跑"写进文档。
+4. **不新建全量重建语料入口、不重灌演示语料**（撞 P6-V3 裁决）。
+5. **不改 rubric-v2、不新增补充口径**（本轮 A / B 两条已入 `MANIFEST.json`，够用）。
+6. **不为"让数字好看"而重跑**——重跑只为可复现；结果变差必须如实登记，不许挑一轮好的留下。
+
+## 4. 出口判据
+
+1. 同一条评测命令**连跑两次**，C1 两侧 80 题 + 多跳 6 题答案**逐字一致**。
+2. 评测启动前带环境自检：池指纹不符 ⇒ `BLOCKED` + `value=null`（**不是 0、也不是旧值**）。
+3. "答案与判分材料不匹配"的情形**不再静默出数** ⇒ 转 `BLOCKED` 并列出差异题号。
+4. 新环境下 C1 / 多跳出数，且与冻结读数（`0.142857` / `0.833333`）的关系被明确登记：相同 ⇒ 判分表复用；不同 ⇒ 差异题号清单 + 重判结论。
+5. `pytest` 不降、三件套干净、CI 四 job 全绿。
+
+## 5. 升级用户的四种情况
+
+1. **修版本解析要动产品检索主链路**（不只是评测）⇒ 停下报告（可能撞 P6-V5 / 图谱版本语义裁决）。
+2. **需要激活或回退演示图谱版本**（属数据变更）⇒ 先报告并给回滚动作，不擅自改演示库。
+3. **重跑后答案与判分材料大面积不一致**（差异 > 20 题）⇒ 停下报告，等裁决是否整轮重判。
+4. CI 红且复核两遍仍红 ⇒ 带 job 名 + 失败行 + 归因。
+
+## 6. 依赖与位置
+
+- **前置**：无硬前置。P7-C 修好 dev 身份头后演练栈可能也可用，但不阻塞本批。
+- **后继**：**阻塞 P8-Release**（终审必须能复核 C1）。
+- **并行**：可与 P7-F（TBD-7 阈值裁决）并行，两者不相干。
+
+## 7. 第一步「定位」已完成（2026-10-13 当日）
+
+**结论：请求里的 `kg_version` 从来没进过问答链路，链路永远取 PG 里 `ready_at` 最新的那条。** 三处坐标串起来就是完整因果：
+
+| # | 坐标 | 事实 |
+|---|---|---|
+| 1 | `backend/app/services/agents.py:256-269` | `AgentService.query` **从未读取** `request.kg_version`，无条件 `kg_version = GraphService.instance().fetch_active_kg_version(org_id=org_id, db=db)`，随后 `version = kg_version.version` 贯串全文 |
+| 2 | `backend/app/services/graphs.py:1399-1412` | `fetch_active_kg_version` 以 **PG `kg_versions` 为真源**：`KgVersioningService(db).get_active(org_id)` 取 `status='ready'` 中 **`ready_at` 最新**的一条；PG 说没有才抛错，**不回落** Neo4j |
+| 3 | PG `kg_versions`（实测） | org `…0001` 下同时存在 `attendance-demo-v1`(ready) 与 `20261012T064951Z-inc-569555ad`(ready)；后者由 P6-V5 于 10-12 06:49 创建、`ready_at` 更新 ⇒ **胜出** ⇒ 检索落在它没有（或不含这些片段）的池上 ⇒ `no_grounded_evidence` ⇒ 全拒答 |
+
+补充验证：全仓检索 `request.kg_version`，**仅** `backend/tests/test_graph_and_agent_routes.py:422` 的测试桩在用 —— 生产路径零处读取。也就是说 `AgentQueryRequest.kg_version` 是个**声明了但不生效**的字段（契约失真，与 B3 同源）。
+
+### 候选修法（待实现方裁决，都不是本轮决定）
+
+1. **评测侧最小改动**：让 `AgentService.query` 尊重显式 `kg_version`（有则优先、无则回落到原行为），评测请求带上 `attendance-demo-v1`。**改产品主链路**，需评估副作用。
+2. **数据侧一次调用**：把 `attendance-demo-v1` 重新 activate（`POST /graph/versions/{v}/activate`）。**属演示库数据变更**，须用户批准，并登记回滚动作（把 inc 版本再 activate 回去）。
+3. **独立评测环境**：单独 org / 单独图库跑评测，彻底隔离增量版本干扰，成本最高但最干净。
+
+> ⚠️ 修法 1 与 2 分别对应本文 §5 的「升级情况 1」与「情况 2」——**都可能撞既有裁决**，不要在没有裁决的情况下擅自落地。

@@ -412,9 +412,26 @@ class Settings(BaseSettings):
         return self.app_env == "production"
 
     @property
-    def dev_org_header_enabled(self) -> bool:
-        """`X-Org-Id` 兜底是否生效——仅非生产 + 显式开关同时满足。"""
+    def dev_identity_enabled(self) -> bool:
+        """两条 dev 身份兜底（`Bearer dev.*` / `X-Org-Id`）的**唯一开关**。
+
+        **P7-C（B1，2026-10-13）**：此前 dev token 只看 :attr:`is_production`，
+        而交付 compose **从不注入 `APP_ENV`** ⇒ 客户现场取默认值 `development`
+        ⇒ `is_production=False` ⇒ 无签名的 `dev.<org_id>.<actor_id>` 全程可用
+        ⇒ **任何人都能伪造任意租户身份**（连 JWT 登录都不必绕）。
+        实测（交付形态：`_env_file=None` + `app_env=development`）：
+        `parse_bearer_token` 直接返回 `Identity(...)`,而 header 兜底已返回 `None`
+        ——两条同源的逃生口**只关了一条**。
+
+        ⇒ 统一口径：**显式开关（`ALLOW_DEV_ORG_HEADER=true`）+
+        非生产** 两个条件同时满足才装配，缺一个即不可达。
+        """
         return self.allow_dev_org_header and not self.is_production
+
+    @property
+    def dev_org_header_enabled(self) -> bool:
+        """`X-Org-Id` 兜底是否生效——与 dev token 共用 :attr:`dev_identity_enabled`。"""
+        return self.dev_identity_enabled
 
     @property
     def max_upload_size_bytes(self) -> int:
