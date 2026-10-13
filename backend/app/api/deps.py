@@ -28,9 +28,9 @@ bearer_scheme = HTTPBearer(
 )
 
 DEV_ORG_HEADER_DESCRIPTION = (
-    "【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；"
-    "Sprint 3 接入 M5 登录后必须移除"
-    "（ADR-0003 §3.3：org_id 严禁来自 body / query）。"
+    "【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）"
+    "**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。"
+    "（ADR-0003 §3.3：org_id 严禁来自 body / query。）"
 )
 
 DEV_ACTOR_HEADER_DESCRIPTION = (

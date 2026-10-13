@@ -3185,7 +3185,7 @@ components:
       scheme: bearer
       type: http
 info:
-  description: "GraphRAG-Agent 后端 API（契约 v1.0，Sprint 1）。\n\n## 租户隔离（ADR-0003，**所有接口强制**）\n- `org_id` **只能**来自认证态：`Authorization: Bearer <token>` 解析结果；\n  **严禁**从请求 body / query 读取。\n- 开发态兜底（`ALLOW_DEV_ORG_HEADER=true` 且非生产）可用 `X-Org-Id` / `X-Actor-Id` 请求头，\n  该兜底 **Sprint 3 必须移除**。\n- 跨租户访问一律 `403 FORBIDDEN`；`org_id` 过滤**必须**经 ORM / 统一注入，禁止裸写 SQL。\n- **例外**：`GET /api/v1/health` 不要求认证、不返回任何业务数据。\n\n## trace_id（M1 验收 7 / M5 §5.3）\n- 请求头 `X-Trace-Id` 可选透传（必须是合法 UUID），缺失则服务端生成 UUIDv4；\n- 响应头 `X-Trace-Id` 恒回显；错误体 `trace_id` 与之一致。\n\n## 统一错误响应\n所有 4xx / 5xx 均为 `{code, message, detail, trace_id}`，`code` 取自 `ErrorCode` 枚举。\n\n## 图谱版本一致性（ADR-0002）\n查询层只认 `kg_version.status = active`。请求显式指定非 active 版本时，\n一律返回 `409 KG_VERSION_NOT_ACTIVE`，**严禁静默降级**到最新版本。\n\n## 实现状态（Sprint 4）\n五个接口均已实装真实链路；`501 NOT_IMPLEMENTED` 不再表示「接口未实现」，而是\n**基础设施故障**（Neo4j 不可用 / LLM 未配置或装配失败）的统一出口。"
+  description: "GraphRAG-Agent 后端 API（契约 v1.0，Sprint 1）。\n\n## 租户隔离（ADR-0003，**所有接口强制**）\n- `org_id` **只能**来自认证态：`Authorization: Bearer <token>` 解析结果；\n  **严禁**从请求 body / query 读取。\n- 开发态兜底（`ALLOW_DEV_ORG_HEADER=true` **且**非生产环境）可用 `X-Org-Id` / `X-Actor-Id`\n  请求头注入身份；开关**默认关闭**、生产环境恒不生效，由护栏 **G-27** 钉住\n  \"交付栈不得开启、生产不可达\"（P7-C 收口）。注意：**兜底未被移除**，它至今仍在。\n- 跨租户访问一律 `403 FORBIDDEN`；`org_id` 过滤**必须**经 ORM / 统一注入，禁止裸写 SQL。\n- **例外**：`GET /api/v1/health` 不要求认证、不返回任何业务数据。\n\n## trace_id（M1 验收 7 / M5 §5.3）\n- 请求头 `X-Trace-Id` 可选透传（必须是合法 UUID），缺失则服务端生成 UUIDv4；\n- 响应头 `X-Trace-Id` 恒回显；错误体 `trace_id` 与之一致。\n\n## 统一错误响应\n所有 4xx / 5xx 均为 `{code, message, detail, trace_id}`，`code` 取自 `ErrorCode` 枚举。\n\n## 图谱版本一致性（ADR-0002）\n查询层只认 `kg_version.status = active`。请求显式指定非 active 版本时，\n一律返回 `409 KG_VERSION_NOT_ACTIVE`，**严禁静默降级**到最新版本。\n\n## 实现状态（Sprint 4）\n五个接口均已实装真实链路；`501 NOT_IMPLEMENTED` 不再表示「接口未实现」，而是\n**基础设施故障**（Neo4j 不可用 / LLM 未配置或装配失败）的统一出口。"
   title: GraphRAG-Agent Backend API
   version: 1.6.0
 openapi: 3.1.0
@@ -3204,7 +3204,7 @@ paths:
         **错误分支**：`doc_ids` 为空 → 400 `VALIDATION_ERROR`；文档不存在 → 404 `DOCUMENT_NOT_FOUND`；**任一文档跨租户 → 403**（不静默剔除）。'
       operationId: detectAffiliation
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3212,7 +3212,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -3312,7 +3312,7 @@ paths:
           - type: 'null'
           description: 按复核状态过滤：`open` / `confirmed` / `dismissed`
           title: Status
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3320,7 +3320,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -3383,7 +3383,7 @@ paths:
           format: uuid
           title: Suspicion Id
           type: string
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3391,7 +3391,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -3467,7 +3467,7 @@ paths:
           format: uuid
           title: Task Id
           type: string
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3475,7 +3475,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -3534,7 +3534,7 @@ paths:
         **501 `NOT_IMPLEMENTED` 的真实语义**：LLM 未配置（`LLM_API_KEY` 缺失）/ LangChain 装配失败 / Neo4j 不可用时返回 501，表示**基础设施不可用**，**不**表示「接口未实现」。'
       operationId: queryAgent
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3542,7 +3542,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -3625,7 +3625,7 @@ paths:
           - type: 'null'
           description: 只看该员工（如 `E001`）
           title: Employee Id
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3633,7 +3633,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -3719,7 +3719,7 @@ paths:
           - type: 'null'
           description: 异常日（ISO）；缺省取该员工第一个异常日
           title: Date
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3727,7 +3727,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -3861,7 +3861,7 @@ paths:
           - type: 'null'
           description: 只看该等级
           title: Level
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3869,7 +3869,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -3977,7 +3977,7 @@ paths:
           minimum: 1
           title: Page Size
           type: integer
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -3985,7 +3985,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4048,7 +4048,7 @@ paths:
           format: uuid
           title: Trace Id
           type: string
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4056,7 +4056,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4150,7 +4150,7 @@ paths:
         **`cost_ratio` 是准入线的载体**：M6 C3 要求「增量 / 全量成本比显著 < 1.00」，超过告警阈值只**日志告警，不阻断**请求（阈值规范见 spec §6，**尚未落 `config.py`**）。
 
 
-        **当前状态**：占位骨架，恒返回 501。成本打点侧 M2 §3 验收 7 的 `token_usage` **已具备**，聚合与口径实现归 P5-M6。
+        **当前状态**：**已实装（P6-V）** —— 读带 RLS 的 `cost_metrics` 表真实聚合，占位期的 501 **已不是**本端点的日常返回值。
 
 
         **错误语义**：跨租户 → 403 `FORBIDDEN`；未实现 → 501。'
@@ -4178,7 +4178,7 @@ paths:
           - type: 'null'
           description: 结束日（ISO，含）；缺省由实现侧定义默认区间（本批未定）
           title: Date To
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4186,7 +4186,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4222,10 +4222,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: '**占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分'
+          description: '**基础设施不可用**（Neo4j 不可用 / LLM 未配置或装配失败）⇒ 501。
+
+
+            ⚠️ 常量名 `PLACEHOLDER_NOT_IMPLEMENTED` 沿用自占位期，容易读错：它当前唯一的挂载点是 **`GET /cost/dashboard`，而该端点已实装（P6-V）**（2026-10-13 更正：此前这里写「占位骨架，功能未实现 / 实现归 P5-M6 批次」）。将来若真出现「功能未实现」的占位端点，**不要**复用本常量——两者语义不同。'
       security:
       - bearerAuth: []
-      summary: 成本仪表盘（M6 §3.4，占位骨架）
+      summary: 成本仪表盘（M6 §3.4）
       tags:
       - cost
   /api/v1/documents:
@@ -4293,7 +4296,7 @@ paths:
           minimum: 1
           title: Page Size
           type: integer
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4301,7 +4304,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4369,7 +4372,7 @@ paths:
         `document_date`（可选）是文档的业务日期：留空则由抽取执行体从正文认，认不出即 `null`——不代填、不猜（ADR-0005 §4 / R4）。'
       operationId: uploadDocument
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4377,7 +4380,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4449,7 +4452,7 @@ paths:
         schema:
           title: Chunk Id
           type: string
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4457,7 +4460,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4523,7 +4526,7 @@ paths:
           format: uuid
           title: Document Id
           type: string
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4531,7 +4534,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4603,7 +4606,7 @@ paths:
           format: uuid
           title: Document Id
           type: string
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4611,7 +4614,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4677,7 +4680,7 @@ paths:
         schema:
           title: Entity Id
           type: string
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4685,7 +4688,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4753,7 +4756,7 @@ paths:
         **一致性（ADR-0002 §3.2）**：只读 active 版本，不存在 active 版本时返回 **409** `KG_VERSION_NOT_ACTIVE`，**严禁静默降级**到历史版本。'
       operationId: getGraphOverview
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4761,7 +4764,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4835,7 +4838,7 @@ paths:
         schema:
           title: Version
           type: string
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4843,7 +4846,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -4951,7 +4954,7 @@ paths:
         **错误语义**：无 active → 409；跨租户 → 403。'
       operationId: getActiveOntology
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -4959,7 +4962,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -5051,7 +5054,7 @@ paths:
           minimum: 1
           title: Page Size
           type: integer
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -5059,7 +5062,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -5112,7 +5115,7 @@ paths:
         **错误语义**：跨租户 → 403 `FORBIDDEN`；LLM 建议解析失败 → 500 `INTERNAL_ERROR`（**不**静默回落内置枚举——悄悄塞一组"看起来合理"的类型，等于替用户做决策）。'
       operationId: coldStartOntology
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -5120,7 +5123,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -5182,7 +5185,7 @@ paths:
         **错误语义**：重复确认 / 版本冲突 → 409；跨租户 → 403。'
       operationId: confirmOntology
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -5190,7 +5193,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -5252,7 +5255,7 @@ paths:
         **错误语义**：跨租户 → 403；实体不存在 / 不在 active 版本 → 404；无 active `kg_version` → 409；图谱不可用 → 501。'
       operationId: mergeOntologyEntities
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -5260,7 +5263,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -5334,7 +5337,7 @@ paths:
         **错误语义**：跨租户 → 403；实体不存在 → 404；无 active `kg_version` → 409；图谱不可用 → 501。'
       operationId: renameOntologyEntity
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -5342,7 +5345,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -5416,7 +5419,7 @@ paths:
         **错误语义**：跨租户 → 403；实体不存在 → 404；无 active `kg_version` → 409；图谱不可用 / 入参不足 2 个新实体 → 501 / 400。'
       operationId: splitOntologyEntity
       parameters:
-      - description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+      - description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
         in: header
         name: X-Org-Id
         required: false
@@ -5424,7 +5427,7 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。
+          description: 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。）
           title: X-Org-Id
       - description: 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。
         in: header
@@ -5496,26 +5499,13 @@ tags:
   name: agent
 - description: M5 审计留痕（只读查询）。写入由审计中间件统一完成，本 tag 下只有两个查询端点；**全部要求租户上下文**，返回项已按 `org_id` 过滤。
   name: audit
-- description: 'M6 本体增量演进（冷启动建议 / 确认生效 / 合并 / 拆分 / 改名 / 读候选 / 读 active）。**全部要求租户上下文**，全部挂在权限拦截（``require_permission``）之下。
-
-
-    **端点状态**（2026-10-08 更正 —— 上一版这里仍写「全部为占位骨架」，已不成立）：
-
-
-    - **已实装（P5-G）**：``POST /ontology/merge`` / ``/split`` / ``/rename`` —— 走「图操作 → 写 ``ontology_actions`` → 增量重算产出新版本」，返回 ``OntologyActionResponse{kg_version, status: "applied"}``（同步完成，无 pending）；``entity_merge_candidates`` 对应行 ``human_review`` → ``applied``。
-
-    - **已实装（P5-I）**：``GET /ontology/candidates`` —— 读本租户的 ``entity_merge_candidates`` 候选对（分页 + ``status`` 过滤），**校正 GUI 的实体来源**（m6 §1.1 批次 B 要求 GUI 与该表绑定）。列表类端点：跨租户 ⇒ **空集**（不是 403），``status`` 非法值 ⇒ 400 ``VALIDATION_ERROR``。
-
-    - **仍是占位**：``GET /ontology/active`` / ``POST /ontology/confirm`` / ``POST /ontology/cold-start``（批次 A）。
-
-
-    **GAP-F2 的准确口径**（也是这段话被更正的原因）：约束是「**严禁 LLM 自动修改本体**」，**不是**「除 confirm 外任何端点都不改本体」。上面三个改本体的动作**全部由人工触发**（人在 GUI 上回车才执行），LLM 侧只有 ``cold-start`` 产出**建议**，建议必须再经 ``confirm`` 才生效 —— 「仅建议不自动生效」这一点从未改变。
-
-
-    ⚠️ **读过一个版本的含义**（ADR-0008）：一次校正会把 active 版本换成**只含受影响子图 ∪ 1 跳邻居**的增量版本，读侧须按**版本继承链**（active ∪ 祖先）读取，**active 版本 ≠ 可见全集**。'
+- description: "M6 本体增量演进（冷启动建议 / 确认生效 / 合并 / 拆分 / 改名 / 读候选 / 读 active）。**全部要求租户上下文**，全部挂在权限拦截（``require_permission``）之下。\n\n**端点状态**（2026-10-08 更正 —— 上一版这里仍写「全部为占位骨架」，已不成立）：\n\n- **已实装（P5-G）**：``POST /ontology/merge`` / ``/split`` / ``/rename`` —— 走「图操作 → 写 ``ontology_actions`` → 增量重算产出新版本」，返回 ``OntologyActionResponse{kg_version, status: \"applied\"}``（同步完成，无 pending）；``entity_merge_candidates`` 对应行 ``human_review`` → ``applied``。\n- **已实装（P5-I）**：``GET /ontology/candidates`` —— 读本租户的 ``entity_merge_candidates`` 候选对（分页 + ``status`` 过滤），**校正 GUI 的实体来源**（m6 §1.1 批次 B 要求 GUI 与该表绑定）。列表类端点：跨租户 ⇒ **空集**（不是 403），``status`` 非法值 ⇒ 400 ``VALIDATION_ERROR``。\n- **已实装（P5-C）**：``GET /ontology/active`` / ``POST /ontology/confirm`` / ``POST /ontology/cold-start`` —— 三者构成「冷启动产出建议 → 人工 confirm → 读 active」闭环：``cold-start`` 调 LLM 产出**建议**且**不落库**，只有 ``confirm`` 写 ``ontology_schemas`` 并置 ``status='active'``。\n  （2026-10-13 更正：本行此前仍写「仍是占位」，与代码不符。）\n\n**GAP-F2 的准确口径**（也是这段话被更正的原因）：约束是「**严禁 LLM 自动修改本体**」，**不是**「除 confirm 外任何端点都不改本体」。上面三个改本体的动作**全部由人工触发**（人在 GUI 上回车才执行），LLM 侧只有 ``cold-start`` 产出**建议**，建议必须再经 ``confirm`` 才生效 —— 「仅建议不自动生效」这一点从未改变。\n\n⚠️ **读过一个版本的含义**（ADR-0008）：一次校正会把 active 版本换成**只含受影响子图 ∪ 1 跳邻居**的增量版本，读侧须按**版本继承链**（active ∪ 祖先）读取，**active 版本 ≠ 可见全集**。"
   name: ontology
 - description: 'M6 §3.4 成本仪表盘：token 用量 / 单文档成本 / **增量 vs 全量成本比**。**要求租户上下文**。
 
 
-    ⚠️ **当前为占位骨架，恒返回 501**（契约先行，实现归 P5-M6）。'
+    **已实装（P6-V）**：数据源是带 RLS 的 ``cost_metrics`` 表（M6 §4.3），M3 问答每次真实 LLM 调用累加到当日那一行上。
+
+
+    ⚠️ **501 仍在本 tag 上存在，但语义变了**：它是「基础设施故障」的统一出口（Neo4j 不可用等），**不是**本端点的日常返回值（2026-10-13 更正：这里此前自陈「占位骨架，恒返回 501」）。'
   name: cost

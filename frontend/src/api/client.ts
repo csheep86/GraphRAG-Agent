@@ -65,6 +65,24 @@ const CONTRACT_COVERED_PATTERNS: RegExp[] = [
   /^\/api\/v1\/ontology\/merge$/,
   /^\/api\/v1\/ontology\/rename$/,
   /^\/api\/v1\/ontology\/split$/,
+  // P7-D（2026-10-13）：把此前漏登记的 8 条契约端点一次补齐，使
+  // 「契约 paths - 白名单」的差集为 **0**（用户裁决：全部纳管、豁免清单为空）。
+  //
+  // 事实口径（别误读成"修线上问题"）：这 8 条当时在 UI 侧**没有调用点**
+  // （全仓只命中生成物 types/api.d.ts 与 mock/audit.ts 里的字符串），
+  // 所以此改动是**收口机制**——将来谁接上真页面，不必再冒一次静默 Mock。
+  // 登录页 / 成本仪表盘页本身仍是缺口，本批不做（Non-goals 第 1 条）。
+  /^\/api\/v1\/auth\/login$/,
+  /^\/api\/v1\/cost\/dashboard$/,
+  /^\/api\/v1\/graph\/versions\/[^/]+\/activate$/,
+  /^\/api\/v1\/health$/,
+  /^\/api\/v1\/license\/status$/,
+  /^\/api\/v1\/ontology\/active$/,
+  /^\/api\/v1\/ontology\/cold-start$/,
+  /^\/api\/v1\/ontology\/confirm$/,
+  //
+  // 从此 **不许手工维护**这份清单：漏/多一条都会让
+  // backend/tests/test_frontend_contract_coverage.py 变红（CI 后端 job 必跑）。
 ];
 
 /**

@@ -25,8 +25,9 @@ GraphRAG-Agent 后端 API（契约 v1.0，Sprint 1）。
 ## 租户隔离（ADR-0003，**所有接口强制**）
 - `org_id` **只能**来自认证态：`Authorization: Bearer <token>` 解析结果；
   **严禁**从请求 body / query 读取。
-- 开发态兜底（`ALLOW_DEV_ORG_HEADER=true` 且非生产）可用 `X-Org-Id` / `X-Actor-Id` 请求头，
-  该兜底 **Sprint 3 必须移除**。
+- 开发态兜底（`ALLOW_DEV_ORG_HEADER=true` **且**非生产环境）可用 `X-Org-Id` / `X-Actor-Id`
+  请求头注入身份；开关**默认关闭**、生产环境恒不生效，由护栏 **G-27** 钉住
+  "交付栈不得开启、生产不可达"（P7-C 收口）。注意：**兜底未被移除**，它至今仍在。
 - 跨租户访问一律 `403 FORBIDDEN`；`org_id` 过滤**必须**经 ORM / 统一注入，禁止裸写 SQL。
 - **例外**：`GET /api/v1/health` 不要求认证、不返回任何业务数据。
 
@@ -80,8 +81,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "``entity_merge_candidates`` 候选对（分页 + ``status`` 过滤），**校正 GUI 的实体来源**"
             "（m6 §1.1 批次 B 要求 GUI 与该表绑定）。列表类端点：跨租户 ⇒ **空集**（不是 403），"
             "``status`` 非法值 ⇒ 400 ``VALIDATION_ERROR``。\n"
-            "- **仍是占位**：``GET /ontology/active`` / ``POST /ontology/confirm`` / "
-            "``POST /ontology/cold-start``（批次 A）。\n\n"
+            "- **已实装（P5-C）**：``GET /ontology/active`` / ``POST /ontology/confirm`` / "
+            "``POST /ontology/cold-start`` —— 三者构成「冷启动产出建议 → 人工 confirm → 读 active」闭环："
+            "``cold-start`` 调 LLM 产出**建议**且**不落库**，只有 ``confirm`` 写 "
+            "``ontology_schemas`` 并置 ``status='active'``。\n"
+            "  （2026-10-13 更正：本行此前仍写「仍是占位」，与代码不符。）\n\n"
             "**GAP-F2 的准确口径**（也是这段话被更正的原因）：约束是「**严禁 LLM 自动修改本体**」，"
             "**不是**「除 confirm 外任何端点都不改本体」。上面三个改本体的动作**全部由人工触发**"
             "（人在 GUI 上回车才执行），LLM 侧只有 ``cold-start`` 产出**建议**，建议必须再经 "
@@ -96,7 +100,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "description": (
             "M6 §3.4 成本仪表盘：token 用量 / 单文档成本 / **增量 vs 全量成本比**。"
             "**要求租户上下文**。\n\n"
-            "⚠️ **当前为占位骨架，恒返回 501**（契约先行，实现归 P5-M6）。"
+            "**已实装（P6-V）**：数据源是带 RLS 的 ``cost_metrics`` 表（M6 §4.3），"
+            "M3 问答每次真实 LLM 调用累加到当日那一行上。\n\n"
+            "⚠️ **501 仍在本 tag 上存在，但语义变了**：它是「基础设施故障」的统一出口"
+            "（Neo4j 不可用等），**不是**本端点的日常返回值"
+            "（2026-10-13 更正：这里此前自陈「占位骨架，恒返回 501」）。"
         ),
     },
 ]

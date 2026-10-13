@@ -151,13 +151,19 @@ SCHEMA_VERSION_NOT_ACTIVE: dict[int, dict[str, Any]] = {
 #: 明确写了「**不**表示接口未实现」。本批 7 个占位端点复用 501（HTTP 语义即 Not Implemented），
 #: 靠 `detail.blocked_by` 区分「功能未实现」与「基础设施故障」。
 #: ⇒ 该冲突登记为定稿增补项（F3 裁决）；M6 实现批次替换占位时须一并复核。
+#:
+#: **P7-D（2026-10-13）复核结果**：占位端点已被逐个替换掉，本常量当前**唯一**挂载点是
+#: ``GET /cost/dashboard``（见 ``routes/cost.py``），而该端点已实装（P6-V）
+#: ⇒ 上面「本批 7 个占位端点」的口径**已不成立**，真语义见下面的 description。
 PLACEHOLDER_NOT_IMPLEMENTED: dict[int, dict[str, Any]] = {
     501: {
         "model": ErrorResponse,
         "description": (
-            "**占位骨架，功能未实现**（M6 契约先行批次）。返回 501，"
-            "`detail.blocked_by` 标明「实现归 P5-M6 批次」。"
-            "与既有 501（基础设施不可用）靠 `detail` 区分"
+            "**基础设施不可用**（Neo4j 不可用 / LLM 未配置或装配失败）⇒ 501。\n\n"
+            "⚠️ 常量名 `PLACEHOLDER_NOT_IMPLEMENTED` 沿用自占位期，容易读错："
+            "它当前唯一的挂载点是 **`GET /cost/dashboard`，而该端点已实装（P6-V）**"
+            "（2026-10-13 更正：此前这里写「占位骨架，功能未实现 / 实现归 P5-M6 批次」）。"
+            "将来若真出现「功能未实现」的占位端点，**不要**复用本常量——两者语义不同。"
         ),
     }
 }

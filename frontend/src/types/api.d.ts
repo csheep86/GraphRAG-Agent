@@ -310,12 +310,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 成本仪表盘（M6 §3.4，占位骨架）
+         * 成本仪表盘（M6 §3.4）
          * @description 按日期区间给出**成本总览**：token 用量、单文档成本、**增量 / 全量成本比**，以及按天明细。
          *
          *     **`cost_ratio` 是准入线的载体**：M6 C3 要求「增量 / 全量成本比显著 < 1.00」，超过告警阈值只**日志告警，不阻断**请求（阈值规范见 spec §6，**尚未落 `config.py`**）。
          *
-         *     **当前状态**：占位骨架，恒返回 501。成本打点侧 M2 §3 验收 7 的 `token_usage` **已具备**，聚合与口径实现归 P5-M6。
+         *     **当前状态**：**已实装（P6-V）** —— 读带 RLS 的 `cost_metrics` 表真实聚合，占位期的 501 **已不是**本端点的日常返回值。
          *
          *     **错误语义**：跨租户 → 403 `FORBIDDEN`；未实现 → 501。
          */
@@ -3575,7 +3575,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -3640,7 +3640,7 @@ export interface operations {
                 status?: string | null;
             };
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -3692,7 +3692,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -3759,7 +3759,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -3813,7 +3813,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -3890,7 +3890,7 @@ export interface operations {
                 employee_id?: string | null;
             };
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -3956,7 +3956,7 @@ export interface operations {
                 date?: string | null;
             };
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4035,7 +4035,7 @@ export interface operations {
                 level?: ("high" | "medium") | null;
             };
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4105,7 +4105,7 @@ export interface operations {
                 page_size?: number;
             };
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4157,7 +4157,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4258,7 +4258,7 @@ export interface operations {
                 date_to?: string | null;
             };
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4295,7 +4295,11 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description **占位骨架，功能未实现**（M6 契约先行批次）。返回 501，`detail.blocked_by` 标明「实现归 P5-M6 批次」。与既有 501（基础设施不可用）靠 `detail` 区分 */
+            /**
+             * @description **基础设施不可用**（Neo4j 不可用 / LLM 未配置或装配失败）⇒ 501。
+             *
+             *     ⚠️ 常量名 `PLACEHOLDER_NOT_IMPLEMENTED` 沿用自占位期，容易读错：它当前唯一的挂载点是 **`GET /cost/dashboard`，而该端点已实装（P6-V）**（2026-10-13 更正：此前这里写「占位骨架，功能未实现 / 实现归 P5-M6 批次」）。将来若真出现「功能未实现」的占位端点，**不要**复用本常量——两者语义不同。
+             */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -4319,7 +4323,7 @@ export interface operations {
                 page_size?: number;
             };
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4371,7 +4375,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4436,7 +4440,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4491,7 +4495,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4563,7 +4567,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4617,7 +4621,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4689,7 +4693,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4750,7 +4754,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4862,7 +4866,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4921,7 +4925,7 @@ export interface operations {
                 page_size?: number;
             };
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -4973,7 +4977,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -5020,7 +5024,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -5076,7 +5080,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -5150,7 +5154,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;
@@ -5224,7 +5228,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 【仅开发态兜底】租户 id。仅当 ALLOW_DEV_ORG_HEADER=true 且非生产环境时生效；Sprint 3 接入 M5 登录后必须移除（ADR-0003 §3.3：org_id 严禁来自 body / query）。 */
+                /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
                 /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
                 "X-Actor-Id"?: string | null;

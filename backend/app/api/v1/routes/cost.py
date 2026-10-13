@@ -4,14 +4,10 @@
 （M6 §4.3，带 RLS 的租户表），写入侧见 :mod:`app.services.cost_metrics`——
 M3 问答每次真实 LLM 调用会累加到当日那一行上去。
 
-⚠️ **X-5：装饰器里的 ``summary`` / ``description`` 仍是占位期原文**
-（写着"占位骨架，恒返回 501"）。**为什么不顺手改**：
-
-- 它们是 **Contract** 的一部分（`contracts/openapi.yaml` 由本仓库 export 生成，
-  前端 `npm run gen:api` 再把它变成 `frontend/src/types/api.d.ts`）；
-- CI 有一条"前端生成物零 diff"的闸门，而按角色隔离 `frontend/` 只能由前端开发改；
-- ⇒ 本批**严守与非改契约**，把描述文本更新登记到下一批（含 `export_openapi.py` +
-  `npm run gen:api` 双生成物一起提交），**不偷偷独立改一半**。
+**X-5 已收口（P7-D，2026-10-13）**：装饰器里的 ``summary`` / ``description``
+**此前**逐字沿用占位期原文（写着"占位骨架，恒返回 501"），现已改为实话，
+并按原登记的做法把 ``contracts/openapi.yaml`` 与 ``frontend/src/types/api.d.ts``
+**双生成物一起重生成并提交**（它们任何一方手工改都会让 CI 契约门禁变红）。
 
 实现侧的三条口径（都在 :mod:`app.services.cost_metrics` 里，路由只做组装）：
 
@@ -52,15 +48,15 @@ def _utc_today() -> date:
     "/dashboard",
     response_model=CostDashboardResponse,
     operation_id="getCostDashboard",
-    summary="成本仪表盘（M6 §3.4，占位骨架）",
+    summary="成本仪表盘（M6 §3.4）",
     description=(
         "按日期区间给出**成本总览**：token 用量、单文档成本、**增量 / 全量成本比**，"
         "以及按天明细。\n\n"
         "**`cost_ratio` 是准入线的载体**：M6 C3 要求「增量 / 全量成本比显著 < 1.00」，"
         "超过告警阈值只**日志告警，不阻断**请求（阈值规范见 spec §6，**尚未落 "
         "`config.py`**）。\n\n"
-        "**当前状态**：占位骨架，恒返回 501。成本打点侧 M2 §3 验收 7 的 `token_usage` "
-        "**已具备**，聚合与口径实现归 P5-M6。\n\n"
+        "**当前状态**：**已实装（P6-V）** —— 读带 RLS 的 `cost_metrics` 表真实聚合，"
+        "占位期的 501 **已不是**本端点的日常返回值。\n\n"
         "**错误语义**：跨租户 → 403 `FORBIDDEN`；未实现 → 501。"
     ),
     responses={**TENANT_ERROR_RESPONSES, **PLACEHOLDER_NOT_IMPLEMENTED},
@@ -86,10 +82,10 @@ async def get_cost_dashboard(
 ) -> CostDashboardResponse:
     """按日期区间返回成本总览（真实组装，不再 501）。
 
-    **X-5（2026-10-09）**：上面的 ``summary`` / ``description`` 与原占位期逐字相同
-    ——它们是契约文本，改了就要连 ``contracts/openapi.yaml`` 与前端 TS 生成物一起
-    提，属下一批（详见模块 docstring）。**实现已经是真的**，别被那句"占位骨架"
-    误导，也别以此为由宣称"契约已 update"。
+    **X-5（P7-D 收口）**：上面的 ``summary`` / ``description`` 已改成实话——
+    它们是契约文本，改动必须连 ``contracts/openapi.yaml`` 与前端 TS 生成物一起重生成。
+    **契约检测守卫**：``backend/tests/test_frontend_contract_coverage.py`` 只盯
+    Mock 白名单，契约文案本身没有守卫，改文案后**必须重跑 export / gen:api**。
     """
     today = _utc_today()
     start = date_from or (today - timedelta(days=_DEFAULT_WINDOW_DAYS - 1))
