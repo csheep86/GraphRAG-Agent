@@ -134,6 +134,10 @@ WITH_TOKEN /api/v1/documents?page=1&...      -> 200
 
 | 项 | 读数 |
 |---|---|
-| CI run | **待回填** |
-| 四个 job | 待回填 |
-| CI 后端 pytest | 待回填（基线 `1311 passed / 7 skipped / 0 failed`；本批无新增用例 ⇒ 期望持平） |
+| CI run | **38405674333**（commit `4c50b2d`） |
+| 四个 job | 后端（ruff + pytest）✅ 3m2s ｜前端（lint + gen:api）✅ 37s ｜契约校验（前后端漂移门禁）✅ 34s ｜流水线汇总 ✅ 4s |
+| CI 后端 pytest | **1311 passed / 7 skipped / 0 failed**（`Ruff 静态检查 All checks passed!`） |
+
+核销：本批**没新增任何用例** ⇒ 期望与上批持平（1311）。实测正好 1311
+⇒ 没有用例被本批的 `client.ts` 改动波及（尤其是 P7-D 那条 10 用例的一致性护栏，
+本批删了一条重复 pattern，它的检查仍然通过）。
