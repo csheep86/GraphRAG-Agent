@@ -108,6 +108,9 @@ restart 复用容器原有配置，**不会应用新 env**；真正生效的是 
 
 | 项 | 读数 |
 |---|---|
-| CI run | **待回填** |
-| 四个 job | 待回填 |
-| CI 后端 pytest | 待回填（基线 `1311 passed / 7 skipped / 0 failed`；本批无新增用例 ⇒ 期望持平） |
+| CI run | **38396222568**（commit `4944a0b`） |
+| 四个 job | 后端（ruff + pytest）✅ 2m40s ｜前端（lint + gen:api）✅ 25s ｜契约校验（前后端漂移门禁）✅ 32s ｜流水线汇总 ✅ 2s |
+| CI 后端 pytest | **1311 passed / 7 skipped / 0 failed**（`Ruff 静态检查 All checks passed!`） |
+
+核销：本批**没新增任何用例** ⇒ 期望与上批（P7-M 收工时的 1311）**持平**。实测正好 1311
+⇒ 没有用例被 bump 或改动悄悄抹掉（那条担心的来源正是 §5 的 F-P7E-1）。
