@@ -9,6 +9,22 @@
     "facts_origin": "demo/attendance/README.md §4「埋设的演示用例」（生成器自检 7 项断言已验证这些数据成立）+ 制度文档条款",
     "caveat": "语料为**仿真演示语料**（README 首屏自证），规模约 2.8 千节点；**非终局语料** ⇒ 本集上的结论只能到 MEASURED_PROVISIONAL"
   },
+  "_judging": {
+    "judged_by": "wIlliam",
+    "judged_at": "2026-10-13",
+    "rubric": "rubric-v2（本集未标 secondary_points ⇒ 全部要点为 core）",
+    "source_view": "backend/data/eval/judging/multihop-view-20261009T083610Z.md",
+    "result": "5 true / 1 false ⇒ 答对率 0.8333（≥ 0.80）",
+    "per_item": {
+      "1": "true —— core ①② 覆盖；③『第二章第三条』条号未在答案中点名，按『条号属附加信息』判 true（与第 6 题同口径）",
+      "2": "true —— 216 小时是排班工时而非加班时长，不能据此算加班 ⇒ 系统答『无法判定』成立",
+      "3": "true —— 语料中不存在王强（E003）的数据，如实回答无法判定 ⇒ 按 rubric-v2 补充口径 A 判 true（不按 core 缺失扣分）",
+      "4": "true —— 语料中不存在刘洋（E005）第 42 周数据，如实回答无法给出 ⇒ 按补充口径 A 判 true",
+      "5": "false —— ①② 正确，但③预警级别答成『高』而 core 要求『中』（观察日 10-31 距季末 61 天 ≥ 30）⇒ 与语料矛盾",
+      "6": "true —— core ①② 覆盖且正确；③『制度二第七条』条号未点名，按『条号属附加信息』判 true"
+    },
+    "data_defect": "第 3 / 4 题的答案被标记为 refused=False 但内容为无法判定；补充口径 A 亦适用于本集。"
+  },
   "items": [
     {
       "index": 1,
@@ -20,8 +36,8 @@
         "门禁无记录不得作为否定出勤的依据",
         "依据《外勤与出差考勤补充规定》第二章 第三条"
       ],
-      "correct": null,
-      "judged_by": null
+      "correct": true,
+      "judged_by": "wIlliam"
     },
     {
       "index": 2,
@@ -29,8 +45,8 @@
       "hops": 3,
       "hop_path": "员工 E002 → 排班聚合（216h）→ 月标准工时 174h → 月加班上限 36h（劳动法第四十一条）",
       "expected_points": ["触发", "加班 42h", "超出上限 6h", "上限 36h"],
-      "correct": null,
-      "judged_by": null
+      "correct": true,
+      "judged_by": "wIlliam"
     },
     {
       "index": 3,
@@ -38,8 +54,8 @@
       "hops": 3,
       "hop_path": "员工 E003 → 标准工时制（弹性）→ 核心时段 10:00–16:00 → 未在岗 7 次 → 阈值 5",
       "expected_points": ["7 次", "触发", "阈值 5 次"],
-      "correct": null,
-      "judged_by": null
+      "correct": true,
+      "judged_by": "wIlliam"
     },
     {
       "index": 4,
@@ -47,8 +63,8 @@
       "hops": 2,
       "hop_path": "员工 E005 → 第 42 周（10-12 周一 ~ 10-17 周六）6 天 × 8h = 48h → 周上限 40h",
       "expected_points": ["48 小时", "超过上限", "周上限 40h"],
-      "correct": null,
-      "judged_by": null
+      "correct": true,
+      "judged_by": "wIlliam"
     },
     {
       "index": 5,
@@ -56,8 +72,8 @@
       "hops": 3,
       "hop_path": "员工 E004 → 月加班 22h → 已调休 0h → 季度剩余天数（观察日 10-31 距季末 61 天 ≥ 30 ⇒ 中）",
       "expected_points": ["月加班 22h", "已调休 0h", "级别：中", "季度剩余 ≥ 30 天判中，< 30 天判高"],
-      "correct": null,
-      "judged_by": null
+      "correct": false,
+      "judged_by": "wIlliam"
     },
     {
       "index": 6,
@@ -65,8 +81,8 @@
       "hops": 3,
       "hop_path": "员工 E001 → 10-17 周六（休息日）→ 工单 SO-2026-0913（09:15 派单 / 11:40 闭环）→ 《加班与调休管理办法》第七条（休息日出勤不当然构成加班，须看月度累计）",
       "expected_points": ["不当然构成加班", "须经审批 / 看月度累计", "依据制度二第七条"],
-      "correct": null,
-      "judged_by": null
+      "correct": true,
+      "judged_by": "wIlliam"
     }
   ]
 }
