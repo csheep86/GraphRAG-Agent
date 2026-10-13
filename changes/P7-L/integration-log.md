@@ -82,7 +82,7 @@ L1 的反向证据是**改前它就红**（缺着 monkeypatch 时读到已判分
 | 1 | 本地 `pytest -q` **0 failed**，总数不降（基线 1259 passed） | **`1262 passed / 46 skipped / 0 failed`**（1259+3=1308 ⇒ 1308，一条没少） |
 | 2 | 三条用例原意图仍在 | L1 仍覆盖缺判分吐原文（含 `len==6` / 逐题原文断言）；L2 仍要求非匿名且**新增半本判分**拦截；L3 仍禁题行 `correct` / `judged_by`（§3 四条红灯） |
 | 3 | ruff / format / seams / openapi | `ruff check` **All checks passed**；`ruff format --check` **298 files already formatted**；`check_seams.py` **ERROR 0 / WARN 0 / OK 12**；`export_openapi.py --check` **零 diff** |
-| 4 | push 后 CI 四 job 全绿 | 待 push 后由 CI 裁决（**R-10**）——这是本批存在的唯一理由 |
+| 4 | push 后 CI 四 job 全绿 | ✅ run **`38381092471`**（commit `409dc36`）：前端 ✅ ／ 契约 ✅ ／ 后端 ✅ ／ 汇总 ✅；后端 job 的 Pytest step = **`1301 passed, 7 skipped, 0 failed`**（改前 `1298 passed` + 3 failed = 1308；改后 1301 + 7 = 1308，**总数一条没少**）——这是本批存在的唯一理由，已达成 |
 
 Non-goals 5 条逐条自答：
 
