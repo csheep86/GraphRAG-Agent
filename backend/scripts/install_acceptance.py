@@ -158,9 +158,22 @@ class Context:
     ask_question: str | None = None
     wait_seconds: float = 60.0
     run_pytest: bool = True
+    #: P7-G / F-P6X-8：真实 JWT（`POST /api/v1/auth/login` 换来的，或直接给）。
+    #: 它为 ``None`` 时才退回 dev 头那条路。
+    token: str | None = None
 
 
 def _tenant_headers(ctx: Context, *, which: str) -> dict[str, str]:
+    """组装租户身份头。
+
+    ⚠️ **有真令牌时不再发 `X-Org-Id` / `X-Actor-Id`**（P7-G / F-P6X-8）：
+    登录态下租户身份**由令牌决定**（`core/auth.py:103` `actor_id = claims.user_id`），
+    再叠一层 dev 头就会出现「两个来源不一致时听谁的」这种无法归因的状态 ——
+    而那正是 P7-C 收口 dev 兜底（护栏 G-27）要避免的东西。
+    """
+    if ctx.token:
+        return {"Authorization": f"Bearer {ctx.token}"}
+
     org, actor = (ctx.org_a, ctx.actor_a) if which == "a" else (ctx.org_b, ctx.actor_b)
     headers: dict[str, str] = {}
     if org:
@@ -168,6 +181,42 @@ def _tenant_headers(ctx: Context, *, which: str) -> dict[str, str]:
     if actor:
         headers["X-Actor-Id"] = str(actor)
     return headers
+
+
+class LoginError(RuntimeError):
+    """凭据换令牌失败。**刻意区分于 '环境没备好'** —— 那是两码事。"""
+
+
+def _login(base_url: str, username: str, password: str) -> str:
+    """用真实账号换 JWT。
+
+    **为什么不另造一条凭据途径**：后端的登录早已存在（P2-C 签发 HS256 JWT，
+    P7-N 又把前端接了上去），缺的只是**调用它的人**。新建一个凭据流会多一处
+    「需要被审计 / 被吊销」的东西，而且目标环境的首账号从哪来本身就是独立议题
+    （见 `changes/P7-N/proposal.md` 的交付前提）—— 两件事不要混在一个批次里解。
+    """
+    try:
+        response = httpx.post(
+            f"{base_url}/api/v1/auth/login",
+            json={"username": username, "password": password},
+            timeout=DEFAULT_TIMEOUT,
+        )
+    except httpx.HTTPError as exc:
+        raise LoginError(f"登录不可达: {type(exc).__name__}: {exc}") from exc
+
+    if response.status_code != 200:
+        # 后端对「账号不存在 / 口令错误 / 已停用」统一回 401 且不区分（防账号枚举）
+        # ⇒ 这里也只能照实说 status，不许替它猜原因。
+        raise LoginError(
+            f"登录失败：HTTP {response.status_code}"
+            f"（后端统一回 401 且不区分原因，见 routes/auth.py）"
+        )
+
+    payload = response.json()
+    token = payload.get("access_token")
+    if not token:
+        raise LoginError("登录响应里没有 access_token")
+    return str(token)
 
 
 # --------------------------------------------------------------------------- #
@@ -837,6 +886,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-url", help="目标环境后端地址（如 http://localhost:8000）"
     )
     parser.add_argument(
+        "--username",
+        help=(
+            "目标环境的登录账号（配合 --password 换取 JWT；"
+            "不给则第 6/7 项在生产形态下必吃 401，见 F-P6X-8）"
+        ),
+    )
+    parser.add_argument("--password", help="登录口令（与 --username 成对）")
+    parser.add_argument(
+        "--token",
+        help="直接给 JWT（与 --username/--password 二选一；给了以后者为准）",
+    )
+    parser.add_argument(
         "--compose-file", help="compose 文件（默认 deploy/docker-compose.yml）"
     )
     parser.add_argument("--backup-dir", help="真实备份集目录（第 8 项用）")
@@ -867,6 +928,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # P7-G / F-P6X-8：给了账号口令就先用它换令牌。
+    #
+    # ⚠️ **刻意不允许"登录失败还照跑"**：那样第 6 / 7 项会被写成 401 FAIL / SKIP，
+    # 读起来像是目标环境没备好，真相却是凭据没给对 —— 与 Non-goal 3「不许靠跳过变绿」
+    # 是同一条纪律。凭据不对就当场退出（码 2，区别于"有 FAIL 项"的 1）。
+    token: str | None = args.token
+    if args.username or args.password:
+        if not args.base_url:
+            print("给了用户名/口令却没给 --base-url ⇒ 无从登录", file=sys.stderr)
+            return 2
+        if not (args.username and args.password):
+            print("--username 与 --password 必须成对给出", file=sys.stderr)
+            return 2
+        try:
+            token = _login(args.base_url, args.username, args.password)
+        except LoginError as exc:
+            print(f"登录失败：{exc}", file=sys.stderr)
+            return 2
+        print(f"已取到令牌（账号 {args.username}）⇒ 后续租户身份由令牌决定")
+
     ctx = Context(
         base_url=args.base_url,
         compose_file=Path(args.compose_file) if args.compose_file else DEFAULT_COMPOSE,
@@ -881,6 +963,7 @@ def main(argv: list[str] | None = None) -> int:
         ask_question=args.ask_question,
         wait_seconds=args.wait_seconds,
         run_pytest=not args.skip_pytest,
+        token=token,
     )
     results = run_all(ctx)
     print(render(results))
