@@ -241,6 +241,15 @@ cd backend && uv run python scripts/check_startup_readiness.py
    > ⇒ 两条通道**都可能**卡，且**卡哪一条不固定**。`gh api` 判因只用于确认「网络没断」，
    > 解法是**两条都试**（先默认、再 `HTTP/1.1`），别在一条上耗掉 5 分钟。
    > （另测：SSH 通道 `git@github.com` 本机 = `Permission denied (publickey)` ⇒ **无 key**，HTTPS 是唯一通道。）
+   >
+   > ⚠️ **第二次实测（2026-10-13，比上面更糟的一种）**：推 `4abe626` 时 **两条通道连试 5 轮全败**
+   > （默认 ×3 + `HTTP/1.1` ×2，等待 45s / 180s / 240s），报 `Failed to connect …:443 after 21xxx ms`
+   > 与 `Recv failure: Connection was reset`（**两种报错都出现了**）；而**同期** `gh api` 通
+   > （能读到远端 HEAD）、`Resolve-DnsName github.com` 正常（`20.205.243.166`）、**无代理环境变量**
+   > ⇒ 判因结论：**不是网络断、也不是凭据**，是 git-over-https 被间歇性掐。
+   > **最终由用户手动 `git push` 成功**（AI 侧始终失败）。
+   > ⇒ 纪律更新：**AI 试 2 轮（默认 + HTTP/1.1）仍失败 ⇒ 停手报告并把 commit 留在本地**，
+   > 交给用户手动推；**不要在重试上耗到 10 分钟**（本例耗了约 7 分钟才停）。
 
 ---
 
