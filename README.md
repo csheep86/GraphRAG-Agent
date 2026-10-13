@@ -99,3 +99,52 @@ cd backend && uv sync
 # 前端
 cd frontend && npm install
 ```
+
+## 部署
+
+**客户侧只此一条路径：`deploy/README.md`** —— 完整起停步骤、离线交付包的安装、已知坑清单都在那里。
+本节只给入口和验收出口，**不复制步骤细节**（两份文档一旦分叉，现场一定是按旧的那个做）。
+
+### 1. 前置条件
+
+| 项 | 要求 |
+|---|---|
+| 运行时 | Docker + Docker Compose v2（交付 compose 里**没有 `build:`**，现场不编译） |
+| 必填项 | `deploy/.env` 里的四个口令：`NEO4J_PASSWORD` / `POSTGRES_PASSWORD` / `APP_OWNER_PASSWORD` / `APP_RLS_PASSWORD` |
+| 端口 | 后端 `127.0.0.1:8000`、前端 `127.0.0.1:3000` —— **只绑回环**是刻意的，要对外访问请在前面加反向代理（那不是本仓库的职责） |
+
+### 2. 起停（照 `deploy/README.md`）
+
+```bash
+cd deploy
+cp .env.example .env          # 然后填上那四个口令
+docker compose up -d          # 首次会构建 backend / frontend 两个镜像
+docker compose ps             # backend / frontend / neo4j / postgres 期望 healthy
+```
+
+### 3. 验收出口
+
+安装验收清单是**脚本化**的（`docs/deployment-spec.md` §10 DR-E4），别照文档逐条手勾：
+
+```bash
+cd backend
+uv run python scripts/install_acceptance.py --help        # 先确认参数口径
+uv run python scripts/install_acceptance.py \
+    --base-url http://127.0.0.1:8000 \
+    --compose-file deploy/docker-compose.yml
+```
+
+⚠️ 它会**写数据**（建租户、跑一次样例文档与问答）⇒ 只能跑在目标环境或演练库，**不要**对着正在使用的库跑。
+
+### 4. 换域名 / IP 不用重建镜像
+
+交付镜像里的前端 Base URL 是**构建期**的默认值；现场要改成自己的域名 / IP 时，
+改 `deploy/.env` 里那两个变量即可（详见下面 §4 的步骤）：
+
+```bash
+# 1) 改 deploy/.env 的 API_BASE_URL（同时按需改 CORS_ALLOW_ORIGINS）
+docker compose up -d frontend   # 重建**容器**即可，不需要重建**镜像**
+```
+
+> 「容器 vs 镜像」的这一步差别，正是本轮修的东西：`up -d` 只是重新创建容器（秒级），
+> `docker compose build` 才是重建镜像（分钟级）。此前换地址只能走后者（审计 B4）。

@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     # -- 基础 --
     app_env: Literal["development", "test", "production"] = "development"
     app_name: str = "GraphRAG-Agent Backend API"
-    app_version: str = "1.6.0"
+    app_version: str = "1.7.0"
     api_prefix: str = "/api/v1"
 
     # -- 数据库：**DR-B1 裁决**：开发 / 测试 / 生产一律 PostgreSQL 16.x --

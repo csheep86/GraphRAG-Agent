@@ -83,7 +83,7 @@ services:
   # **无 `build:`**：本文件是交付形态，镜像只能来自离线包 / 客户内网 registry。
   # 与 `backend` 共用**同一份** `graphrag-agent/backend` 镜像（Y6），只是 `command:` 不同。
   db-init:
-    image: graphrag-agent/backend:1.6.0
+    image: graphrag-agent/backend:1.7.0
     command:
       - python
       - scripts/init_rls_roles.py
@@ -105,12 +105,12 @@ services:
 
   backend:
     # DR-A6（G-19）：tag **必须固定小版本**（`:latest` 是不可复现的同义词，D-N）且
-    # == `backend/app/core/config.py` 的 `app_version`（当前 1.6.0）⇒
+    # == `backend/app/core/config.py` 的 `app_version`（当前 1.7.0）⇒
     # 由 `test_g19_delivery_compose_tags_track_app_version` 机械盯住漂移。
     # ⚠️ 这个 tag 与离线包 tar 里的 tag **必须逐字节相同**，差一个字符客户现场 `docker load`
     #    之后 compose 就会去找一个不存在的镜像（`build_delivery_images.py` 的保存清单
     #    **由本文件反推**，就是为了让这件事不可能漂移）。
-    image: graphrag-agent/backend:1.6.0
+    image: graphrag-agent/backend:1.7.0
     environment:
       # DR-B1：连本文件的 `postgres` 服务。**必须写服务名**，不能写 localhost。
       # **P3-A**：连库账号必须是受限角色 `app_rls`（`NOBYPASSRLS`）。用超级用户连库
@@ -123,7 +123,10 @@ services:
       # 必须全大写：`case_sensitive=False` 让小写写法侥幸可用，
       # 但一旦收紧大小写就**静默连不上**（症状是图谱功能全废、healthcheck 却仍绿）。
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      CORS_ALLOW_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000"]'
+      # P7-E：可配了（此前是写死的 JSON 字符串 ⇒ 客户换域名必须改本文件）。
+      # 形态仍是 JSON 数组（`Settings.cors_allow_origins: list[str]` 从这里解析）；
+      # **默认值刻意不放松**，依旧只有回环口径。
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-'["http://127.0.0.1:3000","http://localhost:3000"]'}
       # §3 生产默认值：私域禁外发，生产不得为 false
       PRIVATE_DEPLOY_ENABLED: "true"
       # ℹ️ **这里刻意不注入验签公钥** —— 公钥按 ADR-0006 **R-L5**「公钥内置」
@@ -174,7 +177,16 @@ services:
     # ⚠️ **R18 红线**：镜像构建时必须带 `NEXT_PUBLIC_USE_MOCK=false`
     # （`build_delivery_images.py` 已写死，且 `--dry-run` 会把它打出来供核对）——
     # 漏了这个 build-arg，容器化前端会**静默走 Mock**（看起来能跑、数据全是假的）。
-    image: graphrag-agent/frontend:1.6.0
+    image: graphrag-agent/frontend:1.7.0
+    # P7-E：**运行时**可变的 API 地址（**不是** build 期那一份）。
+    # 容器启动时 `entrypoint.sh` 会把它写成 `/app/public/env.js`，页面用
+    # `beforeInteractive` 先载 ⇒ 改完之后 `docker compose restart frontend` 即生效，
+    # **不需要重建镜像**。
+    #
+    # ⚠️ 这里**只**放 `NEXT_PUBLIC_API_BASE_URL`：`NEXT_PUBLIC_USE_MOCK` / `APP_ENV`
+    #   是 R18 红线，只能构建期注入（在前 Dockerfile 注释与 entrypoint.sh 里都有写明）。
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${API_BASE_URL:-http://127.0.0.1:8000}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

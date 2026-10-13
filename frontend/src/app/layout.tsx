@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 
 import { AppShell } from "@/components/layout/app-shell";
 
@@ -30,6 +31,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="h-full">
         <AppShell>{children}</AppShell>
       </body>
+      {/* P7-E：容器启动时由 `frontend/entrypoint.sh` 生成的运行时环境变量。
+          `beforeInteractive` 是**必须的** —— 它保证 `window.__ENV__` 先就位，
+          业务 bundle 里 `client.ts::runtimeApiBaseUrl()` 才读得到；换成 `afterInteractive`
+          会用构建期那个地址闪一次，症状是「首次请求打到旧 IP / 旧域名」。 */}
+      <Script src="/env.js" strategy="beforeInteractive" />
     </html>
   );
 }

@@ -95,7 +95,7 @@ services:
   # 幂等：角色 / 函数 / 策略 / 建表全部可重复跑 ⇒ 每次 `up` 都执行，二次起只是 no-op。
   db-init:
     build: *backend-build
-    image: graphrag-agent/backend:1.6.0
+    image: graphrag-agent/backend:1.7.0
     command:
       - python
       - scripts/init_rls_roles.py
@@ -120,10 +120,10 @@ services:
     build: *backend-build
     # DR-A6（G-19）：版本化镜像。保留 build: 的同时声明 image: ⇒ 构建产物自动打此 tag，
     # 现场即可 pull 升级 / 改 tag 回滚。tag **必须固定小版本**（`:latest` 是不可复现的同义词，D-N）。
-    # ⚠️ 此 tag 与 `backend/app/core/config.py` 的 `app_version`（当前 1.6.0）**无自动
+    # ⚠️ 此 tag 与 `backend/app/core/config.py` 的 `app_version`（当前 1.7.0）**无自动
     #    联动** ⇒ **发版 bump 时必须手工同步这里**；漏改由
     #    `test_g19_own_image_tags_track_app_version` 判红（2026-10-01，决策点 1 采纳 (a)）。
-    image: graphrag-agent/backend:1.6.0
+    image: graphrag-agent/backend:1.7.0
     environment:
       # DR-B1：连本文件的 `postgres` 服务。**必须写服务名**，不能写 localhost——
       # 容器里的 localhost 是容器自己；写错的表现是连不上，而 healthcheck 报得很含糊。
@@ -186,7 +186,7 @@ services:
     # DR-A6（G-19）：tag 固定小版本；发版时与 backend 一并同步。
     # 位置注意：必须在 `build.args` 块**之后**且与之同级（4 空格）。插在 args 中间
     #           会把剩余 ARG 挤出该块 ⇒ 整个 compose 不可解析（YAML 静默变死文件）。
-    image: graphrag-agent/frontend:1.6.0
+    image: graphrag-agent/frontend:1.7.0
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

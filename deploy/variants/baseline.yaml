@@ -15,7 +15,7 @@
 #    （需求基线 §300 点名的 demo 形态）⇒ G-12 已转正常驻门禁（≥2 已满足）。
 
 customer: baseline
-base_ref: v1.6.0                        # 基座版本（含补丁位）；与 config.py 的 app_version 对应
+base_ref: v1.7.0                        # 基座版本（含补丁位）；与 config.py 的 app_version 对应
 plugins:
   - id: json-csv-export
     version: 1.0.0

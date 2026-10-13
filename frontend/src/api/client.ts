@@ -6,8 +6,33 @@ import type { components } from "@/types/api";
  * ========================================================================== */
 
 // 使用 `||` 而非 `??`：环境变量被显式置空时也要回退到默认值
-export const API_BASE_URL =
+const BUILD_TIME_API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
+/**
+ * **运行时**那一层 API 地址（P7-E）。
+ *
+ * **为什么需要它**：`NEXT_PUBLIC_*` 在 **build 期**被内联成立面量
+ * （`process.env.NEXT_PUBLIC_*` 编译时就被替换掉）⇒ 客户把自己的域名 / IP 换掉之后，
+ * 旧的写法只能**重建镜像**。破法是「运行时再补一层」：容器入口点启动时把环境变量
+ * 写成 `public/env.js`，页面用 `<Script strategy="beforeInteractive">` 先载它，
+ * 这里再优先读 `window.__ENV__`（生成逻辑见 `frontend/entrypoint.sh`）。
+ *
+ * **优先级：运行时 > 构建期 > 内置默认**。
+ *
+ * ⚠️ **红线：只有 API 地址享受运行时。`NEXT_PUBLIC_USE_MOCK`（R18）刻意留在构建期**
+ * —— 若它也能在现场被改，客户就能把那个"默认不容错"的 Mock 开关打开，
+ * 页面看起来能跑、数据全是假的（这段对照 `frontend/Dockerfile` 顶部的 R18 红线）。
+ */
+function runtimeApiBaseUrl(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const injected = (
+    window as unknown as { __ENV__?: Record<string, string | undefined> }
+  ).__ENV__?.NEXT_PUBLIC_API_BASE_URL;
+  return injected || undefined;
+}
+
+export const API_BASE_URL = runtimeApiBaseUrl() || BUILD_TIME_API_BASE_URL;
 
 export const APP_ENV = process.env.NEXT_PUBLIC_APP_ENV || "development";
 

@@ -22,6 +22,33 @@ docker compose logs -f backend
 docker compose down         # 停；数据卷保留
 ```
 
+### 换域名 / IP：**改这里就行，不用重建镜像**
+
+前端请求后端的地址在**构建期**被烧进镜像，Dockerfile 里那份只是默认值。要改：
+
+```bash
+# 1) 编辑 deploy/.env
+API_BASE_URL=http://<你的域名或 IP>:8000
+CORS_ALLOW_ORIGINS=["http://<你的域名或 IP>:3000"]
+# 2) 重新创建**容器**（不是镜像）
+docker compose up -d frontend
+```
+
+三层口径别搞混 —— 这部分常被误读：
+
+| 动作 | 耗时 | 适用范围 |
+|---|---|---|
+| `docker compose restart frontend` | 秒级 | **不会**应用新环境变量：restart 复用容器原有配置。适合"地址没变、只是想重跑一遍" |
+| `docker compose up -d frontend` | 秒级 | 应用新 env ⇒ 换地址就用它。recreate 容器，**不重新构建镜像** |
+| `docker compose build frontend` | 分钟级 | 重新构建镜像。**改了前端源码才需要**；只换地址不必 |
+
+> 为什么二层？`frontend/entrypoint.sh` 在容器**每次启动**时把 `API_BASE_URL` 写成
+> `public/env.js`，页面再以 `beforeInteractive` 优先载入它 ⇒ 前者够用了。
+>
+> ⚠️ 刻意**不**能运行时改的是 `NEXT_PUBLIC_USE_MOCK`：它按零假数据红线（R18）
+> 锁死在构建期。若它也能在现场被打开，页面就会"能跑但数据全是假的" ——
+> 这类故障没有症状，所以宁可让要动这个开关的人去重建镜像。
+
 ### `db-init`：一次性建库服务（**P3-A，2026-10-04 起**）
 
 RLS 生效的前提是「应用账号**不是**表 owner、且 `NOBYPASSRLS`」，而这个前提**只能由
