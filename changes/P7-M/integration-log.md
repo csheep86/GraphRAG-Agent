@@ -85,8 +85,14 @@ app/core/auth.py:103  return Identity(org_id=claims.org_id, actor_id=claims.user
 
 ## 7. CI 读数回填（**R-10：以 CI 为最终裁决**）
 
+> ⚠️ 推送当时本机网络不可达（`github.com:443` 连不上），两次推送失败；恢复后才推成功
+> ⇒ 下面的 CI 读数是**推成功后实跑**的，不是本地结果外推的。
+
 | 项 | 读数 |
 |---|---|
-| CI run | **待回填** |
-| 四个 job | 待回填 |
-| CI 后端 pytest | 待回填（基线：**1311 passed / 7 skipped / 0 failed**，本批无新增用例 ⇒ 应保持在 1311） |
+| CI run | **38391401636**（本次 push 含 `9b430e8` 实现 + `56316d3` 立案两个 commit，一次 run 覆盖） |
+| 四个 job | 后端（ruff + pytest）✅ 2m30s ｜前端（lint + gen:api）✅ 44s ｜契约校验（前后端漂移门禁）✅ 31s ｜流水线汇总 ✅ 3s |
+| CI 后端 pytest | **1311 passed / 7 skipped / 0 failed**（`Ruff 静态检查 All checks passed!`） |
+
+与预测的核销：本批**没新增任何用例** ⇒ CI 计数应与 P7-D 收工时的 `1311` 持平。
+实测正好是 1311 ⇒ 既没有退化，也没有"多出来"的用例，符合 R-9 的期望。
