@@ -118,10 +118,73 @@ active 节点（`fetch_active_kg_version()` **无参** ⇒ 兜底按字典序取
 ## 7. 边界（**没做的**）
 
 - **迁移脚本未执行**：Non-goal 6 —— 不许碰生产 / 目标环境真实数据；本机只跑了干跑，**源环境一个字节未改**。
-- **段落 ②（演练）未开工**：**不是因为 Y4**（已沿用 P6-X 的 `wIlliam` / `tianen`），而是
-  ① 演练日期与"两人当场在场"尚未排定；② §5.1 期望值表判分待人定稿。
+- ~~**段落 ②（演练）未开工**~~ → **2026-10-13 已开工 ①（恢复演练）**，读数见 §7.1。
 - 未改 `check_9` / §10 判据（Non-goal 1）；未修 F-P6X-3（Non-goal 2）；未动 `cost_metrics`（Non-goal 7）。
 - 未起任何真 LLM 调用（Non-goal 4）。
+- ~~**第 9 项仍未 PASS**~~ → **已 PASS**：留证 `docs/drills/restore-drill-20261013.md`
+  由 **wIlliam 写 / tianen 署名**（Non-goal 3：AI 不代写正文、不代判结论），**已落库** ⇒ 复跑转 PASS。
+
+---
+
+## 7.1 演练 ①（2026-10-13 恢复演练）实测读数
+
+**执行 `wIlliam` / 见证 `tianen**（两人当场在场）；AI 只跑命令 + 校验 + 回登。**
+**内部演练，非客户现场验收**（R-10）。命令序列见 `drill-20261013-runbook.md`。
+
+| 序 | 动作 | 实测读数 |
+|---|---|---|
+| 1 | 起独立环境（`COMPOSE_PROJECT_NAME=graphrag-drill`，compose **副本**改宿主端口 7688 / 7475） | 四服务 healthy；新卷 `graphrag-drill_*`（与源环境 `graphrag-agent_*` 分离）；`GET /health` = **200** |
+| 3 | License | 先用**宿主**指纹签 ⇒ `LICENSE_FINGERPRINT_MISMATCH`；改在**容器内**取指纹（`4d0e04e0…`，machine-id `208c9ebe…`）重签 ⇒ `status: active`（max_orgs 5 / max_seats 50 / 7 modules / 2027-12-31） |
+| 4 | 现跑备份集 | 五类齐全、SHA-256 全过：PG 192157B ／图库 6028528B ／storage 114688000B ／license 580B ／config 3632B（6 项密钥脱敏）⇒ `[OK] backup` |
+| 5 | 恢复 `--apply` | PG ✅ 已恢复到 `graphrag` 库；图库 ❌ `neo4j-admin load` 失败（退出码 1）；storage ⚠️ 落到**宿主** `backend/storage`；license ⚠️ 落到**宿主** `deploy/license/app.lic` |
+| 5b | 图库补恢复 | 停演练栈图库 + `docker run --volumes-from` 一次性容器 load ⇒ **42 files / 268.3MiB** ⇒ 11668 节点、176 个 `:KgVersion` |
+| 7 | 十项验收（**留证落库后复跑**） | **PASS 6 / SKIP 3 / FAIL 1**（明细下） |
+
+**十项明细（复跑后）**：1 PASS ／ 2 PASS ／ 3 PASS（G-23 复用 `1 passed`；委派 pytest 跑在**本机**测试库，非演练栈）／
+4 SKIP（登记过）／ 5 SKIP（登记过）／ **6 FAIL** ／ 7 SKIP（g9 `4 passed`、g26 `30 passed`，目标环境子项因 401 SKIP）／
+8 PASS ／ **9 PASS**（留证 `docs/drills/restore-drill-20261013.md` 已落库，判据认到 1 份）／ 10 PASS。
+（落库前那轮 = PASS 5 / SKIP 4 / FAIL 1 ⇒ **只有第 9 项由 SKIP 转 PASS**，其余读数不变。
+两份报告都留着：`acceptance-20261013.json`（前）与 `acceptance-20261013-final.json`（后）。）
+
+### 三个真实发现（**登记，本批不改**）
+
+1. **F-P6X-7（新）**：`restore.py::restore_neo4j`（`:203-232`）只在**容器 running** 时 `docker exec`，
+   而 `neo4j-admin database load` **要求停服**；且 `--from-path` 传的是**宿主**路径、容器内不可达
+   ⇒ 「宿主编排 → 容器执行」形态下图库恢复**不可能成功**。`backup.py` 已用「容器停 ⇒ `docker run --volumes-from`」
+   解决同款问题（`:153-190`），**恢复侧没有** ⇒ 两侧不对称。
+2. **F-P6X-8（新）**：`install_acceptance.py` **无认证入口**（`:836-864` 无 `--token`）⇒ 目标环境为
+   生产形态（`PRIVATE_DEPLOY_ENABLED=true`、`dev_fallback_enabled: False`）时，第 6 项读 `audit_log`
+   必 **401 ⇒ FAIL**、第 7 项目标环境子项同理 ⇒ SKIP。按 Non-goal 9 **不许改环境 / 改判据**迁就
+   ⇒ 照实记 FAIL。（数据本身是够的：演练栈 `audit_log` = **862 条** ≥ 7，第 6 项判据可达，是工具读不到。）
+3. **§6.2 `ghost_version` 复现**：PG active `20261012T064951Z-inc-569555ad` 在图库无镜像节点
+   ⇒ 恢复后 §6.2 判 **FAIL**（退出码 2「不许启动」）。这是 F-P6X-1 的**历史**部分：本批修复只管
+   **新**版本同步，历史节点须迁移脚本补 ⇒ Non-goal 6 ⇒ 本批不执行。
+
+### ⚠️ 本次操作失误（守史实，不掩饰）
+
+`restore.py` 的 storage / license 落点默认取 `settings`（**本机**路径）⇒ `storage` 被解开覆盖到
+宿主 `backend/storage`、`license` 覆盖到宿主 `deploy/license/app.lic`（同源 580B / 10-11，无实质差异）；
+**演练栈容器内的 License 未受影响**（588B，`status` 仍 active）。
+⇒ 教训：容器化独立环境的恢复须在**目标环境内**跑 restore，或显式给 `--storage-root` / `--license-file`。
+
+### 诚实标注（写进留证，不许略）
+
+- 本次**同机**起独立栈 ⇒ **未覆盖**「换机 ⇒ License 失效、须重新签发」场景；
+- 容器内 machine-id（`208c9ebe…`）**与宿主不同** ⇒ Windows 上 `/etc/machine-id` 挂载无效，
+  指纹回落容器 MAC（compose `:138-144` 已警告）；
+- 第 3 / 7 项的 pytest 委派跑在**本机**测试库，**不是**演练栈 ⇒ 属"复用既有用例"口径，不是目标环境实测。
+
+### 判分裁决（**wIlliam 2026-10-13**；AI 给选项与建议，**勾选与定稿归人**）
+
+| 问 | 裁决 |
+|---|---|
+| 8.1 环境可复现？ | **B 部分达标** —— 数据复现了，但 §6.2 不许启动 + storage / license 落点错位 |
+| 8.2 第 6 项 FAIL 归类 | **B 记 FAIL + 另立缺陷** —— 口径冲突（登记「未授权⇒SKIP」vs 实现「FAIL」）交下批裁决 |
+| 8.3 §6.2 未过处置 | **A 到此为止，另立批** —— 历史镜像迁移会写源环境 ⇒ 不动（守 Non-goal 6） |
+| 8.4 是否单独立批 | **A 合并进下一批** —— F-P6X-7 + F-P6X-8 + 历史镜像迁移 |
+
+§7 过程观察与 §8.5 / §8.6 措辞：由 wIlliam 从 AI 提供的**候选措辞**中逐条选定
+（候选只含机械读数；署名、观察、结论**均由执行者本人定**，AI 未代写一句正文）。
 
 ---
 
