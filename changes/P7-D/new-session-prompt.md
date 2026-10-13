@@ -77,7 +77,7 @@ uv run pytest tests/test_frontend_contract_coverage.py -q         # 必须 10 pa
 | 运行时注入**怎么做** | 三选一已被 D2 机械砍到两选一 ⇒ **推荐 ① entrypoint 生成 `env.js` + `<Script>` 注入**（零新增运行时依赖，符合 §5 第 2 条"前端依赖应克制"）；选 ② nginx 要先拿下依赖批准 |
 | **`USE_MOCK` 不许跟着走运行时** | 已由 **D8 / R18** 定死：**不许**。只有 Base URL 走运行时 |
 | CORS 怎么改 | 已由 **D3** 收窄：把 compose 里那个写死的字符串换成带默认值的变量插值，**默认值不动** |
-| **bump 1.7.0 与 P7-H 的耦合**（D9） | 🟥 **未裁决** ⇒ 走 §10-① 让用户点：**(a)** 本批就地改镜像内容、不 bump（接受"同 tag 不同内容"并登记）；**(b)** 本批先 bump 1.7.0 并连带补 release notes（等于替 P7-H 启动）；**(c)** 本批只做 README + CORS，Base URL 运行时化推迟到 bump 之后 |
+| **bump 1.7.0 与 P7-H 的耦合**（D9） | ✅ **已裁决（2026-10-13，wIlliam 采纳建议）→ 选 (b)**：顺带 **bump 1.7.0**，把 bump 连同 P7-E 一起做掉（P7-H 的前提本来就是 bump，提前做不算浪费）。执行时同时落到：`config.py:131 app_version`、交付 compose 的 own image tags、必要时的 release notes。（a）「同 tag 不同内容」不可接受：一旦有人从 registry 拉 1.6.0 就拿到旧内容，与 G-19「交付物可版本追溯」冲突 |
 | B6 的 release notes 部分 | 建议按 **D4** 判为"当前非缺口"，登记给 bump 之后那批；**本批不补 v1.7.0 notes** |
 
 ---
@@ -135,8 +135,9 @@ uv run pytest tests/test_frontend_contract_coverage.py -q         # 必须 10 pa
 
 ## 10. 升级用户的四种情况
 
-1. **要做判定动作却没有授权**：**D9 的 bump 1.7.0 与 P7-H 耦合**（就地改 / 提前 bump / 推迟 staging）⇒
-   **先让用户点再动手**，别自己挑；这是本批唯一一个可能牵动别的批次开关的决定。
+1. ~~要做判定动作却没有授权~~ **D9 已裁决为 (b)**（见 §5），不用再升级。
+   但仍需在动 `app_version` 之前确认一件事：**release notes v1.7.0 现在写还是等 P7-H**
+   ——本文倾向"bump 时就补一版 notes"，内容至少覆盖本次 Base URL 运行时化。
 2. **三方案都不可行 / 必须重建镜像** ⇒ 停下报告（proposal §5.1：商业影响里"现场改域名要重建"= 不可接受）。
 3. **需要新增前端依赖或 nginx 组件** ⇒ 报告后等批准（前端依赖应克制）。
 4. **CI 红且复核两遍仍红** ⇒ 带 job 名 + 失败行 + 归因。
