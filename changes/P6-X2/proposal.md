@@ -53,21 +53,40 @@
 汇总规则（`:136-143`）：**FAIL 优先 → 其次 SKIP → 全 PASS 才 PASS** ⇒ **一项里有一个子项 SKIP，整项就是 SKIP**。
 退出码只看 FAIL（`:898`）⇒ **SKIP 再多也是 0**，`render` 的汇总行明写「SKIP **不是**通过」。
 
-| 项 | 判据 | 独立环境**预期**（AI 提案） | 机械依据 | 演练前必须做的动作 |
-|---|---|---|---|---|
-| **1** 全 healthy + `/health` 200 | `docker compose ps` 全 healthy **且** HTTP 200 | **PASS** | SKIP 只在：无 docker / 缺 compose 文件（`:311-318`）或 compose 命令本身失败（`:268-278`，原文：「验不到」≠「观测到不健康」）/ 缺 base-url（`:332-333`）；compose 四服务均有 healthcheck（§2） | 独立环境 `up -d` 等到全 healthy；给 `--compose-file` + `--base-url` |
-| **2** License 生效 | `GET /license/status` = `active` + 四维度 | **PASS**（**前提是重新签发**） | FAIL：`status != "active"`（`:351-352`）；SKIP 只在缺 base-url（`:339-347`）。⚠️ **P6-Z 已定：换机 ⇒ License 失效，须重新签发**（`tools/license/issue_license.py`，**不进镜像**） | **先签发 license 再验收**；不签 ⇒ 必 FAIL |
-| **3** License 拒绝可达 | 移除 license → 403 `LICENSE_MISSING` | **PASS** | 委派 pytest：`tests/test_guardrails_compliance.py -k g23_missing_license_blocks_requests`（`:375-377`）；SKIP 只在 `--skip-pytest`（`:209-212`）；空跑（`ran == 0`）= **FAIL**（`:229-235`） | 不加 `--skip-pytest`；该用例要 PG `graphrag_test`（conftest.py:184）⇒ 演练机 PG 须在跑（本机基线 1251/43 已跑过 ⇒ 已就绪） |
-| **4** 上传→解析→建图 | 样例文档 `pending → completed` + active `kg_version` 可读 | **SKIP（登记过）** | 不给 `--pipeline-sample` ⇒ SKIP（`:387-395`，原文「本批默认**不**碰真解析器 / LLM」） | **当天不许补跑**；SKIP 是预期内，**不是回归**（Non-goal 4） |
-| **5** 问答可溯源 | 引用 ≥1 且可回查原文 | **SKIP（登记过）** | 不给 `--ask-question` ⇒ SKIP（`:458-465`，「真 LLM 不进 CI」）。⚠️ **给了**却零引用且未 `refused` ⇒ **FAIL**（`:480-482`） | 同上，**不给这个参数** |
-| **6** 审计留痕 | `audit_log` 新增 **≥7 条**且 `trace_id` 可聚合 | **PASS（可 ¥0 达标）** ⚠️ **陷阱项** | SKIP **只在**缺 base-url（`:490-491`）⇒ 演练**会**给 base-url ⇒ **不再 SKIP**，`len(items) < 7` 直接 **FAIL**（`:496-497`）。<br>可达路径：`AuditMiddleware` 对 `/api/v1/*` 且**非 health** 的请求**全量写**（`middleware.py:139-147`），且 `finally` 里写 ⇒ **403 / 失败也留痕**（`:133-135`）；`audit.list` 自举（audit.py:81） | **先连打 ≥7 次只读 `/api/v1/*`**（如 `GET /api/v1/documents?page_size=1`、`GET /api/v1/audit?page_size=1`）⇒ 不起 LLM、¥0 |
-| **7** 跨 org 被拦截 | 列表空 / 直取 403 | **SKIP（整项）** | 三子项：g9（`:510-516`）/ g26（`:517-523`）委派 pytest；目标环境子项缺 `--org-b` 或 **401/403 ⇒ SKIP**（`:540-554`，原文：「被 RBAC 挡在门外 ≠ 隔离生效」）<br>⇒ 一票 SKIP ⇒ **整项 SKIP**，即便两个 pytest 子项 PASS | 给 `--org-a` / `--org-b`；授权没备好也**只是 SKIP 不是 FAIL**。g9 真图用例本地未设开关会 skip，但 `test_g9_0_ci_really_has_neo4j_service` 是静态查 `ci.yml` ⇒ **会真跑** ⇒ 不会撞「空跑 FAIL」 |
-| **8** 备份成功 | `backup-manifest.json` 完整 + SHA-256 通过 | **PASS** | 纯本地哈希（`:52` / `:594-597`），**离线最稳的一项**；⚠️ **给了 `--backup-dir` 但目录不存在 = FAIL，不是 SKIP**（`:591-592`） | **演练当天先跑一次 `scripts/backup.py`**（P6-W 那套未入库、可能已被清，提示词 §4 已登记） |
-| **9** 恢复演练 | `docs/drills/restore-drill-*.md` 存在 | **PASS（本批目标）** | 只认留证**真实存在**（`:681`）；有测试钉死（test_install_acceptance.py:173-188） | **先有留证（人写），再回登文档**；留证须标「内部演练，非客户现场验收」+ 执行者 / 见证者 |
-| **10** 生产配置 | `PRIVATE_DEPLOY_ENABLED=true` **且** 无密钥进日志 | **PASS** | SKIP：缺 `--env-file`（`:728-736`）／缺 `--log-file`（`:738-747`）／env 里无可比密钥（`:754-758`）。⚠️ **日志文件不存在也计入 leaked ⇒ FAIL**（`:763-764`） | 两个参数都要给，**且路径真实存在** |
+| 项 | 判据 | 独立环境**预期**（AI 提案） | **演练 ① 实测 + 定稿**（**wIlliam 2026-10-13 拍板**） | 机械依据 | 演练前必须做的动作 |
+|---|---|---|---|---|---|
+| **1** 全 healthy + `/health` 200 | `docker compose ps` 全 healthy **且** HTTP 200 | **PASS** | **PASS** ✅（四服务 healthy、`/health` 200、新卷 `graphrag-drill_*`） | SKIP 只在：无 docker / 缺 compose 文件（`:311-318`）或 compose 命令本身失败（`:268-278`，原文：「验不到」≠「观测到不健康」）/ 缺 base-url（`:332-333`）；compose 四服务均有 healthcheck（§2） | 独立环境 `up -d` 等到全 healthy；给 `--compose-file` + `--base-url` |
+| **2** License 生效 | `GET /license/status` = `active` + 四维度 | **PASS**（**前提是重新签发**） | **PASS** ✅（容器内取指纹重签 ⇒ `active`，四维度齐全；⚠️ **宿主指纹会 MISMATCH** ⇒ 指纹须在容器内取） | FAIL：`status != "active"`（`:351-352`）；SKIP 只在缺 base-url（`:339-347`）。⚠️ **P6-Z 已定：换机 ⇒ License 失效，须重新签发**（`tools/license/issue_license.py`，**不进镜像**） | **先签发 license 再验收**；不签 ⇒ 必 FAIL |
+| **3** License 拒绝可达 | 移除 license → 403 `LICENSE_MISSING` | **PASS** | **PASS** ✅（G-23 复用 `1 passed`；⚠️ 委派 pytest 跑在**本机**测试库，非演练栈） | 委派 pytest：`tests/test_guardrails_compliance.py -k g23_missing_license_blocks_requests`（`:375-377`）；SKIP 只在 `--skip-pytest`（`:209-212`）；空跑（`ran == 0`）= **FAIL**（`:229-235`） | 不加 `--skip-pytest`；该用例要 PG `graphrag_test`（conftest.py:184）⇒ 演练机 PG 须在跑（本机基线 1251/43 已跑过 ⇒ 已就绪） |
+| **4** 上传→解析→建图 | 样例文档 `pending → completed` + active `kg_version` 可读 | **SKIP（登记过）** | **SKIP（登记过）** ✅ 与预期一致（未给 `--pipeline-sample`） | 不给 `--pipeline-sample` ⇒ SKIP（`:387-395`，原文「本批默认**不**碰真解析器 / LLM」） | **当天不许补跑**；SKIP 是预期内，**不是回归**（Non-goal 4） |
+| **5** 问答可溯源 | 引用 ≥1 且可回查原文 | **SKIP（登记过）** | **SKIP（登记过）** ✅ 与预期一致（未给 `--ask-question`；真 LLM 未授权 Y1″） | 不给 `--ask-question` ⇒ SKIP（`:458-465`，「真 LLM 不进 CI」）。⚠️ **给了**却零引用且未 `refused` ⇒ **FAIL**（`:480-482`） | 同上，**不给这个参数** |
+| **6** 审计留痕 | `audit_log` 新增 **≥7 条**且 `trace_id` 可聚合 | **PASS（可 ¥0 达标）** ⚠️ **陷阱项** | ⚠️ **FAIL**（**与预期不符**）—— 判据读数为 0，但**数据够**：演练栈 `audit_log` = **862 条** ≥ 7 ⇒ **不是数据不足，是工具读不到**（F-P6X-8：脚本无认证入口 ⇒ 401）。**定稿：照实记 FAIL**，原「预期 PASS」保留作对照；口径冲突（登记「未授权⇒SKIP」vs 实现「401⇒FAIL」）**交下批裁决**，本批不改判据 | SKIP **只在**缺 base-url（`:490-491`）⇒ 演练**会**给 base-url ⇒ **不再 SKIP**，`len(items) < 7` 直接 **FAIL**（`:496-497`）。<br>可达路径：`AuditMiddleware` 对 `/api/v1/*` 且**非 health** 的请求**全量写**（`middleware.py:139-147`），且 `finally` 里写 ⇒ **403 / 失败也留痕**（`:133-135`）；`audit.list` 自举（audit.py:81） | **先连打 ≥7 次只读 `/api/v1/*`**（如 `GET /api/v1/documents?page_size=1`、`GET /api/v1/audit?page_size=1`）⇒ 不起 LLM、¥0 |
+| **7** 跨 org 被拦截 | 列表空 / 直取 403 | **SKIP（整项）** | **SKIP（整项）** ✅ 与预期一致（g9 `4 passed` / g26 `30 passed`；目标环境子项因 401 ⇒ 一票 SKIP 拖整项） | 三子项：g9（`:510-516`）/ g26（`:517-523`）委派 pytest；目标环境子项缺 `--org-b` 或 **401/403 ⇒ SKIP**（`:540-554`，原文：「被 RBAC 挡在门外 ≠ 隔离生效」）<br>⇒ 一票 SKIP ⇒ **整项 SKIP**，即便两个 pytest 子项 PASS | 给 `--org-a` / `--org-b`；授权没备好也**只是 SKIP 不是 FAIL**。g9 真图用例本地未设开关会 skip，但 `test_g9_0_ci_really_has_neo4j_service` 是静态查 `ci.yml` ⇒ **会真跑** ⇒ 不会撞「空跑 FAIL」 |
+| **8** 备份成功 | `backup-manifest.json` 完整 + SHA-256 通过 | **PASS** | **PASS** ✅（五类齐全、SHA-256 全过：PG 192157B／图库 6028528B／storage 114688000B／license 580B／config 3632B） | 纯本地哈希（`:52` / `:594-597`），**离线最稳的一项**；⚠️ **给了 `--backup-dir` 但目录不存在 = FAIL，不是 SKIP**（`:591-592`） | **演练当天先跑一次 `scripts/backup.py`**（P6-W 那套未入库、可能已被清，提示词 §4 已登记） |
+| **9** 恢复演练 | `docs/drills/restore-drill-*.md` 存在 | **PASS（本批目标）** | **PASS** ✅（留证 `restore-drill-20261013.md` 落库后复跑转 PASS；落库前那轮是 SKIP ⇒ **SKIP 不是通过**） | 只认留证**真实存在**（`:681`）；有测试钉死（test_install_acceptance.py:173-188） | **先有留证（人写），再回登文档**；留证须标「内部演练，非客户现场验收」+ 执行者 / 见证者 |
+| **10** 生产配置 | `PRIVATE_DEPLOY_ENABLED=true` **且** 无密钥进日志 | **PASS** | **PASS** ✅（`PRIVATE_DEPLOY_ENABLED=true`、5 个密钥值在 1 份日志里均未出现） | SKIP：缺 `--env-file`（`:728-736`）／缺 `--log-file`（`:738-747`）／env 里无可比密钥（`:754-758`）。⚠️ **日志文件不存在也计入 leaked ⇒ FAIL**（`:763-764`） | 两个参数都要给，**且路径真实存在** |
 
-**AI 提案的汇总预期**：**PASS 7 / SKIP 3 / FAIL 0**（SKIP = 第 4、5 项「登记过」+ 第 7 项目标环境子项拖整项）。
+### 汇总（**两行都留：事前预期 vs 事后实测**）
+
+- **演练 ① 实测（2026-10-13，wIlliam 定稿）**：**PASS 6 / SKIP 3 / FAIL 1**
+  （SKIP = 第 4、5 项「登记过」+ 第 7 项目标环境子项拖整项；FAIL = 第 6 项）。
+- **演练前 AI 提案（保留作对照）**：**PASS 7 / SKIP 3 / FAIL 0**。
+  ⚠️ **差异唯一来源 = 第 6 项**（预期 PASS → 实测 FAIL）：原因是**工具缺口 F-P6X-8**，
+  **不是数据不足**（`audit_log` 862 条 ≥ 7 ⇒ 判据本身可达）⇒ **不许为对齐预期去改判据**。
+
 ⚠️ **与本机基线（PASS 1 / SKIP 9）不同口径，不许跨口径比**（提示词 §7 纪律）—— 本机那趟是**没给 base-url** 才 9 项 SKIP。
+
+### 演练 ① 暴露的三条（**定稿备注；本批不改，下批一眼见坑**）
+
+1. **F-P6X-7**：`restore.py` 图库恢复在「宿主编排 → 容器执行」形态下**不可行**
+   （只走 `docker exec`，而 `neo4j-admin load` 要求停服；`--from-path` 传宿主路径、容器内不可达）；
+   `backup.py` 已用 `--volumes-from` 解同款问题 ⇒ **两侧不对称**。演练中按备份侧思路**手工补完**
+   图库（42 files / 268.3 MiB ⇒ 11668 节点、176 个 `:KgVersion`）。
+2. **F-P6X-8**：`install_acceptance.py` **无认证入口** ⇒ 生产形态（`PRIVATE_DEPLOY_ENABLED=true`、
+   `dev_fallback_enabled: False`）下第 6 项必 FAIL、第 7 项目标环境子项必 SKIP ⇒ **工具缺口，非演练失败**。
+3. **§6.2 `ghost_version`**：PG active `20261012T064951Z-inc-569555ad` 在图库无镜像节点
+   ⇒ 恢复后 §6.2 判 **FAIL**（退出码 2「不许启动」）⇒ 属 F-P6X-1 的**历史**部分，
+   补它须写源环境 ⇒ **Non-goal 6 ⇒ 本批不执行**（本次裁 8.3-A：到此为止、另立批）。
 
 ### 3.1 演练前必做的 4 个动作（**不做就会变 FAIL，不是 SKIP**）
 
@@ -95,7 +114,7 @@
 | Y6 | 镜像 org 维度 / supersede 范围是否纳入本批 | ✅ **纳入本批**（即 Y1′ / O-1），不再是「只登记」 |
 | Y1″ | 是否开真 LLM（决定第 4 / 5 项是 PASS 还是登记过的 SKIP） | ⏳ **演练前须再授权一次**（段落 ① 未消耗 LLM） |
 | **Y7** | **演练日期**（恢复 + 升级两场，须两个不同日期） | ✅ **已定（用户 2026-10-13 授权 AI 代填）**：**恢复 10-13（周二）／升级 10-14（周三）** ⇒ 详见 §5 |
-| — | **本表逐项判分定稿** | ⏳ **等人定稿**（AI 只出了依据与提案） |
+| — | **本表逐项判分定稿** | ✅ **已定稿（2026-10-13，wIlliam 逐项拍板）**：演练 ① 实测 **PASS 6 / SKIP 3 / FAIL 1**；第 6 项按实测记 **FAIL**（F-P6X-8 工具缺口，非数据不足），原「预期 PASS」保留作对照；三条发现（F-P6X-7 / F-P6X-8 / §6.2）已作为备注钉在 §3 表末 |
 
 ---
 
@@ -124,5 +143,11 @@
 - 留证正文由**执行者 wIlliam** 写、**见证者 tianen** 署名（两人**当场在场**，§9.3 第 2 条）；
 - AI 只做**搬运 / 校验 / 跑命令 / 回登**，`docs/drills/` 正文一个字都不代写。
 
-**现状（2026-10-13 实测）**：`docs/drills/` **目录尚不存在** ⇒ 第 9 项此刻**必 SKIP**；
-**① 完成、留证人写并落库之后才转 PASS**（`install_acceptance.py:680-687`）。
+**现状（2026-10-13 收盘）**：演练 ① **已完成**，留证 `docs/drills/restore-drill-20261013.md`
+**由 wIlliam 写 / tianen 署名并落库** ⇒ 第 9 项 **SKIP → PASS**，复跑读数 **PASS 6 / SKIP 3 / FAIL 1**
+（`install_acceptance.py:680-687`）。§5.1 期望值表**已定稿**（见 §3）。
+
+**演练 ②（升级，10-14）**：2026-10-13 查实 —— 本地**只有 `1.6.0` 镜像**，交付 tag 受
+「自研 tag == `app_version`」约束（G-19）⇒ **没有真实升级目标版本**；
+wIlliam 裁决 **不造同镜像别名充数** ⇒ **升级演练等真有新版本（下一批 1.7.0）再做**，
+不写"验到升级"的假留证。
