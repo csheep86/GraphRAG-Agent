@@ -174,6 +174,29 @@ active 节点（`fetch_active_kg_version()` **无参** ⇒ 兜底按字典序取
   指纹回落容器 MAC（compose `:138-144` 已警告）；
 - 第 3 / 7 项的 pytest 委派跑在**本机**测试库，**不是**演练栈 ⇒ 属"复用既有用例"口径，不是目标环境实测。
 
+### 补记：留证落库后 **CI 变红**（2026-10-13，两条都是我的提交引起的）
+
+留证落库那笔（`8ba41ff`）CI **failure**，后端 job 两条：
+
+1. **`test_install_acceptance.py:167`**（稳定红）：`assert 'PASS' == 'SKIP'` —— 第 9 项判据在仓库里
+   **真的找到**了 `docs/drills/restore-drill-20261013.md` ⇒ 第 9 项**正确地**翻成 PASS，
+   而这条护栏断言"第 9 项必须仍是 SKIP" ⇒ **护栏过期**（前提"演练还没做"已不成立），不是脚本错。
+   **修法**：用 `monkeypatch` 把 `DEFAULT_DRILL_DIR` 指向空的临时目录 ⇒ **隔离仓库真实状态**，
+   保住它的内核（若没翻 PASS，理由必须是"演练未做"，**不许**退回拿 "D-1b 未落地" 当借口）；
+   "留证真出现就必须翻 PASS"由紧邻的反向守卫守。
+   ⚠️ 教训：**护栏不该读仓库的真实可变状态** —— 仓库里多一份留证它就红一次。
+
+2. **`test_backup_restore.py:644`**（**flaky**：CI 第一次红、原样重跑绿；本机单独跑绿、全量跑红）
+   ⇒ 不是"偶发算了"，根因已定位（**F-P6X-9**）：用例 `session.run("CREATE …")` 的返回值
+   **没有 `.consume()`** ⇒ Neo4j 的**自动提交事务可能尚未落盘**，而探针 `default_neo4j_probe`
+   **另开一个 session** 去读 ⇒ 读不到刚造的节点 ⇒ `assert … is True` 变 False。
+   时机不同就红/绿（单独跑时缓存/时序恰好对得上 ⇒ 绿）。
+   **修法**：CREATE 与清理的 DELETE 都补 `.consume()`（**只改用例，不动产品代码**）。
+
+**修后读数**（两套口径都跑）：默认 **1257 passed / 46 skipped**；真图 **1298 passed / 5 skipped**；
+`ruff check` All checks passed / 291 files；`check_seams.py` ERROR 0 / WARN 0 / **OK 12**。
+⚠️ 真图口径必须**显式清掉** `GRAPH_REAL_*` 才是默认口径读数（同一会话里变量还在会污染读数，本次已单独复跑）。
+
 ### 判分裁决（**wIlliam 2026-10-13**；AI 给选项与建议，**勾选与定稿归人**）
 
 | 问 | 裁决 |
