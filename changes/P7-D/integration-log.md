@@ -106,6 +106,15 @@ export_openapi.py --check   → [OK]    gen:api → api.d.ts 无 diff
 
   `export_openapi.py` + `npm run gen:api`（`cost.py` 函数 docstring 里已写入这句提醒）。
 
-## 7. CI 读数回填
+## 7. CI 读数回填（**R-10：以 CI 为最终裁决**）
 
-（推送后由 P7-D 收尾填入 run 号、四 job 结论与后端 pytest 计数）
+| 项 | 读数 |
+|---|---|
+| CI run | **38386715267**（commit `0c2b0d9`） |
+| 四个 job | 后端（ruff + pytest）✅ 2m58s ｜前端（lint + gen:api）✅ 38s ｜契约校验（前后端漂移门禁）✅ 34s ｜流水线汇总 ✅ 2s |
+| CI 后端 pytest | **1311 passed / 7 skipped / 0 failed**（`Ruff 静态检查 All checks passed!`） |
+
+⚠️ **本地 1272 / CI 1311 的量差是环境差异，不是提交差异**：本地没有 Neo4j / PG 服务
+⇒ 依赖真服务的用例在本地 skip（46 skipped），在 CI 里真跑（7 skipped）。
+判断退化的正确比法是 **同一环境下的前后值**：CI 上一条基线 `1301 passed` ⇒ 本批净增 10 条
+（= 新测试文件的 10 个用例），**无其他用例被抹掉**。
