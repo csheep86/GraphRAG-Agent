@@ -23,12 +23,15 @@
 
 ```bash
 cd backend && uv run python scripts/check_startup_readiness.py   # 必须 🟢 16 条 / 🟠 0 / 🟡 0
-git status --short                                              # 必须干净
-git log --oneline -1                                            # 见 §7 基线：确认 1a8e09d 已 push
-git push                                                        # ⚠️ 2026-10-13 网络故障，1a8e09d 可能仍在本地
+git fetch -q && git log --oneline origin/HEAD..HEAD               # 必须空（无未推送提交）
+git status --short                                                # 必须干净
+gh run list --limit 2 --json displayTitle,conclusion,headSha      # 见 §7 基线
 ```
 
-⚠️ **第一件事**：若 `1a8e09d` 还没推上去，**先推**并确认 CI 触发，再动代码（提交纪律优先）。
+✅ **推送状态已确认（2026-10-13 用户已推）**：`origin/HEAD = 94f2e42`，未推送提交 = 0，工作区干净。
+⇒ **第一件事**不是推代码，而是确认 CI：**`94f2e42` 的 run `38378258473`** 跑完没有
+（预期：后端 job ❌ 3 failed = F-P7C-5，前端 / 契约 ✅）。若后端 job 出现**第 4 条**失败 ⇒
+那是新情况，**先定位再动手**，不许默认「反正有 3 条红的」。
 
 ---
 
@@ -76,12 +79,12 @@ git push                                                        # ⚠️ 2026-10
 | 项 | 读数 |
 |---|---|
 | 本地 `uv run pytest -q` | `3 failed / 1259 passed / 46 skipped` |
-| CI 后端 job | `3 failed / 1298 passed / 7 skipped`（带图环境） |
+| CI 后端 job | `3 failed / 1298 passed / 7 skipped`（带图环境）；run **`38367482383`**（commit `ef62188`）❌，前端 / 契约 ✅ |
 | `check_startup_readiness.py` | 🟢 **16 条**（G-27 5 项）｜🟠 0｜🟡 0 |
 | `ruff check` / `ruff format --check` | All checks passed / 298 files formatted |
 | `check_seams.py` | ERROR 0 / WARN 0 / OK 12 |
 | `export_openapi.py --check` | 零 diff |
-| HEAD | `1a8e09d`（⚠️ 2026-10-13 因 `github.com:443` 不可达**可能仍未 push**；远端最新 `ef62188`） |
+| HEAD | **`94f2e42`**（✅ 已推送，`origin/HEAD` 同步；工作区干净）｜`1a8e09d`（CI 读数回填）→ `94f2e42`（裁决登记 + P7-L 骨架 + 本提示词） |
 
 ---
 
