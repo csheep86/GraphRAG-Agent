@@ -3577,7 +3577,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -3642,7 +3642,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -3694,7 +3694,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path: {
@@ -3761,7 +3761,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path: {
@@ -3815,7 +3815,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -3892,7 +3892,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -3958,7 +3958,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4037,7 +4037,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4107,7 +4107,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4159,7 +4159,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path: {
@@ -4260,7 +4260,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4325,7 +4325,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4377,7 +4377,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4442,7 +4442,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path: {
@@ -4497,7 +4497,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path: {
@@ -4569,7 +4569,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path: {
@@ -4623,7 +4623,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path: {
@@ -4695,7 +4695,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4756,7 +4756,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path: {
@@ -4868,7 +4868,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4927,7 +4927,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -4979,7 +4979,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -5026,7 +5026,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -5082,7 +5082,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -5156,7 +5156,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;
@@ -5230,7 +5230,7 @@ export interface operations {
             header?: {
                 /** @description 【仅开发态兜底】租户 id。生效条件：`ALLOW_DEV_ORG_HEADER=true`（默认 false）**且**非生产环境；生产环境与交付栈恒不生效（护栏 G-27）。（ADR-0003 §3.3：org_id 严禁来自 body / query。） */
                 "X-Org-Id"?: string | null;
-                /** @description 【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。 */
+                /** @description 【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；缺省取 DEFAULT_ACTOR_ID。⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。 */
                 "X-Actor-Id"?: string | null;
             };
             path?: never;

@@ -15,12 +15,15 @@
 - `GET /attendance/compliance/scan`（**Sprint 9.5 批次 C3**，考勤域合规预警，确定性规则）
 - `POST /auth/login`（**P2-C**，真实口令登录 + 签发 JWT；它**不要求**认证态，
   是 `TENANT_PROTECTED_PATHS` 里唯一被排除的非探针端点）
-- **M6 契约先行批次**（`changes/archive/2026-10-02-P0-m6-finalization` F2，**7 个端点全部 501 占位**，
-  实现归 P5-M6 / Sprint 12）：`POST /ontology/cold-start`、`POST /ontology/confirm`、
-  `POST /ontology/merge`、`POST /ontology/split`、`POST /ontology/rename`、
-  `GET /ontology/active`、`GET /cost/dashboard`（spec §5.5）
+- **M6 契约先行批次**（`changes/archive/2026-10-02-P0-m6-finalization` F2）的 **7 个端点**。
+  注册时全部是 501 占位骨架，**现已全部实装**（2026-10-13 更正）：
+- `POST /ontology/cold-start`、`POST /ontology/confirm`、`GET /ontology/active`（**P5-C**，`e34060c`）
+- `POST /ontology/merge`、`POST /ontology/split`、`POST /ontology/rename`（**P5-G**，`7124a46`）
+- `GET /ontology/candidates`（**P5-I**，`8142ecc`）
+- `GET /cost/dashboard`（**P6-V**，`cea94e3`）
 
-specs 中其余端点草案（`/auth/login`、`/internal/*` 等）留在草案态，后续 Sprint 逐步纳入。
+`/internal/*` 等仍在 spec 草案态；⚠️ `/auth/login` **已不是草案** —— 它已实装并注册在本文件末尾
+（**P2-C**：校验 `users` 表口令哈希并签发 HS256 JWT）。
 
 **为什么占位端点也要注册**：契约由 `scripts/export_openapi.py` **从 app 导出**
 （后端模型是唯一真源）⇒ 端点不注册就进不了 `contracts/openapi.yaml`，
@@ -56,8 +59,9 @@ api_router.include_router(affiliation.router)
 api_router.include_router(audit.router)
 # Sprint 9.5 批次 C3：GET /attendance/compliance/scan
 api_router.include_router(compliance.router)
-# M6 契约先行批次（P0-m6-finalization F2）：6 个 ontology 端点 + GET /cost/dashboard，
-# 全部 501 占位骨架
+# M6 契约先行批次（P0-m6-finalization F2）：7 个端点。
+# ⚠️「全部 501 占位骨架」是**注册当时**的状态（2026-10-13 更正）：7 个端点现已全部实装，
+# 逐条的 commit 见本文件模块 docstring。
 api_router.include_router(ontology.router)
 api_router.include_router(cost.router)
 # P4 / DR-C1（ADR-0006 §2.6）：GET /license/status —— **自检端点**，

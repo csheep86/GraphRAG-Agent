@@ -3,6 +3,12 @@
 **本批（`changes/archive/2026-10-02-P0-m6-finalization` F2）只落契约与 501 占位骨架，不含业务逻辑**
 （Non-goals：占位骨架 ≠ 实现，实现归 P5-M6 批次）。
 
+⚠️ **2026-10-13 更正**：上面说的是**当时**，7 个占位端点现已全部实装 ——
+`cold-start` / `confirm` / `active`（**P5-C**，`e34060c`）、`merge` / `split` / `rename`
+（**P5-G**，`7124a46`）、`candidates`（**P5-I**，`8142ecc`）。
+本文件只剩下**契约形状**，业务逻辑在 :mod:`app.services.ontology` 与
+:mod:`app.api.v1.routes.ontology`（后者内含每个端点的实现口径）。
+
 字段形状与 F1 的 :class:`~app.services.ontology.OntologySuggestion` **同构**
 （``{name, description?}`` / ``{name, head_types, tail_types, description?}``）
 ⇒ 冷启动建议的结果可以**原样**交给 ``POST /ontology/confirm``，

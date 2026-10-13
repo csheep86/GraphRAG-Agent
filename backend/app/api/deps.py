@@ -22,8 +22,11 @@ bearer_scheme = HTTPBearer(
     scheme_name="bearerAuth",
     bearerFormat="JWT",
     description=(
-        "认证态来源。Sprint 1 支持 `Bearer dev.<org_id>.<actor_id>`；"
-        "Sprint 3 起由 M5 `POST /auth/login` 签发的 JWT 取代。"
+        "认证态来源，**两条并存**（2026-10-13 更正：此前这里声称 dev token 会被 JWT 取代，"
+        "但那条路径**至今仍在**，只是被收口成受控兜底，并不是消失）：\n\n"
+        "- `POST /auth/login`（**P2-C**）签发的 **JWT**（`HS256`）——生产环境的正常入口；\n"
+        "- `Bearer dev.<org_id>.<actor_id>` —— 开发态令牌，受 `ALLOW_DEV_ORG_HEADER=true` "
+        "**且**非生产环境双重约束（默认关闭，护栏 G-27 保证生产不可达）。"
     ),
 )
 
@@ -34,7 +37,10 @@ DEV_ORG_HEADER_DESCRIPTION = (
 )
 
 DEV_ACTOR_HEADER_DESCRIPTION = (
-    "【仅开发态兜底】操作者 id，缺省取 DEFAULT_ACTOR_ID；Sprint 3 起由认证态提供。"
+    "【仅开发态兜底】操作者 id。生效条件同上面的 X-Org-Id（默认关闭、非生产才可用）；"
+    "缺省取 DEFAULT_ACTOR_ID。"
+    "⚠️ 它**只**作用于 dev header 这条兜底路径：持有 `POST /auth/login` 签发的 JWT 时，"
+    "actor 由令牌自身提供（`Identity.actor_id = claims.user_id`），本头不参与。"
 )
 
 
