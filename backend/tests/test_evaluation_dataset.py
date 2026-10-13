@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.evaluation.dataset import (
     DATA_DIR,
+    MULTIHOP_FILE,
     DatasetError,
     dataset_versions,
     load_affiliation_gold,
@@ -134,8 +137,22 @@ def test_multihop_all_items_are_really_multihop() -> None:
         assert item.hops >= 2, f"#{item.index} 只有 {item.hops} 跳 ⇒ 不是多跳题"
         assert item.hop_path, f"#{item.index} 缺跳数路径（无法复核跳数）"
         assert item.expected_points
-    # A3：默认全部**未判分** ⇒ correct 为 None（不是 False）
-    assert all(item.correct is None for item in items)
+    # A3：判分只能由人写回 ⇒ 只有两种合法形态：
+    #   1. **全 None**（未判分，不入分母，不是 False）；
+    #   2. **全 bool** —— 此时**必须**有 `_judging.judged_by` 署名。
+    # **P7-L**：P6-T 落判分后本集进入形态 2，原先只认形态 1 的断言过期了；
+    # 收口方式不是放宽成「bool 也行」，而是把「判分必须非匿名」一并钉成机器判据——
+    # 匿名判分比没有判分更危险：数字看着有了，却没人能复核、没人负责。
+    if all(item.correct is None for item in items):
+        return
+    assert all(isinstance(item.correct, bool) for item in items), (
+        "判分必须**全有或全无**：半本判分 ⇒ 分母只算判过的题，答对率虚高"
+    )
+    payload = json.loads((DATA_DIR / MULTIHOP_FILE).read_text(encoding="utf-8"))
+    assert payload.get("_judging", {}).get("judged_by"), (
+        f"{MULTIHOP_FILE} 已带判分但 `_judging.judged_by` 缺失或为空 "
+        "⇒ 匿名判分（A3：判分须可追溯到具体的人）"
+    )
 
 
 def test_affiliation_gold_has_nine_findings() -> None:

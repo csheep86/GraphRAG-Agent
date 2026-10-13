@@ -103,7 +103,14 @@ def test_sheets_never_carry_correct(tmp_path: Path) -> None:
     sheet, _filename = module.build_sheets(path)
     #: 只查**字段名**（判分值藏在多深的层级都不放过），不查正文——
     #: `_notice` 里本就要写"不含 correct 值"这句话，按子串扫会误伤。
-    keys = set(_all_keys(sheet))
+    #: **P7-L**：扫描范围收窄到**题行**（graph / baseline 两侧的逐题记录）。
+    #: P6-T 之后 gold 的 rubric 元数据里带 `judged_by`（判分人署名是**必须留痕**的），
+    #: 判分表把它连同 rubric 一起内联导出 ⇒ 全树扫描会把这条正当留痕读成"代判分"。
+    #: 红线本身**一条没放宽**：题行里出 `correct` / `judged_by` 仍然必须红。
+    keys: set[str] = set()
+    for side in ("graph", "baseline"):
+        for row in sheet[side]:
+            keys.update(_all_keys(row))
     assert "correct" not in keys
     assert "judged_by" not in keys
 

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -30,6 +31,7 @@ from app.evaluation.baseline import (
     pool_fingerprint,
     rank_by_cosine,
 )
+from app.evaluation.dataset import load_multihop_set
 from app.evaluation.metrics import AnswerRecord, CitationRef, graph_gain
 from app.evaluation.runner import (
     C1_GAIN_THRESHOLD,
@@ -503,7 +505,20 @@ def test_multihop_without_judgement_exposes_answer_texts(
     """多跳缺判分时**必须**吐答案原文（D3：人不该盲判）。
 
     原先 detail 只有 ``{"asked": 6, "judged": 0}`` ⇒ 人拿着它无从判分。
+
+    **P7-L**：P6-T 已把 86/86 判分写回 gold ⇒ 真实数据集**不再是「未判分」状态**，
+    原先「读真 gold 就自然未判分」的前提没了。本用例钉的是**缺判分时的行为**，
+    故把 gold 换成 ``correct=None`` 的副本再跑（替身手法与下方
+    :func:`test_multihop_number_carries_answer_texts` 同型），
+    **不是**删掉这条覆盖——删了就等于承认「缺判分时可以只吐数字」。
     """
+    real_items = load_multihop_set()
+    monkeypatch.setattr(
+        "app.evaluation.runner.load_multihop_set",
+        lambda: tuple(
+            replace(item, correct=None, judged_by=None) for item in real_items
+        ),
+    )
     monkeypatch.setattr("app.evaluation.runner.ask_safe", _fake_ask)
     result = eval_multihop_accuracy(
         {"ctx": RunnerContext(mode="live", git_hash="deadbeef")}
