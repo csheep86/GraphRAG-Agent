@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 
 import { AppShell } from "@/components/layout/app-shell";
+import { AuthGate } from "@/components/auth/auth-gate";
 
 import "./globals.css";
 
@@ -29,7 +30,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="h-full">
-        <AppShell>{children}</AppShell>
+        {/* P7-N：登录门套在 AppShell **外面** —— 未登录时不渲染侧栏 / 顶栏 */}
+        <AuthGate>
+          <AppShell>{children}</AppShell>
+        </AuthGate>
       </body>
       {/* P7-E：容器启动时由 `frontend/entrypoint.sh` 生成的运行时环境变量。
           `beforeInteractive` 是**必须的** —— 它保证 `window.__ENV__` 先就位，

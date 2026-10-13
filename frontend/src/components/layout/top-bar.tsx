@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, ChevronDown, LogOut, Settings, UserRound } from "lucide-react";
 
+import { logout } from "@/api/auth";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useSession } from "@/components/auth/use-session";
 import { breadcrumbFor } from "@/lib/nav";
 
 /** 品牌标识：蓝色圆角方块 + 白色内嵌图形（对齐设计稿 Logo） */
@@ -30,6 +32,12 @@ export function TopBar() {
   // 用 breadcrumbFor 而非 matchNavItem：子页（如 /attendance/compliance）
   // 要显示「合规预警」，否则顶栏会跟侧栏一样停在「考勤域」。
   const current = breadcrumbFor(pathname);
+
+  // P7-N：顶栏的账号区此前是**硬编码的假身份**（「林默 · 管理员」），连「退出登录」
+  // 点了都没反应 —— 它属于"看起来能跑"的那类 UI，正好借本批把它接到真会话上：
+  // 有会话显示真实用户名、退出真生效；dev 形态显示「开发态」，不再冒充某个具体的人。
+  const session = useSession();
+  const displayName = session?.username || "";
 
   return (
     <header className="relative z-40 flex h-[var(--topbar-height)] shrink-0 items-center gap-4 border-b border-border bg-card px-5">
@@ -72,11 +80,16 @@ export function TopBar() {
             >
               <Avatar className="size-6">
                 <AvatarFallback className="bg-gradient-to-br from-[#4f7dff] to-[#3b5bf6] text-[11px] text-white">
-                  林
+                  {displayName ? displayName.slice(0, 1) : "开"}
                 </AvatarFallback>
               </Avatar>
               <span className="text-muted-foreground">
-                林默 · <span className="text-foreground">管理员</span>
+                {displayName ? (
+                  displayName
+                ) : (
+                  // dev 兜底形态下确实没有登录身份 ⇒ 说"开发态"，不编一个用户名
+                  <span className="text-foreground">开发态</span>
+                )}
               </span>
               <ChevronDown className="size-3.5 text-muted-foreground" />
             </button>
@@ -93,7 +106,8 @@ export function TopBar() {
               偏好设置
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            {/* P7-N：真的退出。后端 JWT 无状态、没有注销端点 ⇒ 丢弃本地会话即回到登录态 */}
+            <DropdownMenuItem onClick={() => logout()} disabled={!session}>
               <LogOut />
               退出登录
             </DropdownMenuItem>

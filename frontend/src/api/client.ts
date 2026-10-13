@@ -1,5 +1,7 @@
 import type { components } from "@/types/api";
 
+import { clearSession, readSession } from "./session";
+
 /* ============================================================================
  * API 层入口。UI 只依赖 `src/api/*` 暴露的函数，不直接 fetch。
  * 后端就绪后只需把 NEXT_PUBLIC_USE_MOCK 置为 false，UI 无需改动。
@@ -55,6 +57,9 @@ export const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
  * 契约新增端点时必须同步这里；漏更新会让新端点走 mock 而非真实接口。
  */
 const CONTRACT_COVERED_PATTERNS: RegExp[] = [
+  // Sprint 9.5 批次 C3：问答端点（D1 起带 reasoning_path）。漏登记会让政策问答页走 Mock。
+  // （**F-P7D-2**：这一条原本在本数组里登记了**两次**，P7-N 改动本文件时顺带清掉 ——
+  //  其余分组本次未动）
   /^\/api\/v1\/agent\/query$/,
   /^\/api\/v1\/documents$/,
   /^\/api\/v1\/documents\/upload$/,
@@ -81,8 +86,6 @@ const CONTRACT_COVERED_PATTERNS: RegExp[] = [
   // 批次 C4：考勤域异常归因两端点（清单 + 归因）。同理，漏登记会让它们走 Mock。
   /^\/api\/v1\/attendance\/anomalies$/,
   /^\/api\/v1\/attendance\/anomalies\/explain$/,
-  // Sprint 9.5 批次 C3：问答端点（D1 起带 reasoning_path）。同理，漏登记会让政策问答页走 Mock。
-  /^\/api\/v1\/agent\/query$/,
   // P5-I（2026-10-09）：M6 校正 GUI 的四条端点（候选读 + merge / rename / split）。
   // ⚠️ 漏登记的后果不是报错而是**静默走假数据**：USE_MOCK=false 时点三动作打到的是
   // 本地 mock，页面看起来"成功"、图谱其实一行没变 —— 与本仓「不假造成功」直接冲突。
@@ -140,6 +143,21 @@ export class ApiError extends Error {
   }
 }
 
+/** 登录端点自己**不带** Authorization —— 那时还没会话；带着旧 token 只会干扰换账号。 */
+const LOGIN_PATH = "/api/v1/auth/login";
+
+/**
+ * P7-N：给请求挂上 `Authorization: Bearer <token>`（契约写死的携带方式，见 `LoginResponse`）。
+ *
+ * 没有会话就**不挂头**，交给后端返回 401 ⇒ 上层把 UI 带回登录态。
+ * **不要**为了"让请求看起来能跑"去伪造一个凭据。
+ */
+function authHeaders(path: string): Record<string, string> {
+  if (path === LOGIN_PATH) return {};
+  const token = readSession()?.token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 /** 真实 HTTP 调用；Mock 模式下不会被触发 */
 export async function request<T>(
   path: string,
@@ -156,12 +174,22 @@ export async function request<T>(
         ? { "X-Org-Id": DEV_DEFAULT_ORG_ID }
         : {}),
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...authHeaders(path),
       ...init.headers,
     },
     cache: "no-store",
   });
 
   if (!response.ok) {
+    // P7-N：**401 一律按"会话不在了"处理**（登录端点自身的 401 除外 —— 那时还没有会话，
+    // 是口令不对）。
+    //
+    // 为什么不留着 token 让下一个请求自己再试一次：带着失效的 token，
+    // 页面上每个接口都会挨一次 401，症状是"一直在 loading / 到处红"，很难归因。
+    // 清掉之后 UI 回到登录态，用户看得懂。**不做静默重试** —— 重试成功会掩盖事实。
+    if (response.status === 401 && path !== LOGIN_PATH) {
+      clearSession();
+    }
     let payload: ErrorResponse | null = null;
     try {
       payload = (await response.json()) as ErrorResponse;
