@@ -156,12 +156,28 @@ def test_d1b_inspection_ignores_prose_in_docs(mod, tmp_path: Path) -> None:
     assert "docs/ 里的描述不算" in " ".join(problems)
 
 
-def test_item9_is_skipped_because_no_drill_is_filed_yet(mod) -> None:
+def test_item9_is_skipped_because_no_drill_is_filed_yet(
+    mod, tmp_path: Path, monkeypatch
+) -> None:
     """第 9 项**仍必须是 SKIP**，但理由从"D-1b 未落地"变成"**演练未做**"。
 
     本批（P6-D1b）只解前置；翻 PASS 要等 P6-X 的**双人演练留证**。
     ⇒ 断言同时盯两头：不许再拿 D-1b 当借口，也不许偷偷变 PASS。
+
+    **P6-X2（2026-10-13）改写说明（守史实，原文留痕）**：
+    P6-X2 的恢复演练**已做**，留证 `docs/drills/restore-drill-20261013.md` **已落库**
+    ⇒ 本条原来直接读**仓库真实**的 `DEFAULT_DRILL_DIR`，于是第 9 项**正确地**翻成 PASS，
+    本条随之变红（`assert 'PASS' == 'SKIP'`）—— 这是**护栏过期**，不是脚本错：
+    "第 9 项必须是 SKIP"这个断言的前提（演练尚未做）已经不成立了。
+
+    但本条要盯的**内核没变**：第 9 项若没翻 PASS，理由必须是"**演练未做**"，
+    **不许**再退回去拿 "D-1b 未落地" 当借口。故改为用 `monkeypatch` 把留证目录指向
+    **空的临时目录**（隔离仓库真实状态）⇒ 仍断言 SKIP + 理由不含 D-1b；
+    "留证真出现就必须翻 PASS"由紧邻的 :func:`test_item9_would_flip_once_a_drill_is_filed` 守。
+
+    ⚠️ 不隔离仓库状态的代价已实测：仓库里多一份留证，这条就会红一次。
     """
+    monkeypatch.setattr(mod, "DEFAULT_DRILL_DIR", tmp_path / "drills")
     subs = mod.check_9(mod.Context(run_pytest=False))
     status, detail = mod.combine(subs)
     assert status == "SKIP"

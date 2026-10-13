@@ -631,12 +631,17 @@ def test_real_neo4j_probe_distinguishes_existing_and_missing_version(
 
     # ② 断言（不包 try）
     with real_graph_service._session() as session:  # noqa: SLF001
+        # ⚠️ 必须 ``.consume()``：``session.run`` 走的是**自动提交事务**，
+        # 不消费结果 ⇒ 事务可能**还没落盘** ⇒ 探针（它自己另开一个 session）
+        # 读不到刚造的节点 ⇒ 断言 ``is True`` 变 False。
+        # 实测形状：单独跑绿、全量跑红（CI 第一次红、重跑绿）—— 典型的
+        # 「写没提交 + 读走新 session」的时序依赖（F-P6X-9，2026-10-13）。
         session.run(
             "CREATE (v:KgVersion {version: $version}) "
             "SET v.status = 'active', v.scope = 'global', v.org_id = $org_id",
             version=seeded_version,
             org_id=str(settings.default_org_id),
-        )
+        ).consume()
         try:
             # 「缺失」那一半
             assert module.default_neo4j_probe(missing_version) is False
@@ -648,7 +653,8 @@ def test_real_neo4j_probe_distinguishes_existing_and_missing_version(
             )
             assert str(active.version)
         finally:
+            # 同上：清理也必须真落盘，否则会给后面的用例留脏节点。
             session.run(
                 "MATCH (v:KgVersion {version: $version}) DETACH DELETE v",
                 version=seeded_version,
-            )
+            ).consume()
