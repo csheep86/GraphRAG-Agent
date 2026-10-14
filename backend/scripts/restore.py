@@ -200,6 +200,69 @@ def restore_postgres(
     return ("postgres", f"已恢复到库 {target_db}")
 
 
+#: 一次性容器里 dump 源的挂载点（**只读**）—— ``--from-path`` 认的是容器内路径。
+RESTORE_SOURCE_MOUNT = "/graphrag-restore-source"
+
+
+def _neo4j_load_command(
+    container: str, load_argv: list[str], dump_dir: Path
+) -> tuple[list[str] | None, str]:
+    """组装图库 load 命令 —— 与 ``backup.py::_neo4j_dump_command`` 对称（P7-G / F-P6X-7）。
+
+    **为什么原来那条路必然失败**：``neo4j-admin database load`` 要求**图库停服**，
+    而 ``docker exec`` 只在**容器运行时**可用 —— 两条约束不可能同时满足。
+    旧代码却正是在「容器在跑」时发这条命令，于是它只能失败，而失败原因被一句
+    「load 失败（退出码 N）」盖住，看起来像是 load 本身有问题。
+
+    **现在的两条路**：
+
+    - 容器在跑 ⇒ **不发命令**，把原因说清楚（停一个正在服务的图库是人的决定，
+      脚本刻意不代劳 —— 它也不知道此刻有没有人正在用）；
+    - 容器已停 ⇒ 起一次性容器：``--volumes-from`` 挂原容器的**数据卷**，
+      再用 ``-v`` 把宿主的 dump 目录挂进 ``RESTORE_SOURCE_MOUNT`` ——
+      后者是必需的：``--from-path`` 是**容器内**路径，宿主的备份目录在容器里本就不可达。
+    """
+    probe = subprocess.run(  # noqa: S603 - 固定 argv，无 shell
+        ["docker", "inspect", container, "--format", "{{.State.Running}}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if probe.returncode != 0:
+        return None, f"容器 {container} 取不到（不存在，或 docker 不可用）"
+
+    if probe.stdout.strip().lower() == "true":
+        return None, (
+            f"容器 {container} 正在运行 ⇒ 不执行 load："
+            "neo4j-admin database load 要求图库停服，而 docker exec 只在运行时可用"
+            "（F-P6X-7）⇒ 请先停掉该容器再跑本项。脚本不代劳停库"
+        )
+
+    image = subprocess.run(  # noqa: S603 - 固定 argv，无 shell
+        ["docker", "inspect", container, "--format", "{{.Config.Image}}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--volumes-from",
+        container,
+        "-v",
+        f"{dump_dir}:{RESTORE_SOURCE_MOUNT}:ro",
+        "--entrypoint",
+        "neo4j-admin",
+        image.stdout.strip(),
+        *load_argv,
+    ], ""
+
+
 def restore_neo4j(
     *, backup_dir: Path, entry: ObjectEntry, container: str | None
 ) -> tuple[str, str]:
@@ -210,26 +273,51 @@ def restore_neo4j(
             "neo4j",
             "SKIP 未给 --neo4j-container：图库 load 要求停服，副作用大于收益 ⇒ 不自动做",
         )
+    if not source.is_file():
+        return ("neo4j", f"SKIP 备份集里没有图库 dump 文件: {source}")
+
     settings = get_settings()
-    proc = subprocess.run(  # noqa: S603 - 固定 argv，无 shell
+
+    #: ``neo4j-admin database load`` 的 ``--from-path`` 认的是**目录**（不是文件），
+    #: 且要求该目录下躺着 ``<数据库名>.dump``。所以这里挂载的是 dump **所在目录**，
+    #: 文件名必须与目标库名对得上 —— 对不上就明说，别让 neo4j-admin 报一句
+    #: "is not an existing directory"（那条信息指不到真正的原因）。
+    expected = f"{settings.neo4j_database}.dump"
+    if source.name != expected:
+        return (
+            "neo4j",
+            f"SKIP dump 文件名 {source.name!r} 与目标库不匹配（load 期望 {expected!r}）"
+            " —— 备份侧 `NEO4J_DUMP_FILE` 是硬编码的，而库名 `neo4j_database` 可配"
+            "（F-P7G-2：两者一旦不一致，恢复必然失败）",
+        )
+
+    command, reason = _neo4j_load_command(
+        container,
         [
-            "docker",
-            "exec",
-            container,
-            "neo4j-admin",
             "database",
             "load",
             settings.neo4j_database,
-            f"--from-path={source}",
+            f"--from-path={RESTORE_SOURCE_MOUNT}",
             "--overwrite-destination=true",
         ],
-        capture_output=True,
-        text=True,
-        check=False,
+        source.parent,
+    )
+    if command is None:
+        return ("neo4j", f"SKIP {reason}")
+
+    proc = subprocess.run(  # noqa: S603 - 固定 argv，无 shell
+        command, capture_output=True, text=True, check=False
     )
     if proc.returncode != 0:
-        return ("neo4j", f"neo4j-admin load 失败（退出码 {proc.returncode}）")
-    return ("neo4j", f"已恢复图库 {settings.neo4j_database}")
+        detail = (proc.stderr or proc.stdout or "").strip()[:300]
+        return (
+            "neo4j",
+            f"neo4j-admin load 失败（退出码 {proc.returncode}）: {detail}",
+        )
+    return (
+        "neo4j",
+        f"已恢复图库 {settings.neo4j_database}（一次性容器 · 数据卷 --volumes-from）",
+    )
 
 
 def config_hint(*, backup_dir: Path, entry: ObjectEntry) -> tuple[str, str]:

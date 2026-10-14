@@ -408,7 +408,17 @@ def evaluate_version_consistency(
             ok=False,
             message=(
                 f"PG active 版本 = {active_version}，但 Neo4j 中该版本节点不存在 ⇒ "
-                "幽灵版本（ADR-0002 §3.2 禁止），不许静默启动"
+                "幽灵版本（ADR-0002 §3.2 禁止），不许静默启动。"
+                # ↓ P7-G 裁决（A）：显式登记为已知限制，把触发条件 / 后果 / 补偿写进报错里，
+                #   免得现场看到一句"不许静默启动"却不知道该怎么办。
+                "触发条件：该版本产生于镜像同步接线之前（此前建图 / 增量只写 PG、"
+                "从不写图库 :KgVersion）；自 `sync_kg_version_mirror` 接上两处完成路径后，"
+                "新版本会自动同步镜像 ⇒ 幽灵版本只会来自历史版本。"
+                "客户可见后果：本项 FAIL ⇒ restore 退出码 2，系统拒绝启动（fail-closed，"
+                "不是可以跳过的警告）。"
+                "补偿办法：重跑一次建图或增量，让 PG 的 active 迁到带镜像的新版本；"
+                "想就地保留该历史版本则须补一次镜像同步 —— 注意"
+                "`scripts/migrate_kg_version_org.py` 只补 org_id，补不了缺失的镜像节点"
             ),
         )
     return VersionConsistency(
