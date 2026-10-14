@@ -102,6 +102,19 @@ _CITATION_ID_PATTERN = re.compile(r"chunk-[0-9A-Za-z]{1,64}")
 #: **模型只给文本、不给数字**——偏移由 :func:`_to_citation` 确定性换算（D-B）。
 _MENTION_SEPARATOR = "#"
 
+#: **P7-S：注入证据观测出口**的事件名（日志检索 / 探针按这个 key 取数）。
+#:
+#: 为什么要有这个出口：`citations` 是**模型的输出**——它回答的是「模型说它用了
+#: 什么证据」，而不是「我们注入了什么证据」（P7-R §6.1）。于是「chunk 选择漂」
+#: 与「LLM 措辞漂」在旧读数下**判不开**：后者可以是前者的因。
+#:
+#: 本事件记的是**送进 Prompt 的 chunk_id 序列**（含顺序），位于 LLM 调用**之前**
+#: ⇒ 它不受生成侧非确定性影响，是判别实验里**检索侧的直接读数**。
+#:
+#: 刻意**只记 id 与顺序、不记正文**：正文已在 Prompt 里，且量大；需要时按 id
+#: 回查 ``GET /documents/{id}/chunks/{chunk_id}``（与 :func:`_snippet` 同口径）。
+INJECTED_EVIDENCE_EVENT = "agent_query_injected_evidence"
+
 
 @dataclass(frozen=True, slots=True)
 class _SubgraphResult:
@@ -396,6 +409,17 @@ class AgentService:
 
         chunk_index = {chunk.chunk_id: chunk for chunk in evidence_chunks}
         text_chunks = _serialize_chunks(evidence_chunks)
+        #: **P7-S 观测出口**：本轮**注入 Prompt 的 chunk_id 序列**（注入顺序）。
+        #: 这里记的就是 ``text_chunks`` 里 chunk 出现的顺序 —— 不是模型回说的
+        #: ``evidence``，也不是过了归因闸门之后的 ``citations``（见常量处说明）。
+        #: 探针 ``scripts/check_injected_evidence.py`` 按 ``trace_id`` 抓它。
+        logger.bind(
+            trace_id=trace_id,
+            kg_version=version,
+            org_id=str(org_id),
+            chunk_count=len(evidence_chunks),
+            chunk_ids=tuple(chunk.chunk_id for chunk in evidence_chunks),
+        ).info(INJECTED_EVIDENCE_EVENT)
         logger.bind(
             trace_id=trace_id,
             entity_count=len(entity_ids),
@@ -973,18 +997,58 @@ def _cited_doc_ids(
     return tuple(seen.values())
 
 
+def _citation_span_width(citation: Citation) -> int:
+    """引用区间的字符宽度——**越小越精确**（同一 ``chunk_id`` 多条时的取舍判据）。
+
+    ``char_offset`` / ``char_end`` 是片段内相对偏移（见 :func:`_to_citation`）：
+    - **回退档** = 整段（``0 ~ len(text)``）⇒ 宽度最大；
+    - **span 档** = 实体提及那一小截 ⇒ 宽度最小。
+
+    ⚠️ 异常数据（``char_end < char_offset``）按 **0** 处理：**不**让它取到负值
+    而被反读成"最精确的一条"。
+    """
+    return max(0, int(citation.char_end) - int(citation.char_offset))
+
+
 def _build_citations(
     evidence: Sequence[str], chunks: Mapping[str, EvidenceChunk]
 ) -> list[Citation]:
-    """把 LLM ``evidence`` 列表转为契约引用列表（丢弃一切不可回查的条目）。"""
-    citations: list[Citation] = []
+    """把 LLM ``evidence`` 列表转为契约引用列表（**按 ``chunk_id`` 保序去重**）。
+
+    **P7-S**：原实现只按模型给的 ``evidence`` 顺序逐条 ``append`` ⇒ 同一 chunk
+    被模型列几次，``citations`` 里就出现几次（P7-R §5.3 实测
+    ``chunk-0c7b712dc257`` 出现 **3** 次）。这是**确证缺陷**，与漂移最终归因到
+    检索侧还是生成侧**无关**：UI 会把同一段原文重复列给用户，引用覆盖率等
+    下游统计也随之失真。
+
+    两条口径，**缺一不可**：
+
+    1. **保序**：条目顺序仍取 LLM ``evidence`` 的**首次出现顺序**。
+       刻意**不**改成按 ``chunk_id`` 排序——那会引入一个与模型输出无关的新顺序，
+       把"顺序是否漂移"这个待测量直接抹掉（P7-R §6.1 的教训：不许再造新判据）；
+    2. **留最精确**：同一 ``chunk_id`` 带不同 span 时（``#提及`` 后缀会产生不同
+       区间），保留**区间最窄**的那条，而不是简单丢弃第一条或最后一条——
+       span 档能把用户直接带到那一句，整段回退档做不到。
+
+    ⚠️ 不可回查的条目（形似度不通过 / chunk 不在本轮注入 / 未挂 ``:Document``）
+    仍一律丢弃，与去重无关（F3）。
+    """
+    best: dict[str, Citation] = {}
+    order: list[str] = []
     for item in evidence:
         if not _looks_like_citation(item):
             continue
         citation = _to_citation(item, chunks)
-        if citation is not None:
-            citations.append(citation)
-    return citations
+        if citation is None:
+            continue
+        incumbent = best.get(citation.chunk_id)
+        if incumbent is None:
+            best[citation.chunk_id] = citation
+            order.append(citation.chunk_id)
+            continue
+        if _citation_span_width(citation) < _citation_span_width(incumbent):
+            best[citation.chunk_id] = citation
+    return [best[chunk_id] for chunk_id in order]
 
 
 #: 答案正文里的 ``[source: <chunk_id>]`` 标记（引用覆盖率统计依赖它，正文格式不变）

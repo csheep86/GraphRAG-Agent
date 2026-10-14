@@ -481,3 +481,137 @@ def test_to_citation_falls_back_when_span_outside_chunk() -> None:
     assert citation is not None
     assert citation.char_offset == 0
     assert citation.char_end == len(chunk.text)
+
+
+# --------------------------------------------------------------------------- #
+# P7-S：`_build_citations` 按 chunk_id 保序去重
+# --------------------------------------------------------------------------- #
+
+
+def test_build_citations_dedups_repeated_chunk_id() -> None:
+    """P7-S 主缺陷：模型把同一 chunk 列 3 次 ⇒ `citations` 里只出 **1** 条。
+
+    形态来自 P7-R §5.3 实测（``chunk-0c7b712dc257`` ×3）。重复引用会让 UI 把
+    同一段原文列给用户三次，也让「引用条数」这类统计失真。
+
+    ⚠️ **反向验证（R-9「恒绿即失效」）**：把 `_build_citations` 改回无条件
+    ``append`` ⇒ 本例**必须红**（``len == 3 != 1``）。接回后必须全绿。
+    """
+    citations = _build_citations([CHUNK_ID, CHUNK_ID, CHUNK_ID], _index(_chunk()))
+
+    assert [citation.chunk_id for citation in citations] == [CHUNK_ID]
+
+
+def test_build_citations_dedup_keeps_first_appearance_order() -> None:
+    """保序：`[A, B, A, C]` ⇒ `[A, B, C]`（按**首次出现**定序）。
+
+    刻意**不**改成按 ``chunk_id`` 排序——那会引入一个与模型输出无关的新顺序，
+    把「顺序是否漂移」这个待测量直接抹掉（P7-R §6.1 的教训）。
+    """
+    first = _chunk(chunk_id="chunk-aaaa0001", page=1)
+    second = _chunk(chunk_id="chunk-bbbb0002", page=2)
+    third = _chunk(chunk_id="chunk-cccc0003", page=3)
+
+    citations = _build_citations(
+        [
+            "chunk-aaaa0001",
+            "chunk-bbbb0002",
+            "chunk-aaaa0001",
+            "chunk-cccc0003",
+        ],
+        _index(first, second, third),
+    )
+
+    assert [citation.chunk_id for citation in citations] == [
+        "chunk-aaaa0001",
+        "chunk-bbbb0002",
+        "chunk-cccc0003",
+    ]
+
+
+def test_build_citations_dedup_keeps_most_precise_span() -> None:
+    """同一 chunk_id 带不同 span ⇒ 保留**区间最窄**（最精确）那条。
+
+    ``#提及`` 后缀会产生不同区间（span 档 10~20 / 回退档 0~len(text)）。
+    两条顺序**都验**：整段在前、span 在前，结论必须相同 ⇒ 不是"先到先得"。
+    """
+    chunk = _chunk_with_spans(
+        spans=(EntitySpan(mention="北京青云科技有限公司", char_start=10, char_end=20),)
+    )
+    index = _index(chunk)
+    precise = _to_citation(f"{CHUNK_ID}#北京青云科技有限公司", index)
+    whole = _to_citation(CHUNK_ID, index)
+    assert precise is not None and whole is not None
+    assert (precise.char_offset, precise.char_end) == (10, 20)
+    assert (whole.char_offset, whole.char_end) == (0, len(chunk.text))
+
+    assert _build_citations([CHUNK_ID, f"{CHUNK_ID}#北京青云科技有限公司"], index) == [
+        precise
+    ]
+    assert _build_citations([f"{CHUNK_ID}#北京青云科技有限公司", CHUNK_ID], index) == [
+        precise
+    ]
+
+
+def test_build_citations_dedup_does_not_reorder_distinct_chunks() -> None:
+    """去重**只**影响重复项：互不相同的 chunk 顺序原样保留（不被排序）。"""
+    first = _chunk(chunk_id="chunk-cccc0003", page=3)
+    second = _chunk(chunk_id="chunk-aaaa0001", page=1)
+
+    citations = _build_citations(
+        ["chunk-cccc0003", "chunk-aaaa0001"], _index(first, second)
+    )
+
+    assert [citation.chunk_id for citation in citations] == [
+        "chunk-cccc0003",
+        "chunk-aaaa0001",
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# P7-S：注入证据观测出口（LLM 之前 ⇒ 不受生成侧非确定性影响）
+# --------------------------------------------------------------------------- #
+
+
+def test_query_logs_injected_chunk_sequence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """观测出口：本轮**注入 Prompt 的 chunk_id 序列（含顺序）**有日志出口。
+
+    判据是「**我们送进了什么**」，不是「模型说它用了什么」（``citations`` 是
+    ``parsed.evidence`` 的投影，见 P7-R §6.1）⇒ 这条读数**在 LLM 调用之前**
+    产出，不受生成侧非确定性影响，是判别「检索漂 / 生成漂」的直接证据。
+
+    ⚠️ **反向验证（R-9）**：删掉 `_execute_query` 里那条
+    ``INJECTED_EVIDENCE_EVENT`` 日志 ⇒ 本例**必须红**（``len(hits) == 0 != 1``）。
+    """
+    from loguru import logger
+
+    from app.services.agents import INJECTED_EVIDENCE_EVENT
+
+    first = _chunk(chunk_id="chunk-cccc0003", page=3)
+    second = _chunk(chunk_id="chunk-aaaa0001", page=1)
+    _patch_pipeline(
+        monkeypatch,
+        chunks=[first, second],
+        llm_answer=_llm_answer(["chunk-cccc0003"]),
+    )
+
+    records: list[object] = []
+    handler_id = logger.add(lambda m: records.append(m.record), level="INFO", format="")
+    try:
+        asyncio.run(
+            AgentService.instance().query(
+                request=AgentQueryRequest(question="甲方是谁？"),
+                org_id=uuid4(),
+                trace_id="t-p7s-injected",
+            )
+        )
+    finally:
+        logger.remove(handler_id)
+
+    hits = [r for r in records if r["message"] == INJECTED_EVIDENCE_EVENT]  # type: ignore[index]
+    assert len(hits) == 1
+    extra = hits[0]["extra"]  # type: ignore[index]
+    assert extra["trace_id"] == "t-p7s-injected"
+    assert extra["chunk_count"] == 2
+    #: **顺序**必须等于注入顺序（不是排序后的、也不是 citations 的顺序）
+    assert extra["chunk_ids"] == ("chunk-cccc0003", "chunk-aaaa0001")
