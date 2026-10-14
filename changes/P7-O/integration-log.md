@@ -99,6 +99,9 @@
 
 | 项 | 读数 |
 |---|---|
-| CI run | **待回填**（推送后填入） |
-| 四个 job | 待回填 |
-| CI 后端 pytest | 待回填（基线 `1311 passed / 7 skipped / 0 failed`；本批无新增用例 ⇒ 期望持平） |
+| CI run | **38498980075**（commit `67e59ea`） |
+| 四个 job | 后端（ruff + pytest）✅ 2m47s ｜前端（lint + gen:api）✅ 43s ｜契约校验（前后端漂移门禁）✅ 28s ｜流水线汇总 ✅ 3s |
+| CI 后端 pytest | **1311 passed / 7 skipped / 0 failed**（`Ruff: All checks passed!`） |
+
+核销：本批**没新增任何用例** ⇒ 期望与上批（P7-G 收工时的 `1311`）**持平**。实测正好 1311
+⇒ `restore.py` 的落点改动没有波及任何既有用例（尤其是 backup/restore 那 49 条）。
