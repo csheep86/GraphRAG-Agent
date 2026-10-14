@@ -368,7 +368,6 @@ def apply_restore(
     pg_container: str | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """按清单逐个恢复；返回每个对象的 (name, 结果串)——**不做静默跳过**。"""
-    settings = get_settings()
     outcomes: list[tuple[str, str]] = []
     by_name = {item.name: item for item in manifest.objects}
 
@@ -398,9 +397,14 @@ def apply_restore(
                 restore_storage(
                     backup_dir=backup_dir,
                     entry=entry,
-                    target_root=Path(storage_root)
-                    if storage_root
-                    else settings.storage_root,
+                    target_root=Path(storage_root),
+                )
+                if storage_root
+                else (
+                    "storage",
+                    "SKIP 未给 --storage-root：本脚本通常在**宿主**上跑，而恢复目标往往是别处；"
+                    "默认落到 settings.storage_root 等于把文件写回本机而不是目标环境 ——"
+                    "P6-X2 演练正踩了这个坑（落点错位 ⇒ 那次演练 C 项不达标）⇒ 不猜，请显式给",
                 )
             )
         elif name == "license":
@@ -408,9 +412,14 @@ def apply_restore(
                 restore_license(
                     backup_dir=backup_dir,
                     entry=entry,
-                    target_path=Path(license_file)
-                    if license_file
-                    else Path(settings.license_file_path),
+                    target_path=Path(license_file),
+                )
+                if license_file
+                else (
+                    "license",
+                    "SKIP 未给 --license-file：理由同 storage —— 默认落到"
+                    " settings.license_file_path 会覆盖**本机**的 License，"
+                    "而恢复目标通常不是本机 ⇒ 不猜，请显式给",
                 )
             )
         else:
@@ -427,10 +436,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pg-dsn", help="恢复用的 BYPASSRLS 库连接串")
     parser.add_argument("--target-db", help="恢复目标库名（须已存在，脚本不建库）")
     parser.add_argument(
-        "--storage-root", help="文件存储根目录（默认 settings.storage_root）"
+        "--storage-root",
+        # 不再有"默认落 settings"这一说：那正是 P6-X2 演练落点错位的来源。
+        help="文件存储恢复落点（**不给则跳过**：不落本机 settings.storage_root）",
     )
     parser.add_argument(
-        "--license-file", help="License 落点（默认 settings.license_file_path）"
+        "--license-file",
+        help="License 恢复落点（**不给则跳过**：不覆盖本机 License）",
     )
     parser.add_argument("--neo4j-container", help="图容器名（显式指定才会 load 图库）")
     parser.add_argument(
