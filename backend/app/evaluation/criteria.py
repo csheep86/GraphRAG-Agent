@@ -69,6 +69,15 @@ class Provenance:
     #: 写进归因是为了**防止把 L1 的结果说成端到端**（A8 裁决 4 / G5 声明）。
     corpus_layer: str | None = None
     rubric: str | None = None
+    #: **A8 可复现门（P7-K）**：**判分所绑定**的环境坐标。
+    #:
+    #: 为什么必须进归因（而不是只写进 detail）：这三样变了 ⇒ 检索到的证据集合 /
+    #: 生成答案的模型都变了 ⇒ 同一张判分表**不再对应这批答案**。写在 detail 里
+    #: 可以被读者忽略，写进归因 ⇒ **脱离坐标无法被引用**（P7-K 出口判据 5）。
+    pool_fingerprint: str | None = None
+    generation_model: str | None = None
+    #: 注入给 LLM 的证据条数上限（`EVIDENCE_CHUNK_LIMIT`）
+    top_k: int | None = None
     notes: str | None = None
 
 

@@ -72,6 +72,7 @@ from app.evaluation.report import (  # noqa: E402
 )
 from app.evaluation.runner import (  # noqa: E402
     ALL_CRITERIA,
+    JudgementBasis,
     RunnerContext,
     resolve_cost_ceiling,
     run,
@@ -351,6 +352,13 @@ def main() -> int:
             else None
         ),
         judged_by=args.judged_by,
+        #: **P7-K**：按判分表自证的 ``_source_sheets`` 加载「判分当时那一趟」的坐标
+        #: 与答案原文 ⇒ 出数前可以验环境、验答案。两张表各自加载自己的 basis
+        #:（与 A1 裁决 3「两侧必须分开判」同一道理）。
+        judgement_basis=JudgementBasis.load(graph_judgements_path, side="graph"),
+        baseline_judgement_basis=JudgementBasis.load(
+            baseline_judgements_path, side="baseline"
+        ),
         gold_version=args.gold,
     )
 

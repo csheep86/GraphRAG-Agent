@@ -19,7 +19,9 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
@@ -124,6 +126,11 @@ class RunnerContext:
     #: 人工判分：``{题号: correct}``（A3：脚本不自动判分）。
     judgements: dict[int, bool] | None = None
     judged_by: str = "architect"
+    #: **A8 可复现（P7-K）**：判分所**绑定**的那一趟坐标（由图侧判分表自证），
+    #: 出数前用它验环境 + 验答案；``None`` ⇒ 无法证明「这批答案就是人判过的那批」。
+    judgement_basis: Any | None = None
+    #: 同上，**基线侧**用另一张判分表 ⇒ 也必须有自己的 basis（A1 裁决 3）。
+    baseline_judgement_basis: Any | None = None
     #: **A1（2026-10-05）**：**基线侧**的独立判分（同一份 rubric、同一批改）。
     #: 为什么必须是**另一份**：两侧的答案由不同检索产出，同一题在两侧对错可以不同
     #: ⇒ 共用一张判分表等于替基线"预设答案"，那会让增益失去意义（L10-A1 条款 3）。
@@ -215,6 +222,11 @@ def _provenance(
         corpus=str(extra.get("corpus") or "demo/attendance（仿真演示语料）"),
         corpus_layer=extra.get("corpus_layer"),
         rubric=str(manifest.get("rubric", {}).get("id", "rubric-v1")),
+        #: **P7-K（出口判据 5）**：环境坐标进**归因**而不是只进 detail——
+        #: 写在 detail 里可以被读者忽略，写进归因 ⇒ 脱离坐标无法引用这个数字。
+        pool_fingerprint=extra.get("pool_fingerprint"),
+        generation_model=extra.get("generation_model"),
+        top_k=extra.get("top_k"),
         notes=extra.get("notes"),
     )
 
@@ -487,6 +499,9 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
 
     items = load_multihop_set()
     judgements = runner_ctx.judgements or {}
+    #: gold 里已存的 correct（P6-T 写回的那份）**保留为兜底**，但它只有在后面
+    #: 两道门都通过之后才允许被套用（P7-K D5：答案漂移时不许吃这本老账）。
+    gold_correct = {item.index: item.correct for item in items}
     answers: list[AnswerRecord] = []
     indices: list[int] = []
     failures: list[dict[str, Any]] = []
@@ -497,14 +512,7 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
                 {"index": item.index, "error": error, "question": item.question}
             )
             continue
-        correct = judgements.get(item.index, item.correct)
-        answers.append(
-            _to_answer(
-                response,
-                correct=correct,
-                judged_by=runner_ctx.judged_by if correct is not None else None,
-            )
-        )
+        answers.append(_to_answer(response, correct=None, judged_by=None))
         indices.append(item.index)
 
     if not answers:
@@ -519,7 +527,60 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
             detail={"failures": failures, "asked": len(items)},
         )
 
-    metric = accuracy(tuple(answers))
+    #: **P7-K 门 ①——环境自检**：本次链路是否还站在判分当时的那个环境上。
+    #: 放在**出数之前**而不是之后：环境不对时再去跑 6 道题只是白烧一次 LLM。
+    coords = _live_env_coords(runner_ctx)
+    blocked, gate_detail = _reproducibility_gate(
+        runner_ctx.judgement_basis,
+        dataset_version="gold-multihop-v1",
+        git_hash=runner_ctx.git_hash,
+        pool_fingerprint=coords[0] if coords else None,
+        top_k=coords[1] if coords else None,
+        generation_model=coords[2] if coords else None,
+    )
+    if blocked is not None:
+        return _blocked_result(
+            C_MULTIHOP,
+            runner_ctx,
+            dataset_version="gold-multihop-v1",
+            blocked_by=blocked,
+            threshold=0.80,
+            threshold_source="calibrated",
+            asked=len(items),
+            note=(
+                "环境不可复现 ⇒ 判分表不得复用：要么回到原环境重跑，"
+                "要么只重判差异题后再出数（重 number 跑不为「让数字好看」）"
+            ),
+            answer_texts=_awaiting_judgement(tuple(answers), tuple(indices)),
+            **gate_detail,
+        )
+
+    #: **P7-K 门 ②——答案比对**：拒答 / 原文漂移 ⇒ 旧判分不再适用于这批答案。
+    stale = _answer_gate(runner_ctx.judgement_basis, indices, answers)
+    if stale:
+        return _blocked_result(
+            C_MULTIHOP,
+            runner_ctx,
+            dataset_version="gold-multihop-v1",
+            blocked_by=(
+                f"判分已过期：{len(stale)}/{len(answers)} 题的本次答案与判分材料不一致"
+                "（拒答或答案原文漂移）⇒ 旧判分不得套用（P6-T canary 的形状）"
+            ),
+            threshold=0.80,
+            threshold_source="calibrated",
+            asked=len(items),
+            stale_answers=stale,
+            answer_texts=_awaiting_judgement(tuple(answers), tuple(indices)),
+        )
+
+    judged = _apply_judgements(
+        tuple(indices),
+        tuple(answers),
+        judgements,
+        gold_correct,
+        runner_ctx.judged_by,
+    )
+    metric = accuracy(judged)
     if metric.value is None:
         return CriterionResult(
             criterion=C_MULTIHOP,
@@ -547,14 +608,19 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
         status=status,
         value=metric.value,
         provenance=_provenance(
-            runner_ctx, dataset_version="gold-multihop-v1", notes=reason
+            runner_ctx,
+            dataset_version="gold-multihop-v1",
+            pool_fingerprint=coords[0] if coords else None,
+            generation_model=coords[2] if coords else None,
+            top_k=coords[1] if coords else None,
+            notes=reason,
         ),
         threshold=0.80,
         threshold_source="calibrated",  # 0.80 来自矩阵，非 provisional
         verdict=judge(metric.value, threshold=0.80, threshold_source="calibrated"),
         detail={
             "asked": len(items),
-            "judged": sum(1 for a in answers if a.correct is not None),
+            "judged": sum(1 for a in judged if a.correct is not None),
             "judged_by": runner_ctx.judged_by,
             #: **P6-T（D2）**：与 C1 同一条留证要求——出数这一趟的答案原文**必须落盘**，
             #: 否则无从证明「人判的那 6 条」==「出数这一趟的 6 条」（判据 4）。
@@ -1115,6 +1181,37 @@ def _judged_answers(
     )
 
 
+def _apply_judgements(
+    indices: Sequence[int],
+    answers: Sequence[AnswerRecord],
+    judgements: Mapping[int, bool] | None,
+    gold_correct: Mapping[int, bool | None],
+    judged_by: str,
+) -> tuple[AnswerRecord, ...]:
+    """套人工判分；``gold_correct`` 是 gold 里已存的那份（P6-T 写回），作兜底。
+
+    为什么保留兜底却不算违规：它被套用的**前置条件**是 :func:`_answer_gate` 与
+    :func:`_reproducibility_gate` 都已通过 ⇒ 已证明「这批答案 == 当时人判的那批」。
+    缺了那两道门，兜底就会退化成 P6-T 那条 canary（6/6 拒答照样出 0.8333）。
+    """
+    table = judgements or {}
+    applied: list[AnswerRecord] = []
+    for index, answer in zip(indices, answers, strict=True):
+        correct = table.get(int(index), gold_correct.get(int(index)))
+        applied.append(
+            AnswerRecord(
+                refused=answer.refused,
+                citations=answer.citations,
+                answer_text=answer.answer_text,
+                correct=correct,
+                #: 未判分的题**不许落 judged_by**（A3：没人判过却写着某人的名字，
+                #: 事后就分不清这题到底判没判）。
+                judged_by=judged_by if correct is not None else None,
+            )
+        )
+    return tuple(applied)
+
+
 def _awaiting_judgement(
     answers: tuple[AnswerRecord, ...], indices: tuple[int, ...]
 ) -> list[dict[str, Any]]:
@@ -1133,6 +1230,327 @@ def _awaiting_judgement(
         }
         for index, answer in zip(indices, answers, strict=False)
     ]
+
+
+# ---------------------------------------------------------------------------
+# A8 可复现门（P7-K）
+# ---------------------------------------------------------------------------
+
+
+def _clean_str(value: Any) -> str | None:
+    """把「空 / None」统一归一成 ``None``（JSON 里的 ``""`` 不算登记过）。
+
+    为什么要这一步：答卷里缺失的坐标常写成 ``""``。若拿它去比对会把
+    「当时没记录」读成「本次不一致」⇒ **假红**，而假红会反过来把真红淹没。
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+@dataclass(frozen=True)
+class JudgementBasis:
+    """**判分当时那一趟**的环境坐标与答案原文（A8 可复现 / P7-K 的锚）。
+
+    它同时支撑两条门：
+
+    - **D4（版本漂移）**：判分是在某个池 / 某版代码 / 某个模型上做的；换环境重跑
+      ⇒ 答案已经不是人判过的那批 ⇒ 复用判分即**空心出数**。
+      P6-T 实测过成因：请求显式带 ``attendance-demo-v1``，链路却永远取 PG 里
+      ``ready_at`` 最新的那条 ⇒ 检索落在增量版本的池上 ⇒ **6/6 全拒答**。
+    - **D5（空心 PASS）**：``eval_multihop_accuracy`` 原写法是
+      ``correct = judgements.get(item.index, item.correct)``——它**从不看本次答案**，
+      所以 6/6 拒答照样报 ``0.8333 PASS``（P6-T canary 实证）。
+
+    加载来源是判分表的 ``_source_sheets`` 元信息。为什么让判分表**自证来源**
+    而不是新增命令行参数：**参数可以被忘传**，而判分表不写来源本身就违反了
+    「判分文件必须能自解释」的既有约定（``eval_acceptance.py::_load_judgements``）。
+    """
+
+    dataset_version: str
+    source: str
+    git_hash: str | None
+    pool_fingerprint: str | None
+    top_k: int | None
+    generation_model: str | None
+    #: 题号 -> 判分所见答案原文（**逐字**比对用）
+    answers: Mapping[int, str]
+
+    @classmethod
+    def load(cls, judgement_path: Path | None, *, side: str) -> JudgementBasis | None:
+        """按判分表的 ``_source_sheets`` 找到那份答卷并抽出坐标。
+
+        **找不到 ⇒ 返回 ``None`` 而不抛**：没有 basis 时判据走「未核 + 如实登记」，
+        **不等于**静默放行——见 :func:`_reproducibility_gate`。
+        """
+        if judgement_path is None:
+            return None
+        sheet_path = cls._locate_sheets(judgement_path)
+        if sheet_path is None:
+            return None
+        try:
+            sheet = json.loads(sheet_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+        rows = sheet.get(side) or []
+        spec = sheet.get(f"_{side}_spec") or {}
+        pool = spec.get("pool") or {}
+        answers: dict[int, str] = {}
+        for row in rows:
+            raw_index = str(row.get("index") or "").strip()
+            #: 非数字题号（如手工备注行）直接跳过：它不参与判分，混进来只会
+            #: 让比对函数以为某题「没有被判过」。
+            if raw_index.lstrip("-").isdigit():
+                answers[int(raw_index)] = str(row.get("answer") or "")
+        top_k = spec.get("top_k")
+        return cls(
+            dataset_version=str(sheet.get("_dataset_version") or ""),
+            source=sheet_path.name,
+            git_hash=_clean_str(sheet.get("_git_hash")),
+            pool_fingerprint=_clean_str(pool.get("fingerprint")),
+            top_k=top_k if isinstance(top_k, int) else None,
+            generation_model=_clean_str(spec.get("generation_model")),
+            answers=answers,
+        )
+
+    @staticmethod
+    def _locate_sheets(judgement_path: Path) -> Path | None:
+        """判分表 ``_source_sheets`` 指向的答卷（**先在同目录找**）。"""
+        try:
+            table = json.loads(judgement_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        sheet_name = table.get("_source_sheets")
+        if not isinstance(sheet_name, str) or not sheet_name.strip():
+            return None
+        candidate = judgement_path.parent / Path(sheet_name).name
+        return candidate if candidate.is_file() else None
+
+    def env_mismatch(
+        self,
+        *,
+        git_hash: str,
+        pool_fingerprint: str | None,
+        top_k: int | None,
+        generation_model: str | None,
+    ) -> str | None:
+        """环境是否与判分时一致：不符返回**原因**，一致返回 ``None``。
+
+        两侧都可能有 ``None`` ⇒ **不比对**（判分材料没登记，或本次取不到该坐标）。
+        为什么不把这些判成不一致：拿「当时没记录 / 本次没取到」当证据去证伪，
+        等于制造一种**无法被反驳的假红**——它会反过来把真红淹没。
+        """
+        if self.git_hash and git_hash and self.git_hash != git_hash:
+            return f"代码版本不同（判分 {self.git_hash} / 本次 {git_hash}）"
+        if (
+            self.pool_fingerprint
+            and pool_fingerprint
+            and self.pool_fingerprint != pool_fingerprint
+        ):
+            return (
+                f"chunk 池不同（判分 {self.pool_fingerprint} / 本次 "
+                f"{pool_fingerprint}）⇒ 检索到的不是同一批证据"
+            )
+        if self.top_k is not None and top_k is not None and self.top_k != top_k:
+            return f"注入证据条数不同（判分 {self.top_k} / 本次 {top_k}）"
+        if (
+            self.generation_model
+            and generation_model
+            and self.generation_model != generation_model
+        ):
+            return (
+                f"生成模型不同（判分 {self.generation_model} / 本次 "
+                f"{generation_model}）"
+            )
+        return None
+
+    def stale_answers(
+        self, indices: Sequence[int], answers: Sequence[AnswerRecord]
+    ) -> list[dict[str, Any]]:
+        """逐题列出「本次答案 ≠ 判分所见答案」（空 = 全部一致）。
+
+        **拒答一律计为不一致**：拒答没有答案原文，判分人当时判的是一段文字，
+        ⇒ 拿那段文字的判分结果往拒答上套，就是 P6-T 那条 canary 的原样复现。
+        """
+        stale: list[dict[str, Any]] = []
+        for index, answer in zip(indices, answers, strict=False):
+            expected = self.answers.get(int(index))
+            if answer.refused:
+                stale.append(
+                    {
+                        "index": int(index),
+                        "reason": "本次答案为拒答（无答案可判）",
+                        "judged_answer_head": (expected or "")[:80],
+                    }
+                )
+                continue
+            if expected is None:
+                continue
+            if answer.answer_text.strip() != expected.strip():
+                stale.append(
+                    {
+                        "index": int(index),
+                        "reason": "答案原文与判分所见不一致",
+                        "judged_answer_head": expected[:80],
+                        "current_answer_head": answer.answer_text[:80],
+                    }
+                )
+        return stale
+
+
+_UNCHECKED_NOTE = (
+    "未提供判分材料来源（判分表缺 _source_sheets）⇒ "
+    "无法证明「本次答案」就是「当时人判的那批答案」"
+)
+
+
+def _reproducibility_gate(
+    basis: JudgementBasis | None,
+    *,
+    dataset_version: str,
+    git_hash: str,
+    pool_fingerprint: str | None = None,
+    top_k: int | None = None,
+    generation_model: str | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    """出数前的**环境自检**（P7-K 出口判据 2）。
+
+    :returns: ``(blocked_by, detail)`` —— ``blocked_by`` 非 ``None`` ⇒
+        **必须转 BLOCKED 且 value=None**（不是 0、也不是旧值）。
+
+    三种返回值：
+
+    - 坐标不符 ⇒ ``("判分环境不可复现：…", {...})`` ⇒ BLOCKED；
+    - 无 basis / basis 属于别的数据集 ⇒ ``(None, {"reproducibility": "unchecked"})``
+      ⇒ **照旧出数但如实登记**，不许写成"已核实";
+    - 一致 ⇒ ``(None, {"reproducibility": "verified"})``。
+    """
+    if basis is None:
+        return None, {"reproducibility": "unchecked", "note": _UNCHECKED_NOTE}
+    if basis.dataset_version and basis.dataset_version != dataset_version:
+        return None, {
+            "reproducibility": "unchecked",
+            "note": (
+                f"判分材料 {basis.source} 属于 {basis.dataset_version}，"
+                f"与本判据的 {dataset_version} 不是同一数据集 ⇒ 不适用"
+            ),
+        }
+    mismatched = basis.env_mismatch(
+        git_hash=git_hash,
+        pool_fingerprint=pool_fingerprint,
+        top_k=top_k,
+        generation_model=generation_model,
+    )
+    if mismatched is not None:
+        return (
+            f"判分环境不可复现：{mismatched}（判分材料 {basis.source}）",
+            {
+                "reproducibility": "blocked",
+                "expected": {
+                    "git_hash": basis.git_hash,
+                    "pool_fingerprint": basis.pool_fingerprint,
+                    "top_k": basis.top_k,
+                    "generation_model": basis.generation_model,
+                },
+                "actual": {
+                    "git_hash": git_hash,
+                    "pool_fingerprint": pool_fingerprint,
+                    "top_k": top_k,
+                    "generation_model": generation_model,
+                },
+            },
+        )
+    return None, {"reproducibility": "verified", "basis_source": basis.source}
+
+
+def _live_env_coords(runner_ctx: RunnerContext) -> tuple[str, int, str] | None:
+    """本次运行的 ``(池指纹, top_k, 生成模型)``；取不到返回 ``None``。
+
+    为什么 best-effort（**吞异常**而不是报错）：坐标只用于**证伪**「判分还能不能复用」，
+    取不到它说明的是"本次无从比对"，不能顺势把判据判死 ⇒ 是否出数交给
+    :func:`_reproducibility_gate` 决定。
+    """
+    try:
+        from uuid import UUID  # noqa: PLC0415
+
+        from app.evaluation.baseline import (  # noqa: PLC0415
+            build_pool_ref,
+            graph_side_spec,
+        )
+        from app.services.graphs import GraphService  # noqa: PLC0415
+
+        snapshot = _qa_run(runner_ctx)
+        kg_version = next(iter(snapshot.kg_versions), "")
+        pool = GraphService.instance().fetch_chunk_pool(
+            kg_version=kg_version, org_id=UUID(runner_ctx.org_id)
+        )
+        pool_ref = build_pool_ref(
+            kg_version=kg_version, org_id=runner_ctx.org_id, chunks=pool
+        )
+        spec = graph_side_spec(pool=pool_ref, judged_by=runner_ctx.judged_by)
+    except Exception:  # noqa: BLE001 - 坐标取不到 ⇒ 无从比对，不拖垮判据
+        return None
+    return spec.pool.fingerprint, spec.top_k, spec.generation_model
+
+
+def _refused_entries(
+    indices: Sequence[int], answers: Sequence[AnswerRecord]
+) -> list[dict[str, Any]]:
+    """本次**拒答**的题（P6-T canary 的原样形状：全拒答仍报 0.8333 PASS）。"""
+    return [
+        {
+            "index": int(index),
+            "reason": "本次答案为拒答（无答案可判）",
+            "answer_head": answer.answer_text[:80],
+        }
+        for index, answer in zip(indices, answers, strict=False)
+        if answer.refused
+    ]
+
+
+def _answer_gate(
+    basis: JudgementBasis | None,
+    indices: Sequence[int],
+    answers: Sequence[AnswerRecord],
+) -> list[dict[str, Any]]:
+    """本次答案是否还能套用判分：**空列表 = 可以**，否则逐题给出理由。
+
+    两条独立证据：
+
+    1. **拒答**（不需要判分材料也能查）：拒答没有答案原文，判分人判的是一段文字
+       ⇒ 把那段文字的判分套到拒答上，就是 P6-T canary 的形状；
+    2. **答案原文漂移**（需要 basis）：更像日常形态——环境没报错、链路也通，
+       但证据换了 ⇒ 答案悄悄变了，而判分表还是旧的。
+    """
+    if isinstance(basis, JudgementBasis):
+        return basis.stale_answers(indices, answers)
+    return _refused_entries(indices, answers)
+
+
+def _blocked_result(
+    criterion: str,
+    runner_ctx: RunnerContext,
+    *,
+    dataset_version: str,
+    blocked_by: str,
+    threshold: float,
+    threshold_source: str,
+    **detail: Any,
+) -> CriterionResult:
+    """「不给数字」的统一出口：**value=None + INDETERMINATE**（不是 0、不是旧值）。"""
+    return CriterionResult(
+        criterion=criterion,
+        status=CriterionStatus.UNKNOWN,
+        value=None,
+        provenance=_provenance(runner_ctx, dataset_version=dataset_version),
+        blocked_by=blocked_by,
+        verdict=Verdict.INDETERMINATE,
+        threshold=threshold,
+        threshold_source=threshold_source,
+        detail=detail or None,
+    )
 
 
 def _c1_unknown(
@@ -1282,6 +1700,43 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
             baseline_spec=base_spec.as_dict(),
         )
 
+    #: **P7-K 门 ①——环境自检**（判分是否还能复用）。
+    #: 坐标直接复用 :func:`_load_pool_and_specs` 已算好的图侧 spec：不重复建池、
+    #: 不多一次 Neo4j 查询，也避免两侧坐标来自两次不同的加载。
+    blocked, gate_detail = _reproducibility_gate(
+        runner_ctx.judgement_basis,
+        dataset_version="controlled-qset-v4",
+        git_hash=runner_ctx.git_hash,
+        pool_fingerprint=graph_spec.pool.fingerprint,
+        top_k=graph_spec.top_k,
+        generation_model=graph_spec.generation_model,
+    )
+    if blocked is not None:
+        return _c1_unknown(
+            runner_ctx,
+            blocked,
+            graph_spec=graph_spec.as_dict(),
+            baseline_spec=base_spec.as_dict(),
+            **gate_detail,
+        )
+
+    #: **P7-K 门 ②——答案比对（图侧）**：这批答案是不是当时人判过的那批。
+    graph_stale = _answer_gate(
+        runner_ctx.judgement_basis, snapshot.answered_indices, snapshot.answers
+    )
+    if graph_stale:
+        return _c1_unknown(
+            runner_ctx,
+            f"判分已过期：图侧 {len(graph_stale)}/{len(snapshot.answers)} 题"
+            "的本次答案与判分材料不一致（拒答或答案原文漂移）⇒ 旧判分不得套用",
+            stale_answers=graph_stale,
+            graph_spec=graph_spec.as_dict(),
+            baseline_spec=base_spec.as_dict(),
+            awaiting_graph=_awaiting_judgement(
+                snapshot.answers, snapshot.answered_indices
+            ),
+        )
+
     graph_answers = _judged_answers(
         snapshot.answers,
         snapshot.answered_indices,
@@ -1291,6 +1746,21 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
     graph_metric = accuracy(graph_answers)
 
     baseline_error, baseline_answers, baseline_indices = _run_baseline_side(runner_ctx)
+
+    #: 门 ② 的**基线侧**：它用另一张判分表（A1 裁决 3）⇒ 必须有自己的 basis。
+    baseline_stale = _answer_gate(
+        runner_ctx.baseline_judgement_basis, baseline_indices, baseline_answers
+    )
+    if baseline_stale:
+        return _c1_unknown(
+            runner_ctx,
+            f"判分已过期：基线侧 {len(baseline_stale)}/{len(baseline_answers)} 题"
+            "的本次答案与判分材料不一致（拒答或答案原文漂移）⇒ 旧判分不得套用",
+            stale_answers=baseline_stale,
+            graph_spec=graph_spec.as_dict(),
+            baseline_spec=base_spec.as_dict(),
+            awaiting_baseline=_awaiting_judgement(baseline_answers, baseline_indices),
+        )
     baseline_metric = (
         accuracy(
             _judged_answers(
@@ -1354,6 +1824,11 @@ def eval_graph_gain(ctx: dict[str, Any]) -> CriterionResult:
             runner_ctx,
             dataset_version="controlled-qset-v4",
             kg_version=", ".join(snapshot.kg_versions),
+            #: **P7-K**：出数的同时把"判分所绑定的环境"一并写出——少了这三行，
+            #: 这份数字可以被**脱离坐标**引用，那正是 P6-T D4/D5 的形状。
+            pool_fingerprint=graph_spec.pool.fingerprint,
+            generation_model=graph_spec.generation_model,
+            top_k=graph_spec.top_k,
             #: **随实测反推**（P6-D）：图里有 M2 抽取产物 ⇒ L2，只有直灌数据 ⇒ L1，
             #: 图不可用 ⇒ None（宁可空着，不许填一个漂亮的层号）。
             corpus_layer=_detect_layer(snapshot.kg_versions, runner_ctx.org_id),
