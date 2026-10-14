@@ -81,7 +81,7 @@ $ uv run python scripts/eval_acceptance.py --calibrate
 | 1 | ceiling = 裁决值，日志有裁决人 + 理由 + 日期 | ✅ | §1 决策表（真名待本人补） |
 | 2 | `pytest` 不降（尤其 `test_eval_acceptance_cli.py` 三锚点） | ✅ | 见 §5 |
 | 3 | 矩阵 C3-a / C3-b 行 `PASS(provisional)` → `MEASURED` | ⚠️ **部分，见下——这是本批唯一没闭合的判据** | 需终审确认语义 |
-| 4 | 三件套 + CI 四 job 全绿 | ✅ | 见 §6 |
+| 4 | 三件套 + CI 四 job 全绿 | ✅ | **CI run [`38529683194`](https://github.com/csheep86/GraphRAG-Agent/actions/runs/38529683194)**（push `0469ab8`）四 job 全绿；后端 job **1337 passed / 7 skipped / 0 failed** —— 与上一批 P7-K 收尾时**持平**（本批零行为改动 ⇒ 持平即正确） |
 
 ### 4.1 判据 3 未闭合的原因（**待你在 P8-Release 前确认**）
 
