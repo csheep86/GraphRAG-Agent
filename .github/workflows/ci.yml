@@ -151,9 +151,17 @@ jobs:
       # ⚠️ 少了这一步，业务测试会以超级用户身份跑 ⇒ RLS 从未被验证，
       # 而 G-26 判据 4 会把它叫住（rolbypassrls / rolsuper 断言）。
       - name: 建 RLS 角色与受控系统函数（须超级用户）
+        # ⚠️ `--create-tables` **不能省**（P7-Q / 2026-10-14）：
+        # 此前脚本里有「空库 ⇒ 自动 `create_all`」的隐式分支，本步骤**什么都不给**也能建表；
+        # P7-Q 删掉该分支（它正是 F-P7H-1「交付库由 create_all 建、却从不 stamp」的成因），
+        # 建表改由开关显式指定 ⇒ CI 这步必须显式给，否则下一步的
+        # `GRANT … ON public.affiliation_suspicions` 会 `UndefinedTable`（实测：run 38519070311）。
+        # 口径：**测试路径** = `--create-tables`（`create_all`，本就跑迁移）；
+        #       **交付路径** = `--run-migrations`（`alembic upgrade head`，唯一建表途径）。
         run: |
           uv run python scripts/init_rls_roles.py \
-            --admin-url postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test
+            --admin-url postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test \
+            --create-tables
 
       - name: Ruff 静态检查
         run: uv run ruff check .
@@ -289,7 +297,7 @@ jobs:
             echo "  - 起测试库（G-8 要求 PostgreSQL 16.x，本地与 CI 同 tag）:"
             echo "    \`docker run --rm -d -e POSTGRES_USER=graphrag -e POSTGRES_PASSWORD=graphrag -e POSTGRES_DB=graphrag -p 5432:5432 postgres:16-alpine\`"
             echo "  - 建 RLS 角色与策略（P3-A：业务测试走受限角色，超级用户会绕过 RLS）:"
-            echo "    \`uv run python scripts/init_rls_roles.py --admin-url postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test\`"
+            echo "    \`uv run python scripts/init_rls_roles.py --admin-url postgresql+psycopg://graphrag:graphrag@localhost:5432/graphrag_test --create-tables\`"
             echo "  - 起图谱库（P3-B：G-9 图谱侧用例要**真** Neo4j，与 deploy 同 tag）:"
             echo "    \`docker run --rm -d -e NEO4J_AUTH=neo4j/ci-graph-pw-2026 -p 7687:7687 neo4j:5.26-community\`"
             echo "  - 真图用例的连接开关（缺它 ⇒ 图谱用例 skip；CI 上由 job env 注入）:"
