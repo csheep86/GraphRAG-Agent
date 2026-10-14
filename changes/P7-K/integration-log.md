@@ -119,7 +119,58 @@
 
 ---
 
-## 7. CI
+---
+
+## 7. 第 2 段探路（2026-10-14 实机）｜**真机跑不了，且原因改变了本段的形态**
+
+### 7.1 环境实况（`docker ps`）
+
+| 容器 | 状态 | 端口（宿主机） |
+|---|---|---|
+| `graphrag-drill-backend-1` | Up 30h healthy | **8000** |
+| `graphrag-drill-postgres-1` / `-neo4j-1` | Up 30h healthy | — / 7475、7688 |
+| `graphrag-pg` / `graphrag-neo` | Up 2d / 30h | 5432 / 7687 |
+| `graphrag-pg16` / `graphrag-neo4j` / `kg-poc-neo4j` | Exited | — |
+
+### 7.2 三个 ¥0 发现
+
+1. **`EVAL_BASE_URL` 默认 `http://127.0.0.1:8002`，而活着的服务在 `8000`**
+   （`app/evaluation/runner.py:112`）⇒ 不显式给 `--base-url` 必然连不上，且 first error 会
+   误导成"后端未起"。**（已绕：`--base-url http://127.0.0.1:8000`）**
+2. **多跳探针结果：`链路不可用：6/6 题请求失败（首错：HTTP 401）`**
+   （报告 `backend/reports/eval/p7k-multihop-probe1.json`）
+3. **401 的根因**：契约要求 `bearerAuth`；而 `dev.<org>.<actor>` 兜底只在
+   `ALLOW_DEV_ORG_HEADER=true` **且非生产**时装配（`app/core/auth.py:9-14`，护栏 **G-27**）。
+   评测脚本 `runner.py:159` **只发 `X-Org-Id`、不发 `Authorization`** ⇒ 在关了 dev 兜底的
+   栈上**必然 401**。drill 栈正是这种形态。
+
+### 7.3 由此得出的结论（**不许绕过**）
+
+> **不许为了跑评测去把 drill 栈的 `ALLOW_DEV_ORG_HEADER` 打开** —— 那等于把 B1 的护栏
+> （P7-C 刚钉死的「非开发形态不可达」）为一次评测而拆掉一层。P7-K Non-goal 3 也写明
+> 「不修 B1 dev 身份头」。
+
+⇒ 这反过来**机械地证明 proposal §1 裁决的「独立评测环境」是必需、而非可选**：
+评测必须跑在**为评测而配**的栈上（`APP_ENV=development` + `ALLOW_DEV_ORG_HEADER=true`），
+而不是跑在任何一套"顺便存在"的容器里。
+
+### 7.4 下一步（第 2 段本体，另外开一轮做）
+
+1. 用 `deploy/docker-compose.yml` 起一套**独立评测栈**（`project-name` 与 drill 隔离），
+   显式注入 `ALLOW_DEV_ORG_HEADER=true` / `APP_ENV=development`；
+2. 图库按已查证的 **`neo4j-admin dump/load` 整库搬运**（`backup.py:193-232` / `restore.py:294-303`），
+   沿用同一 `DEFAULT_ORG_ID` ⇒ **不需要重新抽取语料**（那才是烧钱的一段）；
+3. 恢复后在新 PG 上把那个多出来的 inc 版本置**非 ready**（这是 D4 的直接成因；
+   **无现成脚本** ⇒ 命中 proposal §5 情况 2：动手前先报告）；
+4. 用官方 `--compare A B` 做出口判据 1（连跑两次逐字一致），再出 C1 / 多跳读数登记（判据 4）。
+
+> ⚠️ 成本提醒：在这一步**之前**的全部工作已让 `--live` 的失败成本从"出赝数"降到
+> "连不上就 BLOCKED"——第 1 段的两道门在核验出 401 时给出了 `value=null + INDETERMINATE`，
+> **没有出任何数字**（这正是它们该做的事）。
+
+---
+
+## 8. CI
 
 | 项 | 读数 |
 |---|---|
