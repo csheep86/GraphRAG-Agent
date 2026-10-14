@@ -297,6 +297,17 @@ class Settings(BaseSettings):
     #:    已知不确定性：若抽取是「每文档一次调用」而非「每 chunk 一次」，真实量级
     #:    会掉到 ~2k/文档 ⇒ 32 000 偏松，这正是 `--calibrate` 存在的理由。
     #:
+    #: **2026-10-14 裁决（P7-F）**：32 000 **维持原值**，由人裁决为**产品期出厂默认
+    #: ceiling**。裁决理由：尚无外部客户与真实业务语料 ⇒ 无可校准样本；本值是
+    #: **通用默认值，不是任何行业的达标线**，且可由部署方在 `.env` 覆盖。
+    #:
+    #: ⚠️ 为什么 `resolve_cost_ceiling()` 的 source **仍是 provisional**（未改紧浊）：
+    #:    本值**未经校准**（唯一实测 n=1，文档仅 1019 字）⇒ 若改标成已校准，C3-a
+    #:    判出**纯 PASS**，把"没有校准样本"读成"TBD-7 已收敛"——属 §5.2 假绿。
+    #:    **重裁触发条件**（命中任一即重来）：① 出现第一位外部持证客户；
+    #:    ② 拿到 ≥3 份**真实业务长度**文档的 `cost_records`；③ 抽取链路的调用
+    #:    粒度发生变化（每 chunk ↔ 每文档）。
+    #:
     #: 唯一消费点：`app/evaluation/runner.py::resolve_cost_ceiling`（C3-a 判定）
     #:            + `scripts/eval_acceptance.py::_calibrate`（校准建议）。
     eval_single_doc_token_ceiling: int = Field(default=32_000, gt=0)
