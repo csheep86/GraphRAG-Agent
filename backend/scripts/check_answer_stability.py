@@ -90,7 +90,8 @@ def _classify(first: dict, other: dict) -> str:
     """同一题两次之间，差异属于哪一类（**互斥且覆盖**）。"""
     if first["refused"] != other["refused"]:
         return "c_refusal_flip"
-    if first["citations"] != other["citations"]:
+    #: 判据用**序列**（哪个 chunk、什么顺序），不是条数 —— 见 ``_collect`` 里的注记。
+    if first.get("citation_ids") != other.get("citation_ids"):
         return "a_evidence_drift"
     if _normalise(first["answer"]) != _normalise(other["answer"]):
         return "b_wording_drift"
@@ -111,9 +112,15 @@ def _collect(ctx: RunnerContext, items) -> dict[int, dict]:
             }
             continue
         #: 与 ``runner._to_answer`` 同一套字段约定（不 import 私有函数）。
+        #: ⚠️ ``citation_ids`` **必须记序列，不能只记条数**：证据"条数相同"≠"证据相同"。
+        #: 若 top-k 的**顺序**在跑动中漂移，注入 LLM 的上下文顺序随之变化 ⇒
+        #: 答案措辞会变，而条数纹丝不动 ⇒ 只比条数会把"检索漂"误判成"生成漂"。
         out[item.index] = {
             "refused": bool(response.get("refused")),
             "citations": len(response.get("citations") or ()),
+            "citation_ids": tuple(
+                str(c.get("chunk_id") or "") for c in (response.get("citations") or ())
+            ),
             "answer": str(response.get("answer") or ""),
             "error": None,
         }
@@ -140,12 +147,14 @@ def main(argv: list[str] | None = None) -> int:
         idx = item.index
         texts = [_normalise(run[idx]["answer"]) for run in runs]
         cites = [run[idx]["citations"] for run in runs]
+        evidence = [tuple(run[idx].get("citation_ids") or ()) for run in runs]
         refusals = [run[idx]["refused"] for run in runs]
         coverage = [_coverage(run[idx]["answer"], item.expected_points) for run in runs]
         classes = {_classify(runs[0][idx], run[idx]) for run in runs[1:]}
         per_item[idx] = {
             "identical": len(set(texts)) == 1,
             "citations_identical": len(set(cites)) == 1,
+            "evidence_identical": len(set(evidence)) == 1,
             "coverage_identical": len(set(coverage)) == 1,
             "refusal_flipped": any(r != refusals[0] for r in refusals),
             "variant_count": len(set(texts)),
@@ -165,6 +174,9 @@ def main(argv: list[str] | None = None) -> int:
         "rate_citations_identical": (
             sum(1 for v in per_item.values() if v["citations_identical"]) / n
         ),
+        "rate_evidence_identical": (
+            sum(1 for v in per_item.values() if v["evidence_identical"]) / n
+        ),
         "rate_coverage_identical": (
             sum(1 for v in per_item.values() if v["coverage_identical"]) / n
         ),
@@ -182,11 +194,14 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"重复次数 N={args.repeat}，题目数 n={n}")
     print(f"  答案逐字一致率 : {summary['rate_answer_identical']:.3f}")
-    print(f"  引用一致率     : {summary['rate_citations_identical']:.3f}")
+    print(f"  引用条数一致率 : {summary['rate_citations_identical']:.3f}")
+    print(f"  证据序列一致率 : {summary['rate_evidence_identical']:.3f}  <- 判据用这个")
     print(f"  要点覆盖一致率 : {summary['rate_coverage_identical']:.3f}")
     print(f"  差异分类       : {summary['classification']}")
-    if summary["rate_citations_identical"] > summary["rate_answer_identical"]:
-        print("  -> 引用比措辞稳 -> 漂移来自**生成侧**（去改检索是白费劲）")
+    if summary["rate_evidence_identical"] > summary["rate_answer_identical"]:
+        print("  -> 证据序列比措辞稳 -> 漂移来自**生成侧**（去改检索是白费劲）")
+    elif summary["rate_evidence_identical"] < 1.0:
+        print("  -> 证据序列本身在漂移 -> **检索侧就不稳**，先别怪模型")
 
     if args.out:
         out_path = Path(args.out)
