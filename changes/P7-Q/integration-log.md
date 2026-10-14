@@ -81,9 +81,30 @@ dev 路径例外：`--create-tables` 那条分支仍然落策略（dev 库从不
 | ruff / format | `All checks passed!` ／ `301 files already formatted` |
 | 契约零漂移 / 接缝纪律 | `[OK]` / `[OK]`（ERROR 0 / WARN 0 / OK 12） |
 | 回切点 S1 | 读到本批 **4 条 Non-goals** 并逐条对照；S2 = 6 文件 / 419 行（阈值内）；S3/S4/S5 均无漂移 |
-| CI run | 见提交后的回填 |
+| CI run | **38519861381**（四 job 全绿；后端 job **1317 passed / 7 skipped / 0 failed**） |
 
-**核销**：本批新增 4 条用例 ⇒ 计数**应当上升**（+4），实测正好 +4 ⇒ 新用例真被收进去跑了。
+**核销**：本批新增 4 条用例 ⇒ 计数**应当上升**（+4）；
+CI 实测 **1317 = 1313 + 4** ⇒ 新用例真被 CI 收进去跑了（若持平 1313 反而要查）。
+
+### 4.1 ⚠️ 第一次推送是**红**的（run **38519070311**，后端 job 43s 就红）
+
+删掉「空库 ⇒ 自动 `create_all`」这条隐式分支时，**漏了一个调用方**：
+
+```
+.github/workflows/ci.yml「建 RLS 角色与受控系统函数」步骤：
+  uv run python scripts/init_rls_roles.py --admin-url …（**什么都不给**）
+```
+
+此前它靠那条隐式分支在空测试库上建表；分支一删 ⇒ 表不存在 ⇒ 下一步
+`GRANT … ON public.affiliation_suspicions` 抛 `UndefinedTable`（`init_rls_roles.py:392`）。
+
+**修法**：给 CI 这步显式补 `--create-tables`（测试路径本来就是 `create_all`，
+只是从**隐式**改**显式**；交付路径才是 `--run-migrations`）⇒ run **38519861381** 全绿。
+失败摘要里的复现命令同步补上（否则照它复现会再踩一次）。
+
+**教训（本批最值得留的一条）**：改一个"隐式默认行为"时，**调用方清单必须逐个点名**——
+本机只跑了带 `--run-migrations` 的形态和 `pytest`（conftest 自己建表），
+两者都绕开了这个入口 ⇒ **本地全绿而 CI 红**。本地 pytest 绿**不等于**部署/门禁链路绿。
 
 ---
 
@@ -112,4 +133,5 @@ dev 路径例外：`--create-tables` 那条分支仍然落策略（dev 库从不
 | **F-P7Q-1** | 任何"已由 `create_all` 建成"的旧库升级时都只能 stamp、不能真跑（那批迁移无处可跑）。这是**存量迁移的性质**决定的，不是本批实现的问题；要真正验证"升级时迁移真跑"，需等一个加表 / 加列的迁移 |
 | **F-P7Q-2** | `db-init` 不再落策略 ⇒ 将来若有迁移加了租户表却漏了 RLS 迁移，`db-init` 会**硬失败**（刻意设计）。CI 侧由 G-26 的清单漂移断言 + 「迁移后策略齐备」判据兜底 |
 | **F-P7Q-3** | dev 库 / `graphrag_test` 仍是 `create_all`、未 stamp（与 `probe_temporal_state.py:94-98` 同一形态）⇒ Non-goal 1，本批不动 |
+| **F-P7Q-4** | ✅ **已修**（run 38519861381 全绿）：删「空库自动 `create_all`」这条**隐式**分支时漏了 CI 那一步 ⇒ `UndefinedTable` 红。教训登记：**改隐式默认行为 ⇒ 调用方必须逐个点名**；本机只跑了 `--run-migrations` 形态与 `pytest`（conftest 自建表），**本地全绿 ≠ CI / 部署链路绿** |
 | **F-P7O-1** | （沿用登记）dev 图库 248 个脏 `:KgVersion` 未清理 |

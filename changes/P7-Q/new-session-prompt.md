@@ -143,10 +143,14 @@ BUILTIN_LICENSE_PUBLIC_KEY_B64 (public_key.py:28) = R5Q6Ab4q6cylp3RXRPBd/vbeIoCX
 | ruff / format | `All checks passed!` ／ `301 files already formatted` |
 | 契约零漂移 / 接缝纪律 | `[OK]` / `[OK]`（ERROR 0 / WARN 0 / OK 12） |
 | CI（上批 P7-P） | run **`38503380019`**，后端 job **1313 passed / 7 skipped** |
-| **本批（P7-Q）推送后** | 新增 4 条 ⇒ 后端 job **期望 1317**（= 1313 + 4）⇒ **实际 run 号与读数待回填** |
+| **CI（本批 P7-Q，已回填）** | run **`38519861381`**，四 job 全绿，后端 job **1317 passed / 7 skipped / 0 failed**（= 1313 + 4，核销通过） |
 
 > **核销规则**：P7-J **不新增用例** ⇒ CI 计数应当**持平 1317**（不是上升）。
 > 若下降 ⇒ 说明有既有用例因本批文档/登记改动而红，**先查是不是批次摊太大，而不是先改测试让它绿**（R-10）。
+>
+> ⚠️ **P7-Q 的红过一次，别照着"上次全绿"的印象开工**：run `38519070311` 曾红在
+> 「建 RLS 角色与受控系统函数」一步（删隐式建表分支漏了 CI 调用方，已补 `--create-tables`）。
+> ⇒ **开工前先 `gh run list --limit 3` 看真实状态**，不要凭文档表格或记忆。
 
 ---
 
