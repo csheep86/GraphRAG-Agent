@@ -168,9 +168,9 @@ class TestEnvironmentMismatch:
         assert detail["expected"]["pool_fingerprint"] == POOL
         assert detail["actual"]["pool_fingerprint"] == "ffffffffffffffff"
 
-    def test_git_and_model_and_topk_each_block(self) -> None:
+    def test_model_and_topk_each_block(self) -> None:
+        """直接决定「检索到哪些证据」的两项变了 ⇒ 必须拦（裁决乙不动这两条）。"""
         for kwargs, hint in (
-            ({"git_hash": "另一个 commit"}, "代码版本不同"),
             ({"generation_model": "另一个模型"}, "生成模型不同"),
             ({"top_k": 8}, "注入证据条数不同"),
         ):
@@ -185,6 +185,47 @@ class TestEnvironmentMismatch:
                 _basis(), dataset_version="gold-multihop-v1", **coords
             )
             assert blocked is not None and hint in blocked, f"{hint} 未被拦住"
+
+    def test_code_drift_is_recorded_not_blocked(self) -> None:
+        """**裁决乙（P7-K）**：代码版本不同 ⇒ **只登记**，不因为版本号就判死。
+
+        为什么可以：版本只是「答案可能变了」的**代理指标**，而
+        :meth:`JudgementBasis.stale_answers` 是**直接证据**（逐字比对）。
+        让代理压过事实，会逼着人去改判分材料里的 ``git_hash`` 来"凑"放行
+        ——那才是赝数的入口（等于把"换个版本号"变成清洗证据的手段）。
+        """
+        blocked, detail = _reproducibility_gate(
+            _basis(),
+            dataset_version="gold-multihop-v1",
+            git_hash="另一个 commit",
+            pool_fingerprint=POOL,
+            top_k=32,
+            generation_model=MODEL,
+        )
+        assert blocked is None, "代码版本差异不得单独判死"
+        assert detail["reproducibility"] == "verified_with_code_drift"
+        assert "另一个 commit" in detail["code_drift"]
+        #: 差异必须留痕 ⇒ 读者能看出这次是在"不同代码"上复用了判分。
+        assert detail["expected"]["git_hash"] == GIT
+        assert detail["actual"]["git_hash"] == "另一个 commit"
+
+    def test_code_drift_still_blocks_when_answers_missing(self) -> None:
+        """**不可让的前提**：材料里没有答案原文 ⇒ 版本差异是唯一线索，不许降级。
+
+        少了这条，一个"只带 correct、不带答案原文"的材料就能在任何代码版本上
+        出数 ⇒ 回到 P6-T canary 的形状。
+        """
+        blocked, detail = _reproducibility_gate(
+            _basis(answers={}),
+            dataset_version="gold-multihop-v1",
+            git_hash="另一个 commit",
+            pool_fingerprint=POOL,
+            top_k=32,
+            generation_model=MODEL,
+        )
+        assert blocked is not None
+        assert "没有答案原文" in blocked
+        assert detail["reason"] == "code_drift_without_answer_basis"
 
     def test_unreadable_coordinates_are_not_turned_into_failure(self) -> None:
         """本次取不到池坐标 ⇒ **不许**读成不一致（无法反驳的假红会淹没真红）。"""
@@ -310,7 +351,7 @@ class TestMultihopReproducibilityEndToEnd:
                     git_hash=GIT,
                     judgements={1: True},
                     judged_by="unit-test",
-                    judgement_basis=_basis(),
+                    multihop_judgement_basis=_basis(),
                 )
             }
         )
@@ -342,7 +383,7 @@ class TestMultihopReproducibilityEndToEnd:
                     git_hash=GIT,
                     judgements={1: True},
                     judged_by="unit-test",
-                    judgement_basis=_basis(),
+                    multihop_judgement_basis=_basis(),
                 )
             }
         )

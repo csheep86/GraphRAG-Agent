@@ -131,6 +131,11 @@ class RunnerContext:
     judgement_basis: Any | None = None
     #: 同上，**基线侧**用另一张判分表 ⇒ 也必须有自己的 basis（A1 裁决 3）。
     baseline_judgement_basis: Any | None = None
+    #: **多跳**的 basis。为什么**不能复用上面两张**：多跳判的那趟与 C1 判的那趟
+    #: 不是同一次运行（各自的 git / 答卷都不同）⇒ 共用一张材料会把两个判据的
+    #: 证据混为一谈。多跳的判分材料是 ``gold-multihop-v1.json`` **自己**（判分写在
+    #: 它的 ``_judging`` / ``items[*].correct`` 里），由 ``_source_sheets`` 自证。
+    multihop_judgement_basis: Any | None = None
     #: **A1（2026-10-05）**：**基线侧**的独立判分（同一份 rubric、同一批改）。
     #: 为什么必须是**另一份**：两侧的答案由不同检索产出，同一题在两侧对错可以不同
     #: ⇒ 共用一张判分表等于替基线"预设答案"，那会让增益失去意义（L10-A1 条款 3）。
@@ -531,7 +536,7 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
     #: 放在**出数之前**而不是之后：环境不对时再去跑 6 道题只是白烧一次 LLM。
     coords = _live_env_coords(runner_ctx)
     blocked, gate_detail = _reproducibility_gate(
-        runner_ctx.judgement_basis,
+        runner_ctx.multihop_judgement_basis,
         dataset_version="gold-multihop-v1",
         git_hash=runner_ctx.git_hash,
         pool_fingerprint=coords[0] if coords else None,
@@ -556,7 +561,7 @@ def eval_multihop_accuracy(ctx: dict[str, Any]) -> CriterionResult:
         )
 
     #: **P7-K 门 ②——答案比对**：拒答 / 原文漂移 ⇒ 旧判分不再适用于这批答案。
-    stale = _answer_gate(runner_ctx.judgement_basis, indices, answers)
+    stale = _answer_gate(runner_ctx.multihop_judgement_basis, indices, answers)
     if stale:
         return _blocked_result(
             C_MULTIHOP,
@@ -1317,7 +1322,14 @@ class JudgementBasis:
 
     @staticmethod
     def _locate_sheets(judgement_path: Path) -> Path | None:
-        """判分表 ``_source_sheets`` 指向的答卷（**先在同目录找**）。"""
+        """判分表 ``_source_sheets`` 指向的答卷（同目录优先，其次 ``judging/``）。
+
+        **为什么要多找一层 ``judging/``**：多跳的判分材料就是
+        ``data/eval/gold-multihop-v1.json`` 自己（判分写在它的 ``_judging`` /
+        ``items[*].correct`` 里），而按约定**答卷材料集中在 ``judging/`` 目录下** ⇒
+        只找同目录的话，多跳会永远拿不到 basis ⇒ 退成 ``unchecked`` ⇒ 又变成
+        「99 题空心 PASS」那条没人把关的路。
+        """
         try:
             table = json.loads(judgement_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -1325,8 +1337,22 @@ class JudgementBasis:
         sheet_name = table.get("_source_sheets")
         if not isinstance(sheet_name, str) or not sheet_name.strip():
             return None
-        candidate = judgement_path.parent / Path(sheet_name).name
-        return candidate if candidate.is_file() else None
+        for parent in (judgement_path.parent, judgement_path.parent / "judging"):
+            candidate = parent / Path(sheet_name).name
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def git_drift(self, git_hash: str) -> str | None:
+        """代码版本差异（**只登记、不拦截**）；无差异 / 无从比对 ⇒ ``None``。
+
+        **P7-K 裁决乙（2026-10-14）**：把它从 :meth:`env_mismatch` 里拆出来，
+        是因为这两件事的性质不同——指纹 / top_k / 模型**直接决定检索到什么证据**，
+        而代码版本只是一个**代理指标**（换了几行代码，答案未必变）。
+        """
+        if self.git_hash and git_hash and self.git_hash != git_hash:
+            return f"判分时所见代码 {self.git_hash} ≠ 本次 {git_hash}"
+        return None
 
     def env_mismatch(
         self,
@@ -1335,14 +1361,20 @@ class JudgementBasis:
         pool_fingerprint: str | None,
         top_k: int | None,
         generation_model: str | None,
+        enforce_git: bool = True,
     ) -> str | None:
         """环境是否与判分时一致：不符返回**原因**，一致返回 ``None``。
 
         两侧都可能有 ``None`` ⇒ **不比对**（判分材料没登记，或本次取不到该坐标）。
         为什么不把这些判成不一致：拿「当时没记录 / 本次没取到」当证据去证伪，
         等于制造一种**无法被反驳的假红**——它会反过来把真红淹没。
+
+        Args:
+            enforce_git: ``False`` ⇒ **代码版本不进本函数**（改由 :meth:`git_drift`
+                单独登记）。默认 ``True`` 是为了让 "是否会因为版本而拦" 这件事
+                在调用点显式写出来，而不是藏在某个默认值里。
         """
-        if self.git_hash and git_hash and self.git_hash != git_hash:
+        if enforce_git and self.git_hash and git_hash and self.git_hash != git_hash:
             return f"代码版本不同（判分 {self.git_hash} / 本次 {git_hash}）"
         if (
             self.pool_fingerprint
@@ -1442,26 +1474,58 @@ def _reproducibility_gate(
         pool_fingerprint=pool_fingerprint,
         top_k=top_k,
         generation_model=generation_model,
+        #: **裁决乙（P7-K）**：代码版本不参与拦截（见 :meth:`JudgementBasis.git_drift`）。
+        enforce_git=False,
     )
+    _expected = {
+        "git_hash": basis.git_hash,
+        "pool_fingerprint": basis.pool_fingerprint,
+        "top_k": basis.top_k,
+        "generation_model": basis.generation_model,
+    }
+    _actual = {
+        "git_hash": git_hash,
+        "pool_fingerprint": pool_fingerprint,
+        "top_k": top_k,
+        "generation_model": generation_model,
+    }
     if mismatched is not None:
         return (
             f"判分环境不可复现：{mismatched}（判分材料 {basis.source}）",
             {
                 "reproducibility": "blocked",
-                "expected": {
-                    "git_hash": basis.git_hash,
-                    "pool_fingerprint": basis.pool_fingerprint,
-                    "top_k": basis.top_k,
-                    "generation_model": basis.generation_model,
-                },
-                "actual": {
-                    "git_hash": git_hash,
-                    "pool_fingerprint": pool_fingerprint,
-                    "top_k": top_k,
-                    "generation_model": generation_model,
-                },
+                "expected": _expected,
+                "actual": _actual,
             },
         )
+
+    #: 代码版本差异只登记，**但有一条不可让的前提**：必须能逐字比对答案。
+    #: 若材料里没有答案原文，版本差异就是「这批答案可能不是人判过的那批」的
+    #: **唯一**线索——把它一并降级，等于把所有防线一起撤掉。
+    drift = basis.git_drift(git_hash)
+    if drift is not None and not basis.answers:
+        return (
+            f"判分环境不可复现：{drift}，且判分材料 {basis.source} "
+            "**没有答案原文**可逐字比对 ⇒ 无法证明这批答案就是当年判过的那批",
+            {
+                "reproducibility": "blocked",
+                "reason": "code_drift_without_answer_basis",
+                "expected": _expected,
+                "actual": _actual,
+            },
+        )
+    if drift is not None:
+        return None, {
+            "reproducibility": "verified_with_code_drift",
+            "basis_source": basis.source,
+            "code_drift": drift,
+            "note": (
+                "代码版本与判分当时不同，但答案已由答案门**逐字比对**裁定 ⇒ "
+                "以答案为准（裁决乙）。归因里记的是本次 git，引用时请连带本条。"
+            ),
+            "expected": _expected,
+            "actual": _actual,
+        }
     return None, {"reproducibility": "verified", "basis_source": basis.source}
 
 

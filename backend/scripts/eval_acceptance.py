@@ -50,6 +50,7 @@ from app.evaluation.criteria import (  # noqa: E402
     CriterionResult,
     judge,
 )
+from app.evaluation.dataset import DATA_DIR, MULTIHOP_FILE  # noqa: E402
 from app.evaluation.gate import (  # noqa: E402
     BASELINE_DIR,
     DEFAULT_BASELINE_FILE,
@@ -358,6 +359,12 @@ def main() -> int:
         judgement_basis=JudgementBasis.load(graph_judgements_path, side="graph"),
         baseline_judgement_basis=JudgementBasis.load(
             baseline_judgements_path, side="baseline"
+        ),
+        #: **多跳**走自己那份材料（多跳的判分材料就是 gold 本身，判分写在它的
+        #: ``_judging`` / ``items[*].correct`` 里）。**刻意不给命令行参数**：
+        #: 参数能被忘传，而忘了传 ⇒ basis=None ⇒ 又回到「没有把 gate」的空心出数。
+        multihop_judgement_basis=JudgementBasis.load(
+            DATA_DIR / MULTIHOP_FILE, side="graph"
         ),
         gold_version=args.gold,
     )
