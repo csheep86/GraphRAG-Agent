@@ -9,7 +9,7 @@
 
 | 项 | 内容 |
 |---|---|
-| **裁决人** | **用户本人**（会话内裁决；本机账户 `william`）。⚠️ **真名留白待本人补**——按项目纪律 AI 不代填人名，P8-Release 终审前请本人补上 |
+| **裁决人** | **william**（用户本人，会话内裁决；2026-10-14 用户确认：**`william` 就是真名**，不是账户占位符） |
 | **裁决日期** | 2026-10-14 |
 | **裁决值** | `EVAL_SINGLE_DOC_TOKEN_CEILING` = **32 000（维持原值）** |
 | **裁决性质** | **产品期出厂默认 ceiling** |
@@ -80,10 +80,10 @@ $ uv run python scripts/eval_acceptance.py --calibrate
 |---|---|---|---|
 | 1 | ceiling = 裁决值，日志有裁决人 + 理由 + 日期 | ✅ | §1 决策表（真名待本人补） |
 | 2 | `pytest` 不降（尤其 `test_eval_acceptance_cli.py` 三锚点） | ✅ | 见 §5 |
-| 3 | 矩阵 C3-a / C3-b 行 `PASS(provisional)` → `MEASURED` | ⚠️ **部分，见下——这是本批唯一没闭合的判据** | 需终审确认语义 |
+| 3 | 矩阵 C3-a / C3-b 行 `PASS(provisional)` → `MEASURED` | ✅（**读法 A**，用户 2026-10-14 选定；见 §4.1） | `7574.0000 token/doc` + status `MEASURED_PROVISIONAL` |
 | 4 | 三件套 + CI 四 job 全绿 | ✅ | **CI run [`38529683194`](https://github.com/csheep86/GraphRAG-Agent/actions/runs/38529683194)**（push `0469ab8`）四 job 全绿；后端 job **1337 passed / 7 skipped / 0 failed** —— 与上一批 P7-K 收尾时**持平**（本批零行为改动 ⇒ 持平即正确） |
 
-### 4.1 判据 3 未闭合的原因（**待你在 P8-Release 前确认**）
+### 4.1 「MEASURED」的两种读法（**用户 2026-10-14 选定读法 A** ⇒ 判据 3 闭合）
 
 矩阵`:205` 用的是 ⏳ / ✅ 图例，**没有 `MEASURED` 这个状态词**；而代码里的状态枚举实际值是：
 
@@ -91,16 +91,19 @@ $ uv run python scripts/eval_acceptance.py --calibrate
 CriterionStatus.MEASURED_PROVISIONAL   ← tests/test_eval_cost_criteria.py:150 实测断言
 ```
 
-⇒ 「C3 转 MEASURED」有两种读法，**我不自行挑选**：
+⇒ 「C3 转 MEASURED」有两种读法：
 
-| 读法 | 是否已达成 | 依据 |
+| 读法 | 达成 | 依据 |
 |---|---|---|
-| **A**：MEASURED = 「有真实实测值，不再 BLOCKED」 | ✅ **已达成** | `7574.0000 token/doc`（n=1，`eval-live-20261012T065005Z.json`），status = `MEASURED_PROVISIONAL` |
-| **B**：MEASURED = 「判定可给纯 PASS（阈值已校准）」 | ❌ **未达成，且须烧 LLM** | 需先用 ≥3 份**真实业务长度**文档跑 `--calibrate` 出建议值，再走一次人裁决 |
+| **A**：MEASURED = 「有真实实测值，不再 BLOCKED」 | ✅ **用户选定这条 ⇒ 判据 3 闭合** | `7574.0000 token/doc`（n=1，`eval-live-20261012T065005Z.json`），status = `MEASURED_PROVISIONAL` |
+| **B**：MEASURED = 「判定可给纯 PASS（阈值已校准）」 | ❌ 未达成，**须烧 LLM** | 需先用 ≥3 份真实业务长度文档跑 `--calibrate` 出建议值，再走一次人裁决 |
 
-**我的判断**：P8-Release §1 前置第 3 条真正卡的是「阈值是否有人裁决」（因为它标注为 *只能用户* 的 0.1 人天项），
-这一条已闭合；读法 B 需要的不是"裁决"而是"校准样本"，属于另一笔工作。
-但**这个歧义我不替你裁** —— 若终审要求 B，请让我先用多份真实长度文档跑一轮（会产生 LLM 费用，需你批准）。
+**为什么 A 足以给 P8-Release 交代**：req §1 前置第 3 条真正卡的是「阈值**有没有人裁决**」
+（审计把它标成 *只能用户* 的 0.1 人天项）—— 这一层已闭合；读法 B 要的不是裁决而是**校准样本**，
+属另一笔工作（要 LLM 费用）。
+
+⚠️ **由此带来的限定，必须写进 `release notes` 并留在矩阵里**：C3-a 是 **`MEASURED_PROVISIONAL`**，
+不是"经过校准的达标线"。**禁止**把这句话读成「成本准入线已达标」。
 
 ---
 
@@ -136,6 +139,8 @@ CriterionStatus.MEASURED_PROVISIONAL   ← tests/test_eval_cost_criteria.py:150 
 
 ## 7. 遗留（给 P8-Release）
 
-1. **§1 裁决人真名**：请本人补（AI 不代填人名）。
-2. **§4.1 的 MEASURED 语义**：选 A 还是 B。选 B ⇒ 需批准一轮多文档真实长度 `--calibrate`（LLM 费用）。
-3. 若将来出现外部客户 ⇒ 按 §1 的重裁触发条件**重来一次**，届时可能需要新 CodeBuddy 批次。
+本批**无未闭环项**（裁决人 = `william`；MEASURED 按读法 A 闭合）。仅剩一条**未来触发**：
+
+- 若将来命中 §1 的重裁触发条件（出现第一位外部持证客户 / 拿到 ≥3 份真实业务长度文档的
+  `cost_records` / 抽取调用粒度变化）⇒ **重来一次 TBD-7 校准 + 裁决**，届时若要把 C3-a
+  升到读法 B（纯 PASS），需批准一轮多文档 `--calibrate`（LLM 费用）。
