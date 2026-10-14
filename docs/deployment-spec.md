@@ -127,6 +127,18 @@
 8. 交付签署：安装验收清单（§9）逐条签字
 ```
 
+> **第 4 步里 `db-init` 会顺带把表建好**（P7-Q / F-P7H-1，2026-10-14）：
+>
+> 建表**只有一条路**：`init_rls_roles.py --run-migrations` ⇒ 以 owner 跑
+> `alembic upgrade head`。空库 = 迁移建表；已 stamp 的库 = 迁移增量；
+> 旧版 `create_all` 建的库 = 先机械比对、与模型等价才 `stamp head`（不等价 ⇒ 报错）。
+>
+> ⚠️ **为什么不能再回到 `--create-tables`**：`create_all` 按模型建表且**从不 stamp**
+> ⇒ 客户按 §7.2 升级时 `alembic upgrade head` 在**第一个**迁移就撞 `DuplicateTable`
+> （把版本号拨到哪一段都会撞）⇒ **升级路径是断的**。
+> 交付编排里的 `--create-tables` 已改为 `--run-migrations`，改回去等于把该缺陷放回去。
+> ⇒ 现场**不需要**、也不该手工建表；升级走同一条路（§7.2 第 4 步）。
+
 > **第 5 步「开首账号」**（F-P7N-2 / P7-N 方案 (a)，2026-10-14 补齐）：
 >
 > ```bash
@@ -286,10 +298,23 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 3. 取目标版本镜像：
    - registry 模式：docker compose pull      ← 只传变化层
    - 离线模式：docker load -i <新包>.tar
-4. 执行数据库迁移（Alembic upgrade head）
+4. 数据库建表 / 迁移 —— **`db-init` 一次性服务自动跑**，与首次部署同一条路
+   （`init_rls_roles.py --run-migrations` ⇒ owner 身份 `alembic upgrade head`）。
+   - **P7-Q（F-P7H-1，2026-10-14）起，建表只此一条路**：此前首次部署由
+     `--create-tables`（`create_all`）建表且**从不 stamp** ⇒ 客户执行本步时
+     `alembic upgrade head` 在**第一个**迁移就撞 `DuplicateTable`
+     （实测把 `alembic_version` 拨到哪一段都会撞）⇒ **升级路径是断的**。
+   - **旧版库**（无 `alembic_version` 但表已存在，即 ≤1.6.0 由 `create_all` 建的库）：
+     `db-init` 先比对库 schema 与当前模型，等价 ⇒ `stamp head` 一次性归位
+     （那批迁移是追平模型的，跑不动）；**不等价 ⇒ 报错并列出差异**，
+     不许靠 stamp 把缺表 / 缺列伪造成"已迁移"。
+   - 排障 / 预演要**手工**跑也可以（**不是必需**）：
+     `docker compose exec backend alembic upgrade head`（backend 已注入 owner 串）。
    - **P3-A（2026-10-04）起，这一步同时落 RLS 策略**：迁移
      `8210590e76a5` 会对 14 张租户表逐张执行 `ENABLE` + `FORCE` +
      `tenant_isolation` 策略。**漏跑迁移 = 库里没有隔离**，且不会有任何报错。
+     P7-Q 起 `db-init` **不再自己落策略**（只校验齐备）：策略一旦被"当前代码版本"
+     重述，库里的策略就不再对应任何一条迁移 ⇒ 迁移是唯一落点。
    - 迁移须以 **owner** 角色执行（受限角色无权 `ALTER TABLE`）。
      **P3-D（2026-10-04）起这条被机械接线**：新增 `Settings.database_url_owner`
      （env `DATABASE_URL_OWNER`），`migrations/env.py` **优先**取它（缺则回落
@@ -334,6 +359,9 @@ PG 是 Source of Truth、Neo4j 是从属镜像（ADR-0002）。因此：
 
 ```
 [ ] 目标版本的迁移脚本存在且已评审
+[ ] **目标库可迁移**：库里应已有 `alembic_version`（首次部署即由 `db-init --run-migrations` 建立）。
+    查不到 ⇒ 旧版 `create_all` 建的库，按 §7.2 第 4 步处置（比对通过才 `stamp head`），
+    **不得**手工把版本号拨到任意一段（实测拨到哪一段都会撞 `DuplicateTable`）
 [ ] 备份已完成且 manifest 完整
 [ ] 回滚方案（**上一版本 tag** + 备份路径 + 预计耗时）已写明
 [ ] License 对新版本仍有效（模块 / 有效期 / 席位，ADR-0006 §2.4）

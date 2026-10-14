@@ -90,9 +90,14 @@ services:
       # 超级用户连串：只在**这一个一次性服务**里出现（backend 用的是受限角色）
       - --admin-url
       - postgresql+psycopg://graphrag:${POSTGRES_PASSWORD}@postgres:5432/graphrag
-      # 首次部署时建表（owner 身份）。已存在则 no-op；**升级**仍走
-      # `alembic upgrade head`（deployment-spec §7.2），本服务不改迁移历史。
-      - --create-tables
+      # **P7-Q（F-P7H-1）：建表只此一条路 —— `alembic upgrade head`**（以 owner 跑）。
+      # 此前这里是 `--create-tables`（`Base.metadata.create_all`），而它**从不 stamp**
+      # ⇒ 客户按 deployment-spec §7.2 升级时，第一个迁移就撞 DuplicateTable，
+      # **升级路径是断的**（把版本号拨到哪一段都会撞）。
+      # ⇒ 现在：空库 = 迁移建表；已 stamp 的库 = 迁移增量；旧版 create_all 建的库
+      #   = 先机械比对、等价才 stamp head（脚本内三种状态三种处置）。
+      # ⚠️ **不许**改回 `--create-tables`：那等于把 F-P7H-1 原样放回去。
+      - --run-migrations
     environment:
       # 【密钥】这两个口令**不写进镜像**（§3），由现场 `.env` / Secrets 注入。
       APP_OWNER_PASSWORD: ${APP_OWNER_PASSWORD:?APP_OWNER_PASSWORD 必填，见 .env.example}
