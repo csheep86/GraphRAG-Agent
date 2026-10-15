@@ -335,4 +335,11 @@ uv run pytest tests -q（真图口径）        => 1289 passed, 5 skipped    （
 ### 8.7 残留（下一批的硬边界）
 
 - **全仓 `restore-drill-*.md` = 0 份**（`docs/drills/` 下无匹配）⇒ 第 9 项**机械上**不可能 PASS
+  > ✅ **2026-10-15 订正（本句已为过时口径**，出处
+  > `docs/release-readiness-audit-2026-10-13.md` §5.1）：实测 `docs/drills/`
+  > 现有 **3** 个文件，其中 **`restore-drill-20261013.md` 存在**（另有
+  > `upgrade-drill-20261014.md` = **P7-H** 的升级+回滚留证、
+  > `upgrade-drill-20261014-p7q.md` = P7-Q 的）⇒ 本句自 2026-10-13
+  > （P6-X2 留证）起**已不成立**，它只对 **2026-10-13 之前**成立。
+  > 原句按 R-5 保留为史实，不删。
   （`check_9` 只认 `DEFAULT_DRILL_DIR = docs/drills` 下真实存在的文件，**不认口头声明**）。

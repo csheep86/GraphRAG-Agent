@@ -133,7 +133,7 @@ Neo4j 同一实例。命令：进程内直调 `AgentService.query`，从 P7-S �
 |---|---|---|
 | 1 | 「指定版本 ⇒ 出终答」的 LLM 段未验（供应商超时） | 环境恢复后随手补一条即可 |
 | 2 | `chunks` 13 vs 32 的差异未对齐 | 不属本批 |
-| 3 | **service 层不做 active 校验**（信任路由层）——若你要求加，属扩大范围 | 见 proposal §5，**等你裁** |
+| 3 | ~~**service 层要不要也校验 active**~~ ⇒ **已机械核实，保持现状**（见 §8） | ✅ **已闭环**，无需你裁 |
 | 4 | 生成侧漂移（P7-S §5 × P7-K §10.2） | 等你裁路 A / 路 B |
 
 ### 7.1 本批**解锁**了什么
@@ -148,3 +148,36 @@ Neo4j 同一实例。命令：进程内直调 `AgentService.query`，从 P7-S �
       ⇒ 即使版本锁住，答案仍会漂 ⇒ P7-K 出口判据 1 仍不成立
       ⇒ **这根才是 P8-Release 的真门槛**，等你裁
 ```
+
+---
+
+## 8. 「信任路由层」这个前提是**核实**过的，不是推断（2026-10-15 补）
+
+proposal §5 把「service 层不重复校验 active」列为一个**需要你裁决的取舍**，
+依据是「`agent.py:60-61` 是唯一 HTTP 入口」。那是读代码得出的**推断**；
+本节把它换成**机械读数**。
+
+### 8.1 全仓调用点清点
+
+| 类别 | `AgentService.instance().query` 调用点 | 传 `kg_version` 吗 |
+|---|---|---|
+| **生产代码** | **仅 1 处**：`app/api/v1/routes/agent.py:65` | 有 → 其前 **第 60-61 行必然先过 `_assert_active_kg_version`** ✅ |
+| 脚本 | `scripts/repro_agent_query.py:214` | **不传**（`:183` 只构造 `question` / `scope`）⇒ 走 active 分支 |
+| 脚本 | `scripts/check_injected_evidence.py:130`（P7-S 探针） | **不传** ⇒ 走 active 分支 |
+| 测试 | 19 处（mock 链） | 除本批新增用例外，均不传 |
+
+### 8.2 结论
+
+⇒ **当前代码库里，没有任何调用方绕过路由直接给 `AgentService.query` 传 `kg_version`**
+⇒ 「信任路由层」在生产路径上**成立**，service 层不重复校验**保持现状**，
+   proposal §5 的取舍项就此**关闭**，不再需要你裁决。
+
+### 8.3 ⚠️ 但留下一个边界（**登记，不处置**）
+
+`scripts/` 下的脚本**不受**路由校验保护。今天它们都不传 `kg_version`，所以安全；
+**将来若有脚本要指定版本**（评测要锁版本 ⇒ 正是 P7-U 想做的事），它就绕过了
+`_assert_active_kg_version`。
+
+⇒ 若后续真要这么用，**应优先走 HTTP**（`eval_controlled_qset.py` 已是这个口径：
+它读的是 `response.get("kg_version")`），或在脚本里显式调
+`fetch_kg_version_status` 自查。**本批不改**（不属本批范围）。
