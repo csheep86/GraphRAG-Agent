@@ -266,20 +266,43 @@ class AgentService:
         """
         settings = get_settings()
 
-        # 1) active kg_version
-        try:
-            kg_version = GraphService.instance().fetch_active_kg_version(
-                org_id=org_id, db=db
-            )
-        except GraphUnavailableError as exc:
-            # 基础设施故障（Neo4j 不可用 / 无 active 版本）**不**等同于「检索不到证据」：
-            # 后者才是 refused=true，前者必须上抛为 501，否则会把故障伪装成正常拒答。
-            logger.bind(trace_id=trace_id, reason=str(exc)).error(
-                "agent_query_graph_unavailable"
-            )
-            raise AgentUnavailableError(f"Neo4j 不可用: {exc}") from exc
+        # 1) kg_version：**请求显式指定优先**，缺省才取 active
+        #
+        #    **P7-U**：契约 ``AgentQueryRequest.kg_version`` 写的是「指定图谱版本，
+        #    缺省取最新 active 版本」（``schemas/agent.py:49-56``）。旧实现只由路由层
+        #    校验它是否为 active（ADR-0002 §3.2 ``_assert_active_kg_version``），
+        #    **却从不采纳**——service 层仍自行 resolve ⇒ 传了等于没传。
+        #
+        #    后果见 P6-T §3 **P6-T-D4**（登记为【阻塞 P8-Release】）：显式带
+        #    ``kg_version=attendance-demo-v1``，后端仍解析成别的版本 ⇒ 评测锁不住
+        #    版本，检索 0 证据、全拒答。
+        #
+        #    安全边界（三条，逐条可查）：
+        #    1. 下面第 2.5 步的 ``validate_kg_version_tenant_boundary`` 用的是同一个
+        #       ``version`` ⇒ 指定版本照样过跨租户 fail-closed（ADR-0003 §4）；
+        #    2. **未指定时走原链路**，故障语义（501 ``AgentUnavailableError``）
+        #       **逐字不变**；
+        #    3. 契约字段不动 ⇒ 响应 ``kg_version`` 只是从「系统 resolve 的」变成
+        #       「调用方指定的（已校验 active）」，正是契约描述写的语义。
+        requested_version = request.kg_version
+        if requested_version:
+            #: 路由层已校验 active——非 active 一律 409，严禁静默降级（ADR-0002 §3.2）
+            version = requested_version
+        else:
+            try:
+                kg_version = GraphService.instance().fetch_active_kg_version(
+                    org_id=org_id, db=db
+                )
+            except GraphUnavailableError as exc:
+                # 基础设施故障（Neo4j 不可用 / 无 active 版本）**不**等同于
+                # 「检索不到证据」：后者才是 refused=true，前者必须上抛为 501，
+                # 否则会把故障伪装成正常拒答。
+                logger.bind(trace_id=trace_id, reason=str(exc)).error(
+                    "agent_query_graph_unavailable"
+                )
+                raise AgentUnavailableError(f"Neo4j 不可用: {exc}") from exc
 
-        version = kg_version.version
+            version = kg_version.version
 
         # 2) 拉取子图：一次拿到 Prompt 文本 + 结构化节点 / 关系
         #    （批次 A：nodes / edges 用于填充契约 kg_nodes / kg_relations）

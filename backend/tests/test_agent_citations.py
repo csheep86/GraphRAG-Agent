@@ -615,3 +615,77 @@ def test_query_logs_injected_chunk_sequence(monkeypatch: pytest.MonkeyPatch) -> 
     assert extra["chunk_count"] == 2
     #: **顺序**必须等于注入顺序（不是排序后的、也不是 citations 的顺序）
     assert extra["chunk_ids"] == ("chunk-cccc0003", "chunk-aaaa0001")
+
+
+# --------------------------------------------------------------------------- #
+# P7-U：显式 kg_version 必须被采纳（P6-T-D4 /【阻塞 P8-Release】）
+# --------------------------------------------------------------------------- #
+
+
+def test_query_adopts_explicit_kg_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P7-U：请求显式指定 ``kg_version`` ⇒ **全链路用它**，而不是 resolve 出来的 active。
+
+    契约 ``AgentQueryRequest.kg_version`` 写的是「指定图谱版本，缺省取最新
+    active 版本」（``schemas/agent.py:49-56``）。旧实现只由路由层**校验**它是否
+    active，service 层却**自行 resolve** 并覆盖 ⇒ 传了等于没传。实证后果见
+    P6-T §3 **P6-T-D4**（登记为【阻塞 P8-Release】）：显式带
+    ``attendance-demo-v1``，后端仍解析成别的版本 ⇒ 检索 0 证据、全拒答。
+
+    判据：打桩的 active 是 ``v-test``，请求指定 ``v-specified`` ⇒ 响应与链路上
+    用的都必须是 ``v-specified``。
+
+    ⚠️ **反向验证（R-9「恒绿即失效」）**：拆掉 `_execute_query` 里「显式指定优先」
+    那个分支 ⇒ 本例**必须红**（``response.kg_version`` 会退回 ``v-test``）。
+    """
+    seen: list[str] = []
+
+    def fake_tenant_boundary(
+        self: GraphService, *, kg_version: str, current_org_id: UUID
+    ) -> bool:
+        seen.append(kg_version)
+        return True
+
+    _patch_pipeline(
+        monkeypatch,
+        chunks=[_chunk()],
+        llm_answer=_llm_answer([CHUNK_ID]),
+    )
+    monkeypatch.setattr(
+        GraphService, "validate_kg_version_tenant_boundary", fake_tenant_boundary
+    )
+
+    response = asyncio.run(
+        AgentService.instance().query(
+            request=AgentQueryRequest(question="甲方是谁？", kg_version="v-specified"),
+            org_id=uuid4(),
+            trace_id="t-p7u-specified",
+        )
+    )
+
+    assert response.kg_version == "v-specified"
+    #: 链路（子图 / 证据 / 租户边界校验）用的**也是**指定版本，不是 resolve 出来的
+    assert seen == ["v-specified"]
+
+
+def test_query_falls_back_to_active_when_kg_version_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """未指定 ``kg_version`` ⇒ 仍取 active（**行为逐字不变**，出口判据 2）。
+
+    这条守的是「修 A 不能顺手改 B」：P7-U 只动「指定了怎么办」这一支。
+    """
+    _patch_pipeline(
+        monkeypatch,
+        chunks=[_chunk()],
+        llm_answer=_llm_answer([CHUNK_ID]),
+    )
+
+    response = asyncio.run(
+        AgentService.instance().query(
+            request=AgentQueryRequest(question="甲方是谁？"),
+            org_id=uuid4(),
+            trace_id="t-p7u-default",
+        )
+    )
+
+    assert response.kg_version == "v-test"
