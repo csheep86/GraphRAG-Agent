@@ -102,6 +102,28 @@ uv run python scripts/demo_rehearsal.py --domain attendance --password=<口令> 
 ```
 期望 `PASS 10 / FAIL 0 / SKIP 0`。只做 ¥0 预检就去掉 `--with-llm`（→ PASS 9 / SKIP 1）。
 
+## 5.5 重启演示栈（2026-10-29 收工后 **已停**，数据在卷里）
+
+数据卷**全部保留**：`graphrag-drill_pg_data` / `graphrag-drill_neo4j_data` / `graphrag-drill_neo4j_logs`。
+重启必须用**带 override 的那条命令**（少了 override 会退回 1.6.0、丢 License、丢 storage ⇒ A2 静默跳过、问答 500）：
+
+```powershell
+cd D:\AIProject\GraphRAG-Agent\backend\reports\delivery
+$env:COMPOSE_PROJECT_NAME='graphrag-drill'
+docker compose -f docker-compose.drill-20261013.yml -f drill-license-override.yml `
+               -f demo-170-override.yml --env-file .env.drill up -d
+```
+
+起来后自检：**完整**（烧一次 LLM）→
+
+```powershell
+cd D:\AIProject\GraphRAG-Agent\backend
+uv run python scripts/demo_rehearsal.py --domain attendance --password=<口令> --with-llm --frontend-base http://127.0.0.1:3000
+```
+期望 `PASS 10 / FAIL 0 / SKIP 0`。**¥0 预检版**去掉 `--with-llm`（→ PASS 9 / SKIP 1）。
+
+> ⚠️ 若 rebuilt/换了镜像出现 `must be owner of table …`（db-init exit 1），按 §3.1 先把 19 张表属主归到 `app_owner` 再 `up -d`。
+
 ## 6. 未做 / 遗留（不伪装）
 
 1. **4 个前端页需人工在浏览器点验**——脚本只能证路由可达（CSR 无 SSR 文案）。**这一步 AI 不能代做**。
