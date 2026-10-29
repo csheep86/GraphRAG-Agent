@@ -129,5 +129,5 @@ uv run python scripts/demo_rehearsal.py --domain attendance --password=<口令> 
 1. **4 个前端页需人工在浏览器点验**——脚本只能证路由可达（CSR 无 SSR 文案）。**这一步 AI 不能代做**。
 2. **关联方疑点页仍是空的**（`affiliation_suspicions` = 0，且 `affiliation-demo-v2` 挂 0 篇文档）。本批走考勤域，按 Non-goal 7 未补；若演示要演疑点清单，需另立批次跑 detect + 补该域数据。
 3. **演示环境的 override 在 `backend/reports/delivery/`（被 `.gitignore` 忽略，不入库）** ⇒ 换机器 / 清理该目录后**无法复现**。本批按 Non-goal 未在 `deploy/` 新增编排（会牵动 G-19 / G-27 的扫描口径），故只在此登记风险。
-4. **`v1.7.0` tag 待打**（代码里 `app_version` 已是 1.7.0，tag 最新仍是 `v1.6.0`）——本批 CI 绿后补。
+4. ~~`v1.7.0` tag 待打~~ —— **2026-10-29 已打并推送**：CI run `40876350736` **success** 后 `git tag -a v1.7.0` → `git push origin v1.7.0`。此前 tag 停在 `v1.6.0` 而 `app_version` 已是 1.7.0，差的那一步补齐了。
 5. **P8-Release 终审线未动**：P7-I（L2 端到端）、审计 §5.1 剩 2 条、路 B 的语义判据口径与重判 P6-T 真值——按 Non-goal 4 **全部不在本批**。
