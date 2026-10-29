@@ -10,6 +10,7 @@
     uv run python scripts/demo_rehearsal.py --with-llm               # 含真实问答（**烧 token**）
     uv run python scripts/demo_rehearsal.py --frontend-base http://127.0.0.1:3000
     uv run python scripts/demo_rehearsal.py --json reports/rehearsal.json
+    uv run python scripts/demo_rehearsal.py --password=<演示账号口令>   # 交付形态必加，见下
 
     # 考勤域（Sprint 9.5）：异常清单 → 合规扫描 → 异常归因 → 问答 → 审计 → 前端 4 页
     uv run python scripts/demo_rehearsal.py --domain attendance
@@ -113,16 +114,53 @@ class Rehearsal:
         return sum(1 for c in self.checks if c.status == "FAIL")
 
 
-def _headers(trace_id: str) -> dict[str, str]:
-    """从**在线服务的同一份配置**取 dev 头：不许在脚本里硬编码 org_id。"""
+def _headers(trace_id: str, token: str | None = None) -> dict[str, str]:
+    """从**在线服务的同一份配置**取 dev 头：不许在脚本里硬编码 org_id。
+
+    **P8-Demo（2026-10-29）：交付形态必须带 JWT**。原因（真机实测，非推断）：
+    登录上线（P2-C）后 `X-Org-Id` 只是 **dev 兜底**，而交付栈从不设
+    `ALLOW_DEV_ORG_HEADER`（护栏 G-27 要求它不得开启）⇒ 只发 dev 头时业务端点
+    一律 `401 UNAUTHORIZED`（`detail.dev_fallback_enabled = false`）。
+    `token` 为空 ⇒ 保持旧行为（本机 dev 栈仍靠 dev 头），但这在交付态必红。
+    """
     from app.core.config import get_settings
 
     settings = get_settings()
-    return {
+    headers = {
         "X-Org-Id": str(settings.default_org_id),
         "X-Actor-Id": str(settings.default_actor_id),
         "X-Trace-Id": trace_id,
     }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _default_username() -> str:
+    """演示账号的用户名：`seed_dev_rbac.py` 以 ``dev-{actor_id}`` 命名（播种时打印）。"""
+    from app.core.config import get_settings
+
+    return f"dev-{get_settings().default_actor_id}"
+
+
+def _login(
+    *, base_url: str, api_prefix: str, username: str, password: str, timeout: float
+) -> str:
+    """`POST /auth/login` 取 JWT。**失败即抛**——拿不到 token 的彩排没有意义。
+
+    刻意**不**吞异常：登录失败时后续每一步都是 401，与其让 6 步全红后靠人猜，
+    不如在第一句就说清「是登不上，不是数据没了」。
+    """
+    with httpx.Client(base_url=f"{base_url}{api_prefix}", timeout=timeout) as client:
+        resp = client.post(
+            "/auth/login", json={"username": username, "password": password}
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"登录失败 HTTP {resp.status_code}：{resp.text[:300]}"
+            f"（username={username}）—— 检查账号是否已播种、License 是否有效"
+        )
+    return str(resp.json()["access_token"])
 
 
 def _fail(report: Rehearsal, step: str, title: str, detail: str) -> None:
@@ -494,10 +532,28 @@ def step_7_frontend(
             if response.status_code != 200:
                 _fail(report, "7", title, f"{path} → HTTP {response.status_code}")
                 continue
-            if must not in response.text:
-                _fail(report, "7", title, f"{path} 200 但页面不含「{must}」")
+            # ⚠️ **P8-Demo（2026-10-29）：断言从「HTML 含文案」改为「是应用页、不是 404」**
+            # 原判据**测错了对象**：交付镜像跑的是 `next start`（生产构建），考勤四页是
+            # **客户端渲染** ⇒ SSR 出来的 HTML 只有应用壳（实测 11 KB、`合规|考勤|异常|工时`
+            # **零命中**，title 是通用站名）⇒ 文案断言在交付态**必然假红**，
+            # 与页面好坏无关。它当年成立是因为验的是 `next dev` / SSR 页面。
+            #
+            # 机械上能证的只有两件事：路由可达（200）且是**应用页**而非 Next 的 404 页。
+            # 「页面上真有内容」需要浏览器执行 JS ⇒ **人工点验**，不由本脚本冒充。
+            # 404 由 **HTTP 状态码**判（实测：不存在的路由 → 404；存在的 → 200）。
+            # 刻意**不**拿文案 `could not be found` 判 404 —— 那是 Next App Router
+            # **每个页面**的 RSC 载荷里都带的内置 notFound 组件元数据（实测 /attendance
+            # 命中 2 次却是正常页）⇒ 用它判会把所有页面误判成 404。
+            body = response.text
+            if "__next" not in body:
+                _fail(report, "7", title, f"{path} 200 但不是应用页（无应用壳）")
                 continue
-            report.add("7", title, "PASS", f"{path} → 200 且含「{must}」")
+            report.add(
+                "7",
+                title,
+                "PASS",
+                f"{path} → 200 且为应用页（CSR：文案「{must}」需人工在浏览器点验）",
+            )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -519,6 +575,15 @@ def main(argv: list[str] | None = None) -> int:
         "--with-llm",
         action="store_true",
         help="跑真实问答（步骤 3），**会产生 LLM 费用**；默认跳过",
+    )
+    parser.add_argument(
+        "--password",
+        default=None,
+        help="演示账号口令（缺省用户名 = `dev-<default_actor_id>`，可用 --username 覆盖）；"
+        "**交付形态必须给**——那里的 dev 兜底是关的，不带 JWT 一律 401",
+    )
+    parser.add_argument(
+        "--username", default=None, help="登录用户名（覆盖缺省的 `dev-<actor_id>`）"
     )
     parser.add_argument(
         "--question",
@@ -547,6 +612,27 @@ def main(argv: list[str] | None = None) -> int:
     question = args.question or (
         ATTENDANCE_QUESTION if args.domain == "attendance" else DEFAULT_QUESTION
     )
+    token: str | None = None
+    if args.password:
+        username = args.username or _default_username()
+        try:
+            token = _login(
+                base_url=args.base_url,
+                api_prefix=args.api_prefix,
+                username=username,
+                password=args.password,
+                timeout=args.timeout,
+            )
+        except RuntimeError as exc:
+            print(f"登录不可用，终止：{exc}", file=sys.stderr)
+            return 2
+        print(f"已登录：username={username}（JWT 已取到，长度 {len(token)}）")
+    else:
+        print(
+            "[warn] 未给 --password ⇒ 只发 dev 头；交付形态（dev 兜底关闭）会 401",
+            file=sys.stderr,
+        )
+
     print(
         f"彩排开始：domain={args.domain} base={args.base_url} "
         f"trace_id={trace_id} with_llm={args.with_llm}"
@@ -554,7 +640,7 @@ def main(argv: list[str] | None = None) -> int:
 
     client = httpx.Client(
         base_url=f"{args.base_url}{args.api_prefix}",
-        headers=_headers(trace_id),
+        headers=_headers(trace_id, token),
         timeout=args.timeout,
     )
     try:
